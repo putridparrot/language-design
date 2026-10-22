@@ -6,12 +6,35 @@ namespace Piper.Syntax;
 /// <summary>Base of the immutable syntax tree. Every node knows the source span it covers.</summary>
 public abstract record SyntaxNode(TextSpan Span);
 
-public sealed record CompilationUnitSyntax(TextSpan Span, ImmutableArray<DeclarationSyntax> Declarations)
-    : SyntaxNode(Span);
+/// <summary>One source file: an optional file-scoped namespace, using directives, then declarations.</summary>
+public sealed record CompilationUnitSyntax(
+    TextSpan Span,
+    SourceText Source,
+    NamespaceDeclarationSyntax? Namespace,
+    ImmutableArray<UsingDirectiveSyntax> Usings,
+    ImmutableArray<DeclarationSyntax> Declarations) : SyntaxNode(Span);
+
+/// <summary><c>A.B.C</c>.</summary>
+public sealed record QualifiedNameSyntax(TextSpan Span, ImmutableArray<Token> Parts) : SyntaxNode(Span)
+{
+    public bool IsMissing => Parts.Any(p => p.IsMissing);
+
+    public string Text => string.Join(".", Parts.Select(p => p.Text));
+}
+
+/// <summary><c>namespace Geometry.Shapes;</c> (file-scoped, as in C#).</summary>
+public sealed record NamespaceDeclarationSyntax(TextSpan Span, QualifiedNameSyntax Name) : SyntaxNode(Span);
+
+/// <summary><c>using System.Text;</c>: imports a Piper or .NET namespace's members into this file.</summary>
+public sealed record UsingDirectiveSyntax(TextSpan Span, QualifiedNameSyntax Name) : SyntaxNode(Span);
 
 // Declarations
 
-public abstract record DeclarationSyntax(TextSpan Span, Token Name) : SyntaxNode(Span);
+/// <summary><see cref="Private"/> is the <c>private</c> modifier: the declaration is only visible in its own file.</summary>
+public abstract record DeclarationSyntax(TextSpan Span, Token Name) : SyntaxNode(Span)
+{
+    public Token? Private { get; init; }
+}
 
 /// <summary>
 /// A function or method. At most one of <see cref="BlockBody"/> and <see cref="ExpressionBody"/> is set;
@@ -68,8 +91,12 @@ public sealed record ParameterSyntax(TextSpan Span, Token Name, TypeSyntax Type)
 
 public abstract record TypeSyntax(TextSpan Span) : SyntaxNode(Span);
 
-/// <summary><c>Int</c> or a generic instantiation such as <c>Pair&lt;Int, String&gt;</c>.</summary>
-public sealed record NamedTypeSyntax(TextSpan Span, Token Name, ImmutableArray<TypeSyntax> TypeArguments) : TypeSyntax(Span);
+/// <summary>
+/// <c>Int</c>, a generic instantiation such as <c>Pair&lt;Int, String&gt;</c>, or a qualified name such as
+/// <c>System.Text.StringBuilder</c> (<see cref="Qualifier"/> holds the namespace parts).
+/// </summary>
+public sealed record NamedTypeSyntax(TextSpan Span, ImmutableArray<Token> Qualifier, Token Name, ImmutableArray<TypeSyntax> TypeArguments)
+    : TypeSyntax(Span);
 
 /// <summary><c>T?</c>, shorthand for <c>Option&lt;T&gt;</c>.</summary>
 public sealed record OptionalTypeSyntax(TextSpan Span, TypeSyntax Inner) : TypeSyntax(Span);

@@ -34,6 +34,9 @@ public enum TokenKind
     StaticKeyword,
     NullKeyword,
     IsKeyword,
+    NamespaceKeyword,
+    UsingKeyword,
+    PrivateKeyword,
     TrueKeyword,
     FalseKeyword,
 

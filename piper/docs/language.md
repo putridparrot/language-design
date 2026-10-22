@@ -1,4 +1,4 @@
-# The Piper language (milestone 4)
+# The Piper language (milestone 5)
 
 Piper is a small, C-style, expression-oriented language that transpiles to C#. It borrows
 immutable-by-default bindings, block expressions, enums (sum types), exhaustive `match` and traits
@@ -32,7 +32,9 @@ it implements. Keep the two in step when changing syntax.
 Notation: `{ x }` is zero or more, `[ x ]` is optional, `|` separates alternatives, `"x"` is a literal token.
 
 ```ebnf
-compilationUnit = { declaration } EOF ;
+compilationUnit = { using } [ "namespace" qualifiedName ";" ] { using } { [ "private" ] declaration } EOF ;
+using           = "using" qualifiedName ";" ;                (* a Piper or .NET namespace *)
+qualifiedName   = IDENT { "." IDENT } ;
 declaration     = function | record | enum | trait | extend ;
 
 function        = [ "static" ] "fn" IDENT [ typeParameters ] "(" [ parameters ] ")" [ "->" type ]
@@ -47,7 +49,7 @@ typeParameter   = IDENT [ ":" type { "+" type } ] ;           (* bounds must be 
 parameters      = parameter { "," parameter } [ "," ] ;
 parameter       = IDENT ":" type ;
 type            = namedType { "?" } ;                         (* T? is Option<T> *)
-namedType       = IDENT [ "<" type { "," type } [ "," ] ">" ] ;
+namedType       = qualifiedName [ "<" type { "," type } [ "," ] ">" ] ;   (* e.g. System.Text.StringBuilder, List<Int> *)
 
 block           = "{" { statement } [ expression ] "}" ;      (* final expression = block's value *)
 statement       = variableDecl | while | for | return | "break" ";" | "continue" ";"
@@ -104,7 +106,7 @@ number there is all it takes to change precedence.
 ### Lexical structure
 
 - **Identifiers:** ASCII letters, digits and `_`, not starting with a digit.
-- **Keywords:** `fn let var if else while for in return break continue record enum match trait extend static this null is true false`.
+- **Keywords:** `fn let var if else while for in return break continue record enum match trait extend static this null is namespace using private true false`.
 - **Comments:** `// line` and `/* block */`. Block comments nest.
 - **Integers:** `42`, `1_000_000`, `0xFF`, `0b1010`. Add an `L` suffix for Long: `3_000_000_000L`. An unsuffixed literal must fit in Int.
 - **Doubles:** `1.5`, `2e3`, `2.5E-1`. A digit is required after the `.`, so `0..10` is a range.
@@ -284,6 +286,65 @@ fn compute(a: Int, b: Int) -> Result<Int, MathError> {
 - **Pattern matching:** `Result` values match like any enum, e.g. `Err(MathError.DivideByZero)`.
 - **No redeclaring:** `Option` and `Result` are built in, so they can't be redeclared. You can extend them, e.g. `extend Option { fn isNone() -> Bool = this is None; }`.
 
+### Programs, namespaces and visibility
+
+A program is any number of `.piper` files compiled together, e.g. `piper run src/`. As in C#, each file
+may start with a file-scoped namespace and `using` directives:
+
+```piper
+namespace Geometry;          // everything in this file is in Geometry
+
+using System.Text;           // .NET namespaces...
+using Geometry.Shapes;       // ...and Piper ones alike
+
+record Point(x: Double, y: Double);
+fn area(s: Shape) -> Double = ...;
+private fn square(x: Double) -> Double = x * x;   // visible only in this file
+```
+
+- **Namespaces span files.** Several files can declare the same namespace and see each other's declarations without a `using`. A file without a `namespace` contributes to the global namespace.
+- **Qualified names always work**, without a `using`, in both expressions and types: `Geometry.area(s)`, `Geometry.Point(1.0, 2.0)`, `System.Text.StringBuilder`.
+- **`using N;` imports** N's types and functions, but not its sub-namespaces, as in C#. A name imported from two namespaces is an error where it's used; qualify it.
+- **Lookup order:** this file's private declarations, then the file's namespace and the namespaces enclosing it, then Piper's builtins, then imports.
+- **Visibility:**
+  - Declarations are public by default.
+  - `private` restricts a function, record, enum, trait or extend-block method to its own file.
+  - A public declaration can't expose a private type in its signature or fields. Make it private too, or make the type public.
+- **`extend` works across files.** An `extend` block can extend a type declared in another file (the emitted C# uses `partial` types).
+- **One entry point:** exactly one `main`, in any namespace.
+
+### .NET interop
+
+Any public type in the .NET base libraries can be used. Builtin Piper types are the corresponding .NET types,
+so their members are available too.
+
+```piper
+using System;
+using System.Text;
+using System.Collections.Generic;
+
+let root = Math.Sqrt(16);                  // static method (Int widens to Double)
+let max = Int.MaxValue;                    // static field
+let shout = "piper".ToUpper();             // instance method on a builtin type
+let length = shout.Length;                 // property
+let builder = StringBuilder();             // constructor: call the type, as for Piper records
+builder.Append("x = ");
+builder.Append(42);                        // overload chosen by argument type
+
+let points: List<Point> = List();          // generic types take their type arguments from the expected type
+points.Add(Point(1, 2));                   // and can hold Piper values
+```
+
+- **Overload resolution** follows C#, simplified:
+  - An exact match beats a numeric widening (Int → Long beats Int → Double).
+  - That beats a conversion to a base type or interface, which beats `object`.
+  - Ties go to the normal form over a `params` expansion, then to the overload needing fewer default arguments. Anything still tied is reported as ambiguous.
+- **Null at the boundary:**
+  - .NET members whose results are annotated as possibly null, and `Nullable<T>` values, come back as `T?`, with `null` becoming `None`. For example, `Environment.GetEnvironmentVariable(name) ?? "unset"`.
+  - Where .NET accepts null, you can pass a `T?`, and `None` becomes `null`.
+- **`extend` on .NET types:** a non-generic .NET type can be extended like a builtin, e.g. `extend StringBuilder { fn line(s: String) { this.AppendLine(s); } }`, but not with a member name it already has.
+- **Not yet supported:** generic methods (most of LINQ), extension methods, delegates, `out`/`ref` parameters, indexers, property setters and events. Exceptions propagate (there is no `try` yet).
+
 ### Bindings
 
 - `let` declares an immutable binding and `var` a mutable one. Assigning to a `let` binding, a parameter or a `for` loop variable is a compile error.
@@ -331,6 +392,13 @@ locale-independent. `main()` takes no parameters and returns Unit; it is the pro
 | `match o { Some(v) => …, None => … }`, `o is Some(v)` | property patterns `o is { IsSome: true, Value: var v }`, `{ IsSome: false }` |
 | `a ?? b`, `a?.b` | `a.IsSome ? a.Value : b`, `a.IsSome ? Option<T>.Some(a.Value.b) : Option<T>.None` (non-variable operands are first stored in a temporary) |
 | `let x = f()?;` | `var t = f(); if (!t.IsSome) { return Option<R>.None; } x = t.Value;` |
+| a `.piper` file | a `.cs` file of the same name; the file with `main` also gets the entry point, Option/Result and `PiperInterop` helpers |
+| `namespace Geometry;` | `namespace Geometry { … }`; names from other namespaces are written `global::Geometry.Point` |
+| `private record R(…)` / `private trait T` | `file sealed record R(…)` / `file interface T` (C# 11 file-local types) |
+| `private fn f()` / private method | `internal static` in the file's module class / `internal` member |
+| `extend` of a type declared in another file | that type becomes `partial`; the other file holds a `partial record` part with the added members |
+| `Math.Sqrt(2.0)`, `StringBuilder()`, `s.Length` | `global::System.Math.Sqrt(2.0)`, `new global::System.Text.StringBuilder()`, `s.Length` |
+| a possibly-null .NET result / a `T?` passed to .NET | `PiperInterop.FromNullableReference(…)` / `PiperInterop.ToNullableReference(…)` (and `…Value` versions for `Nullable<T>`) |
 | `fn f(a: Int) -> Int { … }` | `public static int f(int a) { … }` in a static module class |
 | `fn f(a: Int) -> Int = e;` | `public static int f(int a) => e;` |
 | `let x = e;` / `var x = e;` | `int x = e;` (immutability is checked by Piper, not C#) |
@@ -363,13 +431,16 @@ The match is known to be exhaustive, so a final arm without a guard or bindings 
 - A function ending in `while true { … }` is still reported as "not all code paths return a value".
 - `?` followed by member access needs parentheses, `(f()?).name`, because `?.` is conditional access.
 - A match guard, or the rest of an if/while condition after an `is` that binds variables, can't contain `?`, or `?.`/`??` on anything but a variable.
-- There are no lambdas, collections, modules or .NET interop yet. See the roadmap. When interop arrives, nullable .NET values will surface as `T?` (null becoming `None`).
+- .NET interop: no generic methods (most of LINQ), extension methods, delegates/lambdas, `out`/`ref` parameters, indexers (`list[0]`), property setters or events yet, and no `try`/`catch`: .NET exceptions propagate.
+- There is no `for` over collections yet, so .NET collections can be filled and queried (`Count`, `Contains`) but not iterated.
+- There are no lambdas or Piper collections yet. See the roadmap.
 
 ## Roadmap
 
 1. ~~**Sum types and `match`**~~, done in milestone 2.
 2. ~~**Null safety and errors**~~, done in milestone 4: `Option`/`T?`, `Result`, `null`, `?.`, `??`, `?` and `is` patterns.
 3. ~~**Traits, generics and extensions**~~, done in milestone 3.
-4. **Modules, imports and .NET interop.**
-5. **Smaller features:** tuples and destructuring, lambdas, `defer`, `use`, async/await, and a pipe operator `|>`.
-6. **A language server** that reuses the fault-tolerant parser and binder.
+4. ~~**Modules, imports and .NET interop**~~, done in milestone 5: `namespace`, `using`, `private`, multi-file programs, and calling .NET.
+5. **Collections and lambdas:** `for x in collection`, indexing (`list[0]`), lambdas (which also unlock LINQ and other delegate-taking .NET APIs), and `try`/`catch` for .NET exceptions.
+6. **Smaller features:** tuples and destructuring, `defer`, `use`, async/await, and a pipe operator `|>`.
+7. **A language server** that reuses the fault-tolerant parser and binder.

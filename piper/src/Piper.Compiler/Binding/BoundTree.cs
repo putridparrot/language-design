@@ -1,4 +1,6 @@
 using System.Collections.Immutable;
+using System.Reflection;
+using Piper.Text;
 
 namespace Piper.Binding;
 
@@ -9,12 +11,20 @@ namespace Piper.Binding;
 public abstract class BoundNode;
 
 public sealed class BoundProgram(
+    ImmutableArray<SourceText> files,
+    ImmutableArray<NamespaceSymbol> fileNamespaces,
     ImmutableArray<TypeSymbol> types,
     ImmutableArray<EnumSymbol> builtinTypes,
     ImmutableArray<BoundFunction> functions,
     ImmutableArray<BoundFunction> methods,
     FunctionSymbol? main)
 {
+    /// <summary>The program's source files; every declaration's <see cref="Symbol.DeclaringFile"/> is one of these.</summary>
+    public ImmutableArray<SourceText> Files { get; } = files;
+
+    /// <summary>The namespace each of <see cref="Files"/> declares (the global namespace if none).</summary>
+    public ImmutableArray<NamespaceSymbol> FileNamespaces { get; } = fileNamespaces;
+
     /// <summary>This compilation's built-in Option and Result (they may have gained methods from extend blocks).</summary>
     public ImmutableArray<EnumSymbol> BuiltinTypes { get; } = builtinTypes;
 
@@ -249,6 +259,68 @@ public sealed class BoundMatchArm(BoundPattern pattern, BoundExpression? guard, 
     public BoundExpression? Guard { get; } = guard;
 
     public BoundExpression Body { get; } = body;
+}
+
+// .NET interop
+
+/// <summary>
+/// A call to a .NET method or constructor (<see cref="Member"/> is a MethodInfo or ConstructorInfo).
+/// <see cref="Receiver"/> is null for static methods and constructors; <see cref="ContainerType"/> is the type they belong to.
+/// </summary>
+public sealed class BoundClrInvocationExpression(
+    BoundExpression? receiver,
+    TypeSymbol containerType,
+    MethodBase member,
+    ImmutableArray<BoundExpression> arguments,
+    TypeSymbol type) : BoundExpression
+{
+    public BoundExpression? Receiver { get; } = receiver;
+
+    public TypeSymbol ContainerType { get; } = containerType;
+
+    public MethodBase Member { get; } = member;
+
+    public ImmutableArray<BoundExpression> Arguments { get; } = arguments;
+
+    public override TypeSymbol Type { get; } = type;
+}
+
+/// <summary>Reading a .NET property or field (<see cref="Receiver"/> is null for static ones).</summary>
+public sealed class BoundClrMemberExpression(BoundExpression? receiver, TypeSymbol containerType, MemberInfo member, TypeSymbol type)
+    : BoundExpression
+{
+    public BoundExpression? Receiver { get; } = receiver;
+
+    public TypeSymbol ContainerType { get; } = containerType;
+
+    public MemberInfo Member { get; } = member;
+
+    public override TypeSymbol Type { get; } = type;
+}
+
+public enum NullableBoundaryKind
+{
+    /// <summary>A possibly-null .NET reference → Option.</summary>
+    FromNullableReference,
+
+    /// <summary>A .NET <c>Nullable&lt;T&gt;</c> → Option.</summary>
+    FromNullableValue,
+
+    /// <summary>An Option passed where .NET accepts a null reference.</summary>
+    ToNullableReference,
+
+    /// <summary>An Option passed where .NET expects a <c>Nullable&lt;T&gt;</c>.</summary>
+    ToNullableValue,
+}
+
+/// <summary>Where null meets Option: .NET's null becomes None on the way in, and None becomes null on the way out.</summary>
+public sealed class BoundNullableBoundaryExpression(BoundExpression operand, NullableBoundaryKind kind, TypeSymbol type) : BoundExpression
+{
+    public BoundExpression Operand { get; } = operand;
+
+    public NullableBoundaryKind Kind { get; } = kind;
+
+    public override TypeSymbol Type { get; } = type;
 }
 
 /// <summary><c>left ?? right</c>. <see cref="Right"/> has either the left's value type, or (chaining) the left's optional type.</summary>

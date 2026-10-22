@@ -8,11 +8,12 @@ namespace Piper.Binding;
 
 /// <summary>
 /// Resolves names, checks types and enforces Piper's own rules (immutability, Bool conditions,
-/// definite returns, exhaustive matches, trait conformance) that C# could not check for us.
-/// Binding happens in passes so declarations can appear in any order: type names, type parameters,
-/// trait conformances, fields, method and function signatures, then bodies. After an error the
-/// offending expression gets the Error type, which suppresses follow-on errors.
-/// This file holds declarations and statements; see Binder.Expressions.cs and Binder.Patterns.cs.
+/// definite returns, exhaustive matches, trait conformance, visibility) that C# could not check for us.
+/// A program is any number of files; binding happens in passes over all of them so declarations can
+/// appear in any order and any file: type names, type parameters, trait conformances, fields, method and
+/// function signatures, then bodies. After an error the offending expression gets the Error type, which
+/// suppresses follow-on errors.
+/// This file holds declarations and statements; see Binder.Expressions.cs, Binder.Patterns.cs and Binder.Interop.cs.
 /// </summary>
 public sealed partial class Binder
 {
@@ -23,20 +24,12 @@ public sealed partial class Binder
         "MemberwiseClone", "Finalize", "ReferenceEquals",
     ];
 
-    private static readonly Dictionary<TypeSymbol, Type> ClrTypes = new()
-    {
-        [TypeSymbol.Int] = typeof(int),
-        [TypeSymbol.Long] = typeof(long),
-        [TypeSymbol.Double] = typeof(double),
-        [TypeSymbol.Bool] = typeof(bool),
-        [TypeSymbol.String] = typeof(string),
-        [TypeSymbol.Char] = typeof(char),
-    };
-
     private readonly DiagnosticBag _diagnostics;
-    private readonly Scope _globalScope;
+    private readonly Scope _builtins;
+    private readonly NamespaceSymbol _globalNamespace;
+    private readonly List<FileContext> _files = [];
 
-    /// <summary>Methods added to builtin types with <c>extend Int { … }</c>; user types keep theirs on the symbol.</summary>
+    /// <summary>Methods added to builtin and .NET types with <c>extend Int { … }</c>; user types keep theirs on the symbol.</summary>
     private readonly Dictionary<TypeSymbol, List<MethodSymbol>> _builtinMethods = [];
 
     /// <summary>The built-in <c>Option&lt;T&gt;</c> (<c>T?</c>) and <c>Result&lt;T, E&gt;</c>.</summary>
@@ -46,78 +39,119 @@ public sealed partial class Binder
     /// <summary>The unwrapped values that <c>?.</c> chains currently being bound refer to.</summary>
     private readonly Stack<VariableSymbol> _implicitReceivers = new();
 
-    private Scope _scope;
+    private FileContext _file = null!;
+    private Scope _scope = null!;
     private FunctionSymbol? _function;
     private int _loopDepth;
+
+    /// <summary>Everything about the file being bound: its namespace, private declarations and the scope chain its code sees.</summary>
+    private sealed class FileContext(CompilationUnitSyntax unit, NamespaceSymbol @namespace)
+    {
+        public CompilationUnitSyntax Unit { get; } = unit;
+
+        public SourceText Source => Unit.Source;
+
+        public NamespaceSymbol Namespace { get; } = @namespace;
+
+        public List<NamespaceSymbol> Usings { get; } = [];
+
+        /// <summary>The file's private declarations: the head of its scope chain.</summary>
+        public Scope Private { get; set; } = null!;
+
+        /// <summary>
+        /// Lookup chain, nearest first: private declarations → the namespace and each enclosing one →
+        /// builtins → names imported by using directives → top-level namespaces (e.g. System).
+        /// </summary>
+        public Scope Scope => Private;
+    }
+
+    /// <summary>Resolution reached a dead end that has already been reported.</summary>
+    private sealed class ErrorSymbol() : Symbol("?")
+    {
+        public static readonly ErrorSymbol Instance = new();
+    }
+
+    /// <summary>A name imported by more than one using directive.</summary>
+    private sealed class AmbiguousSymbol(string name, IReadOnlyList<string> sources) : Symbol(name)
+    {
+        public IReadOnlyList<string> Sources { get; } = sources;
+    }
 
     private Binder(DiagnosticBag diagnostics)
     {
         _diagnostics = diagnostics;
         (_option, _result) = EnumSymbol.CreateBuiltins();
 
-        var builtins = new Scope(parent: null);
+        _builtins = new Scope(parent: null);
         foreach (var type in TypeSymbol.Builtins)
-            builtins.TryDeclare(type);
+            _builtins.TryDeclare(type);
         foreach (var function in BuiltinFunctions.All)
-            builtins.TryDeclare(function);
+            _builtins.TryDeclare(function);
 
         // Option and Result are part of the language: their variants can be used unqualified (Some(1), None, Ok(x), Err(e)).
         foreach (var @enum in new[] { _option, _result })
         {
-            builtins.TryDeclare(@enum);
+            _builtins.TryDeclare(@enum);
             foreach (var variant in @enum.Variants)
-                builtins.TryDeclare(variant);
+                _builtins.TryDeclare(variant);
         }
 
-        // User declarations live in their own scope so they may shadow builtins.
-        _globalScope = new Scope(builtins);
-        _scope = _globalScope;
+        _globalNamespace = new NamespaceSymbol("", null, new Scope(null));
     }
 
-    public static BoundProgram BindProgram(CompilationUnitSyntax unit, DiagnosticBag diagnostics) =>
-        new Binder(diagnostics).Bind(unit);
+    public static BoundProgram BindProgram(ImmutableArray<CompilationUnitSyntax> units, DiagnosticBag diagnostics) =>
+        new Binder(diagnostics).Bind(units);
 
-    private sealed record ExtendInfo(ExtendDeclarationSyntax Syntax, TypeSymbol Target, Scope TypeParameterScope);
+    private sealed record ExtendInfo(ExtendDeclarationSyntax Syntax, FileContext File, TypeSymbol Target, Scope TypeParameterScope);
 
-    private sealed record FunctionInfo(FunctionSymbol Symbol, FunctionDeclarationSyntax Syntax, Scope SignatureScope);
+    private sealed record FunctionInfo(FunctionSymbol Symbol, FunctionDeclarationSyntax Syntax, FileContext File, Scope SignatureScope);
 
-    private BoundProgram Bind(CompilationUnitSyntax unit)
+    private void InFile(FileContext file)
     {
-        var types = DeclareTypes(unit);
+        _file = file;
+        _scope = file.Scope;
+        _diagnostics.CurrentSource = file.Source;
+    }
+
+    private BoundProgram Bind(ImmutableArray<CompilationUnitSyntax> units)
+    {
+        foreach (var unit in units)
+            _files.Add(CreateFile(unit));
+        foreach (var file in _files)
+            BindUsings(file);
+
+        var types = new List<TypeSymbol>();
+        foreach (var file in _files)
+            types.AddRange(DeclareTypes(file));
 
         // Type parameters (with their trait constraints) come next: everything below may mention them.
-        var typeParameterScopes = new Dictionary<NamedTypeDefinition, Scope>();
         foreach (var definition in types.OfType<NamedTypeDefinition>())
         {
+            InFile(FileOf(definition));
             var (syntax, reserved) = definition switch
             {
                 RecordSymbol r => (r.Declaration.TypeParameters, new HashSet<string> { r.Name }),
                 EnumSymbol e => (e.Declaration!.TypeParameters, [e.Name, .. e.Declaration.Variants.Select(v => v.Name.Text)]),
                 _ => throw new InvalidOperationException(),
             };
-            var scope = new Scope(_globalScope);
-            definition.TypeParameters = BindTypeParameters(syntax, scope, reserved);
-            typeParameterScopes[definition] = scope;
-        }
-
-        // Extend blocks on Option and Result see their (already created) type parameters.
-        foreach (var builtin in new[] { _option, _result })
-        {
-            var scope = new Scope(_globalScope);
-            foreach (var parameter in builtin.TypeParameters)
-                scope.TryDeclare(parameter);
-            typeParameterScopes[builtin] = scope;
+            definition.TypeParameters = BindTypeParameters(syntax, new Scope(_file.Scope), reserved);
         }
 
         // Conformances must be known before any generic type is instantiated, to check constraints.
-        var extends = BindExtendHeaders(unit, typeParameterScopes);
+        var extends = _files.SelectMany(BindExtendHeaders).ToList();
 
         foreach (var type in types)
         {
-            if (type is RecordSymbol record)
-                WithScope(typeParameterScopes[record], () => record.Fields = BindFields(record.Declaration.Fields, record.Name));
-            else if (type is EnumSymbol @enum)
-                WithScope(typeParameterScopes[@enum], () => BindVariants(@enum));
+            if (type is not NamedTypeDefinition definition)
+                continue;
+            InFile(FileOf(definition));
+            WithScope(TypeParameterScope(definition, _file), () =>
+            {
+                if (definition is RecordSymbol record)
+                    record.Fields = BindFields(record.Declaration.Fields, record.Name);
+                else
+                    BindVariants((EnumSymbol)definition);
+            });
         }
 
         var methods = new List<FunctionInfo>();
@@ -128,28 +162,158 @@ public sealed partial class Binder
         CheckConformances(extends);
 
         var functions = new List<FunctionInfo>();
-        foreach (var declaration in unit.Declarations.OfType<FunctionDeclarationSyntax>())
+        foreach (var file in _files)
         {
-            var info = BindFunctionSignature(declaration, _globalScope, containingType: null, thisType: null);
-            if (!declaration.Name.IsMissing && !_globalScope.TryDeclare(info.Symbol))
-                _diagnostics.ReportDuplicateDeclaration(declaration.Name.Span, info.Symbol.Name);
-            functions.Add(info);
+            InFile(file);
+            foreach (var declaration in file.Unit.Declarations.OfType<FunctionDeclarationSyntax>())
+            {
+                var info = BindFunctionSignature(declaration, file, file.Scope, containingType: null, thisType: null);
+                if (!declaration.Name.IsMissing)
+                    Declare(info.Symbol, declaration, file);
+                functions.Add(info);
+            }
         }
+
+        CheckExposure(types, functions, methods);
 
         var boundFunctions = functions.Select(BindFunctionBody).OfType<BoundFunction>().ToImmutableArray();
         var boundMethods = methods.Select(BindFunctionBody).OfType<BoundFunction>().ToImmutableArray();
 
-        var main = functions.Select(f => f.Symbol).FirstOrDefault(f => f.Name == "main");
+        var mains = functions.Select(f => f.Symbol).Where(f => f.Name == "main").ToList();
+        foreach (var extra in mains.Skip(1))
+        {
+            InFile(FileOf(extra));
+            _diagnostics.ReportDuplicateMain(extra.Declaration!.Name.Span);
+        }
+        var main = mains.FirstOrDefault();
         if (main is not null && (main.Parameters.Length != 0 || main.ReturnType != TypeSymbol.Unit || main.TypeParameters.Length != 0))
+        {
+            InFile(FileOf(main));
             _diagnostics.ReportInvalidMain(main.Declaration!.Name.Span);
+        }
 
-        return new BoundProgram([.. types], [_option, _result], boundFunctions, boundMethods, main);
+        return new BoundProgram([.. units.Select(u => u.Source)], [.. _files.Select(f => f.Namespace)], [.. types], [_option, _result], boundFunctions, boundMethods, main);
     }
 
-    private List<TypeSymbol> DeclareTypes(CompilationUnitSyntax unit)
+    private FileContext FileOf(Symbol symbol) => _files.First(f => f.Source == symbol.DeclaringFile);
+
+    // Files, namespaces and using directives
+
+    private FileContext CreateFile(CompilationUnitSyntax unit)
     {
+        var @namespace = _globalNamespace;
+        if (unit.Namespace is { Name: { IsMissing: false } name })
+        {
+            foreach (var part in name.Parts)
+            {
+                @namespace = @namespace.GetOrAddChild(part.Text, () => new Scope(null));
+                @namespace.IsDeclaredInPiper = true;
+            }
+        }
+
+        var file = new FileContext(unit, @namespace);
+
+        // Build the chain from the far end: top-level namespaces ← usings ← builtins ← namespaces ← private.
+        var roots = Scope.WithFallback(null, name => _globalNamespace.LookupMember(name, _option, NewMembers) as NamespaceSymbol);
+        var imports = Scope.WithFallback(roots, name => LookupImported(file, name));
+        Scope chain = Scope.View(_builtins, imports);
+        var enclosing = new List<NamespaceSymbol>();
+        for (var ns = @namespace; ns is not null; ns = ns.Parent)
+            enclosing.Add(ns);
+        for (int i = enclosing.Count - 1; i >= 0; i--)
+            chain = Scope.View(enclosing[i].Members, chain);
+        file.Private = new Scope(chain);
+        return file;
+    }
+
+    private static Scope NewMembers() => new(null);
+
+    private void BindUsings(FileContext file)
+    {
+        InFile(file);
+        foreach (var directive in file.Unit.Usings)
+        {
+            if (directive.Name.IsMissing)
+                continue;
+            if (ResolveNamespace(directive.Name.Parts) is { } @namespace)
+                file.Usings.Add(@namespace);
+            else
+                _diagnostics.ReportUnknownNamespace(directive.Name.Span, directive.Name.Text);
+        }
+    }
+
+    private NamespaceSymbol? ResolveNamespace(ImmutableArray<Token> parts)
+    {
+        var current = _globalNamespace;
+        foreach (var part in parts)
+        {
+            if (current.LookupMember(part.Text, _option, NewMembers) is not NamespaceSymbol next)
+                return null;
+            current = next;
+        }
+        return current;
+    }
+
+    /// <summary>A name imported into <paramref name="file"/> by its using directives (types and functions, not namespaces).</summary>
+    private Symbol? LookupImported(FileContext file, string name)
+    {
+        var found = new List<(Symbol Symbol, NamespaceSymbol From)>();
+        foreach (var @namespace in file.Usings)
+        {
+            var symbol = @namespace.LookupMember(name, _option, NewMembers);
+            if (symbol is null or NamespaceSymbol || found.Any(f => ReferenceEquals(f.Symbol, symbol)))
+                continue;
+            found.Add((symbol, @namespace));
+        }
+
+        return found.Count switch
+        {
+            0 => null,
+            1 => found[0].Symbol,
+            _ => new AmbiguousSymbol(name, [.. found.Select(f => f.From.FullName)]),
+        };
+    }
+
+    /// <summary>A member of <paramref name="namespace"/>, including this file's private declarations if it's the file's own namespace.</summary>
+    private Symbol? MemberOf(NamespaceSymbol @namespace, string name)
+    {
+        if (@namespace == _file.Namespace && _file.Private.LookupLocal(name) is { } own)
+            return own;
+        return @namespace.LookupMember(name, _option, NewMembers);
+    }
+
+    /// <summary>Declares a top-level symbol in its file's namespace, or in the file's private scope.</summary>
+    private void Declare(Symbol symbol, DeclarationSyntax declaration, FileContext file)
+    {
+        symbol.DeclaringFile = file.Source;
+        symbol.Namespace = file.Namespace;
+        symbol.IsPrivate = declaration.Private is not null;
+
+        var name = symbol.Name;
+        bool clash = file.Private.LookupLocal(name) is not null || file.Namespace.Members.LookupLocal(name) is not null;
+        var scope = symbol.IsPrivate ? file.Private : file.Namespace.Members;
+        if (clash || !scope.TryDeclare(symbol))
+            _diagnostics.ReportDuplicateDeclaration(declaration.Name.Span, name);
+    }
+
+    /// <summary>For an undefined name: a private declaration elsewhere explains it better than "does not exist".</summary>
+    private bool ReportIfPrivateElsewhere(Token name)
+    {
+        var owner = _files.FirstOrDefault(f => f != _file && f.Private.LookupLocal(name.Text) is not null);
+        if (owner is null)
+            return false;
+        _diagnostics.ReportPrivateDeclaration(name.Span, name.Text, owner.Source.FileName);
+        return true;
+    }
+
+    private void ReportAmbiguous(Token name, AmbiguousSymbol ambiguous) =>
+        _diagnostics.ReportAmbiguousImport(name.Span, name.Text, ambiguous.Sources);
+
+    private List<TypeSymbol> DeclareTypes(FileContext file)
+    {
+        InFile(file);
         var types = new List<TypeSymbol>();
-        foreach (var declaration in unit.Declarations)
+        foreach (var declaration in file.Unit.Declarations)
         {
             TypeSymbol? type = declaration switch
             {
@@ -162,11 +326,13 @@ public sealed partial class Binder
                 continue;
 
             if (type.Name is "Option" or "Result")
+            {
                 _diagnostics.ReportBuiltinTypeRedeclared(declaration.Name.Span, type.Name);
-            else if (_globalScope.TryDeclare(type))
-                types.Add(type);
-            else
-                _diagnostics.ReportDuplicateDeclaration(declaration.Name.Span, type.Name);
+                continue;
+            }
+
+            Declare(type, declaration, file);
+            types.Add(type);
         }
         return types;
     }
@@ -183,6 +349,18 @@ public sealed partial class Binder
         {
             _scope = outer;
         }
+    }
+
+    /// <summary>A scope inside <paramref name="file"/> in which <paramref name="target"/>'s type parameters are visible.</summary>
+    private static Scope TypeParameterScope(TypeSymbol target, FileContext file)
+    {
+        var scope = new Scope(file.Scope);
+        if (target is NamedTypeDefinition definition)
+        {
+            foreach (var parameter in definition.TypeParameters)
+                scope.TryDeclare(parameter);
+        }
+        return scope;
     }
 
     /// <summary>Declares type parameters in <paramref name="scope"/> and binds their trait constraints.</summary>
@@ -266,20 +444,25 @@ public sealed partial class Binder
     // Traits and extend blocks
 
     /// <summary>Resolves each extend block's target type and records the traits it implements.</summary>
-    private List<ExtendInfo> BindExtendHeaders(CompilationUnitSyntax unit, Dictionary<NamedTypeDefinition, Scope> typeParameterScopes)
+    private List<ExtendInfo> BindExtendHeaders(FileContext file)
     {
+        InFile(file);
         var extends = new List<ExtendInfo>();
-        foreach (var syntax in unit.Declarations.OfType<ExtendDeclarationSyntax>())
+        foreach (var syntax in file.Unit.Declarations.OfType<ExtendDeclarationSyntax>())
         {
             var targetSyntax = (NamedTypeSyntax)syntax.Target;
             if (syntax.Name.IsMissing)
                 continue;
 
-            var symbol = _globalScope.Lookup(syntax.Name.Text);
+            if (syntax.Private is { } @private)
+                _diagnostics.ReportInvalidExtendTarget(@private.Span, "'private' applies to the methods in an extend block, not the block itself.");
+
+            var symbol = ResolveTypeName(targetSyntax);
             TypeSymbol? target = symbol switch
             {
                 NamedTypeDefinition definition => definition,
-                TypeSymbol builtin when ClrTypes.ContainsKey(builtin) => builtin,
+                TypeSymbol builtin when ClrTypes.BuiltinTypes.ContainsKey(builtin) => builtin,
+                ClrTypeSymbol { IsGenericDefinition: false } clr when !clr.Type.IsGenericType => clr,
                 _ => null,
             };
 
@@ -287,9 +470,9 @@ public sealed partial class Binder
             {
                 if (symbol is TraitSymbol)
                     _diagnostics.ReportInvalidExtendTarget(targetSyntax.Span, "Traits cannot be extended (yet); add default methods to the trait instead.");
-                else if (symbol is TypeSymbol other)
-                    _diagnostics.ReportInvalidExtendTarget(targetSyntax.Span, $"'{other}' cannot be extended.");
-                else
+                else if (symbol is TypeSymbol or ClrTypeGroupSymbol)
+                    _diagnostics.ReportInvalidExtendTarget(targetSyntax.Span, $"'{symbol.Name}' cannot be extended.");
+                else if (symbol is null && !ReportIfPrivateElsewhere(syntax.Name))
                     _diagnostics.ReportUndefinedType(syntax.Name.Span, syntax.Name.Text);
                 continue;
             }
@@ -314,7 +497,7 @@ public sealed partial class Binder
                 if (target is not NamedTypeDefinition)
                 {
                     _diagnostics.ReportInvalidExtendTarget(traitSyntax.Span,
-                        $"Only records and enums can implement traits; '{target}' is a builtin type.");
+                        $"Only records and enums can implement traits; '{target}' is a builtin or .NET type.");
                     continue;
                 }
 
@@ -325,16 +508,17 @@ public sealed partial class Binder
             }
 
             if (target is NamedTypeDefinition named)
-                named.Traits = [.. named.Traits, .. traits];
+                named.Conformances = [.. named.Conformances, .. traits.Select(t => (t, (SourceText?)file.Source))];
 
-            var scope = target is NamedTypeDefinition def ? typeParameterScopes[def] : _globalScope;
-            extends.Add(new ExtendInfo(syntax, target, scope));
+            extends.Add(new ExtendInfo(syntax, file, target, TypeParameterScope(target, file)));
         }
         return extends;
     }
 
     private IEnumerable<FunctionInfo> BindTraitMethods(TraitSymbol trait)
     {
+        var file = FileOf(trait);
+        InFile(file);
         var infos = new List<FunctionInfo>();
         var methods = ImmutableArray.CreateBuilder<MethodSymbol>();
         var names = new HashSet<string>();
@@ -344,8 +528,10 @@ public sealed partial class Binder
                 _diagnostics.ReportInvalidTraitMethod(@static.Span, $"Trait method '{syntax.Name.Text}' cannot be static (yet).");
             if (!syntax.TypeParameters.IsEmpty)
                 _diagnostics.ReportInvalidTraitMethod(syntax.Name.Span, $"Trait method '{syntax.Name.Text}' cannot be generic (yet).");
+            if (syntax.Private is { } @private)
+                _diagnostics.ReportInvalidTraitMethod(@private.Span, $"Trait method '{syntax.Name.Text}' cannot be private.");
 
-            var info = BindFunctionSignature(syntax, _globalScope, trait, trait);
+            var info = BindFunctionSignature(syntax, file, file.Scope, trait, trait);
             var method = (MethodSymbol)info.Symbol;
             if (syntax.Name.IsMissing)
                 continue;
@@ -365,12 +551,13 @@ public sealed partial class Binder
 
     private IEnumerable<FunctionInfo> BindExtendMethods(ExtendInfo extend)
     {
+        InFile(extend.File);
         var target = extend.Target;
         var thisType = target is NamedTypeDefinition definition ? definition.SelfType : target;
         var infos = new List<FunctionInfo>();
         foreach (var syntax in extend.Syntax.Methods)
         {
-            var info = BindFunctionSignature(syntax, extend.TypeParameterScope, target, thisType);
+            var info = BindFunctionSignature(syntax, extend.File, extend.TypeParameterScope, target, thisType);
             var method = (MethodSymbol)info.Symbol;
             if (!syntax.HasBody)
                 _diagnostics.ReportMissingBody(syntax.Name.Span, syntax.Name.Text);
@@ -420,7 +607,8 @@ public sealed partial class Binder
         }
 
         // An existing .NET member would win over a C# extension member, silently calling the wrong thing.
-        if (ClrTypes[target].GetMember(method.Name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static).Length > 0)
+        var clrType = ClrTypes.ToClr(target)!;
+        if (clrType.GetMember(method.Name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static).Length > 0)
         {
             _diagnostics.ReportExistingClrMember(name.Span, target, method.Name);
             return false;
@@ -440,9 +628,10 @@ public sealed partial class Binder
             if (extend.Target is not NamedTypeDefinition definition)
                 continue;
 
+            InFile(extend.File);
             foreach (var traitSyntax in extend.Syntax.Traits)
             {
-                if (traitSyntax is not NamedTypeSyntax named || _globalScope.Lookup(named.Name.Text) is not TraitSymbol trait)
+                if (traitSyntax is not NamedTypeSyntax named || ResolveTypeName(named) is not TraitSymbol trait)
                     continue;
 
                 foreach (var required in trait.Methods)
@@ -456,7 +645,11 @@ public sealed partial class Binder
                     }
 
                     if (!SignaturesMatch(implementation, required))
+                    {
+                        _diagnostics.CurrentSource = implementation.DeclaringFile;
                         _diagnostics.ReportTraitSignatureMismatch(implementation.Declaration!.Name.Span, required.Name, trait, Signature(required));
+                        _diagnostics.CurrentSource = extend.File.Source;
+                    }
                 }
             }
         }
@@ -475,12 +668,81 @@ public sealed partial class Binder
         return $"fn {method.Name}({parameters}){result}";
     }
 
+    /// <summary>
+    /// A public declaration must not mention a private type: code in other files could see the declaration
+    /// but not the type (C# rejects the same thing for file-local types).
+    /// </summary>
+    private void CheckExposure(List<TypeSymbol> types, List<FunctionInfo> functions, List<FunctionInfo> methods)
+    {
+        void Check(Symbol owner, Token name, IEnumerable<TypeSymbol> mentioned)
+        {
+            if (owner.IsPrivate || mentioned.FirstOrDefault(MentionsPrivateType) is not { } exposed)
+                return;
+            InFile(FileOf(owner));
+            _diagnostics.ReportPrivateTypeExposed(name.Span, name.Text, PrivateTypeIn(exposed)!);
+        }
+
+        foreach (var type in types)
+        {
+            switch (type)
+            {
+                case RecordSymbol record:
+                    Check(record, record.Declaration.Name, record.Fields.Select(f => f.Type));
+                    break;
+                case EnumSymbol @enum:
+                    Check(@enum, @enum.Declaration!.Name, @enum.Variants.SelectMany(v => v.Fields.Select(f => f.Type)));
+                    break;
+                case TraitSymbol trait:
+                    Check(trait, trait.Declaration.Name, trait.Methods.SelectMany(SignatureTypes));
+                    break;
+            }
+
+            if (type is NamedTypeDefinition definition && !definition.IsPrivate)
+            {
+                foreach (var (trait, _) in definition.Conformances.Where(c => c.Trait.IsPrivate))
+                {
+                    InFile(FileOf(definition));
+                    _diagnostics.ReportPrivateTypeExposed(NameOf(definition).Span, definition.Name, trait.Name);
+                }
+            }
+        }
+
+        foreach (var info in functions)
+            Check(info.Symbol, info.Syntax.Name, SignatureTypes(info.Symbol));
+
+        foreach (var info in methods)
+        {
+            var method = (MethodSymbol)info.Symbol;
+            if (!method.ContainingType.IsPrivate)
+                Check(method, info.Syntax.Name, SignatureTypes(method));
+        }
+    }
+
+    private static Token NameOf(NamedTypeDefinition definition) => definition switch
+    {
+        RecordSymbol record => record.Declaration.Name,
+        EnumSymbol @enum => @enum.Declaration!.Name,
+        _ => throw new InvalidOperationException(),
+    };
+
+    private static IEnumerable<TypeSymbol> SignatureTypes(FunctionSymbol function) =>
+        [.. function.Parameters.Select(p => p.Type), function.ReturnType, .. function.TypeParameters.SelectMany(p => p.Constraints)];
+
+    private static bool MentionsPrivateType(TypeSymbol type) => PrivateTypeIn(type) is not null;
+
+    private static string? PrivateTypeIn(TypeSymbol type) => type switch
+    {
+        _ when type.OriginalDefinition.IsPrivate => type.OriginalDefinition.Name,
+        _ => type.TypeArguments.Select(PrivateTypeIn).FirstOrDefault(n => n is not null),
+    };
+
     // Functions and methods
 
     /// <param name="containingType">The trait, record/enum definition or builtin a method belongs to; null for a top-level function.</param>
     /// <param name="thisType">The type of <c>this</c> inside an instance method.</param>
     private FunctionInfo BindFunctionSignature(
         FunctionDeclarationSyntax declaration,
+        FileContext file,
         Scope outer,
         TypeSymbol? containingType,
         TypeSymbol? thisType)
@@ -513,7 +775,7 @@ public sealed partial class Binder
             if (!declaration.HasBody)
                 _diagnostics.ReportMissingBody(declaration.Name.Span, declaration.Name.Text);
             var function = new FunctionSymbol(declaration.Name.Text, typeParameters, parameters.ToImmutable(), returnType, declaration);
-            return new FunctionInfo(function, declaration, scope);
+            return new FunctionInfo(function, declaration, file, scope);
         }
 
         // As in C#, methods are instance methods with an implicit `this` unless marked static.
@@ -521,16 +783,22 @@ public sealed partial class Binder
             ? new VariableSymbol("this", thisType!, isMutable: false, VariableKind.This)
             : null;
         var method = new MethodSymbol(
-            declaration.Name.Text, typeParameters, parameters.ToImmutable(), returnType, declaration, containingType, thisVariable);
-        return new FunctionInfo(method, declaration, scope);
+            declaration.Name.Text, typeParameters, parameters.ToImmutable(), returnType, declaration, containingType, thisVariable)
+        {
+            DeclaringFile = file.Source,
+            Namespace = file.Namespace,
+            IsPrivate = declaration.Private is not null,
+        };
+        return new FunctionInfo(method, declaration, file, scope);
     }
 
     private BoundFunction? BindFunctionBody(FunctionInfo info)
     {
-        var (function, declaration, signatureScope) = info;
+        var (function, declaration, file, signatureScope) = info;
         if (!declaration.HasBody)
             return null;
 
+        InFile(file);
         _function = function;
         _loopDepth = 0;
         _scope = new Scope(signatureScope);
@@ -556,7 +824,7 @@ public sealed partial class Binder
 
         body = CheckFunctionResult(function, declaration, body, trailingSyntax);
 
-        _scope = _globalScope;
+        _scope = file.Scope;
         _function = null;
         return new BoundFunction(function, body, declaration.ExpressionBody is not null);
     }
@@ -595,14 +863,46 @@ public sealed partial class Binder
 
         var named = (NamedTypeSyntax)syntax;
         var name = named.Name;
-        if (name.IsMissing)
+        if (name.IsMissing || named.Qualifier.Any(q => q.IsMissing))
             return TypeSymbol.Error;
 
-        var symbol = _scope.Lookup(name.Text);
+        var symbol = ResolveTypeName(named);
         var arguments = named.TypeArguments.Select(a => BindValueType(a, "type argument")).ToImmutableArray();
+
+        // `List<Int>`: pick the .NET type with the right number of type parameters.
+        if (symbol is ClrTypeGroupSymbol group)
+        {
+            if (group.WithArity(arguments.Length) is not { } chosen)
+            {
+                _diagnostics.ReportTypeArgumentCount(syntax.Span, group.Name, group.Types.Max(t => t.GetGenericArguments().Length), arguments.Length);
+                return TypeSymbol.Error;
+            }
+            symbol = ClrTypes.FromClr(chosen, new Dictionary<Type, TypeSymbol>(), _option) ?? ClrTypeSymbol.For(chosen);
+        }
 
         switch (symbol)
         {
+            case ErrorSymbol:
+                return TypeSymbol.Error;
+
+            case AmbiguousSymbol ambiguous:
+                ReportAmbiguous(name, ambiguous);
+                return TypeSymbol.Error;
+
+            case ClrTypeSymbol clr when clr.IsGenericDefinition:
+            {
+                int arity = clr.Type.GetGenericArguments().Length;
+                if (arity != arguments.Length)
+                {
+                    _diagnostics.ReportTypeArgumentCount(syntax.Span, clr.Name, arity, arguments.Length);
+                    return TypeSymbol.Error;
+                }
+                return arguments.Contains(TypeSymbol.Error) ? TypeSymbol.Error : clr.Construct(arguments);
+            }
+
+            case NamespaceSymbol:
+                _diagnostics.ReportNotAType(name.Span, named.Qualifier.IsEmpty ? name.Text : $"{string.Join(".", named.Qualifier.Select(q => q.Text))}.{name.Text}", "namespace");
+                return TypeSymbol.Error;
             case NamedTypeDefinition definition:
                 if (definition.TypeParameters.Length != arguments.Length)
                 {
@@ -625,10 +925,48 @@ public sealed partial class Binder
                 }
                 return type;
 
-            default:
+            case null when named.Qualifier.IsEmpty && ReportIfPrivateElsewhere(name):
+                return TypeSymbol.Error;
+
+            case null:
                 _diagnostics.ReportUndefinedType(name.Span, name.Text);
                 return TypeSymbol.Error;
+
+            default:
+                _diagnostics.ReportNotAType(name.Span, name.Text, symbol is FunctionSymbol ? "function" : "value");
+                return TypeSymbol.Error;
         }
+    }
+
+    /// <summary>
+    /// Resolves a (possibly qualified) type name to a symbol without type arguments applied: a Piper type,
+    /// a builtin, a .NET type or type group, or <see cref="ErrorSymbol"/> after reporting a bad qualifier.
+    /// </summary>
+    private Symbol? ResolveTypeName(NamedTypeSyntax syntax)
+    {
+        if (syntax.Qualifier.IsEmpty)
+            return _scope.Lookup(syntax.Name.Text);
+
+        if (_scope.Lookup(syntax.Qualifier[0].Text) is not NamespaceSymbol @namespace)
+        {
+            _diagnostics.ReportUnknownNamespace(syntax.Qualifier[0].Span, syntax.Qualifier[0].Text);
+            return ErrorSymbol.Instance;
+        }
+
+        foreach (var part in syntax.Qualifier.Skip(1))
+        {
+            if (MemberOf(@namespace, part.Text) is not NamespaceSymbol next)
+            {
+                _diagnostics.ReportUnknownNamespace(part.Span, $"{@namespace.FullName}.{part.Text}");
+                return ErrorSymbol.Instance;
+            }
+            @namespace = next;
+        }
+
+        if (MemberOf(@namespace, syntax.Name.Text) is { } member)
+            return member;
+        _diagnostics.ReportNotInNamespace(syntax.Name.Span, syntax.Name.Text, @namespace.FullName);
+        return ErrorSymbol.Instance;
     }
 
     private TypeSymbol BindValueType(TypeSyntax syntax, string what)

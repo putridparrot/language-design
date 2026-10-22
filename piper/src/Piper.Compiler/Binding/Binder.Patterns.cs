@@ -97,6 +97,9 @@ public sealed partial class Binder
         BoundConditionalAccessExpression access =>
             access.Target is not BoundVariableExpression || ContainsStatements(access.WhenNotNull),
         BoundTryExpression => true,
+        BoundClrInvocationExpression call => (call.Receiver is { } r && ContainsStatements(r)) || call.Arguments.Any(ContainsStatements),
+        BoundClrMemberExpression member => member.Receiver is { } receiver && ContainsStatements(receiver),
+        BoundNullableBoundaryExpression boundary => ContainsStatements(boundary.Operand),
         _ => false,
     };
 

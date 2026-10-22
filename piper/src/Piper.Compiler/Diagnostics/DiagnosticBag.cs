@@ -21,11 +21,14 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
+    /// <summary>The file that spans in newly reported diagnostics refer to; set by whichever phase is processing a file.</summary>
+    public SourceText? CurrentSource { get; set; }
+
     private void Error(string code, TextSpan span, string message) =>
-        _diagnostics.Add(new Diagnostic(code, DiagnosticSeverity.Error, span, message));
+        _diagnostics.Add(new Diagnostic(code, DiagnosticSeverity.Error, span, message) { Source = CurrentSource });
 
     private void Warning(string code, TextSpan span, string message) =>
-        _diagnostics.Add(new Diagnostic(code, DiagnosticSeverity.Warning, span, message));
+        _diagnostics.Add(new Diagnostic(code, DiagnosticSeverity.Warning, span, message) { Source = CurrentSource });
 
     // Lexer
 
@@ -74,6 +77,11 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportUnexpectedTokenInInterpolation(TextSpan span, Token actual) =>
         Error("PIP0104", span, $"Unexpected {Describe(actual)} in interpolation.");
+
+    public void ReportMisplacedDirective(TextSpan span, string directive) =>
+        Error("PIP0106", span, directive == "namespace"
+            ? "A file can have one 'namespace' declaration, before any other declarations."
+            : "'using' directives must come before the file's declarations.");
 
     public void ReportExpectedPattern(TextSpan span, Token actual) =>
         Error("PIP0105", span, $"Expected a pattern but found {Describe(actual)}.");
@@ -298,6 +306,38 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportBuiltinTypeRedeclared(TextSpan span, string name) =>
         Error("PIP0264", span, $"'{name}' is built into Piper and cannot be redeclared.");
+
+    // Namespaces, visibility and .NET interop
+
+    public void ReportPrivateTypeExposed(TextSpan span, string declaration, string privateType) =>
+        Error("PIP0270", span, $"'{declaration}' is public but uses private type '{privateType}'; make '{declaration}' private too, or make '{privateType}' public.");
+
+    public void ReportPrivateDeclaration(TextSpan span, string name, string file) =>
+        Error("PIP0271", span, $"'{name}' is private to {Path.GetFileName(file)}.");
+
+    public void ReportUnknownNamespace(TextSpan span, string name) =>
+        Error("PIP0272", span, $"The namespace '{name}' does not exist (in Piper code or the .NET libraries).");
+
+    public void ReportNotInNamespace(TextSpan span, string name, string @namespace) =>
+        Error("PIP0272", span, $"The namespace '{@namespace}' has no member '{name}'.");
+
+    public void ReportAmbiguousImport(TextSpan span, string name, IReadOnlyList<string> namespaces) =>
+        Error("PIP0273", span, $"'{name}' is ambiguous: it is imported from {string.Join(" and ", namespaces.Select(n => $"'{n}'"))}. Qualify it, e.g. {namespaces[0]}.{name}.");
+
+    public void ReportNoApplicableOverload(TextSpan span, string member, IEnumerable<TypeSymbol> arguments) =>
+        Error("PIP0274", span, $"No overload of '{member}' accepts arguments ({string.Join(", ", arguments)}).");
+
+    public void ReportAmbiguousOverload(TextSpan span, string member, IEnumerable<string> candidates) =>
+        Error("PIP0275", span, $"The call to '{member}' is ambiguous between: {string.Join("; ", candidates)}.");
+
+    public void ReportDuplicateMain(TextSpan span) =>
+        Error("PIP0276", span, "A program can only have one 'main' function.");
+
+    public void ReportNotAType(TextSpan span, string name, string kind) =>
+        Error("PIP0277", span, $"'{name}' is a {kind}, not a type.");
+
+    public void ReportCannotConstruct(TextSpan span, TypeSymbol type) =>
+        Error("PIP0278", span, $"'{type}' has no public constructors.");
 
     public void ReportEmptyRangePattern(TextSpan span) =>
         Error("PIP0239", span, "This range pattern is empty: its lower bound is not below its upper bound.");

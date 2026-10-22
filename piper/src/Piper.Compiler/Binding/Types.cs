@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Piper.Syntax;
+using Piper.Text;
 
 namespace Piper.Binding;
 
@@ -77,7 +78,10 @@ public abstract class NamedTypeDefinition : TypeSymbol
     public bool IsGeneric => TypeParameters.Length > 0;
 
     /// <summary>Traits this type implements, declared with <c>extend Type: Trait { … }</c>.</summary>
-    public ImmutableArray<TraitSymbol> Traits { get; internal set; } = [];
+    public ImmutableArray<TraitSymbol> Traits => [.. Conformances.Select(c => c.Trait)];
+
+    /// <summary>Each implemented trait with the file whose extend block declared it (it may not be this type's file).</summary>
+    public ImmutableArray<(TraitSymbol Trait, SourceText? File)> Conformances { get; internal set; } = [];
 
     /// <summary>Methods declared in <c>extend</c> blocks.</summary>
     public IReadOnlyList<MethodSymbol> Methods => _methods;

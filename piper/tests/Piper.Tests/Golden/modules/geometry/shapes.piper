@@ -1,0 +1,16 @@
+namespace Geometry;
+
+record Point(x: Double, y: Double);
+
+enum Shape {
+    Circle(center: Point, radius: Double),
+    Rect(corner: Point, width: Double, height: Double),
+}
+
+fn area(shape: Shape) -> Double = match shape {
+    Circle(_, r) => 3.0 * square(r),
+    Rect(_, w, h) => w * h,
+};
+
+// Only this file can see `square`.
+private fn square(x: Double) -> Double = x * x;

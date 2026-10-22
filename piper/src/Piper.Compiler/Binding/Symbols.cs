@@ -1,11 +1,21 @@
 using System.Collections.Immutable;
 using Piper.Syntax;
+using Piper.Text;
 
 namespace Piper.Binding;
 
 public abstract class Symbol(string name)
 {
     public string Name { get; } = name;
+
+    /// <summary>For top-level declarations (types, traits, functions, methods): the file that declares them.</summary>
+    public SourceText? DeclaringFile { get; internal set; }
+
+    /// <summary>For top-level declarations: the namespace they belong to.</summary>
+    public NamespaceSymbol? Namespace { get; internal set; }
+
+    /// <summary>Declared <c>private</c>: visible only in <see cref="DeclaringFile"/>.</summary>
+    public bool IsPrivate { get; internal set; }
 
     public override string ToString() => Name;
 }

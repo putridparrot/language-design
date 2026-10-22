@@ -1,3 +1,7 @@
+using System.Collections.Immutable;
+using Piper.Diagnostics;
+using Piper.Text;
+
 namespace Piper.Tests;
 
 public class BinderTests
@@ -252,6 +256,86 @@ public class BinderTests
             fn r(flag: Bool) -> Long? = if flag { 1 } else { null };
             fn s() -> Result<Int, String> = if true { Ok(1) } else { Err("no") };
             fn t(x: Int?) -> Int { var total = 0; var y = x; while y is Some(v) && v > 0 { total += v; y = v - 1; } total }
+            """);
+    }
+
+    private static ImmutableArray<Diagnostic> CompileFiles(params string[] files) =>
+        Compilation.Compile(files.Select((text, i) => new SourceText(text, $"file{i}.piper"))).Diagnostics;
+
+    private static void AssertSingleErrorInFiles(string code, params string[] files)
+    {
+        var diagnostics = CompileFiles(files);
+        Assert.True(
+            diagnostics.Length == 1 && diagnostics[0].Code == code,
+            $"Expected exactly one {code} but got:\n{string.Join("\n", diagnostics.Select(d => d.Format()))}");
+    }
+
+    [Theory]
+    [InlineData("PIP0106", "fn f() {} namespace X;")]
+    [InlineData("PIP0106", "fn f() {} using System;")]
+    [InlineData("PIP0240", "using System.Collections.Generic; fn f() { let xs = List(); }")]
+    [InlineData("PIP0252", "using System.Text; extend StringBuilder { fn Append() {} }")]
+    [InlineData("PIP0270", "private record P(x: Int); fn f(p: P) {}")]
+    [InlineData("PIP0270", "private trait T { fn m(); } record R(x: Int); extend R: T { fn m() {} }")]
+    [InlineData("PIP0272", "using Nope.Missing;")]
+    [InlineData("PIP0272", "fn f() { let x = System.Nope.Thing(); }")]
+    [InlineData("PIP0274", "using System; fn f() -> Double = Math.Sqrt(\"x\");")]
+    [InlineData("PIP0277", "using System; fn f(x: System) {}")]
+    [InlineData("PIP0278", "using System; fn f() { let m = Math(); }")]
+    [InlineData("PIP0212", "using System; fn f() -> Int = \"abc\".Lenght;")]
+    [InlineData("PIP0243", "using System.Text; fn f() { let b = StringBuilder(); b.Apend(\"x\"); }")]
+    public void Module_and_interop_errors_are_reported(string code, string program)
+    {
+        AssertSingleError(code, program);
+    }
+
+    [Fact]
+    public void Private_declarations_are_invisible_to_other_files()
+    {
+        AssertSingleErrorInFiles("PIP0271", "namespace N; private fn helper() -> Int = 1;", "using N; fn f() -> Int = helper();");
+        AssertSingleErrorInFiles("PIP0271", "namespace N; private record R(x: Int);", "using N; fn f(r: R) {}");
+        AssertSingleErrorInFiles("PIP0271",
+            "namespace N; record R(x: Int); extend R { private fn secret() -> Int = 1; }",
+            "using N; fn f(r: R) -> Int = r.secret();");
+    }
+
+    [Fact]
+    public void Names_imported_from_two_namespaces_are_ambiguous()
+    {
+        AssertSingleErrorInFiles("PIP0273", "namespace A; record R(x: Int);", "namespace B; record R(x: Int);", "using A; using B; fn f(r: R) {}");
+    }
+
+    [Fact]
+    public void A_program_has_one_main()
+    {
+        AssertSingleErrorInFiles("PIP0276", "fn main() {}", "namespace Other; fn main() {}");
+    }
+
+    [Fact]
+    public void Namespaces_span_files_and_can_be_qualified()
+    {
+        var diagnostics = CompileFiles(
+            "namespace Geo.Shapes; record Point(x: Int, y: Int); private fn secret() -> Int = 1; fn origin() -> Point = Point(secret(), 0);",
+            "namespace Geo.Shapes; fn far() -> Point = Point(100, 100);",
+            "namespace App; using Geo.Shapes; fn main() { let a: Geo.Shapes.Point = origin(); let b = Geo.Shapes.far(); print(a == b); }");
+        Assert.Empty(diagnostics);
+    }
+
+    [Fact]
+    public void Interop_members_resolve()
+    {
+        AssertNoErrors("""
+            using System;
+            using System.Text;
+            using System.Collections.Generic;
+            extend StringBuilder { fn line(s: String) { this.AppendLine(s); } }
+            fn a(s: String?) -> Bool = String.IsNullOrEmpty(s);
+            fn b() -> Double = Math.Max(1, 2.5) + Math.Sqrt(2);
+            fn c() -> Int = "abc".IndexOf('b') + "x".Length;
+            fn d() -> String = TimeSpan.FromSeconds(90).ToString();
+            fn e() { let sb = StringBuilder(); sb.line("hi"); let xs: List<Int> = List(); xs.Add(1); print(xs.Count); }
+            fn g() -> String? = Environment.GetEnvironmentVariable("HOME");
+            fn h() -> Long = Math.Abs(-3L) + Int.MaxValue;
             """);
     }
 

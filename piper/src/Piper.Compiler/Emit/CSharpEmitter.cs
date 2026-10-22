@@ -1,7 +1,9 @@
 using System.Collections.Immutable;
 using System.Globalization;
+using System.Reflection;
 using System.Text;
 using Piper.Binding;
+using Piper.Text;
 
 namespace Piper.Emit;
 
@@ -41,32 +43,49 @@ public sealed class CSharpEmitter
         "file", "required", "partial", "with", "when", "and", "or", "not", "global", "managed", "unmanaged",
     ];
 
-    private readonly CodeWriter _writer = new();
-    private readonly string _moduleClassName;
-    private readonly string _extensionsClassName;
-    private readonly HashSet<string> _topLevelNames;
+
+    public const string InteropClassName = "PiperInterop";
+
+    private readonly BoundProgram _program;
     private readonly Dictionary<MethodSymbol, BoundFunction> _methodBodies;
+    private readonly HashSet<string> _topLevelNames;
+    private readonly Dictionary<SourceText, string> _moduleClassNames = [];
+    private readonly Dictionary<SourceText, string> _extensionClassNames = [];
+    private readonly SourceText _runtimeFile;
+    private CodeWriter _writer = new();
     private NameAllocator _names = new([]);
 
     /// <summary>How <c>this</c> is spelled in the method being emitted: <c>this</c> in members, the receiver parameter in extension blocks.</summary>
     private string _thisName = "this";
 
-    /// <summary>Top-level functions are called unqualified from the module class and qualified from anywhere else.</summary>
-    private bool _inModuleClass;
+    /// <summary>The namespace whose block is being written; types elsewhere are written fully qualified.</summary>
+    private NamespaceSymbol? _namespace;
 
-    /// <summary>Option/Result are only emitted if the program mentions them.</summary>
+    /// <summary>Set while writing a file's module class: that file's functions are called unqualified.</summary>
+    private SourceText? _moduleFile;
+
+    /// <summary>Option/Result and the interop helpers are only emitted if the program uses them.</summary>
     private readonly HashSet<EnumSymbol> _usedBuiltins = [];
+    private bool _usesInterop;
 
-    private CSharpEmitter(BoundProgram program, string moduleName)
+    private CSharpEmitter(BoundProgram program)
     {
+        _program = program;
+        _methodBodies = program.Methods.ToDictionary(m => (MethodSymbol)m.Symbol);
         _topLevelNames =
         [
             .. program.Types.Select(t => t.Name), .. program.BuiltinTypes.Select(t => t.Name),
-            .. program.Functions.Select(f => f.Symbol.Name), EntryPointClassName,
+            .. program.Functions.Select(f => f.Symbol.Name), EntryPointClassName, InteropClassName,
+            // The entry point's own Main method would hide a module class of that name.
+            "Main",
         ];
-        _moduleClassName = UniqueTopLevelName(moduleName, "Module");
-        _extensionsClassName = UniqueTopLevelName(_moduleClassName + "Extensions", "_");
-        _methodBodies = program.Methods.ToDictionary(m => (MethodSymbol)m.Symbol);
+        foreach (var file in program.Files)
+        {
+            var moduleName = UniqueTopLevelName(ModuleName(file.FileName), "Module");
+            _moduleClassNames[file] = moduleName;
+            _extensionClassNames[file] = UniqueTopLevelName(moduleName + "Extensions", "_");
+        }
+        _runtimeFile = program.Main?.DeclaringFile ?? program.Files[0];
     }
 
     private string UniqueTopLevelName(string name, string suffix)
@@ -77,53 +96,292 @@ public sealed class CSharpEmitter
         return name;
     }
 
-    public static string Emit(BoundProgram program, string moduleName)
+    /// <summary>`hello_world.piper` → `Hello_world`; falls back to `Program`.</summary>
+    public static string ModuleName(string fileName)
     {
-        var emitter = new CSharpEmitter(program, moduleName);
-        emitter.EmitProgram(program);
-        return emitter._writer.ToString();
+        var stem = Path.GetFileNameWithoutExtension(fileName);
+        var builder = new StringBuilder();
+        foreach (char c in stem)
+            builder.Append(char.IsAsciiLetterOrDigit(c) || c == '_' ? c : '_');
+
+        if (builder.Length == 0 || builder.ToString().All(c => c == '_'))
+            return "Program";
+        if (char.IsAsciiDigit(builder[0]))
+            builder.Insert(0, '_');
+        builder[0] = char.ToUpperInvariant(builder[0]);
+        return builder.ToString();
     }
 
-    private void EmitProgram(BoundProgram program)
+    /// <summary>One C# file per Piper file (named after it); the file with <c>main</c> also gets the entry point and runtime support.</summary>
+    public static ImmutableArray<GeneratedFile> Emit(BoundProgram program)
     {
+        var emitter = new CSharpEmitter(program);
+        var texts = program.Files.Select((file, i) => (File: file, Text: emitter.EmitFile(file, program.FileNamespaces[i]))).ToList();
+
+        // Runtime support goes last, once every file has been written and we know what was used.
+        var runtimeIndex = texts.FindIndex(t => t.File == emitter._runtimeFile);
+        texts[runtimeIndex] = (emitter._runtimeFile, texts[runtimeIndex].Text + emitter.EmitRuntime());
+
+        return [.. texts.Select(t => new GeneratedFile(Path.ChangeExtension(Path.GetFileName(t.File.FileName), ".cs"), t.Text))];
+    }
+
+    private string EmitFile(SourceText file, NamespaceSymbol @namespace)
+    {
+        _writer = new CodeWriter();
         _writer.WriteLine("// <auto-generated>");
         _writer.WriteLine("//     Generated by the Piper compiler. Do not edit by hand.");
         _writer.WriteLine("// </auto-generated>");
         _writer.WriteLine("#nullable enable");
         _writer.WriteLine();
 
-        foreach (var type in program.Types)
+        // Methods and trait implementations this file adds to types declared in other files go in a
+        // `partial` part, inside the namespace of the type they extend.
+        var contributions = ForeignContributions(file).ToList();
+        InNamespace(@namespace, () =>
         {
-            switch (type)
+            var sections = new List<Action>();
+            foreach (var type in _program.Types.Where(t => t.DeclaringFile == file))
             {
-                case RecordSymbol record:
-                    EmitRecord(record);
-                    break;
-                case EnumSymbol @enum:
-                    EmitEnum(@enum);
-                    break;
-                case TraitSymbol trait:
-                    EmitTrait(trait);
-                    break;
+                sections.Add(type switch
+                {
+                    RecordSymbol record => () => EmitRecord(record, file),
+                    EnumSymbol @enum => () => EmitEnum(@enum, file),
+                    TraitSymbol trait => () => EmitTrait(trait),
+                    _ => throw new InvalidOperationException(),
+                });
             }
-            _writer.WriteLine();
-        }
+            foreach (var type in contributions.Where(t => NamespaceOf(t) == @namespace))
+                sections.Add(() => EmitPartialPart(type, file));
 
-        _writer.WriteLine($"public static class {Escape(_moduleClassName)}");
+            var functions = _program.Functions.Where(f => f.Symbol.DeclaringFile == file).ToList();
+            if (functions.Count > 0 || file == _runtimeFile)
+                sections.Add(() => EmitModuleClass(file, functions));
+            if (HasExtensions(file))
+                sections.Add(() => EmitExtensions(file));
+
+            for (int i = 0; i < sections.Count; i++)
+            {
+                if (i > 0)
+                    _writer.WriteLine();
+                sections[i]();
+            }
+        });
+
+        foreach (var group in contributions.Where(t => NamespaceOf(t) != @namespace).GroupBy(NamespaceOf))
+        {
+            _writer.WriteLine();
+            InNamespace(group.Key, () =>
+            {
+                var types = group.ToList();
+                for (int i = 0; i < types.Count; i++)
+                {
+                    if (i > 0)
+                        _writer.WriteLine();
+                    EmitPartialPart(types[i], file);
+                }
+            });
+        }
+        return _writer.ToString();
+    }
+
+    private NamespaceSymbol NamespaceOf(Symbol symbol) => symbol.Namespace ?? RootOf(_program.FileNamespaces[0]);
+
+    private void EmitModuleClass(SourceText file, List<BoundFunction> functions)
+    {
+        _writer.WriteLine($"public static class {Escape(_moduleClassNames[file])}");
         _writer.OpenBrace();
-        _inModuleClass = true;
-        for (int i = 0; i < program.Functions.Length; i++)
+        _moduleFile = file;
+        for (int i = 0; i < functions.Count; i++)
         {
             if (i > 0)
                 _writer.WriteLine();
-            EmitFunction(program.Functions[i], "public static ");
+            EmitFunction(functions[i], functions[i].Symbol.IsPrivate ? "internal static " : "public static ");
         }
-        _inModuleClass = false;
+        _moduleFile = null;
         _writer.CloseBrace();
+    }
 
-        EmitExtensions(program);
+    /// <summary>Writes <paramref name="body"/> inside a <c>namespace</c> block (none for the global namespace).</summary>
+    private void InNamespace(NamespaceSymbol @namespace, Action body)
+    {
+        var outer = _namespace;
+        _namespace = @namespace;
+        if (!@namespace.IsGlobal)
+        {
+            _writer.WriteLine($"namespace {@namespace.FullName}");
+            _writer.OpenBrace();
+        }
+        body();
+        if (!@namespace.IsGlobal)
+            _writer.CloseBrace();
+        _namespace = outer;
+    }
 
-        if (program.Main is not null)
+    /// <summary>The file a type's main declaration is written to: its own, or (for Option/Result) the runtime file.</summary>
+    private SourceText HomeFile(NamedTypeDefinition type) => type.DeclaringFile ?? _runtimeFile;
+
+    private IEnumerable<MethodSymbol> MethodsFrom(NamedTypeDefinition type, SourceText file) =>
+        type.Methods.Where(m => (m.DeclaringFile ?? _runtimeFile) == file);
+
+    private IEnumerable<TraitSymbol> TraitsFrom(NamedTypeDefinition type, SourceText file) =>
+        type.Conformances.Where(c => (c.File ?? _runtimeFile) == file).Select(c => c.Trait);
+
+    /// <summary>Other files add to this type with extend blocks, so every C# part must be <c>partial</c>.</summary>
+    private bool IsPartial(NamedTypeDefinition type) =>
+        type.Methods.Any(m => (m.DeclaringFile ?? _runtimeFile) != HomeFile(type)) ||
+        type.Conformances.Any(c => (c.File ?? _runtimeFile) != HomeFile(type));
+
+    private IEnumerable<NamedTypeDefinition> ForeignContributions(SourceText file) =>
+        _program.Types.OfType<NamedTypeDefinition>().Concat(_program.BuiltinTypes)
+            .Where(t => HomeFile(t) != file && (MethodsFrom(t, file).Any() || TraitsFrom(t, file).Any()));
+
+    private static string Visibility(Symbol symbol) => symbol.IsPrivate ? "file" : "public";
+
+    /// <summary>
+    /// <c>public sealed record Pair&lt;A, B&gt;(A first, B second) : Trait where A : Bound</c>, with a body
+    /// holding any extend methods (which is what lets the record implement trait interfaces).
+    /// </summary>
+    private void EmitRecord(RecordSymbol record, SourceText file)
+    {
+        var partial = IsPartial(record) ? "partial " : "";
+        var header = $"{Visibility(record)} sealed {partial}record {Escape(record.Name)}{TypeParameterList(record.TypeParameters)}" +
+                     $"({Fields(record.Fields)}){BaseList(TraitsFrom(record, file))}{Constraints(record.TypeParameters)}";
+        var methods = MethodsFrom(record, file).ToList();
+        if (methods.Count == 0)
+        {
+            _writer.WriteLine(header + ";");
+            return;
+        }
+
+        _writer.WriteLine(header);
+        _writer.OpenBrace();
+        EmitMembers(methods);
+        _writer.CloseBrace();
+    }
+
+    /// <summary>
+    /// An enum is a closed record hierarchy: the private constructor means only the nested variant
+    /// records can derive from it.
+    /// </summary>
+    private void EmitEnum(EnumSymbol @enum, SourceText file)
+    {
+        var name = Escape(@enum.Name);
+        var selfType = TypeName(@enum.SelfType);
+        // Inside the enum a variant name hides any top-level type of the same name, so qualify those.
+        var variantNames = @enum.Variants.Select(v => v.Name).ToHashSet();
+        var partial = IsPartial(@enum) ? "partial " : "";
+
+        _writer.WriteLine($"{Visibility(@enum)} abstract {partial}record {name}{TypeParameterList(@enum.TypeParameters)}" +
+                          $"{BaseList(TraitsFrom(@enum, file))}{Constraints(@enum.TypeParameters)}");
+        _writer.OpenBrace();
+        _writer.WriteLine($"private {name}()");
+        _writer.OpenBrace();
+        _writer.CloseBrace();
+        foreach (var variant in @enum.Variants)
+        {
+            _writer.WriteLine();
+            _writer.WriteLine($"public sealed record {Escape(variant.Name)}({Fields(variant.Fields, variantNames)}) : {selfType};");
+        }
+        var methods = MethodsFrom(@enum, file).ToList();
+        if (methods.Count > 0)
+        {
+            _writer.WriteLine();
+            EmitMembers(methods);
+        }
+        _writer.CloseBrace();
+    }
+
+    /// <summary>A part of a type declared in another file, holding what this file's extend blocks add to it.</summary>
+    private void EmitPartialPart(NamedTypeDefinition type, SourceText file)
+    {
+        var keyword = type is EnumSymbol { BuiltinKind: not BuiltinEnumKind.None } ? "readonly partial record struct" : "partial record";
+        _writer.WriteLine($"{keyword} {Escape(type.Name)}{TypeParameterList(type.TypeParameters)}{BaseList(TraitsFrom(type, file))}");
+        _writer.OpenBrace();
+        EmitMembers(MethodsFrom(type, file).ToList());
+        _writer.CloseBrace();
+    }
+
+    /// <summary>A trait is an interface; methods with a body become default interface methods.</summary>
+    private void EmitTrait(TraitSymbol trait)
+    {
+        _writer.WriteLine($"{Visibility(trait)} interface {Escape(trait.Name)}");
+        _writer.OpenBrace();
+        for (int i = 0; i < trait.Methods.Length; i++)
+        {
+            if (i > 0)
+                _writer.WriteLine();
+            var method = trait.Methods[i];
+            _thisName = "this";
+            if (_methodBodies.TryGetValue(method, out var body))
+            {
+                EmitFunction(body, "");
+            }
+            else
+            {
+                _names = NewNameAllocator(method);
+                _writer.WriteLine($"{Signature(method, "")};");
+            }
+        }
+        _writer.CloseBrace();
+    }
+
+    private void EmitMembers(IReadOnlyList<MethodSymbol> methods)
+    {
+        _thisName = "this";
+        for (int i = 0; i < methods.Count; i++)
+        {
+            if (i > 0)
+                _writer.WriteLine();
+            var access = methods[i].IsPrivate ? "internal " : "public ";
+            EmitFunction(_methodBodies[methods[i]], access + (methods[i].IsStatic ? "static " : ""));
+        }
+    }
+
+    /// <summary>
+    /// Methods on builtin and .NET types become C# 14 extension members:
+    /// <c>extension(int self) { public int squared() =&gt; self * self; }</c>.
+    /// </summary>
+    private IEnumerable<MethodSymbol> ExtensionMethods(SourceText file) => _program.Methods
+        .Select(m => (MethodSymbol)m.Symbol)
+        .Where(m => m.DeclaringFile == file && m.ContainingType is not (NamedTypeDefinition or TraitSymbol));
+
+    private bool HasExtensions(SourceText file) => ExtensionMethods(file).Any();
+
+    private void EmitExtensions(SourceText file)
+    {
+        var groups = ExtensionMethods(file).GroupBy(m => (m.ContainingType, m.IsStatic)).ToList();
+
+        _writer.WriteLine($"public static class {Escape(_extensionClassNames[file])}");
+        _writer.OpenBrace();
+        for (int i = 0; i < groups.Count; i++)
+        {
+            if (i > 0)
+                _writer.WriteLine();
+            var (type, isStatic) = groups[i].Key;
+            _writer.WriteLine(isStatic ? $"extension({TypeName(type)})" : $"extension({TypeName(type)} self)");
+            _writer.OpenBrace();
+            var methods = groups[i].ToList();
+            for (int j = 0; j < methods.Count; j++)
+            {
+                if (j > 0)
+                    _writer.WriteLine();
+                _thisName = "self";
+                var access = methods[j].IsPrivate ? "internal " : "public ";
+                EmitFunction(_methodBodies[methods[j]], access + (isStatic ? "static " : ""));
+            }
+            _writer.CloseBrace();
+        }
+        _writer.CloseBrace();
+        _thisName = "this";
+    }
+
+    /// <summary>The entry point, the Option/Result structs and the null-boundary helpers, in the global namespace.</summary>
+    private string EmitRuntime()
+    {
+        _writer = new CodeWriter();
+        _namespace = _program.FileNamespaces[0].IsGlobal ? _program.FileNamespaces[0] : RootOf(_program.FileNamespaces[0]);
+
+        if (_program.Main is { } main)
         {
             _writer.WriteLine();
             _writer.WriteLine($"internal static class {EntryPointClassName}");
@@ -132,17 +390,45 @@ public sealed class CSharpEmitter
             _writer.OpenBrace();
             // Piper output must not depend on the machine's locale (e.g. "1,5" vs "1.5").
             _writer.WriteLine("global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;");
-            _writer.WriteLine($"{Escape(_moduleClassName)}.{Escape(program.Main.Name)}();");
+            _writer.WriteLine($"{FunctionContainer(main)}.{Escape(main.Name)}();");
             _writer.CloseBrace();
             _writer.CloseBrace();
         }
 
+        if (_usesInterop)
+            EmitInterop();
+
         // Emitted last, once we know whether anything used them.
-        foreach (var builtin in program.BuiltinTypes)
+        foreach (var builtin in _program.BuiltinTypes)
         {
             if (_usedBuiltins.Contains(builtin) || builtin.Methods.Count > 0)
                 EmitBuiltinType(builtin);
         }
+        return _writer.ToString();
+    }
+
+    private static NamespaceSymbol RootOf(NamespaceSymbol @namespace)
+    {
+        while (@namespace.Parent is not null)
+            @namespace = @namespace.Parent;
+        return @namespace;
+    }
+
+    /// <summary>Where .NET's null meets Piper's Option.</summary>
+    private void EmitInterop()
+    {
+        _usedBuiltins.Add(_program.BuiltinTypes[0]);
+        _writer.WriteLine();
+        _writer.WriteLine($"internal static class {InteropClassName}");
+        _writer.OpenBrace();
+        _writer.WriteLine("public static Option<T> FromNullableReference<T>(T? value) where T : class => value is null ? Option<T>.None : Option<T>.Some(value);");
+        _writer.WriteLine();
+        _writer.WriteLine("public static Option<T> FromNullableValue<T>(T? value) where T : struct => value.HasValue ? Option<T>.Some(value.GetValueOrDefault()) : Option<T>.None;");
+        _writer.WriteLine();
+        _writer.WriteLine("public static T? ToNullableReference<T>(Option<T> value) where T : class => value.IsSome ? value.Value : null;");
+        _writer.WriteLine();
+        _writer.WriteLine("public static T? ToNullableValue<T>(Option<T> value) where T : struct => value.IsSome ? value.Value : null;");
+        _writer.CloseBrace();
     }
 
     /// <summary>
@@ -153,9 +439,10 @@ public sealed class CSharpEmitter
     private void EmitBuiltinType(EnumSymbol builtin)
     {
         bool isOption = builtin.BuiltinKind == BuiltinEnumKind.Option;
+        var partial = IsPartial(builtin) ? "partial " : "";
         _writer.WriteLine();
         _writer.WriteLine("#nullable disable");
-        _writer.WriteLine($"public readonly record struct {(isOption ? "Option<T>" : "Result<T, E>")}{BaseList(builtin.Traits)}");
+        _writer.WriteLine($"public readonly {partial}record struct {(isOption ? "Option<T>" : "Result<T, E>")}{BaseList(TraitsFrom(builtin, _runtimeFile))}");
         _writer.OpenBrace();
         if (isOption)
         {
@@ -197,135 +484,14 @@ public sealed class CSharpEmitter
             _writer.WriteLine("public override string ToString() => IsOk ? $\"Ok({Value})\" : $\"Err({Error})\";");
         }
 
-        if (builtin.Methods.Count > 0)
+        var methods = MethodsFrom(builtin, _runtimeFile).ToList();
+        if (methods.Count > 0)
         {
             _writer.WriteLine();
-            EmitMembers(builtin.Methods);
+            EmitMembers(methods);
         }
         _writer.CloseBrace();
         _writer.WriteLine("#nullable restore");
-    }
-
-    /// <summary>
-    /// <c>public sealed record Pair&lt;A, B&gt;(A first, B second) : Trait where A : Bound</c>, with a body
-    /// holding any extend methods (which is what lets the record implement trait interfaces).
-    /// </summary>
-    private void EmitRecord(RecordSymbol record)
-    {
-        var header = $"public sealed record {Escape(record.Name)}{TypeParameterList(record.TypeParameters)}" +
-                     $"({Fields(record.Fields)}){BaseList(record.Traits)}{Constraints(record.TypeParameters)}";
-        if (record.Methods.Count == 0)
-        {
-            _writer.WriteLine(header + ";");
-            return;
-        }
-
-        _writer.WriteLine(header);
-        _writer.OpenBrace();
-        EmitMembers(record.Methods);
-        _writer.CloseBrace();
-    }
-
-    /// <summary>
-    /// An enum is a closed record hierarchy: the private constructor means only the nested variant
-    /// records can derive from it.
-    /// </summary>
-    private void EmitEnum(EnumSymbol @enum)
-    {
-        var name = Escape(@enum.Name);
-        var selfType = TypeName(@enum.SelfType);
-        // Inside the enum a variant name hides any top-level type of the same name, so qualify those.
-        var variantNames = @enum.Variants.Select(v => v.Name).ToHashSet();
-
-        _writer.WriteLine($"public abstract record {name}{TypeParameterList(@enum.TypeParameters)}{BaseList(@enum.Traits)}{Constraints(@enum.TypeParameters)}");
-        _writer.OpenBrace();
-        _writer.WriteLine($"private {name}()");
-        _writer.OpenBrace();
-        _writer.CloseBrace();
-        foreach (var variant in @enum.Variants)
-        {
-            _writer.WriteLine();
-            _writer.WriteLine($"public sealed record {Escape(variant.Name)}({Fields(variant.Fields, variantNames)}) : {selfType};");
-        }
-        if (@enum.Methods.Count > 0)
-        {
-            _writer.WriteLine();
-            EmitMembers(@enum.Methods);
-        }
-        _writer.CloseBrace();
-    }
-
-    /// <summary>A trait is an interface; methods with a body become default interface methods.</summary>
-    private void EmitTrait(TraitSymbol trait)
-    {
-        _writer.WriteLine($"public interface {Escape(trait.Name)}");
-        _writer.OpenBrace();
-        for (int i = 0; i < trait.Methods.Length; i++)
-        {
-            if (i > 0)
-                _writer.WriteLine();
-            var method = trait.Methods[i];
-            _thisName = "this";
-            if (_methodBodies.TryGetValue(method, out var body))
-            {
-                EmitFunction(body, "");
-            }
-            else
-            {
-                _names = NewNameAllocator(method);
-                _writer.WriteLine($"{Signature(method, "")};");
-            }
-        }
-        _writer.CloseBrace();
-    }
-
-    private void EmitMembers(IReadOnlyList<MethodSymbol> methods)
-    {
-        _thisName = "this";
-        for (int i = 0; i < methods.Count; i++)
-        {
-            if (i > 0)
-                _writer.WriteLine();
-            EmitFunction(_methodBodies[methods[i]], methods[i].IsStatic ? "public static " : "public ");
-        }
-    }
-
-    /// <summary>
-    /// Methods on builtin types become C# 14 extension members:
-    /// <c>extension(int self) { public int squared() =&gt; self * self; }</c>.
-    /// </summary>
-    private void EmitExtensions(BoundProgram program)
-    {
-        var groups = program.Methods
-            .Select(m => (MethodSymbol)m.Symbol)
-            .Where(m => m.ContainingType is not (NamedTypeDefinition or TraitSymbol))
-            .GroupBy(m => (m.ContainingType, m.IsStatic))
-            .ToList();
-        if (groups.Count == 0)
-            return;
-
-        _writer.WriteLine();
-        _writer.WriteLine($"public static class {Escape(_extensionsClassName)}");
-        _writer.OpenBrace();
-        for (int i = 0; i < groups.Count; i++)
-        {
-            if (i > 0)
-                _writer.WriteLine();
-            var (type, isStatic) = groups[i].Key;
-            _writer.WriteLine(isStatic ? $"extension({TypeName(type)})" : $"extension({TypeName(type)} self)");
-            _writer.OpenBrace();
-            var methods = groups[i].ToList();
-            for (int j = 0; j < methods.Count; j++)
-            {
-                if (j > 0)
-                    _writer.WriteLine();
-                _thisName = "self";
-                EmitFunction(_methodBodies[methods[j]], isStatic ? "public static " : "public ");
-            }
-            _writer.CloseBrace();
-        }
-        _writer.CloseBrace();
-        _thisName = "this";
     }
 
     private string Fields(IEnumerable<FieldSymbol> fields, ISet<string>? shadowedNames = null) =>
@@ -334,13 +500,23 @@ public sealed class CSharpEmitter
     private static string TypeParameterList(IEnumerable<TypeParameterSymbol> parameters) =>
         parameters.Any() ? $"<{string.Join(", ", parameters.Select(p => Escape(p.Name)))}>" : "";
 
-    private static string BaseList(IEnumerable<TraitSymbol> traits) =>
-        traits.Any() ? $" : {string.Join(", ", traits.Select(t => Escape(t.Name)))}" : "";
+    private string BaseList(IEnumerable<TraitSymbol> traits) =>
+        traits.Any() ? $" : {string.Join(", ", traits.Select(t => TypeName(t)))}" : "";
 
-    private static string Constraints(IEnumerable<TypeParameterSymbol> parameters) =>
+    private string Constraints(IEnumerable<TypeParameterSymbol> parameters) =>
         string.Concat(parameters
             .Where(p => p.Constraints.Length > 0)
-            .Select(p => $" where {Escape(p.Name)} : {string.Join(", ", p.Constraints.Select(c => Escape(c.Name)))}"));
+            .Select(p => $" where {Escape(p.Name)} : {string.Join(", ", p.Constraints.Select(c => TypeName(c)))}"));
+
+    /// <summary>How to reach a top-level function from the current position: its module class, qualified as needed.</summary>
+    private string FunctionContainer(FunctionSymbol function)
+    {
+        var className = Escape(_moduleClassNames[function.DeclaringFile!]);
+        return function.Namespace == _namespace ? className : $"global::{Qualified(function.Namespace!, className)}";
+    }
+
+    private static string Qualified(NamespaceSymbol @namespace, string name) =>
+        @namespace.IsGlobal ? name : $"{@namespace.FullName}.{name}";
 
     private NameAllocator NewNameAllocator(FunctionSymbol function)
     {
@@ -372,7 +548,7 @@ public sealed class CSharpEmitter
             var expression = only switch
             {
                 BoundReturnStatement { Value: { } value } => value,
-                BoundExpressionStatement { Expression: BoundCallExpression or BoundMethodCallExpression or BoundAssignmentExpression } statement =>
+                BoundExpressionStatement { Expression: BoundCallExpression or BoundMethodCallExpression or BoundClrInvocationExpression or BoundAssignmentExpression } statement =>
                     statement.Expression,
                 _ => null,
             };
@@ -422,7 +598,7 @@ public sealed class CSharpEmitter
                 break;
             }
 
-            case BoundExpressionStatement { Expression: BoundCallExpression or BoundMethodCallExpression or BoundAssignmentExpression } expressionStatement:
+            case BoundExpressionStatement { Expression: BoundCallExpression or BoundMethodCallExpression or BoundClrInvocationExpression or BoundAssignmentExpression } expressionStatement:
                 _writer.WriteLine($"{Expr(expressionStatement.Expression, AssignmentPrecedence)};");
                 break;
 
@@ -521,6 +697,13 @@ public sealed class CSharpEmitter
                 ($"new {ConstructorName(creation.Variant, creation.Type)}({Arguments(creation.Arguments)})", PrimaryPrecedence),
             BoundOptionalMemberExpression member =>
                 ($"{Expr(member.Operand, PrimaryPrecedence)}.{member.Member}", PrimaryPrecedence),
+            BoundClrInvocationExpression { Member: ConstructorInfo } construction =>
+                ($"new {TypeName(construction.ContainerType)}({Arguments(construction.Arguments)})", PrimaryPrecedence),
+            BoundClrInvocationExpression invocation =>
+                ($"{ClrReceiver(invocation.Receiver, invocation.ContainerType)}.{Escape(invocation.Member.Name)}({Arguments(invocation.Arguments)})", PrimaryPrecedence),
+            BoundClrMemberExpression member =>
+                ($"{ClrReceiver(member.Receiver, member.ContainerType)}.{Escape(member.Member.Name)}", PrimaryPrecedence),
+            BoundNullableBoundaryExpression boundary => (NullableBoundary(boundary), PrimaryPrecedence),
             BoundIsPatternExpression test =>
                 ($"{Expr(test.Expression, PrimaryPrecedence)} is {Pattern(test.Pattern)}", RelationalPrecedence),
             BoundFieldAccessExpression access =>
@@ -580,11 +763,23 @@ public sealed class CSharpEmitter
             ? $"({Escape(trait.Name)}){Expr(conversion.Expression, UnaryPrecedence)}"
             : Expr(branch, ConditionalPrecedence);
 
+    /// <summary>The value an instance member is used on, or the type a static one belongs to.</summary>
+    private string ClrReceiver(BoundExpression? receiver, TypeSymbol container) =>
+        receiver is null ? TypeName(container) : Expr(receiver, PrimaryPrecedence);
+
+    /// <summary>A call to one of the helpers that turn .NET's null into None and back.</summary>
+    private string NullableBoundary(BoundNullableBoundaryExpression boundary)
+    {
+        _usesInterop = true;
+        TypeName(boundary.Type);
+        return $"global::{InteropClassName}.{boundary.Kind}({Expr(boundary.Operand, AssignmentPrecedence)})";
+    }
+
     private string Call(BoundCallExpression call)
     {
         if (call.Function == BuiltinFunctions.Print)
             return $"global::System.Console.WriteLine({DisplayValue(call.Arguments[0], ConditionalPrecedence)})";
-        var qualifier = _inModuleClass ? "" : Escape(_moduleClassName) + ".";
+        var qualifier = call.Function.DeclaringFile == _moduleFile ? "" : FunctionContainer(call.Function) + ".";
         return $"{qualifier}{Escape(call.Function.Name)}{TypeArgumentList(call.TypeArguments)}({Arguments(call.Arguments)})";
     }
 
@@ -710,15 +905,42 @@ public sealed class CSharpEmitter
         if (type.OriginalDefinition is EnumSymbol { BuiltinKind: not BuiltinEnumKind.None } builtin)
             _usedBuiltins.Add(builtin);
 
-        string Qualify(string name) => shadowedNames?.Contains(name) == true ? "global::" + Escape(name) : Escape(name);
+        // Types from another namespace (or hidden by a variant of the same name) are written in full.
+        string Qualify(Symbol definition)
+        {
+            var name = Escape(definition.Name);
+            var @namespace = definition.Namespace ?? RootOf(_program.FileNamespaces[0]);
+            bool sameNamespace = @namespace == _namespace || (@namespace.IsGlobal && _namespace is { IsGlobal: true });
+            return sameNamespace && shadowedNames?.Contains(definition.Name) != true
+                ? name
+                : $"global::{Qualified(@namespace, name)}";
+        }
+
+        string Arguments(IEnumerable<TypeSymbol> arguments) => string.Join(", ", arguments.Select(a => TypeName(a, shadowedNames)));
+
         return type switch
         {
-            NamedTypeDefinition or TraitSymbol => Qualify(type.Name),
-            ConstructedTypeSymbol constructed =>
-                $"{Qualify(constructed.Definition.Name)}<{string.Join(", ", constructed.TypeArguments.Select(a => TypeName(a, shadowedNames)))}>",
+            NamedTypeDefinition or TraitSymbol => Qualify(type),
+            ConstructedTypeSymbol constructed => $"{Qualify(constructed.Definition)}<{Arguments(constructed.TypeArguments)}>",
             TypeParameterSymbol parameter => Escape(parameter.Name),
+            ClrTypeSymbol { Type.IsArray: true } array => $"{ClrTypeName(array.Type.GetElementType()!)}[]",
+            ClrTypeSymbol clr when clr.TypeArguments.IsEmpty => ClrTypeName(clr.Type),
+            ClrTypeSymbol clr => $"{ClrTypeName(clr.Type)}<{Arguments(clr.TypeArguments)}>",
             _ => throw new InvalidOperationException($"Type '{type}' cannot be emitted."),
         };
+    }
+
+    /// <summary><c>global::System.Text.StringBuilder</c>; for a generic definition the name without its arity.</summary>
+    private string ClrTypeName(Type type)
+    {
+        foreach (var (piper, clr) in ClrTypes.BuiltinTypes)
+        {
+            if (clr == type)
+                return TypeName(piper);
+        }
+        if (type == typeof(object))
+            return "object";
+        return $"global::{type.Namespace}.{type.Name.Split('`')[0]}";
     }
 
     private static string Escape(string name) => CSharpKeywords.Contains(name) ? "@" + name : name;

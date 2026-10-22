@@ -26,7 +26,7 @@ public sealed class Lowerer
         var lowerer = new Lowerer();
         ImmutableArray<BoundFunction> LowerAll(ImmutableArray<BoundFunction> functions) =>
             [.. functions.Select(f => new BoundFunction(f.Symbol, lowerer.LowerFunction(f), f.IsExpressionBodied))];
-        return new BoundProgram(program.Types, program.BuiltinTypes, LowerAll(program.Functions), LowerAll(program.Methods), program.Main);
+        return new BoundProgram(program.Files, program.FileNamespaces, program.Types, program.BuiltinTypes, LowerAll(program.Functions), LowerAll(program.Methods), program.Main);
     }
 
     private BoundBlockStatement LowerFunction(BoundFunction function)
@@ -297,6 +297,23 @@ public sealed class Lowerer
             case BoundMethodCallExpression call:
                 return new BoundMethodCallExpression(
                     null, call.ReceiverType, call.Method, call.TypeArguments, LowerOperands(call.Arguments, prelude), call.Type);
+
+            case BoundClrInvocationExpression { Receiver: { } receiver } invocation:
+            {
+                var operands = LowerOperands([receiver, .. invocation.Arguments], prelude);
+                return new BoundClrInvocationExpression(operands[0], invocation.ContainerType, invocation.Member, operands[1..], invocation.Type);
+            }
+
+            case BoundClrInvocationExpression invocation:
+                return new BoundClrInvocationExpression(
+                    null, invocation.ContainerType, invocation.Member, LowerOperands(invocation.Arguments, prelude), invocation.Type);
+
+            case BoundClrMemberExpression member:
+                return new BoundClrMemberExpression(
+                    member.Receiver is null ? null : LowerForValue(member.Receiver, prelude), member.ContainerType, member.Member, member.Type);
+
+            case BoundNullableBoundaryExpression boundary:
+                return new BoundNullableBoundaryExpression(LowerForValue(boundary.Operand, prelude), boundary.Kind, boundary.Type);
 
             case BoundRecordCreationExpression creation:
                 return new BoundRecordCreationExpression(creation.Record, LowerOperands(creation.Arguments, prelude), creation.Type);

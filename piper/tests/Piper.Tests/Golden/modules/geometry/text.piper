@@ -1,0 +1,31 @@
+namespace Geometry;
+
+using System.Text;
+
+trait Describe {
+    fn describe() -> String;
+}
+
+// Extending types declared in another file of the namespace.
+extend Shape: Describe {
+    fn describe() -> String {
+        let text = StringBuilder();
+        match this {
+            Circle(center, r) => {
+                text.Append("circle at ");
+                text.Append(center.label());
+                text.Append(" radius ");
+                text.Append(r);
+            }
+            Rect(corner, w, h) => {
+                text.Append("{w}x{h} rectangle at ");
+                text.Append(corner.label());
+            }
+        }
+        text.ToString()
+    }
+}
+
+extend Point {
+    fn label() -> String = "({this.x}, {this.y})";
+}

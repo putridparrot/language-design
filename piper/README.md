@@ -8,8 +8,12 @@ dotnet build
 dotnet run --project src/Piper.Cli -- run samples/hello.piper     # transpile, compile and run
 dotnet run --project src/Piper.Cli -- emit samples/hello.piper    # print the generated C#
 dotnet run --project src/Piper.Cli -- build samples/hello.piper   # write samples/hello.cs
+dotnet run --project src/Piper.Cli -- run src/                    # a multi-file program: every .piper under src/
 dotnet test
 ```
+
+Inputs can be any mix of `.piper` files and directories; they are compiled together as one program,
+producing one `.cs` file per `.piper` file. The generated code needs C# 14 (.NET 10 SDK).
 
 ## Layout
 

@@ -1,0 +1,65 @@
+// Calling .NET: static members, constructors, instance members, generic collections,
+// overloads, and null crossing into Piper as None.
+
+using System;
+using System.Text;
+using System.Collections.Generic;
+
+record Point(x: Int, y: Int);
+
+fn describe(path: String) -> String {
+    // Path.GetExtension is annotated as possibly returning null, so it comes back as String?.
+    let extension = System.IO.Path.GetExtension(path);
+    "{path}: {extension ?? "no extension"}"
+}
+
+fn main() {
+    // Static methods and properties, with overloads chosen by argument type.
+    print(Math.Sqrt(16));
+    print(Math.Max(3, 7));
+    print(Math.Max(2.5, 1.0));
+    print(Math.Abs(-5L));
+    print(Math.PI > 3.14);
+    print(Int.MaxValue);
+    print(Int.Parse("42") + 1);
+    print(Char.IsDigit('7'));
+
+    // Members of Piper's builtin types are the .NET members.
+    let name = "Piper";
+    print(name.Length);
+    print(name.ToUpper());
+    print(name.Contains("ip"));
+    print(name.Replace('p', 'P'));
+    print(name.Substring(1, 3));
+    print("a,b,c".Split(',').Length);
+
+    // Constructing .NET objects and calling their methods.
+    let builder = StringBuilder();
+    builder.Append("x = ");
+    builder.Append(42);
+    builder.Append(", ok = ");
+    builder.Append(true);
+    print(builder.ToString());
+    print(TimeSpan.FromMinutes(90).TotalHours);
+
+    // Generic .NET types take their type arguments from the expected type, and may hold Piper values.
+    let points: List<Point> = List();
+    points.Add(Point(1, 2));
+    points.Add(Point(3, 4));
+    print(points.Count);
+    print(points.Contains(Point(3, 4)));
+
+    let ages: Dictionary<String, Int> = Dictionary();
+    ages.Add("Ada", 36);
+    print(ages.ContainsKey("Ada"));
+
+    // null from .NET becomes None.
+    print(describe("notes.txt"));
+    print(Environment.GetEnvironmentVariable("PIPER_SURELY_UNSET_VARIABLE") ?? "unset");
+
+    // ...and None becomes null where .NET accepts it.
+    let missing: String? = null;
+    let present: String? = "here";
+    print("{String.IsNullOrEmpty(missing)} {String.IsNullOrEmpty(present)}");
+    print(String.Join(", ", "a", "b", "c"));
+}

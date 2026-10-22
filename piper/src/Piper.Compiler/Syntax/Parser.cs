@@ -27,6 +27,7 @@ public sealed class Parser
 
     public static CompilationUnitSyntax ParseCompilationUnit(SourceText source, DiagnosticBag diagnostics)
     {
+        diagnostics.CurrentSource = source;
         var parser = new Parser(source, diagnostics, Lexer.Tokenize(source, diagnostics));
         return parser.ParseCompilationUnit();
     }
@@ -87,24 +88,65 @@ public sealed class Parser
 
     private TextSpan SpanFrom(Token first) => TextSpan.FromBounds(first.Span.Start, Math.Max(first.Span.End, Previous.Span.End));
 
-    /// <summary>compilationUnit = { declaration } EOF ;</summary>
+    /// <summary>
+    /// compilationUnit = { using } [ "namespace" qualifiedName ";" ] { using } { [ "private" ] declaration } EOF ;
+    /// using           = "using" qualifiedName ";" ;
+    /// </summary>
     private CompilationUnitSyntax ParseCompilationUnit()
     {
+        var usings = ImmutableArray.CreateBuilder<UsingDirectiveSyntax>();
+        NamespaceDeclarationSyntax? @namespace = null;
         var declarations = ImmutableArray.CreateBuilder<DeclarationSyntax>();
+
         while (Current.Kind != TokenKind.EndOfFile)
         {
             int start = _position;
-            if (ParseDeclaration() is { } declaration)
-                declarations.Add(declaration);
+            switch (Current.Kind)
+            {
+                case TokenKind.UsingKeyword:
+                {
+                    var keyword = NextToken();
+                    var name = ParseQualifiedName();
+                    Expect(TokenKind.Semicolon);
+                    var directive = new UsingDirectiveSyntax(SpanFrom(keyword), name);
+                    if (declarations.Count > 0)
+                        _diagnostics.ReportMisplacedDirective(directive.Span, "using");
+                    usings.Add(directive);
+                    break;
+                }
+                case TokenKind.NamespaceKeyword:
+                {
+                    var keyword = NextToken();
+                    var name = ParseQualifiedName();
+                    Expect(TokenKind.Semicolon);
+                    var declaration = new NamespaceDeclarationSyntax(SpanFrom(keyword), name);
+                    if (@namespace is not null || declarations.Count > 0)
+                        _diagnostics.ReportMisplacedDirective(declaration.Span, "namespace");
+                    else
+                        @namespace = declaration;
+                    break;
+                }
+                default:
+                    if (ParseDeclaration() is { } parsed)
+                        declarations.Add(parsed);
+                    break;
+            }
             if (_position == start)
                 NextToken();
         }
-        return new CompilationUnitSyntax(new TextSpan(0, _source.Length), declarations.ToImmutable());
+        return new CompilationUnitSyntax(
+            new TextSpan(0, _source.Length), _source, @namespace, usings.ToImmutable(), declarations.ToImmutable());
     }
 
-    /// <summary>declaration = function | record | enum | trait | extend ;</summary>
+    /// <summary>declaration = function | record | enum | trait | extend ;  optionally preceded by "private".</summary>
     private DeclarationSyntax? ParseDeclaration()
     {
+        if (Current.Kind == TokenKind.PrivateKeyword)
+        {
+            var @private = NextToken();
+            return ParseDeclaration() is { } declaration ? declaration with { Private = @private } : null;
+        }
+
         switch (Current.Kind)
         {
             case TokenKind.FnKeyword or TokenKind.StaticKeyword:
@@ -127,7 +169,8 @@ public sealed class Parser
 
     private static bool IsDeclarationStart(TokenKind kind) => kind is
         TokenKind.FnKeyword or TokenKind.StaticKeyword or TokenKind.RecordKeyword or TokenKind.EnumKeyword or
-        TokenKind.TraitKeyword or TokenKind.ExtendKeyword;
+        TokenKind.TraitKeyword or TokenKind.ExtendKeyword or TokenKind.PrivateKeyword or
+        TokenKind.NamespaceKeyword or TokenKind.UsingKeyword;
 
     /// <summary>
     /// function = [ "static" ] "fn" IDENT [ typeParameters ] "(" [ parameter { "," parameter } [ "," ] ] ")"
@@ -273,6 +316,13 @@ public sealed class Parser
                 continue;
             }
 
+            if (Current.Kind == TokenKind.PrivateKeyword && Peek(1).Kind is TokenKind.FnKeyword or TokenKind.StaticKeyword)
+            {
+                var @private = NextToken();
+                methods.Add(ParseFunction() with { Private = @private });
+                continue;
+            }
+
             // Another declaration keyword probably means a missing '}'.
             if (IsDeclarationStart(Current.Kind))
                 break;
@@ -324,19 +374,44 @@ public sealed class Parser
     {
         if (Current.Kind == TokenKind.Identifier)
         {
-            var name = NextToken();
+            var first = Current;
+            var parts = ImmutableArray.CreateBuilder<Token>();
+            parts.Add(NextToken());
+            while (Current.Kind == TokenKind.Dot)
+            {
+                NextToken();
+                parts.Add(Expect(TokenKind.Identifier));
+            }
+            var name = parts[^1];
+            parts.RemoveAt(parts.Count - 1);
+            var qualifier = parts.ToImmutable();
+
             if (Current.Kind != TokenKind.Less)
-                return new NamedTypeSyntax(name.Span, name, []);
+                return new NamedTypeSyntax(SpanFrom(first), qualifier, name, []);
 
             NextToken();
             var arguments = ParseSeparatedList(ParseType, TokenKind.Greater);
             Expect(TokenKind.Greater);
-            return new NamedTypeSyntax(SpanFrom(name), name, arguments);
+            return new NamedTypeSyntax(SpanFrom(first), qualifier, name, arguments);
         }
 
         ReportOnce(Current.Span, () => _diagnostics.ReportExpectedType(Current.Span, Current));
         var missing = Missing(TokenKind.Identifier);
-        return new NamedTypeSyntax(missing.Span, missing, []);
+        return new NamedTypeSyntax(missing.Span, [], missing, []);
+    }
+
+    /// <summary>qualifiedName = IDENT { "." IDENT } ;</summary>
+    private QualifiedNameSyntax ParseQualifiedName()
+    {
+        var parts = ImmutableArray.CreateBuilder<Token>();
+        var first = Expect(TokenKind.Identifier);
+        parts.Add(first);
+        while (Current.Kind == TokenKind.Dot)
+        {
+            NextToken();
+            parts.Add(Expect(TokenKind.Identifier));
+        }
+        return new QualifiedNameSyntax(TextSpan.FromBounds(first.Span.Start, Previous.Span.End), parts.ToImmutable());
     }
 
     private ImmutableArray<T> ParseSeparatedList<T>(Func<T> parseItem, TokenKind close)

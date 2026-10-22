@@ -26,12 +26,16 @@ public static class Runner
     // Console.Out is process-wide, so capturing it must be serialized.
     private static readonly Lock ConsoleLock = new();
 
-    public static CSharpBuildResult Build(string csharp, string assemblyName = "PiperProgram")
+    public static CSharpBuildResult Build(string csharp, string assemblyName = "PiperProgram") =>
+        Build([new GeneratedFile("Program.cs", csharp)], assemblyName);
+
+    public static CSharpBuildResult Build(IEnumerable<GeneratedFile> files, string assemblyName = "PiperProgram")
     {
-        var tree = CSharpSyntaxTree.ParseText(csharp, new CSharpParseOptions(LanguageVersion.Latest));
+        var options = new CSharpParseOptions(LanguageVersion.Latest);
+        var trees = files.Select(f => CSharpSyntaxTree.ParseText(f.Text, options, path: f.Name)).ToList();
         var compilation = CSharpCompilation.Create(
             assemblyName,
-            [tree],
+            trees,
             References.Value,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
 
@@ -46,9 +50,12 @@ public static class Runner
     }
 
     /// <param name="captureOutput">When true, the program's stdout is returned in <see cref="RunResult.Output"/> instead of printed.</param>
-    public static RunResult Run(string csharp, bool captureOutput = true)
+    public static RunResult Run(string csharp, bool captureOutput = true) =>
+        Run([new GeneratedFile("Program.cs", csharp)], captureOutput);
+
+    public static RunResult Run(IEnumerable<GeneratedFile> files, bool captureOutput = true)
     {
-        var build = Build(csharp);
+        var build = Build(files);
         if (!build.Success)
             return new RunResult(false, "", build.Errors);
 

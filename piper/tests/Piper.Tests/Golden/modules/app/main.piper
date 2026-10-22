@@ -1,0 +1,18 @@
+using Geometry;
+using System.Collections.Generic;
+
+// A private type, only visible in this file.
+private record Totals(count: Int, area: Double);
+
+fn main() {
+    let circle = Shape.Circle(Point(0.0, 0.0), 1.0);
+    let rect = Geometry.Shape.Rect(Geometry.Point(1.0, 2.0), 3.0, 4.0);   // fully qualified also works
+    print(circle.describe());
+    print(rect.describe());
+
+    let shapes: List<Shape> = List();
+    shapes.Add(circle);
+    shapes.Add(rect);
+    let totals = Totals(shapes.Count, area(circle) + Geometry.area(rect));
+    print(totals);
+}

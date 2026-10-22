@@ -63,23 +63,37 @@ public sealed partial class Binder
         if (name.IsMissing)
             return new BoundErrorExpression();
 
-        switch (_scope.Lookup(name.Text))
+        return BindSymbolAsValue(_scope.Lookup(name.Text), name, syntax.Span, expected);
+    }
+
+    /// <summary>Uses a resolved name as a value: a variable, or a fieldless built-in variant such as <c>None</c>.</summary>
+    private BoundExpression BindSymbolAsValue(Symbol? symbol, Token name, TextSpan span, TypeSymbol? expected)
+    {
+        switch (symbol)
         {
             case VariableSymbol variable:
                 return new BoundVariableExpression(variable);
             case VariantSymbol variant:
                 // A built-in variant used bare: `None`.
-                return BindVariantCreation(variant.Enum, variant, null, syntax.Span, expected);
+                return BindVariantCreation(variant.Enum, variant, null, span, expected);
             case FunctionSymbol:
                 _diagnostics.ReportNotAValue(name.Span, name.Text, "function");
                 return new BoundErrorExpression();
-            case TypeSymbol:
+            case TypeSymbol or ClrTypeGroupSymbol:
                 _diagnostics.ReportNotAValue(name.Span, name.Text, "type");
+                return new BoundErrorExpression();
+            case NamespaceSymbol:
+                _diagnostics.ReportNotAValue(name.Span, name.Text, "namespace");
+                return new BoundErrorExpression();
+            case AmbiguousSymbol ambiguous:
+                ReportAmbiguous(name, ambiguous);
+                return new BoundErrorExpression();
+            case ErrorSymbol:
                 return new BoundErrorExpression();
             default:
                 if (name.Kind == TokenKind.ThisKeyword)
                     _diagnostics.ReportThisOutsideInstanceMethod(name.Span);
-                else
+                else if (!ReportIfPrivateElsewhere(name))
                     _diagnostics.ReportUndefinedName(name.Span, name.Text);
                 return new BoundErrorExpression();
         }
@@ -204,8 +218,18 @@ public sealed partial class Binder
     {
         switch (syntax.Callee)
         {
-            case MemberAccessExpressionSyntax { Target: NameExpressionSyntax typeName } member when LookupType(typeName) is { } type:
-                return BindStaticMember(type, member.Member, syntax.Arguments, syntax.Span, expected);
+            case MemberAccessExpressionSyntax member when ResolveContainer(member.Target) is { } container:
+                return container switch
+                {
+                    // Geometry.area(c), System.Text.StringBuilder()
+                    NamespaceSymbol @namespace when !member.Member.IsMissing =>
+                        BindCallTo(MemberOf(@namespace, member.Member.Text) ?? NotInNamespace(member.Member, @namespace), member.Member, syntax, expected),
+                    // Point.origin(), Shape.Circle(1.0), Math.Sqrt(2.0)
+                    TypeSymbol type => BindStaticMember(type, member.Member, syntax.Arguments, syntax.Span, expected),
+                    ClrTypeGroupSymbol group when NonGenericMember(group) is { } type =>
+                        BindStaticMember(type, member.Member, syntax.Arguments, syntax.Span, expected),
+                    _ => BindArgumentsForDiagnostics(syntax.Arguments),
+                };
 
             case MemberAccessExpressionSyntax member:
             {
@@ -214,7 +238,9 @@ public sealed partial class Binder
             }
 
             case NameExpressionSyntax name:
-                return BindNamedCall(name, syntax, expected);
+                return name.Identifier.IsMissing
+                    ? BindArgumentsForDiagnostics(syntax.Arguments)
+                    : BindCallTo(_scope.Lookup(name.Identifier.Text), name.Identifier, syntax, expected);
 
             default:
                 if (BindExpression(syntax.Callee).Type != TypeSymbol.Error)
@@ -223,20 +249,63 @@ public sealed partial class Binder
         }
     }
 
-    /// <summary>A name that refers to a type (not a variable that happens to share its name).</summary>
-    private TypeSymbol? LookupType(NameExpressionSyntax name) =>
-        !name.Identifier.IsMissing &&
-        _scope.Lookup(name.Identifier.Text) is TypeSymbol type && type != TypeSymbol.Never && type != TypeSymbol.Error
-            ? type
-            : null;
-
-    private BoundExpression BindNamedCall(NameExpressionSyntax name, CallExpressionSyntax syntax, TypeSymbol? expected)
+    /// <summary>
+    /// If <paramref name="syntax"/> names a namespace or type (rather than a value), returns it:
+    /// a <see cref="NamespaceSymbol"/>, <see cref="TypeSymbol"/> or <see cref="ClrTypeGroupSymbol"/>, or
+    /// <see cref="ErrorSymbol"/> once a bad qualified name has been reported. Null means "bind it as a value".
+    /// </summary>
+    private Symbol? ResolveContainer(ExpressionSyntax syntax)
     {
-        if (name.Identifier.IsMissing)
-            return BindArgumentsForDiagnostics(syntax.Arguments);
+        switch (syntax)
+        {
+            case NameExpressionSyntax { Identifier: { IsMissing: false } name }:
+                return _scope.Lookup(name.Text) switch
+                {
+                    (NamespaceSymbol or ClrTypeGroupSymbol or ErrorSymbol) and var symbol => symbol,
+                    TypeSymbol type when type != TypeSymbol.Never && type != TypeSymbol.Error => type,
+                    AmbiguousSymbol ambiguous => Reported(() => ReportAmbiguous(name, ambiguous)),
+                    _ => null,
+                };
 
-        var calleeName = name.Identifier.Text;
-        switch (_scope.Lookup(calleeName))
+            case MemberAccessExpressionSyntax { Member: { IsMissing: false } member } access
+                when ResolveContainer(access.Target) is NamespaceSymbol @namespace:
+                return MemberOf(@namespace, member.Text) switch
+                {
+                    (NamespaceSymbol or TypeSymbol or ClrTypeGroupSymbol) and var symbol => symbol,
+                    null => NotInNamespace(member, @namespace),
+                    _ => null,
+                };
+
+            case MemberAccessExpressionSyntax access when ResolveContainer(access.Target) is ErrorSymbol:
+                return ErrorSymbol.Instance;
+
+            default:
+                return null;
+        }
+    }
+
+    private static ErrorSymbol Reported(Action report)
+    {
+        report();
+        return ErrorSymbol.Instance;
+    }
+
+    private ErrorSymbol NotInNamespace(Token member, NamespaceSymbol @namespace) =>
+        Reported(() =>
+        {
+            if (@namespace != _file.Namespace || !ReportIfPrivateElsewhere(member))
+                _diagnostics.ReportNotInNamespace(member.Span, member.Text, @namespace.IsGlobal ? "<global>" : @namespace.FullName);
+        });
+
+    /// <summary>Static members of a name shared by several generic arities come from its non-generic type, if any.</summary>
+    private TypeSymbol? NonGenericMember(ClrTypeGroupSymbol group) =>
+        group.WithArity(0) is { } type ? ClrTypes.FromClr(type, new Dictionary<Type, TypeSymbol>(), _option) : null;
+
+    /// <summary>Calls whatever <paramref name="symbol"/> (named by <paramref name="name"/>) is: a function, a record or .NET type (construction), or a variant.</summary>
+    private BoundExpression BindCallTo(Symbol? symbol, Token name, CallExpressionSyntax syntax, TypeSymbol? expected)
+    {
+        var calleeName = name.Text;
+        switch (symbol)
         {
             case FunctionSymbol function when function == BuiltinFunctions.Print:
             {
@@ -269,9 +338,30 @@ public sealed partial class Binder
                 // A built-in variant used bare: `Some(1)`, `Ok(x)`, `Err(e)`.
                 return BindVariantCreation(variant.Enum, variant, syntax.Arguments, syntax.Span, expected);
 
+            // StringBuilder(), Random(42), List() (type arguments from the expected type)
+            case ClrTypeSymbol clr:
+                return BindClrConstruction(clr, syntax.Arguments, syntax.Span, expected);
+
+            case ClrTypeGroupSymbol group:
+            {
+                var chosen = expected is ClrTypeSymbol wanted && group.Types.Contains(wanted.Definition.Type)
+                    ? wanted.Definition
+                    : group.WithArity(0) is { } plain ? ClrTypeSymbol.For(plain) : ClrTypeSymbol.For(group.Types[0]);
+                return BindClrConstruction(chosen, syntax.Arguments, syntax.Span, expected);
+            }
+
+            case AmbiguousSymbol ambiguous:
+                BindArgumentsForDiagnostics(syntax.Arguments);
+                ReportAmbiguous(name, ambiguous);
+                return new BoundErrorExpression();
+
+            case ErrorSymbol:
+                return BindArgumentsForDiagnostics(syntax.Arguments);
+
             case null:
                 BindArgumentsForDiagnostics(syntax.Arguments);
-                _diagnostics.ReportUndefinedName(name.Span, calleeName);
+                if (!ReportIfPrivateElsewhere(name))
+                    _diagnostics.ReportUndefinedName(name.Span, calleeName);
                 return new BoundErrorExpression();
 
             default:
@@ -311,6 +401,10 @@ public sealed partial class Binder
         var method = FindMethod(type, member.Text);
         if (method is null)
         {
+            // Math.Sqrt(2.0), Math.PI, Int.MaxValue
+            if (IsClrBacked(type))
+                return BindClrStaticMember(type, member, arguments, span);
+
             BindArgumentsForDiagnostics(arguments);
             if (type is EnumSymbol enumType)
                 _diagnostics.ReportUnknownVariant(member.Span, enumType, member.Text);
@@ -319,6 +413,7 @@ public sealed partial class Binder
             return new BoundErrorExpression();
         }
 
+        CheckAccessible(method, member);
         if (arguments is null)
         {
             _diagnostics.ReportNotAValue(member.Span, member.Text, "method");
@@ -355,7 +450,12 @@ public sealed partial class Binder
             return BindArgumentsForDiagnostics(syntax.Arguments);
 
         var method = FindMethod(receiver.Type, member.Text);
-        if (method is null)
+        if (method is null && IsClrBacked(receiver.Type))
+            return BindClrInstanceCall(receiver, member, syntax.Arguments, syntax.Span);
+
+        if (method is not null)
+            CheckAccessible(method, member);
+        else
         {
             BindArgumentsForDiagnostics(syntax.Arguments);
             if (FindField(receiver.Type, member.Text) is not null)
@@ -540,8 +640,20 @@ public sealed partial class Binder
 
     private BoundExpression BindMemberAccess(MemberAccessExpressionSyntax syntax, TypeSymbol? expected)
     {
-        if (syntax.Target is NameExpressionSyntax typeName && LookupType(typeName) is { } type)
-            return BindStaticMember(type, syntax.Member, arguments: null, syntax.Span, expected);
+        switch (ResolveContainer(syntax.Target))
+        {
+            case NamespaceSymbol @namespace when !syntax.Member.IsMissing:
+            {
+                var member = MemberOf(@namespace, syntax.Member.Text) ?? NotInNamespace(syntax.Member, @namespace);
+                return BindSymbolAsValue(member, syntax.Member, syntax.Span, expected);
+            }
+            case TypeSymbol type:
+                return BindStaticMember(type, syntax.Member, arguments: null, syntax.Span, expected);
+            case ClrTypeGroupSymbol group when NonGenericMember(group) is { } nonGeneric:
+                return BindStaticMember(nonGeneric, syntax.Member, arguments: null, syntax.Span, expected);
+            case NamespaceSymbol or ClrTypeGroupSymbol or ErrorSymbol:
+                return new BoundErrorExpression();
+        }
 
         var target = RequireValue(BindExpression(syntax.Target), syntax.Target.Span);
         if (target.Type == TypeSymbol.Error || syntax.Member.IsMissing)
@@ -549,6 +661,10 @@ public sealed partial class Binder
 
         if (FindField(target.Type, syntax.Member.Text) is { } field)
             return new BoundFieldAccessExpression(target, field, TypeSubstitution.FieldType(field, target.Type));
+
+        // sb.Length, list.Count, "abc".Length
+        if (FindMethod(target.Type, syntax.Member.Text) is null && IsClrBacked(target.Type))
+            return BindClrInstanceMember(target, syntax.Member);
 
         if (FindMethod(target.Type, syntax.Member.Text) is not null)
             _diagnostics.ReportNotAValue(syntax.Member.Span, syntax.Member.Text, "method");
