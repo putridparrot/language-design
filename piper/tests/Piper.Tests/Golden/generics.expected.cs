@@ -5,17 +5,6 @@
 
 public sealed record Pair<A, B>(A first, B second);
 
-public abstract record Option<T>
-{
-    private Option()
-    {
-    }
-
-    public sealed record Some(T @value) : Option<T>;
-
-    public sealed record None() : Option<T>;
-}
-
 public abstract record List<T>
 {
     private List()
@@ -33,7 +22,7 @@ public static class Generics
 
     public static T unwrapOr<T>(Option<T> o, T fallback)
     {
-        if (o is Option<T>.Some(var v))
+        if (o is { IsSome: true, Value: var v })
         {
             return v;
         }
@@ -59,7 +48,7 @@ public static class Generics
     {
         if (items is List<string>.Cons(var head, _) && head == target)
         {
-            return new Option<int>.Some(start);
+            return Option<int>.Some(start);
         }
         else if (items is List<string>.Cons(_, var tail))
         {
@@ -67,13 +56,13 @@ public static class Generics
         }
         else
         {
-            return new Option<int>.None();
+            return Option<int>.None;
         }
     }
 
     public static string describe(Option<int> found)
     {
-        if (found is Option<int>.Some(var i))
+        if (found is { IsSome: true, Value: var i })
         {
             return $"found at {i}";
         }
@@ -88,21 +77,21 @@ public static class Generics
         Pair<int, string> p = new Pair<int, string>(1, "one");
         Pair<string, int> q = swap<int, string>(p);
         global::System.Console.WriteLine($"{q.first} {q.second}");
-        Option<int> some = new Option<int>.Some(42);
-        Option<int> none = new Option<int>.None();
+        Option<int> some = Option<int>.Some(42);
+        Option<int> none = Option<int>.None;
         global::System.Console.WriteLine(unwrapOr<int>(some, 0));
         global::System.Console.WriteLine(unwrapOr<int>(none, -1));
         List<string> words = new List<string>.Cons("piper", new List<string>.Cons("is", new List<string>.Cons("generic", new List<string>.Nil())));
         global::System.Console.WriteLine(length<string>(words));
         global::System.Console.WriteLine(describe(indexOf(words, "generic", 0)));
         global::System.Console.WriteLine(describe(indexOf(words, "rust", 0)));
-        Option<bool> flag = new Option<bool>.Some(true);
+        Option<bool> flag = Option<bool>.Some(true);
         string temp;
-        if (flag is Option<bool>.Some(true))
+        if (flag is { IsSome: true, Value: true })
         {
             temp = "yes";
         }
-        else if (flag is Option<bool>.Some(false))
+        else if (flag is { IsSome: true, Value: false })
         {
             temp = "no";
         }
@@ -124,3 +113,24 @@ internal static class PiperEntryPoint
         Generics.main();
     }
 }
+
+#nullable disable
+public readonly record struct Option<T>
+{
+    private Option(T value)
+    {
+        IsSome = true;
+        Value = value;
+    }
+
+    public bool IsSome { get; }
+
+    public T Value { get; }
+
+    public static Option<T> Some(T value) => new(value);
+
+    public static Option<T> None => default;
+
+    public override string ToString() => IsSome ? $"Some({Value})" : "None";
+}
+#nullable restore

@@ -20,7 +20,10 @@ public static class SyntaxFacts
         "match" => TokenKind.MatchKeyword,
         "trait" => TokenKind.TraitKeyword,
         "extend" => TokenKind.ExtendKeyword,
-        "self" => TokenKind.SelfKeyword,
+        "this" => TokenKind.ThisKeyword,
+        "static" => TokenKind.StaticKeyword,
+        "null" => TokenKind.NullKeyword,
+        "is" => TokenKind.IsKeyword,
         "true" => TokenKind.TrueKeyword,
         "false" => TokenKind.FalseKeyword,
         _ => null,
@@ -28,24 +31,31 @@ public static class SyntaxFacts
 
     /// <summary>
     /// Binary operator precedence table used by the Pratt parser; higher binds tighter, 0 means "not a binary operator".
-    /// All binary operators are left-associative. Assignment is handled separately (lowest, right-associative).
+    /// Binary operators are left-associative except <c>??</c>, which is right-associative as in C#.
+    /// Assignment is handled separately (lowest, right-associative).
     /// </summary>
     public static int GetBinaryPrecedence(TokenKind kind) => kind switch
     {
-        TokenKind.Star or TokenKind.Slash or TokenKind.Percent => 7,
-        TokenKind.Plus or TokenKind.Minus => 6,
-        TokenKind.Less or TokenKind.LessEquals or TokenKind.Greater or TokenKind.GreaterEquals => 5,
-        TokenKind.EqualsEquals or TokenKind.BangEquals => 4,
-        TokenKind.AmpersandAmpersand => 3,
-        TokenKind.PipePipe => 2,
+        TokenKind.Star or TokenKind.Slash or TokenKind.Percent => 8,
+        TokenKind.Plus or TokenKind.Minus => 7,
+        TokenKind.Less or TokenKind.LessEquals or TokenKind.Greater or TokenKind.GreaterEquals => IsPrecedence,
+        TokenKind.EqualsEquals or TokenKind.BangEquals => 5,
+        TokenKind.AmpersandAmpersand => 4,
+        TokenKind.PipePipe => 3,
+        TokenKind.QuestionQuestion => 2,
         TokenKind.DotDot or TokenKind.DotDotEquals => 1,
         _ => 0,
     };
 
+    /// <summary><c>x is Pattern</c> binds like the relational operators, as in C#.</summary>
+    public const int IsPrecedence = 6;
+
+    public static bool IsRightAssociative(TokenKind kind) => kind == TokenKind.QuestionQuestion;
+
     /// <summary>Prefix operators bind tighter than any binary operator.</summary>
     public static int GetUnaryPrecedence(TokenKind kind) => kind switch
     {
-        TokenKind.Minus or TokenKind.Bang => 8,
+        TokenKind.Minus or TokenKind.Bang => 9,
         _ => 0,
     };
 
@@ -82,7 +92,10 @@ public static class SyntaxFacts
         TokenKind.MatchKeyword => "match",
         TokenKind.TraitKeyword => "trait",
         TokenKind.ExtendKeyword => "extend",
-        TokenKind.SelfKeyword => "self",
+        TokenKind.ThisKeyword => "this",
+        TokenKind.StaticKeyword => "static",
+        TokenKind.NullKeyword => "null",
+        TokenKind.IsKeyword => "is",
         TokenKind.TrueKeyword => "true",
         TokenKind.FalseKeyword => "false",
         TokenKind.OpenParen => "(",
@@ -100,6 +113,8 @@ public static class SyntaxFacts
         TokenKind.Arrow => "->",
         TokenKind.FatArrow => "=>",
         TokenKind.Question => "?",
+        TokenKind.QuestionQuestion => "??",
+        TokenKind.QuestionDot => "?.",
         TokenKind.Equals => "=",
         TokenKind.EqualsEquals => "==",
         TokenKind.Bang => "!",

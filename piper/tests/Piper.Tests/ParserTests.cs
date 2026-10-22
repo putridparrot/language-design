@@ -36,6 +36,11 @@ public class ParserTests
         ParenthesizedExpressionSyntax e => Show(e.Expression),
         IfExpressionSyntax => "if",
         BlockExpressionSyntax => "{}",
+        NullLiteralExpressionSyntax => "null",
+        ImplicitReceiverSyntax => "",
+        ConditionalAccessExpressionSyntax e => $"{Show(e.Target)}?{Show(e.WhenNotNull)}",
+        TryExpressionSyntax e => $"{Show(e.Operand)}?",
+        IsExpressionSyntax e => $"({Show(e.Expression)} is {e.Pattern.GetType().Name.Replace("PatternSyntax", "")})",
         _ => expression.GetType().Name,
     };
 
@@ -55,6 +60,14 @@ public class ParserTests
     [InlineData("0..n + 1", "(0 .. (n + 1))")]
     [InlineData("0..=n", "(0 ..= n)")]
     [InlineData("(1 + 2) * 3", "((1 + 2) * 3)")]
+    [InlineData("a ?? b ?? c", "(a ?? (b ?? c))")]
+    [InlineData("a || b ?? c", "((a || b) ?? c)")]
+    [InlineData("a?.b.c(1)", "a?.b.c(1)")]
+    [InlineData("a?.b?.c", "a?.b?.c")]
+    [InlineData("f(x)? + 1", "(f(x)? + 1)")]
+    [InlineData("x is Some(v) && v > 1", "((x is Constructor) && (v > 1))")]
+    [InlineData("!x is None", "((!x) is Identifier)")]
+    [InlineData("x == null", "(x == null)")]
     public void Expressions_respect_precedence_and_associativity(string text, string expected)
     {
         var diagnostics = new DiagnosticBag();
@@ -178,10 +191,10 @@ public class ParserTests
     public void Trait_with_required_and_default_methods()
     {
         var trait = Assert.IsType<TraitDeclarationSyntax>(Assert.Single(
-            ParseClean("trait Shape { fn area(self) -> Double; fn describe(self, prefix: String) -> String = prefix; }").Declarations));
+            ParseClean("trait Shape { fn area() -> Double; fn describe(prefix: String) -> String = prefix; }").Declarations));
         Assert.Equal(2, trait.Methods.Length);
         Assert.False(trait.Methods[0].HasBody);
-        Assert.NotNull(trait.Methods[1].Self);
+        Assert.Null(trait.Methods[1].Static);
         Assert.Equal(["prefix"], trait.Methods[1].Parameters.Select(p => p.Name.Text));
     }
 
@@ -189,18 +202,34 @@ public class ParserTests
     public void Extend_block_with_traits()
     {
         var extend = Assert.IsType<ExtendDeclarationSyntax>(Assert.Single(
-            ParseClean("extend Circle: Shape, Show { fn area(self) -> Double = 1.0; fn unit() -> Circle = Circle(1.0); }").Declarations));
+            ParseClean("extend Circle: Shape, Show { fn area() -> Double = 1.0; static fn unit() -> Circle = Circle(1.0); }").Declarations));
         Assert.Equal("Circle", extend.Name.Text);
         Assert.Equal(2, extend.Traits.Length);
-        Assert.Null(extend.Methods[1].Self);
+        Assert.NotNull(extend.Methods[1].Static);
     }
 
     [Fact]
-    public void Generic_function_with_self_used_in_body()
+    public void Generic_function_with_this_used_in_body()
     {
-        var function = (FunctionDeclarationSyntax)ParseClean("fn first<T>(self, p: Pair<T, T>) -> T = self.x;").Declarations[0];
+        var function = (FunctionDeclarationSyntax)ParseClean("fn first<T>(p: Pair<T, T>) -> T = this.x;").Declarations[0];
         Assert.Equal("T", Assert.Single(function.TypeParameters).Name.Text);
-        Assert.Equal("self.x", Show(function.ExpressionBody!));
+        Assert.Equal("this.x", Show(function.ExpressionBody!));
+    }
+
+    [Fact]
+    public void Optional_types_nest()
+    {
+        var function = (FunctionDeclarationSyntax)ParseClean("fn f(a: Int?, b: Option<String>??) {}").Declarations[0];
+        Assert.IsType<NamedTypeSyntax>(Assert.IsType<OptionalTypeSyntax>(function.Parameters[0].Type).Inner);
+        var twice = Assert.IsType<OptionalTypeSyntax>(function.Parameters[1].Type);
+        Assert.IsType<NamedTypeSyntax>(Assert.IsType<OptionalTypeSyntax>(twice.Inner).Inner);
+    }
+
+    [Fact]
+    public void Null_pattern()
+    {
+        var body = Body(ParseClean("fn f() { match x { null => 0, Some(v) => v } }"));
+        Assert.IsType<NullPatternSyntax>(Assert.IsType<MatchExpressionSyntax>(body.Trailing).Arms[0].Pattern);
     }
 
     [Fact]

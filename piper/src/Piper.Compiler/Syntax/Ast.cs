@@ -15,14 +15,14 @@ public abstract record DeclarationSyntax(TextSpan Span, Token Name) : SyntaxNode
 
 /// <summary>
 /// A function or method. At most one of <see cref="BlockBody"/> and <see cref="ExpressionBody"/> is set;
-/// neither is for a required trait method (<c>fn area(self) -> Double;</c>).
-/// <see cref="Self"/> is the <c>self</c> token for instance methods; it is not part of <see cref="Parameters"/>.
+/// neither is for a required trait method (<c>fn area() -> Double;</c>).
+/// <see cref="Static"/> is the <c>static</c> modifier; methods without it are instance methods with an implicit <c>this</c>.
 /// </summary>
 public sealed record FunctionDeclarationSyntax(
     TextSpan Span,
     Token Name,
     ImmutableArray<TypeParameterSyntax> TypeParameters,
-    Token? Self,
+    Token? Static,
     ImmutableArray<ParameterSyntax> Parameters,
     TypeSyntax? ReturnType,
     BlockExpressionSyntax? BlockBody,
@@ -70,6 +70,9 @@ public abstract record TypeSyntax(TextSpan Span) : SyntaxNode(Span);
 
 /// <summary><c>Int</c> or a generic instantiation such as <c>Pair&lt;Int, String&gt;</c>.</summary>
 public sealed record NamedTypeSyntax(TextSpan Span, Token Name, ImmutableArray<TypeSyntax> TypeArguments) : TypeSyntax(Span);
+
+/// <summary><c>T?</c>, shorthand for <c>Option&lt;T&gt;</c>.</summary>
+public sealed record OptionalTypeSyntax(TextSpan Span, TypeSyntax Inner) : TypeSyntax(Span);
 
 // Statements
 
@@ -151,6 +154,25 @@ public sealed record MatchExpressionSyntax(TextSpan Span, Token Keyword, Express
 public sealed record MatchArmSyntax(TextSpan Span, PatternSyntax Pattern, ExpressionSyntax? Guard, ExpressionSyntax Body)
     : SyntaxNode(Span);
 
+/// <summary><c>null</c>: the None of whatever optional type the context expects.</summary>
+public sealed record NullLiteralExpressionSyntax(TextSpan Span, Token Keyword) : ExpressionSyntax(Span);
+
+/// <summary><c>value is Pattern</c>; in an if/while condition the pattern's variables are in scope in the body.</summary>
+public sealed record IsExpressionSyntax(TextSpan Span, ExpressionSyntax Expression, PatternSyntax Pattern) : ExpressionSyntax(Span);
+
+/// <summary>
+/// <c>target?.rest</c>. <see cref="WhenNotNull"/> is the rest of the member/call chain, rooted at an
+/// <see cref="ImplicitReceiverSyntax"/> that stands for the unwrapped target (as in C#, <c>a?.b.c</c> skips the whole chain).
+/// </summary>
+public sealed record ConditionalAccessExpressionSyntax(TextSpan Span, ExpressionSyntax Target, ExpressionSyntax WhenNotNull)
+    : ExpressionSyntax(Span);
+
+/// <summary>The unwrapped value inside the <see cref="ConditionalAccessExpressionSyntax.WhenNotNull"/> chain.</summary>
+public sealed record ImplicitReceiverSyntax(TextSpan Span) : ExpressionSyntax(Span);
+
+/// <summary><c>operand?</c>: unwraps an Option or Result, returning None/Err from the function if there is no value.</summary>
+public sealed record TryExpressionSyntax(TextSpan Span, ExpressionSyntax Operand) : ExpressionSyntax(Span);
+
 /// <summary>Placeholder produced by error recovery; binds to the error type without further diagnostics.</summary>
 public sealed record ErrorExpressionSyntax(TextSpan Span) : ExpressionSyntax(Span);
 
@@ -184,6 +206,9 @@ public sealed record RangePatternSyntax(TextSpan Span, LiteralPatternSyntax Star
 }
 
 public sealed record OrPatternSyntax(TextSpan Span, ImmutableArray<PatternSyntax> Alternatives) : PatternSyntax(Span);
+
+/// <summary><c>null</c> in a pattern: the same as <c>None</c>.</summary>
+public sealed record NullPatternSyntax(TextSpan Span) : PatternSyntax(Span);
 
 /// <summary>Placeholder produced by error recovery; binds like a wildcard so no follow-on errors are reported.</summary>
 public sealed record ErrorPatternSyntax(TextSpan Span) : PatternSyntax(Span);

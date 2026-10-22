@@ -86,7 +86,13 @@ public sealed class Lexer
             case ',': return Punctuation(TokenKind.Comma, 1);
             case ';': return Punctuation(TokenKind.Semicolon, 1);
             case ':': return Punctuation(TokenKind.Colon, 1);
-            case '?': return Punctuation(TokenKind.Question, 1);
+            case '?':
+                return Peek(1) switch
+                {
+                    '?' => Punctuation(TokenKind.QuestionQuestion, 2),
+                    '.' => Punctuation(TokenKind.QuestionDot, 2),
+                    _ => Punctuation(TokenKind.Question, 1),
+                };
             case '.':
                 if (Peek(1) != '.')
                     return Punctuation(TokenKind.Dot, 1);

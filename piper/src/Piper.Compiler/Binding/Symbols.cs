@@ -25,7 +25,7 @@ public enum VariableKind
     PatternVariable,
 
     /// <summary>The receiver of an instance method.</summary>
-    Self,
+    This,
 
     /// <summary>Introduced by the lowerer; never visible to Piper code.</summary>
     Temporary,
@@ -62,7 +62,7 @@ public class FunctionSymbol(
 }
 
 /// <summary>
-/// A function declared in a trait or an <c>extend</c> block. Instance methods have a <see cref="Self"/>
+/// A function declared in a trait or an <c>extend</c> block. Instance methods have an implicit <see cref="This"/>
 /// receiver; methods without one are static (<c>Type.name(...)</c>).
 /// </summary>
 public sealed class MethodSymbol(
@@ -72,14 +72,14 @@ public sealed class MethodSymbol(
     TypeSymbol returnType,
     FunctionDeclarationSyntax declaration,
     TypeSymbol containingType,
-    VariableSymbol? self) : FunctionSymbol(name, typeParameters, parameters, returnType, declaration)
+    VariableSymbol? thisVariable) : FunctionSymbol(name, typeParameters, parameters, returnType, declaration)
 {
     /// <summary>The record or enum definition, builtin type or trait the method belongs to.</summary>
     public TypeSymbol ContainingType { get; } = containingType;
 
-    public VariableSymbol? Self { get; } = self;
+    public VariableSymbol? This { get; } = thisVariable;
 
-    public bool IsStatic => Self is null;
+    public bool IsStatic => This is null;
 
     public TraitSymbol? Trait => ContainingType as TraitSymbol;
 

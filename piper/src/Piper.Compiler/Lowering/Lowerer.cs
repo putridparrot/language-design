@@ -14,6 +14,9 @@ namespace Piper.Lowering;
 /// </summary>
 public sealed class Lowerer
 {
+    /// <summary>While lowering a <c>?.</c> chain, its receiver variable stands for <c>target.Value</c>.</summary>
+    private readonly Dictionary<VariableSymbol, BoundExpression> _substitutions = [];
+
     private Lowerer()
     {
     }
@@ -23,7 +26,7 @@ public sealed class Lowerer
         var lowerer = new Lowerer();
         ImmutableArray<BoundFunction> LowerAll(ImmutableArray<BoundFunction> functions) =>
             [.. functions.Select(f => new BoundFunction(f.Symbol, lowerer.LowerFunction(f), f.IsExpressionBodied))];
-        return new BoundProgram(program.Types, LowerAll(program.Functions), LowerAll(program.Methods), program.Main);
+        return new BoundProgram(program.Types, program.BuiltinTypes, LowerAll(program.Functions), LowerAll(program.Methods), program.Main);
     }
 
     private BoundBlockStatement LowerFunction(BoundFunction function)
@@ -173,6 +176,16 @@ public sealed class Lowerer
                 LowerMatch(match, sink: null, output);
                 break;
 
+            case BoundConditionalAccessExpression { Type: var type } access when type == TypeSymbol.Unit:
+            {
+                // `user?.greet();` → `if (user.IsSome) { user.Value.greet(); }`
+                var target = LowerOptionalOperand(access.Target, output);
+                var body = new List<BoundStatement>();
+                WithReceiver(access, target, () => LowerForEffect(access.WhenNotNull, body));
+                output.Add(new BoundIfStatement(HasValue(target), new BoundBlockStatement([.. body]), null));
+                break;
+            }
+
             case BoundConversionExpression conversion:
                 LowerForEffect(conversion.Expression, output);
                 break;
@@ -237,11 +250,26 @@ public sealed class Lowerer
     {
         switch (expression)
         {
-            case BoundLiteralExpression or BoundVariableExpression or BoundErrorExpression:
+            case BoundVariableExpression variable when _substitutions.TryGetValue(variable.Variable, out var substitute):
+                return substitute;
+
+            case BoundLiteralExpression or BoundVariableExpression or BoundErrorExpression or BoundOptionalMemberExpression:
                 return expression;
 
             case BoundConversionExpression conversion:
                 return Widen(LowerForValue(conversion.Expression, prelude), conversion.Type);
+
+            case BoundIsPatternExpression test:
+                return new BoundIsPatternExpression(LowerForValue(test.Expression, prelude), test.Pattern);
+
+            case BoundNullCoalescingExpression coalescing:
+                return LowerNullCoalescing(coalescing, prelude);
+
+            case BoundConditionalAccessExpression access:
+                return LowerConditionalAccess(access, prelude);
+
+            case BoundTryExpression attempt:
+                return LowerTry(attempt, prelude);
 
             case BoundUnaryExpression unary:
                 return new BoundUnaryExpression(unary.Operator, LowerForValue(unary.Operand, prelude), unary.Type);
@@ -399,6 +427,104 @@ public sealed class Lowerer
             LowerInto(body, sink, statements);
         output.AddRange(Flatten(statements is [var only] ? only : new BoundBlockStatement([.. statements])));
     }
+
+    // Null safety. Option and Result are emitted as structs with IsSome/IsOk, Value and Error members.
+
+    /// <summary>
+    /// `a ?? b` → `a.IsSome ? a.Value : b`, or, when b needs statements,
+    /// `T t; if (a.IsSome) { t = a.Value; } else { …; t = b; }` so b still runs only when needed.
+    /// </summary>
+    private BoundExpression LowerNullCoalescing(BoundNullCoalescingExpression coalescing, List<BoundStatement> prelude)
+    {
+        var left = LowerOptionalOperand(coalescing.Left, prelude);
+        // When the result is optional (`a ?? b` with b optional too) the left is used as it is.
+        BoundExpression whenSome = coalescing.Type == left.Type ? left : Value(left);
+
+        var rightPrelude = new List<BoundStatement>();
+        var right = LowerForValue(coalescing.Right, rightPrelude);
+        if (rightPrelude.Count == 0)
+            return new BoundConditionalExpression(HasValue(left), whenSome, right, coalescing.Type);
+
+        var temp = NewTemp(coalescing.Type);
+        prelude.Add(new BoundVariableDeclaration(temp, null));
+        rightPrelude.Add(Assign(temp, right));
+        prelude.Add(new BoundIfStatement(
+            HasValue(left),
+            new BoundBlockStatement([Assign(temp, whenSome)]),
+            new BoundBlockStatement([.. rightPrelude])));
+        return new BoundVariableExpression(temp);
+    }
+
+    /// <summary>`a?.b.c()` → `a.IsSome ? Option&lt;T&gt;.Some(a.Value.b.c()) : Option&lt;T&gt;.None` (no Some when the chain is already optional).</summary>
+    private BoundExpression LowerConditionalAccess(BoundConditionalAccessExpression access, List<BoundStatement> prelude)
+    {
+        var target = LowerOptionalOperand(access.Target, prelude);
+        var chainPrelude = new List<BoundStatement>();
+        BoundExpression chain = null!;
+        WithReceiver(access, target, () => chain = LowerForValue(access.WhenNotNull, chainPrelude));
+
+        var optional = (EnumSymbol)access.Type.OriginalDefinition;
+        var whenSome = chain.Type == access.Type
+            ? chain
+            : new BoundVariantCreationExpression(optional.FindVariant("Some")!, [chain], access.Type);
+        var whenNone = new BoundVariantCreationExpression(optional.FindVariant("None")!, [], access.Type);
+
+        if (chainPrelude.Count == 0)
+            return new BoundConditionalExpression(HasValue(target), whenSome, whenNone, access.Type);
+
+        var temp = NewTemp(access.Type);
+        prelude.Add(new BoundVariableDeclaration(temp, null));
+        chainPrelude.Add(Assign(temp, whenSome));
+        prelude.Add(new BoundIfStatement(
+            HasValue(target),
+            new BoundBlockStatement([.. chainPrelude]),
+            new BoundBlockStatement([Assign(temp, whenNone)])));
+        return new BoundVariableExpression(temp);
+    }
+
+    /// <summary>`f()?` → `T? t = f(); if (!t.IsSome) { return None; }` (or `return Err(t.Error)`), then `t.Value`.</summary>
+    private BoundExpression LowerTry(BoundTryExpression attempt, List<BoundStatement> prelude)
+    {
+        var operand = LowerOptionalOperand(attempt.Operand, prelude);
+        var returnType = attempt.FunctionReturnType;
+        var returned = (EnumSymbol)returnType.OriginalDefinition;
+
+        BoundExpression failure = operand.Type.IsOption
+            ? new BoundVariantCreationExpression(returned.FindVariant("None")!, [], returnType)
+            : new BoundVariantCreationExpression(
+                returned.FindVariant("Err")!,
+                [Widen(new BoundOptionalMemberExpression(operand, "Error", operand.Type.TypeArguments[1]), returnType.TypeArguments[1])],
+                returnType);
+
+        prelude.Add(new BoundIfStatement(Not(HasValue(operand)), new BoundReturnStatement(failure), null));
+        return Value(operand);
+    }
+
+    /// <summary>Optional operands are tested and then read, so anything but a variable is evaluated once into a temporary.</summary>
+    private BoundExpression LowerOptionalOperand(BoundExpression operand, List<BoundStatement> prelude)
+    {
+        var lowered = LowerForValue(operand, prelude);
+        return lowered is BoundVariableExpression ? lowered : Spill(lowered, prelude);
+    }
+
+    private void WithReceiver(BoundConditionalAccessExpression access, BoundExpression target, Action lower)
+    {
+        _substitutions[access.Receiver] = Value(target);
+        try
+        {
+            lower();
+        }
+        finally
+        {
+            _substitutions.Remove(access.Receiver);
+        }
+    }
+
+    private static BoundExpression HasValue(BoundExpression optional) =>
+        new BoundOptionalMemberExpression(optional, optional.Type.IsOption ? "IsSome" : "IsOk", TypeSymbol.Bool);
+
+    private static BoundExpression Value(BoundExpression optional) =>
+        new BoundOptionalMemberExpression(optional, "Value", optional.Type.TypeArguments[0]);
 
     /// <summary>`a &amp;&amp; { s; b }` →`bool t = a; if (t) { s; t = b; }` so the right side still runs only when needed.</summary>
     private BoundExpression LowerShortCircuit(BoundBinaryExpression logical, List<BoundStatement> prelude)

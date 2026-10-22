@@ -10,10 +10,14 @@ public abstract class BoundNode;
 
 public sealed class BoundProgram(
     ImmutableArray<TypeSymbol> types,
+    ImmutableArray<EnumSymbol> builtinTypes,
     ImmutableArray<BoundFunction> functions,
     ImmutableArray<BoundFunction> methods,
     FunctionSymbol? main)
 {
+    /// <summary>This compilation's built-in Option and Result (they may have gained methods from extend blocks).</summary>
+    public ImmutableArray<EnumSymbol> BuiltinTypes { get; } = builtinTypes;
+
     /// <summary>User-declared records, enums and traits, in declaration order.</summary>
     public ImmutableArray<TypeSymbol> Types { get; } = types;
 
@@ -247,7 +251,56 @@ public sealed class BoundMatchArm(BoundPattern pattern, BoundExpression? guard, 
     public BoundExpression Body { get; } = body;
 }
 
-/// <summary>Produced only by lowering: <c>expression is pattern</c>, which also binds the pattern's variables.</summary>
+/// <summary><c>left ?? right</c>. <see cref="Right"/> has either the left's value type, or (chaining) the left's optional type.</summary>
+public sealed class BoundNullCoalescingExpression(BoundExpression left, BoundExpression right, TypeSymbol type) : BoundExpression
+{
+    public BoundExpression Left { get; } = left;
+
+    public BoundExpression Right { get; } = right;
+
+    public override TypeSymbol Type { get; } = type;
+}
+
+/// <summary>
+/// <c>target?.chain</c>: <see cref="WhenNotNull"/> refers to the unwrapped target through <see cref="Receiver"/>.
+/// <see cref="Type"/> is Unit (used as a statement), the chain's own optional type (flattened), or <c>Option</c> of it.
+/// </summary>
+public sealed class BoundConditionalAccessExpression(
+    BoundExpression target,
+    VariableSymbol receiver,
+    BoundExpression whenNotNull,
+    TypeSymbol type) : BoundExpression
+{
+    public BoundExpression Target { get; } = target;
+
+    public VariableSymbol Receiver { get; } = receiver;
+
+    public BoundExpression WhenNotNull { get; } = whenNotNull;
+
+    public override TypeSymbol Type { get; } = type;
+}
+
+/// <summary><c>operand?</c>: the Option's or Result's value; otherwise returns None or the Err from <see cref="FunctionReturnType"/>.</summary>
+public sealed class BoundTryExpression(BoundExpression operand, TypeSymbol type, TypeSymbol functionReturnType) : BoundExpression
+{
+    public BoundExpression Operand { get; } = operand;
+
+    public TypeSymbol FunctionReturnType { get; } = functionReturnType;
+
+    public override TypeSymbol Type { get; } = type;
+}
+
+/// <summary>Produced only by lowering: a member of the emitted Option/Result struct (IsSome, IsOk, Value or Error).</summary>
+public sealed class BoundOptionalMemberExpression(BoundExpression operand, string member, TypeSymbol type) : BoundExpression
+{
+    public BoundExpression Operand { get; } = operand;
+
+    public string Member { get; } = member;
+
+    public override TypeSymbol Type { get; } = type;
+}
+
+/// <summary><c>expression is pattern</c>, which also binds the pattern's variables. Also produced by lowering a match.</summary>
 public sealed class BoundIsPatternExpression(BoundExpression expression, BoundPattern pattern) : BoundExpression
 {
     public BoundExpression Expression { get; } = expression;

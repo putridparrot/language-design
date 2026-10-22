@@ -1,0 +1,6 @@
+ok: 50
+error: divide by zero
+error: -25 is negative
+Ok(3)
+Err(Negative { value = -1 })
+64 -> 80

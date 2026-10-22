@@ -48,15 +48,22 @@ public sealed class CSharpEmitter
     private readonly Dictionary<MethodSymbol, BoundFunction> _methodBodies;
     private NameAllocator _names = new([]);
 
-    /// <summary>How <c>self</c> is spelled in the method being emitted: <c>this</c> in members, a parameter in extension blocks.</summary>
-    private string _selfName = "this";
+    /// <summary>How <c>this</c> is spelled in the method being emitted: <c>this</c> in members, the receiver parameter in extension blocks.</summary>
+    private string _thisName = "this";
 
     /// <summary>Top-level functions are called unqualified from the module class and qualified from anywhere else.</summary>
     private bool _inModuleClass;
 
+    /// <summary>Option/Result are only emitted if the program mentions them.</summary>
+    private readonly HashSet<EnumSymbol> _usedBuiltins = [];
+
     private CSharpEmitter(BoundProgram program, string moduleName)
     {
-        _topLevelNames = [.. program.Types.Select(t => t.Name), .. program.Functions.Select(f => f.Symbol.Name), EntryPointClassName];
+        _topLevelNames =
+        [
+            .. program.Types.Select(t => t.Name), .. program.BuiltinTypes.Select(t => t.Name),
+            .. program.Functions.Select(f => f.Symbol.Name), EntryPointClassName,
+        ];
         _moduleClassName = UniqueTopLevelName(moduleName, "Module");
         _extensionsClassName = UniqueTopLevelName(_moduleClassName + "Extensions", "_");
         _methodBodies = program.Methods.ToDictionary(m => (MethodSymbol)m.Symbol);
@@ -129,6 +136,74 @@ public sealed class CSharpEmitter
             _writer.CloseBrace();
             _writer.CloseBrace();
         }
+
+        // Emitted last, once we know whether anything used them.
+        foreach (var builtin in program.BuiltinTypes)
+        {
+            if (_usedBuiltins.Contains(builtin) || builtin.Methods.Count > 0)
+                EmitBuiltinType(builtin);
+        }
+    }
+
+    /// <summary>
+    /// Option and Result are small readonly structs rather than record hierarchies: no allocation, they
+    /// nest (<c>Int??</c>), and <c>default</c> is None. Patterns use their properties, e.g.
+    /// <c>{ IsSome: true, Value: var v }</c>.
+    /// </summary>
+    private void EmitBuiltinType(EnumSymbol builtin)
+    {
+        bool isOption = builtin.BuiltinKind == BuiltinEnumKind.Option;
+        _writer.WriteLine();
+        _writer.WriteLine("#nullable disable");
+        _writer.WriteLine($"public readonly record struct {(isOption ? "Option<T>" : "Result<T, E>")}{BaseList(builtin.Traits)}");
+        _writer.OpenBrace();
+        if (isOption)
+        {
+            _writer.WriteLine("private Option(T value)");
+            _writer.OpenBrace();
+            _writer.WriteLine("IsSome = true;");
+            _writer.WriteLine("Value = value;");
+            _writer.CloseBrace();
+            _writer.WriteLine();
+            _writer.WriteLine("public bool IsSome { get; }");
+            _writer.WriteLine();
+            _writer.WriteLine("public T Value { get; }");
+            _writer.WriteLine();
+            _writer.WriteLine("public static Option<T> Some(T value) => new(value);");
+            _writer.WriteLine();
+            _writer.WriteLine("public static Option<T> None => default;");
+            _writer.WriteLine();
+            _writer.WriteLine("public override string ToString() => IsSome ? $\"Some({Value})\" : \"None\";");
+        }
+        else
+        {
+            _writer.WriteLine("private Result(bool isOk, T value, E error)");
+            _writer.OpenBrace();
+            _writer.WriteLine("IsOk = isOk;");
+            _writer.WriteLine("Value = value;");
+            _writer.WriteLine("Error = error;");
+            _writer.CloseBrace();
+            _writer.WriteLine();
+            _writer.WriteLine("public bool IsOk { get; }");
+            _writer.WriteLine();
+            _writer.WriteLine("public T Value { get; }");
+            _writer.WriteLine();
+            _writer.WriteLine("public E Error { get; }");
+            _writer.WriteLine();
+            _writer.WriteLine("public static Result<T, E> Ok(T value) => new(true, value, default);");
+            _writer.WriteLine();
+            _writer.WriteLine("public static Result<T, E> Err(E error) => new(false, default, error);");
+            _writer.WriteLine();
+            _writer.WriteLine("public override string ToString() => IsOk ? $\"Ok({Value})\" : $\"Err({Error})\";");
+        }
+
+        if (builtin.Methods.Count > 0)
+        {
+            _writer.WriteLine();
+            EmitMembers(builtin.Methods);
+        }
+        _writer.CloseBrace();
+        _writer.WriteLine("#nullable restore");
     }
 
     /// <summary>
@@ -190,7 +265,7 @@ public sealed class CSharpEmitter
             if (i > 0)
                 _writer.WriteLine();
             var method = trait.Methods[i];
-            _selfName = "this";
+            _thisName = "this";
             if (_methodBodies.TryGetValue(method, out var body))
             {
                 EmitFunction(body, "");
@@ -206,7 +281,7 @@ public sealed class CSharpEmitter
 
     private void EmitMembers(IReadOnlyList<MethodSymbol> methods)
     {
-        _selfName = "this";
+        _thisName = "this";
         for (int i = 0; i < methods.Count; i++)
         {
             if (i > 0)
@@ -244,16 +319,16 @@ public sealed class CSharpEmitter
             {
                 if (j > 0)
                     _writer.WriteLine();
-                _selfName = "self";
+                _thisName = "self";
                 EmitFunction(_methodBodies[methods[j]], isStatic ? "public static " : "public ");
             }
             _writer.CloseBrace();
         }
         _writer.CloseBrace();
-        _selfName = "this";
+        _thisName = "this";
     }
 
-    private static string Fields(IEnumerable<FieldSymbol> fields, ISet<string>? shadowedNames = null) =>
+    private string Fields(IEnumerable<FieldSymbol> fields, ISet<string>? shadowedNames = null) =>
         string.Join(", ", fields.Select(f => $"{TypeName(f.Type, shadowedNames)} {Escape(f.Name)}"));
 
     private static string TypeParameterList(IEnumerable<TypeParameterSymbol> parameters) =>
@@ -272,7 +347,8 @@ public sealed class CSharpEmitter
         IEnumerable<string> typeParameters = function.TypeParameters.Select(p => p.Name);
         if (function is MethodSymbol { ContainingType: NamedTypeDefinition definition })
             typeParameters = typeParameters.Concat(definition.TypeParameters.Select(p => p.Name));
-        return new NameAllocator([.. _topLevelNames, "_", .. typeParameters]);
+        // In an extension block the receiver parameter is called `self` (C# can't name it `this`), so keep that name free.
+        return new NameAllocator([.. _topLevelNames, "_", "self", .. typeParameters]);
     }
 
     /// <summary>e.g. <c>public static T first&lt;T&gt;(Pair&lt;T, T&gt; pair) where T : Show</c>; declares the parameter names.</summary>
@@ -287,8 +363,6 @@ public sealed class CSharpEmitter
     {
         var symbol = function.Symbol;
         _names = NewNameAllocator(symbol);
-        if (symbol is MethodSymbol { Self: { } self } && _selfName != "this")
-            _names.Declare(self);
 
         var signature = Signature(symbol, modifiers);
         var body = (BoundBlockStatement)function.Body;
@@ -431,7 +505,7 @@ public sealed class CSharpEmitter
         var (text, precedence) = expression switch
         {
             BoundLiteralExpression literal => (Literal(literal.Value), PrimaryPrecedence),
-            BoundVariableExpression { Variable.Kind: VariableKind.Self } => (_selfName, PrimaryPrecedence),
+            BoundVariableExpression { Variable.Kind: VariableKind.This } => (_thisName, PrimaryPrecedence),
             BoundVariableExpression variable => (Escape(_names.Get(variable.Variable)), PrimaryPrecedence),
             BoundUnaryExpression unary => (Unary(unary), UnaryPrecedence),
             BoundBinaryExpression binary => Binary(binary),
@@ -440,8 +514,13 @@ public sealed class CSharpEmitter
             BoundMethodCallExpression call => (MethodCall(call), PrimaryPrecedence),
             BoundRecordCreationExpression creation =>
                 ($"new {TypeName(creation.Type)}({Arguments(creation.Arguments)})", PrimaryPrecedence),
+            // Option/Result: static factories on the struct, e.g. `Option<int>.Some(1)` and `Option<int>.None`.
+            BoundVariantCreationExpression { Variant.Enum.BuiltinKind: not BuiltinEnumKind.None } creation =>
+                ($"{TypeName(creation.Type)}.{creation.Variant.Name}{(creation.Arguments.IsEmpty ? "" : $"({Arguments(creation.Arguments)})")}", PrimaryPrecedence),
             BoundVariantCreationExpression creation =>
                 ($"new {ConstructorName(creation.Variant, creation.Type)}({Arguments(creation.Arguments)})", PrimaryPrecedence),
+            BoundOptionalMemberExpression member =>
+                ($"{Expr(member.Operand, PrimaryPrecedence)}.{member.Member}", PrimaryPrecedence),
             BoundIsPatternExpression test =>
                 ($"{Expr(test.Expression, PrimaryPrecedence)} is {Pattern(test.Pattern)}", RelationalPrecedence),
             BoundFieldAccessExpression access =>
@@ -525,7 +604,7 @@ public sealed class CSharpEmitter
         return $"{Expr(call.Receiver, PrimaryPrecedence)}.{method}";
     }
 
-    private static string TypeArgumentList(ImmutableArray<TypeSymbol> arguments) =>
+    private string TypeArgumentList(ImmutableArray<TypeSymbol> arguments) =>
         arguments.IsEmpty ? "" : $"<{string.Join(", ", arguments.Select(a => TypeName(a)))}>";
 
     private string Arguments(IEnumerable<BoundExpression> arguments) =>
@@ -575,6 +654,7 @@ public sealed class CSharpEmitter
         BoundLiteralPattern literal => Literal(literal.Value),
         BoundRangePattern range =>
             $">= {Literal(range.Lower)} and {(range.IsInclusive ? "<=" : "<")} {Literal(range.Upper)}",
+        BoundConstructorPattern { Constructor: VariantSymbol { Enum.BuiltinKind: not BuiltinEnumKind.None } } builtin => BuiltinPattern(builtin),
         BoundConstructorPattern { Arguments.Length: 0 } constructor => ConstructorName(constructor.Constructor, constructor.Type),
         BoundConstructorPattern constructor =>
             $"{ConstructorName(constructor.Constructor, constructor.Type)}({string.Join(", ", constructor.Arguments.Select(Pattern))})",
@@ -583,8 +663,28 @@ public sealed class CSharpEmitter
         _ => throw new InvalidOperationException($"Unexpected pattern {pattern.GetType().Name}"),
     };
 
+    /// <summary>
+    /// Property patterns over the Option/Result structs: <c>Some(p)</c> → <c>{ IsSome: true, Value: p }</c>,
+    /// <c>None</c> → <c>{ IsSome: false }</c>, <c>Ok(p)</c>/<c>Err(p)</c> likewise with IsOk and Value/Error.
+    /// </summary>
+    private string BuiltinPattern(BoundConstructorPattern pattern)
+    {
+        TypeName(pattern.Type);
+        var variant = (VariantSymbol)pattern.Constructor;
+        var (test, member) = variant.Name switch
+        {
+            "Some" => ("IsSome: true", "Value"),
+            "None" => ("IsSome: false", null),
+            "Ok" => ("IsOk: true", "Value"),
+            _ => ("IsOk: false", "Error"),
+        };
+        return member is null || pattern.Arguments[0] is BoundWildcardPattern
+            ? $"{{ {test} }}"
+            : $"{{ {test}, {member}: {Pattern(pattern.Arguments[0])} }}";
+    }
+
     /// <summary><c>Option&lt;int&gt;.Some</c> for a variant of <paramref name="type"/>, or the record type itself.</summary>
-    private static string ConstructorName(Symbol constructor, TypeSymbol type) => constructor switch
+    private string ConstructorName(Symbol constructor, TypeSymbol type) => constructor switch
     {
         VariantSymbol variant => $"{TypeName(type)}.{Escape(variant.Name)}",
         RecordSymbol => TypeName(type),
@@ -597,7 +697,7 @@ public sealed class CSharpEmitter
     // Names, types and literals
 
     /// <param name="shadowedNames">User type names hidden by a nested type at this point (enum variants); those are emitted with <c>global::</c>.</param>
-    private static string TypeName(TypeSymbol type, ISet<string>? shadowedNames = null)
+    private string TypeName(TypeSymbol type, ISet<string>? shadowedNames = null)
     {
         if (type == TypeSymbol.Int) return "int";
         if (type == TypeSymbol.Long) return "long";
@@ -606,6 +706,9 @@ public sealed class CSharpEmitter
         if (type == TypeSymbol.String) return "string";
         if (type == TypeSymbol.Char) return "char";
         if (type == TypeSymbol.Unit) return "void";
+
+        if (type.OriginalDefinition is EnumSymbol { BuiltinKind: not BuiltinEnumKind.None } builtin)
+            _usedBuiltins.Add(builtin);
 
         string Qualify(string name) => shadowedNames?.Contains(name) == true ? "global::" + Escape(name) : Escape(name);
         return type switch

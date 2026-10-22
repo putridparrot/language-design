@@ -116,7 +116,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
             VariableKind.Parameter => $"Cannot assign to parameter '{variable.Name}'; parameters are immutable.",
             VariableKind.LoopVariable => $"Cannot assign to loop variable '{variable.Name}'.",
             VariableKind.PatternVariable => $"Cannot assign to pattern variable '{variable.Name}'.",
-            VariableKind.Self => "Cannot assign to 'self'.",
+            VariableKind.This => "Cannot assign to 'this'.",
             _ => $"Cannot assign to '{variable.Name}' because it is immutable; declare it with 'var' instead of 'let'.",
         });
 
@@ -136,7 +136,9 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0211", span, $"The type '{name}' does not exist.");
 
     public void ReportUnknownMember(TextSpan span, TypeSymbol type, string member) =>
-        Error("PIP0212", span, $"Type '{type}' has no member '{member}'.");
+        Error("PIP0212", span, type.IsOption
+            ? $"Type '{type}' has no member '{member}'; use '?.{member}' to reach the value inside the optional."
+            : $"Type '{type}' has no member '{member}'.");
 
     public void ReportOutsideLoop(TextSpan span, string keyword) =>
         Error("PIP0213", span, $"'{keyword}' can only be used inside a loop.");
@@ -233,16 +235,21 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0242", span, $"'{argument}' does not implement '{trait}', which type parameter '{parameter}' requires.");
 
     public void ReportUnknownMethod(TextSpan span, TypeSymbol type, string name) =>
-        Error("PIP0243", span, $"Type '{type}' has no method '{name}'.");
+        Error("PIP0243", span, type.IsOption
+            ? $"Type '{type}' has no method '{name}'; use '?.{name}(...)' to call it on the value inside the optional."
+            : $"Type '{type}' has no method '{name}'.");
 
-    public void ReportSelfOutsideMethod(TextSpan span) =>
-        Error("PIP0244", span, "'self' can only be used in methods declared in a trait or extend block.");
+    public void ReportThisOutsideInstanceMethod(TextSpan span) =>
+        Error("PIP0244", span, "'this' can only be used inside instance (non-static) methods of a trait or extend block.");
+
+    public void ReportStaticOutsideExtend(TextSpan span) =>
+        Error("PIP0244", span, "'static' can only be used on methods in an extend block; top-level functions are already static.");
 
     public void ReportStaticMethodOnInstance(TextSpan span, string method, TypeSymbol type) =>
-        Error("PIP0244", span, $"'{method}' has no 'self' parameter; call it on the type: {type.OriginalDefinition}.{method}(...).");
+        Error("PIP0244", span, $"'{method}' is static; call it on the type: {type.OriginalDefinition}.{method}(...).");
 
     public void ReportInstanceMethodCalledStatically(TextSpan span, string method) =>
-        Error("PIP0244", span, $"'{method}' takes 'self'; call it on a value: value.{method}(...).");
+        Error("PIP0244", span, $"'{method}' is an instance method; call it on a value: value.{method}(...).");
 
     public void ReportMissingTraitMethod(TextSpan span, TypeSymbol type, string method, TraitSymbol trait) =>
         Error("PIP0245", span, $"'{type}' does not implement '{method}', which trait '{trait}' requires.");
@@ -264,6 +271,33 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportExistingClrMember(TextSpan span, TypeSymbol type, string name) =>
         Error("PIP0252", span, $"'{type}' already has a member named '{name}', which would hide this method.");
+
+    // Null safety
+
+    public void ReportNullWithoutOptionalType(TextSpan span) =>
+        Error("PIP0260", span, "'null' needs an optional type here, e.g. 'let x: Int? = null;'. Piper has no null references; 'null' means None.");
+
+    public void ReportRequiresOptional(TextSpan span, string op, TypeSymbol type) =>
+        Error("PIP0261", span, op == "?."
+            ? $"'?.' needs an optional value but '{type}' is not optional; use '.' instead."
+            : $"The left side of '??' must be optional but '{type}' is not.");
+
+    public void ReportIsBindingOutsideCondition(TextSpan span) =>
+        Error("PIP0262", span, "Variables bound by 'is' can only be used in an if or while condition (optionally joined with '&&').");
+
+    public void ReportIsBindingBeforeStatements(TextSpan span) =>
+        Error("PIP0262", span, "After an 'is' that binds variables, the rest of the condition cannot (yet) contain blocks with statements, match, or '?'.");
+
+    public void ReportTryOutsideOptionalFunction(TextSpan span, string kind) =>
+        Error("PIP0263", span, kind == "Option"
+            ? "'?' on an optional value can only be used in a function that returns an optional value."
+            : "'?' on a Result can only be used in a function that returns a Result.");
+
+    public void ReportTryOperandNotOptional(TextSpan span, TypeSymbol type) =>
+        Error("PIP0263", span, $"'?' needs an optional value or a Result, not '{type}'.");
+
+    public void ReportBuiltinTypeRedeclared(TextSpan span, string name) =>
+        Error("PIP0264", span, $"'{name}' is built into Piper and cannot be redeclared.");
 
     public void ReportEmptyRangePattern(TextSpan span) =>
         Error("PIP0239", span, "This range pattern is empty: its lower bound is not below its upper bound.");

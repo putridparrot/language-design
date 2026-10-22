@@ -12,43 +12,6 @@ public sealed record Point(int x, int y)
     public int lengthSquared() => this.x.squared() + this.y.squared();
 }
 
-public abstract record Option<T>
-{
-    private Option()
-    {
-    }
-
-    public sealed record Some(T @value) : Option<T>;
-
-    public sealed record None() : Option<T>;
-
-    public bool isSome()
-    {
-        if (this is Option<T>.Some(_))
-        {
-            return true;
-        }
-        else
-        {
-            return false;
-        }
-    }
-
-    public T getOr(T fallback)
-    {
-        if (this is Option<T>.Some(var v))
-        {
-            return v;
-        }
-        else
-        {
-            return fallback;
-        }
-    }
-
-    public static Option<T> none() => new Option<T>.None();
-}
-
 public static class Extensions
 {
     public static void main()
@@ -66,7 +29,7 @@ public static class Extensions
         Option<string> o = Option<string>.none();
         global::System.Console.WriteLine(o.isSome() ? "true" : "false");
         global::System.Console.WriteLine(o.getOr("default"));
-        global::System.Console.WriteLine(new Option<int>.Some(5).getOr(0));
+        global::System.Console.WriteLine(Option<int>.Some(5).getOr(0));
     }
 }
 
@@ -115,3 +78,50 @@ internal static class PiperEntryPoint
         Extensions.main();
     }
 }
+
+#nullable disable
+public readonly record struct Option<T>
+{
+    private Option(T value)
+    {
+        IsSome = true;
+        Value = value;
+    }
+
+    public bool IsSome { get; }
+
+    public T Value { get; }
+
+    public static Option<T> Some(T value) => new(value);
+
+    public static Option<T> None => default;
+
+    public override string ToString() => IsSome ? $"Some({Value})" : "None";
+
+    public bool isSome()
+    {
+        if (this is { IsSome: true })
+        {
+            return true;
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+    public T getOr(T fallback)
+    {
+        if (this is { IsSome: true, Value: var v })
+        {
+            return v;
+        }
+        else
+        {
+            return fallback;
+        }
+    }
+
+    public static Option<T> none() => Option<T>.None;
+}
+#nullable restore

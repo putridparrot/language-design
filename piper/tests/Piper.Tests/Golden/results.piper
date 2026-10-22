@@ -1,0 +1,39 @@
+// Result<T, E> for errors as values; `?` propagates an Err to the caller.
+
+enum MathError {
+    DivideByZero,
+    Negative(value: Int),
+}
+
+fn divide(a: Int, b: Int) -> Result<Int, MathError> =
+    if b == 0 { Err(MathError.DivideByZero) } else { Ok(a / b) };
+
+fn root(n: Int) -> Result<Int, MathError> {
+    if n < 0 { return Err(MathError.Negative(n)); }
+    var r = 0;
+    while (r + 1) * (r + 1) <= n { r += 1; }
+    Ok(r)
+}
+
+// Each `?` either unwraps the Ok value or returns the Err immediately.
+fn compute(a: Int, b: Int) -> Result<Int, MathError> {
+    let quotient = divide(a, b)?;
+    let r = root(quotient)?;
+    Ok(r * 10)
+}
+
+fn show(result: Result<Int, MathError>) -> String = match result {
+    Ok(v) => "ok: {v}",
+    Err(MathError.DivideByZero) => "error: divide by zero",
+    Err(Negative(n)) => "error: {n} is negative",
+};
+
+fn main() {
+    print(show(compute(100, 4)));
+    print(show(compute(1, 0)));
+    print(show(compute(-50, 2)));
+    print(divide(7, 2));
+    print(root(-1));
+
+    if compute(64, 1) is Ok(v) { print("64 -> {v}"); }
+}

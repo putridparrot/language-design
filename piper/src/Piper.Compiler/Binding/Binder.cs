@@ -39,6 +39,13 @@ public sealed partial class Binder
     /// <summary>Methods added to builtin types with <c>extend Int { … }</c>; user types keep theirs on the symbol.</summary>
     private readonly Dictionary<TypeSymbol, List<MethodSymbol>> _builtinMethods = [];
 
+    /// <summary>The built-in <c>Option&lt;T&gt;</c> (<c>T?</c>) and <c>Result&lt;T, E&gt;</c>.</summary>
+    private readonly EnumSymbol _option;
+    private readonly EnumSymbol _result;
+
+    /// <summary>The unwrapped values that <c>?.</c> chains currently being bound refer to.</summary>
+    private readonly Stack<VariableSymbol> _implicitReceivers = new();
+
     private Scope _scope;
     private FunctionSymbol? _function;
     private int _loopDepth;
@@ -46,12 +53,21 @@ public sealed partial class Binder
     private Binder(DiagnosticBag diagnostics)
     {
         _diagnostics = diagnostics;
+        (_option, _result) = EnumSymbol.CreateBuiltins();
 
         var builtins = new Scope(parent: null);
         foreach (var type in TypeSymbol.Builtins)
             builtins.TryDeclare(type);
         foreach (var function in BuiltinFunctions.All)
             builtins.TryDeclare(function);
+
+        // Option and Result are part of the language: their variants can be used unqualified (Some(1), None, Ok(x), Err(e)).
+        foreach (var @enum in new[] { _option, _result })
+        {
+            builtins.TryDeclare(@enum);
+            foreach (var variant in @enum.Variants)
+                builtins.TryDeclare(variant);
+        }
 
         // User declarations live in their own scope so they may shadow builtins.
         _globalScope = new Scope(builtins);
@@ -76,12 +92,21 @@ public sealed partial class Binder
             var (syntax, reserved) = definition switch
             {
                 RecordSymbol r => (r.Declaration.TypeParameters, new HashSet<string> { r.Name }),
-                EnumSymbol e => (e.Declaration.TypeParameters, [e.Name, .. e.Declaration.Variants.Select(v => v.Name.Text)]),
+                EnumSymbol e => (e.Declaration!.TypeParameters, [e.Name, .. e.Declaration.Variants.Select(v => v.Name.Text)]),
                 _ => throw new InvalidOperationException(),
             };
             var scope = new Scope(_globalScope);
             definition.TypeParameters = BindTypeParameters(syntax, scope, reserved);
             typeParameterScopes[definition] = scope;
+        }
+
+        // Extend blocks on Option and Result see their (already created) type parameters.
+        foreach (var builtin in new[] { _option, _result })
+        {
+            var scope = new Scope(_globalScope);
+            foreach (var parameter in builtin.TypeParameters)
+                scope.TryDeclare(parameter);
+            typeParameterScopes[builtin] = scope;
         }
 
         // Conformances must be known before any generic type is instantiated, to check constraints.
@@ -105,7 +130,7 @@ public sealed partial class Binder
         var functions = new List<FunctionInfo>();
         foreach (var declaration in unit.Declarations.OfType<FunctionDeclarationSyntax>())
         {
-            var info = BindFunctionSignature(declaration, _globalScope, containingType: null, selfType: null);
+            var info = BindFunctionSignature(declaration, _globalScope, containingType: null, thisType: null);
             if (!declaration.Name.IsMissing && !_globalScope.TryDeclare(info.Symbol))
                 _diagnostics.ReportDuplicateDeclaration(declaration.Name.Span, info.Symbol.Name);
             functions.Add(info);
@@ -118,7 +143,7 @@ public sealed partial class Binder
         if (main is not null && (main.Parameters.Length != 0 || main.ReturnType != TypeSymbol.Unit || main.TypeParameters.Length != 0))
             _diagnostics.ReportInvalidMain(main.Declaration!.Name.Span);
 
-        return new BoundProgram([.. types], boundFunctions, boundMethods, main);
+        return new BoundProgram([.. types], [_option, _result], boundFunctions, boundMethods, main);
     }
 
     private List<TypeSymbol> DeclareTypes(CompilationUnitSyntax unit)
@@ -136,7 +161,9 @@ public sealed partial class Binder
             if (type is null || declaration.Name.IsMissing)
                 continue;
 
-            if (_globalScope.TryDeclare(type))
+            if (type.Name is "Option" or "Result")
+                _diagnostics.ReportBuiltinTypeRedeclared(declaration.Name.Span, type.Name);
+            else if (_globalScope.TryDeclare(type))
                 types.Add(type);
             else
                 _diagnostics.ReportDuplicateDeclaration(declaration.Name.Span, type.Name);
@@ -212,7 +239,7 @@ public sealed partial class Binder
 
     private void BindVariants(EnumSymbol @enum)
     {
-        var declaration = @enum.Declaration;
+        var declaration = @enum.Declaration!;
         if (declaration.Variants.IsEmpty)
             _diagnostics.ReportEmptyEnum(declaration.Name.Span, @enum.Name);
 
@@ -313,8 +340,8 @@ public sealed partial class Binder
         var names = new HashSet<string>();
         foreach (var syntax in trait.Declaration.Methods)
         {
-            if (syntax.Self is null)
-                _diagnostics.ReportInvalidTraitMethod(syntax.Name.Span, $"Trait method '{syntax.Name.Text}' must take 'self'; static trait methods aren't supported (yet).");
+            if (syntax.Static is { } @static)
+                _diagnostics.ReportInvalidTraitMethod(@static.Span, $"Trait method '{syntax.Name.Text}' cannot be static (yet).");
             if (!syntax.TypeParameters.IsEmpty)
                 _diagnostics.ReportInvalidTraitMethod(syntax.Name.Span, $"Trait method '{syntax.Name.Text}' cannot be generic (yet).");
 
@@ -339,11 +366,11 @@ public sealed partial class Binder
     private IEnumerable<FunctionInfo> BindExtendMethods(ExtendInfo extend)
     {
         var target = extend.Target;
-        var selfType = target is NamedTypeDefinition definition ? definition.SelfType : target;
+        var thisType = target is NamedTypeDefinition definition ? definition.SelfType : target;
         var infos = new List<FunctionInfo>();
         foreach (var syntax in extend.Syntax.Methods)
         {
-            var info = BindFunctionSignature(syntax, extend.TypeParameterScope, target, selfType);
+            var info = BindFunctionSignature(syntax, extend.TypeParameterScope, target, thisType);
             var method = (MethodSymbol)info.Symbol;
             if (!syntax.HasBody)
                 _diagnostics.ReportMissingBody(syntax.Name.Span, syntax.Name.Text);
@@ -358,7 +385,10 @@ public sealed partial class Binder
     /// <summary>Adds an extend method to its type, rejecting names that clash with existing members.</summary>
     private bool RegisterMethod(TypeSymbol target, MethodSymbol method, Token name)
     {
-        if (ReservedMemberNames.Contains(method.Name))
+        // The emitted Option/Result structs also have IsSome/IsOk/Value/Error members.
+        bool reservedOnBuiltin = target is EnumSymbol { BuiltinKind: not BuiltinEnumKind.None } &&
+                                 method.Name is "IsSome" or "IsOk" or "Value" or "Error";
+        if (ReservedMemberNames.Contains(method.Name) || reservedOnBuiltin)
         {
             _diagnostics.ReportReservedMemberName(name.Span, method.Name);
             return false;
@@ -412,7 +442,7 @@ public sealed partial class Binder
 
             foreach (var traitSyntax in extend.Syntax.Traits)
             {
-                if (_globalScope.Lookup(((NamedTypeSyntax)traitSyntax).Name.Text) is not TraitSymbol trait)
+                if (traitSyntax is not NamedTypeSyntax named || _globalScope.Lookup(named.Name.Text) is not TraitSymbol trait)
                     continue;
 
                 foreach (var required in trait.Methods)
@@ -440,7 +470,7 @@ public sealed partial class Binder
 
     private static string Signature(MethodSymbol method)
     {
-        var parameters = string.Join(", ", ["self", .. method.Parameters.Select(p => $"{p.Name}: {p.Type}")]);
+        var parameters = string.Join(", ", method.Parameters.Select(p => $"{p.Name}: {p.Type}"));
         var result = method.ReturnType == TypeSymbol.Unit ? "" : $" -> {method.ReturnType}";
         return $"fn {method.Name}({parameters}){result}";
     }
@@ -448,12 +478,12 @@ public sealed partial class Binder
     // Functions and methods
 
     /// <param name="containingType">The trait, record/enum definition or builtin a method belongs to; null for a top-level function.</param>
-    /// <param name="selfType">The type of <c>self</c> inside the method.</param>
+    /// <param name="thisType">The type of <c>this</c> inside an instance method.</param>
     private FunctionInfo BindFunctionSignature(
         FunctionDeclarationSyntax declaration,
         Scope outer,
         TypeSymbol? containingType,
-        TypeSymbol? selfType)
+        TypeSymbol? thisType)
     {
         var scope = new Scope(outer);
         var typeParameters = BindTypeParameters(declaration.TypeParameters, scope, new HashSet<string> { declaration.Name.Text });
@@ -478,19 +508,20 @@ public sealed partial class Binder
 
         if (containingType is null)
         {
-            if (declaration.Self is { } self)
-                _diagnostics.ReportSelfOutsideMethod(self.Span);
+            if (declaration.Static is { } @static)
+                _diagnostics.ReportStaticOutsideExtend(@static.Span);
             if (!declaration.HasBody)
                 _diagnostics.ReportMissingBody(declaration.Name.Span, declaration.Name.Text);
             var function = new FunctionSymbol(declaration.Name.Text, typeParameters, parameters.ToImmutable(), returnType, declaration);
             return new FunctionInfo(function, declaration, scope);
         }
 
-        var selfVariable = declaration.Self is null
-            ? null
-            : new VariableSymbol("self", selfType!, isMutable: false, VariableKind.Self);
+        // As in C#, methods are instance methods with an implicit `this` unless marked static.
+        var thisVariable = declaration.Static is null
+            ? new VariableSymbol("this", thisType!, isMutable: false, VariableKind.This)
+            : null;
         var method = new MethodSymbol(
-            declaration.Name.Text, typeParameters, parameters.ToImmutable(), returnType, declaration, containingType, selfVariable);
+            declaration.Name.Text, typeParameters, parameters.ToImmutable(), returnType, declaration, containingType, thisVariable);
         return new FunctionInfo(method, declaration, scope);
     }
 
@@ -503,8 +534,8 @@ public sealed partial class Binder
         _function = function;
         _loopDepth = 0;
         _scope = new Scope(signatureScope);
-        if (function is MethodSymbol { Self: { } self })
-            _scope.TryDeclare(self);
+        if (function is MethodSymbol { This: { } @this })
+            _scope.TryDeclare(@this);
         foreach (var parameter in function.Parameters)
             _scope.TryDeclare(parameter);
 
@@ -556,6 +587,12 @@ public sealed partial class Binder
 
     private TypeSymbol BindType(TypeSyntax syntax)
     {
+        if (syntax is OptionalTypeSyntax optional)
+        {
+            var inner = BindValueType(optional.Inner, "type argument");
+            return inner == TypeSymbol.Error ? TypeSymbol.Error : _option.Construct([inner]);
+        }
+
         var named = (NamedTypeSyntax)syntax;
         var name = named.Name;
         if (name.IsMissing)
@@ -684,10 +721,14 @@ public sealed partial class Binder
 
     private BoundStatement BindWhile(WhileStatementSyntax syntax)
     {
-        var condition = BindCondition(syntax.Condition);
+        // Variables bound by `is` in the condition are in scope in the body.
+        var outer = _scope;
+        _scope = new Scope(outer);
+        var condition = BindCondition(syntax.Condition, allowPatternBindings: true);
         _loopDepth++;
         var body = BindBlock(syntax.Body);
         _loopDepth--;
+        _scope = outer;
         return new BoundWhileStatement(condition, new BoundExpressionStatement(body));
     }
 

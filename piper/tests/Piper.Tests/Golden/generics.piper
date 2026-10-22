@@ -3,11 +3,6 @@
 
 record Pair<A, B>(first: A, second: B);
 
-enum Option<T> {
-    Some(value: T),
-    None,
-}
-
 enum List<T> {
     Cons(head: T, tail: List<T>),
     Nil,

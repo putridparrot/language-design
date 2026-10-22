@@ -47,6 +47,12 @@ public class TypeSymbol : Symbol
 
     public virtual ImmutableArray<TypeSymbol> TypeArguments => [];
 
+    /// <summary>An instantiation of the built-in <c>Option&lt;T&gt;</c> (written <c>T?</c>).</summary>
+    public bool IsOption => OriginalDefinition is EnumSymbol { BuiltinKind: BuiltinEnumKind.Option };
+
+    /// <summary>An instantiation of the built-in <c>Result&lt;T, E&gt;</c>.</summary>
+    public bool IsResult => OriginalDefinition is EnumSymbol { BuiltinKind: BuiltinEnumKind.Result };
+
     public override string ToString() => Name;
 }
 
@@ -112,6 +118,13 @@ public sealed class RecordSymbol : NamedTypeDefinition
     public ImmutableArray<FieldSymbol> Fields { get; internal set; } = [];
 }
 
+public enum BuiltinEnumKind
+{
+    None,
+    Option,
+    Result,
+}
+
 /// <summary>A sum type: a value is exactly one of its <see cref="Variants"/>.</summary>
 public sealed class EnumSymbol : NamedTypeDefinition
 {
@@ -120,7 +133,42 @@ public sealed class EnumSymbol : NamedTypeDefinition
         Declaration = declaration;
     }
 
-    public EnumDeclarationSyntax Declaration { get; }
+    private EnumSymbol(string name, BuiltinEnumKind kind) : base(name)
+    {
+        BuiltinKind = kind;
+    }
+
+    /// <summary>Null for the built-in <c>Option</c> and <c>Result</c>.</summary>
+    public EnumDeclarationSyntax? Declaration { get; }
+
+    public BuiltinEnumKind BuiltinKind { get; }
+
+    /// <summary>
+    /// Creates the built-in <c>enum Option&lt;T&gt; { Some(value: T), None }</c> and
+    /// <c>enum Result&lt;T, E&gt; { Ok(value: T), Err(error: E) }</c>. They are created per compilation
+    /// because extend blocks add methods to them.
+    /// </summary>
+    public static (EnumSymbol Option, EnumSymbol Result) CreateBuiltins()
+    {
+        var t = new TypeParameterSymbol("T");
+        var option = new EnumSymbol("Option", BuiltinEnumKind.Option) { TypeParameters = [t] };
+        option.Variants =
+        [
+            new VariantSymbol("Some", option) { Fields = [new FieldSymbol("value", t)] },
+            new VariantSymbol("None", option),
+        ];
+
+        var value = new TypeParameterSymbol("T");
+        var error = new TypeParameterSymbol("E");
+        var result = new EnumSymbol("Result", BuiltinEnumKind.Result) { TypeParameters = [value, error] };
+        result.Variants =
+        [
+            new VariantSymbol("Ok", result) { Fields = [new FieldSymbol("value", value)] },
+            new VariantSymbol("Err", result) { Fields = [new FieldSymbol("error", error)] },
+        ];
+
+        return (option, result);
+    }
 
     public ImmutableArray<VariantSymbol> Variants { get; internal set; } = [];
 
@@ -139,7 +187,7 @@ public sealed class VariantSymbol(string name, EnumSymbol @enum) : Symbol(name)
 
 /// <summary>A generic record or enum applied to type arguments, e.g. <c>Option&lt;Int&gt;</c>.</summary>
 public sealed class ConstructedTypeSymbol(NamedTypeDefinition definition, ImmutableArray<TypeSymbol> arguments)
-    : TypeSymbol($"{definition.Name}<{string.Join(", ", arguments)}>")
+    : TypeSymbol(definition is EnumSymbol { BuiltinKind: BuiltinEnumKind.Option } ? $"{arguments[0]}?" : $"{definition.Name}<{string.Join(", ", arguments)}>")
 {
     public NamedTypeDefinition Definition { get; } = definition;
 

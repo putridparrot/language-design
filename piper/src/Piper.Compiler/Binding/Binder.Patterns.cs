@@ -24,7 +24,7 @@ public sealed partial class Binder
             BoundExpression? guard = null;
             if (arm.Guard is not null)
             {
-                guard = BindCondition(arm.Guard);
+                guard = BindCondition(arm.Guard, allowPatternBindings: true);
                 if (ContainsStatements(guard))
                     _diagnostics.ReportGuardContainsStatements(arm.Guard.Span);
             }
@@ -90,6 +90,13 @@ public sealed partial class Binder
         BoundRecordCreationExpression creation => creation.Arguments.Any(ContainsStatements),
         BoundVariantCreationExpression creation => creation.Arguments.Any(ContainsStatements),
         BoundInterpolatedStringExpression interpolated => interpolated.Parts.Any(ContainsStatements),
+        BoundIsPatternExpression test => ContainsStatements(test.Expression),
+        // These evaluate their operand once, so anything but a variable is first stored in a temporary.
+        BoundNullCoalescingExpression coalescing =>
+            coalescing.Left is not BoundVariableExpression || ContainsStatements(coalescing.Right),
+        BoundConditionalAccessExpression access =>
+            access.Target is not BoundVariableExpression || ContainsStatements(access.WhenNotNull),
+        BoundTryExpression => true,
         _ => false,
     };
 
@@ -99,6 +106,13 @@ public sealed partial class Binder
         switch (syntax)
         {
             case WildcardPatternSyntax or ErrorPatternSyntax:
+                return new BoundWildcardPattern(expected);
+
+            case NullPatternSyntax:
+                if (expected.IsOption)
+                    return new BoundConstructorPattern(_option.FindVariant("None")!, [], expected);
+                if (expected != TypeSymbol.Error)
+                    _diagnostics.ReportPatternTypeMismatch(syntax.Span, "A 'null' pattern", expected);
                 return new BoundWildcardPattern(expected);
 
             case IdentifierPatternSyntax { Identifier: var name }:

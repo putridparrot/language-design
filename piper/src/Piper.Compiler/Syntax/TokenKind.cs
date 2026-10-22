@@ -30,7 +30,10 @@ public enum TokenKind
     MatchKeyword,
     TraitKeyword,
     ExtendKeyword,
-    SelfKeyword,
+    ThisKeyword,
+    StaticKeyword,
+    NullKeyword,
+    IsKeyword,
     TrueKeyword,
     FalseKeyword,
 
@@ -50,6 +53,8 @@ public enum TokenKind
     Arrow,
     FatArrow,
     Question,
+    QuestionQuestion,
+    QuestionDot,
 
     // Operators
     Equals,

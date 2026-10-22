@@ -1,9 +1,10 @@
-# The Piper language (milestone 3)
+# The Piper language (milestone 4)
 
 Piper is a small, C-style, expression-oriented language that transpiles to C#. It borrows
 immutable-by-default bindings, block expressions, enums (sum types), exhaustive `match` and traits
-from Rust, `let`/`var` and retroactive `extend` from Swift, and records, generics and string
-interpolation from C#. Generated code needs C# 14 (.NET 10), which is used for extension members.
+from Rust, `let`/`var` and retroactive `extend` from Swift, and records, generics, string
+interpolation and the `T?` / `?.` / `??` null-handling syntax from C#. There are no null references:
+absence is the built-in `Option<T>`, and errors are values of the built-in `Result<T, E>`. Generated code needs C# 14 (.NET 10), which is used for extension members.
 
 ```piper
 record Point(x: Int, y: Int);
@@ -34,18 +35,19 @@ Notation: `{ x }` is zero or more, `[ x ]` is optional, `|` separates alternativ
 compilationUnit = { declaration } EOF ;
 declaration     = function | record | enum | trait | extend ;
 
-function        = "fn" IDENT [ typeParameters ] "(" [ "self" [ "," ] ] [ parameters ] ")" [ "->" type ]
-                  ( block | "=" expression ";" | ";" ) ;      (* ";" only for required trait methods *)
+function        = [ "static" ] "fn" IDENT [ typeParameters ] "(" [ parameters ] ")" [ "->" type ]
+                  ( block | "=" expression ";" | ";" ) ;      (* ";" only for required trait methods; "static" only in extend blocks *)
 record          = "record" IDENT [ typeParameters ] "(" [ parameters ] ")" ";" ;
 enum            = "enum" IDENT [ typeParameters ] "{" [ variant { "," variant } [ "," ] ] "}" ;
 variant         = IDENT [ "(" [ parameters ] ")" ] ;
 trait           = "trait" IDENT "{" { function } "}" ;
-extend          = "extend" type [ ":" type { "," type } ] "{" { function } "}" ;
+extend          = "extend" namedType [ ":" type { "," type } ] "{" { function } "}" ;
 typeParameters  = "<" typeParameter { "," typeParameter } [ "," ] ">" ;
 typeParameter   = IDENT [ ":" type { "+" type } ] ;           (* bounds must be traits *)
 parameters      = parameter { "," parameter } [ "," ] ;
 parameter       = IDENT ":" type ;
-type            = IDENT [ "<" type { "," type } [ "," ] ">" ] ;
+type            = namedType { "?" } ;                         (* T? is Option<T> *)
+namedType       = IDENT [ "<" type { "," type } [ "," ] ">" ] ;
 
 block           = "{" { statement } [ expression ] "}" ;      (* final expression = block's value *)
 statement       = variableDecl | while | for | return | "break" ";" | "continue" ";"
@@ -58,11 +60,12 @@ return          = "return" [ expression ] ";" ;
 
 expression      = assignment ;
 assignment      = binary [ ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" ) assignment ] ;
-binary          = unary { binaryOp unary } ;                  (* precedence table below *)
+binary          = unary { binaryOp unary | "is" pattern } ;   (* precedence table below *)
 unary           = ( "-" | "!" ) unary | postfix ;
-postfix         = primary { "(" [ arguments ] ")" | "." IDENT } ;
+postfix         = primary { "(" [ arguments ] ")" | "." IDENT | "?" | "?." IDENT postfix } ;
+                                                              (* after "?." the rest of the chain is skipped on None *)
 arguments       = expression { "," expression } [ "," ] ;
-primary         = INT | DOUBLE | CHAR | STRING | "true" | "false" | IDENT | "self"
+primary         = INT | DOUBLE | CHAR | STRING | "true" | "false" | "null" | IDENT | "this"
                 | "(" expression ")" | block | if | match ;
 if              = "if" expression block [ "else" ( block | if ) ] ;
 
@@ -72,6 +75,7 @@ armBody         = expression | "return" [ expression ] | "break" | "continue" ;
 
 pattern         = primaryPattern { "|" primaryPattern } ;
 primaryPattern  = "_"                                         (* wildcard *)
+                | "null"                                      (* None *)
                 | IDENT                                       (* fieldless variant, else a binding *)
                 | [ IDENT "." ] IDENT [ "(" [ pattern { "," pattern } [ "," ] ] ")" ]   (* variant / record *)
                 | literalPattern [ ( ".." | "..=" ) literalPattern ] ;
@@ -82,13 +86,15 @@ literalPattern  = [ "-" ] ( INT | DOUBLE ) | CHAR | STRING | "true" | "false" ;
 
 | Level | Operators | Associativity |
 |---|---|---|
-| 8 | unary `-` `!` | prefix |
-| 7 | `*` `/` `%` | left |
-| 6 | `+` `-` | left |
-| 5 | `<` `<=` `>` `>=` | left |
-| 4 | `==` `!=` | left |
-| 3 | `&&` | left |
-| 2 | `\|\|` | left |
+| 10 | postfix `()` `.` `?.` `?` | left |
+| 9 | unary `-` `!` | prefix |
+| 8 | `*` `/` `%` | left |
+| 7 | `+` `-` | left |
+| 6 | `<` `<=` `>` `>=` `is` | left |
+| 5 | `==` `!=` | left |
+| 4 | `&&` | left |
+| 3 | `\|\|` | left |
+| 2 | `??` | right |
 | 1 | `..` `..=` | left (only valid in `for`) |
 | 0 | `=` `+=` `-=` `*=` `/=` `%=` | right |
 
@@ -98,7 +104,7 @@ number there is all it takes to change precedence.
 ### Lexical structure
 
 - **Identifiers:** ASCII letters, digits and `_`, not starting with a digit.
-- **Keywords:** `fn let var if else while for in return break continue record enum match trait extend self true false`.
+- **Keywords:** `fn let var if else while for in return break continue record enum match trait extend static this null is true false`.
 - **Comments:** `// line` and `/* block */`. Block comments nest.
 - **Integers:** `42`, `1_000_000`, `0xFF`, `0b1010`. Add an `L` suffix for Long: `3_000_000_000L`. An unsuffixed literal must fit in Int.
 - **Doubles:** `1.5`, `2e3`, `2.5E-1`. A digit is required after the `.`, so `0..10` is a range.
@@ -198,14 +204,14 @@ implemented; a method with a body is a default that implementers may override.
 
 ```piper
 trait Shape {
-    fn area(self) -> Double;
-    fn describe(self) -> String = "area {self.area()}";
+    fn area() -> Double;
+    fn describe() -> String = "area {this.area()}";
 }
 
 record Circle(radius: Double);
 
 extend Circle: Shape {
-    fn area(self) -> Double = 3.14159 * self.radius * self.radius;
+    fn area() -> Double = 3.14159 * this.radius * this.radius;
 }
 ```
 
@@ -213,7 +219,7 @@ extend Circle: Shape {
 - **Traits as types:** a trait is also a type. A `Circle` converts implicitly to `Shape`, and calls through a `Shape` value dispatch dynamically.
 - **Traits as bounds:** a type parameter bound by a trait gets static dispatch.
 - **Using the expected type:** when an `if` or `match` produces different types that all implement the expected trait, the trait is used, e.g. `let s: Shape = if c { circle } else { rect };`.
-- **Not yet supported:** traits can't be generic, inherit from each other, have static methods or mention `Self`. Builtin types can't implement traits.
+- **Not yet supported:** traits can't be generic, inherit from each other, have static methods or refer to the implementing type as a type (a `Self` type). Builtin types can't implement traits.
 
 ### Methods and `extend`
 
@@ -221,23 +227,62 @@ extend Circle: Shape {
 
 ```piper
 extend Int {
-    fn squared(self) -> Int = self * self;
-    fn zero() -> Int = 0;                 // no self: a static method, called as Int.zero()
+    fn squared() -> Int = this * this;
+    static fn zero() -> Int = 0;          // a static method, called as Int.zero()
 }
 
 extend Option {                           // generic types: their type parameters are in scope
-    fn getOr(self, fallback: T) -> T = match self { Some(v) => v, None => fallback };
+    fn getOr(fallback: T) -> T = match this { Some(v) => v, None => fallback };
 }
 
 let n = 7.squared();
 let s = Option.Some(5).getOr(0);
 ```
 
-- **Instance and static methods:** a method whose first parameter is `self` is called on a value. Without `self` it's static and is called on the type.
-- **`self` is immutable.**
+- **Instance and static methods:** as in C#, a method is an instance method by default, with `this` referring to the receiver. Mark it `static fn` to call it on the type instead, e.g. `Int.zero()`. There is no explicit receiver parameter.
+- **`this` is immutable.** Using it in a static method or a top-level function is an error.
 - **Generic types:** write `extend Option`, not `extend Option<Int>`. Methods apply to every instantiation.
 - **Name clashes are errors.** A method can't share a name with a field, a variant, a variant's field (variants inherit their enum's methods) or another method.
 - **Builtin members:** on builtin types, a method can't reuse a name the .NET type already has (such as `String.Length`), because the .NET member would silently win.
+
+### Null safety: `Option` and `T?`
+
+Piper has no null references. A value that might be absent has the built-in type `Option<T>`, written
+`T?` as in C#, so the compiler makes every use deal with the missing case.
+
+```piper
+enum Option<T> { Some(value: T), None }      // built in; Some(…) and None can be used unqualified
+```
+
+| Syntax | Meaning |
+|---|---|
+| `let x: Int? = 5;` | implicit `Some`: a plain value converts to its optional type |
+| `let y: Int? = null;` / `return null;` | `null` is `None`; it only type-checks where an optional type is expected |
+| `user?.name` | `Some(user.name)` if `user` has a value, else `None`. The whole chain after `?.` is skipped, and an already-optional result isn't wrapped again (`user?.email` is `String?`, not `String??`) |
+| `user?.greet();` | as a statement, the call only happens when there is a value |
+| `name ?? "anonymous"` | the value, or the fallback (evaluated only if needed); right-associative, so `a ?? b ?? c` works |
+| `let u = find(id)?;` | the value, or **return `None` from the enclosing function** (which must return an optional) |
+| `x == null`, `x != null`, `x == 5` | comparisons; `x == 5` compares with `Some(5)` |
+| `if x is Some(n) && n > 3 { … n … }` | C#-style `is` patterns. Variables bound in an `if`/`while` condition (or a match guard) are in scope in the body |
+| `match x { null => …, Some(n) => … }` | `null` is also a pattern for `None`; exhaustiveness checks apply |
+
+- **Inference through `T?`:** `fn f<T>(v: T?)` can be called as `f(5)`, which infers `T = Int` and wraps the argument in `Some`.
+- **`is` patterns elsewhere:** outside a condition, an `is` pattern can test but not bind, e.g. `let ok = x is Some(_);`.
+
+### Errors as values: `Result`
+
+```piper
+enum Result<T, E> { Ok(value: T), Err(error: E) }    // built in; Ok(…) and Err(…) can be used unqualified
+
+fn compute(a: Int, b: Int) -> Result<Int, MathError> {
+    let q = divide(a, b)?;      // an Err returns from compute immediately
+    Ok(q * 10)
+}
+```
+
+- **`?` propagates errors.** On a `Result`, `?` unwraps `Ok`, or returns the `Err` from a function that itself returns a `Result` with a compatible error type.
+- **Pattern matching:** `Result` values match like any enum, e.g. `Err(MathError.DivideByZero)`.
+- **No redeclaring:** `Option` and `Result` are built in, so they can't be redeclared. You can extend them, e.g. `extend Option { fn isNone() -> Bool = this is None; }`.
 
 ### Bindings
 
@@ -276,11 +321,16 @@ locale-independent. `main()` takes no parameters and returns Unit; it is the pro
 | patterns `1 \| 2`, `1..=9`, `_` | C# patterns `1 or 2`, `>= 1 and <= 9`, `_` |
 | `record Pair<A, B: Show>(…)` | `public sealed record Pair<A, B>(…) where B : Show` |
 | `swap(p)` (generic) | `swap<int, string>(p)`: type arguments are always explicit |
-| `trait Shape { fn area(self) -> Double; fn d(self) -> String = …; }` | `public interface Shape { double area(); string d() => …; }` |
-| `extend Circle: Shape { fn area(self) … }` | members inside `public sealed record Circle(…) : Shape { public double area() … }` |
+| `trait Shape { fn area() -> Double; fn d() -> String = …; }` | `public interface Shape { double area(); string d() => …; }` |
+| `extend Circle: Shape { fn area() … }` | members inside `public sealed record Circle(…) : Shape { public double area() … }` |
 | `c.d()` where `d` is an un-overridden default | `((Shape)c).d()` (C# only exposes default interface methods through the interface) |
-| `extend Int { fn squared(self) … fn zero() … }` | C# 14 `extension(int self) { public int squared() … }` and `extension(int) { public static int zero() … }` |
-| `self` | `this` in members, the `self` receiver parameter in extension blocks |
+| `extend Int { fn squared() … static fn zero() … }` | C# 14 `extension(int self) { public int squared() … }` and `extension(int) { public static int zero() … }` |
+| `this` | `this` in members; in C# extension blocks the receiver parameter is named `self`, since C# reserves `this` |
+| `Int?`, `Result<Int, E>` | `Option<int>`, `Result<int, E>`: small `readonly record struct`s added to the output when used (not C#'s `int?`, which can't represent `None` for an unconstrained generic `T` or nest) |
+| `Some(x)`, `None`, `null` | `Option<int>.Some(x)`, `Option<int>.None` |
+| `match o { Some(v) => …, None => … }`, `o is Some(v)` | property patterns `o is { IsSome: true, Value: var v }`, `{ IsSome: false }` |
+| `a ?? b`, `a?.b` | `a.IsSome ? a.Value : b`, `a.IsSome ? Option<T>.Some(a.Value.b) : Option<T>.None` (non-variable operands are first stored in a temporary) |
+| `let x = f()?;` | `var t = f(); if (!t.IsSome) { return Option<R>.None; } x = t.Value;` |
 | `fn f(a: Int) -> Int { … }` | `public static int f(int a) { … }` in a static module class |
 | `fn f(a: Int) -> Int = e;` | `public static int f(int a) => e;` |
 | `let x = e;` / `var x = e;` | `int x = e;` (immutability is checked by Piper, not C#) |
@@ -311,12 +361,14 @@ The match is known to be exhaustive, so a final arm without a guard or bindings 
 - Traits: no generic traits, trait inheritance, static trait methods or `Self` type. Builtin types can't implement traits.
 - `==` isn't defined on type parameters or trait-typed values.
 - A function ending in `while true { … }` is still reported as "not all code paths return a value".
-- There are no lambdas, nullability, collections, modules or .NET interop yet. See the roadmap.
+- `?` followed by member access needs parentheses, `(f()?).name`, because `?.` is conditional access.
+- A match guard, or the rest of an if/while condition after an `is` that binds variables, can't contain `?`, or `?.`/`??` on anything but a variable.
+- There are no lambdas, collections, modules or .NET interop yet. See the roadmap. When interop arrives, nullable .NET values will surface as `T?` (null becoming `None`).
 
 ## Roadmap
 
 1. ~~**Sum types and `match`**~~, done in milestone 2.
-2. **Null safety and errors:** `T?`, `?.`, `??`, `if let` / `guard let`, a standard `Option`/`Result`, and a `?` operator for propagating errors. Generic enums now exist, so this can go next.
+2. ~~**Null safety and errors**~~, done in milestone 4: `Option`/`T?`, `Result`, `null`, `?.`, `??`, `?` and `is` patterns.
 3. ~~**Traits, generics and extensions**~~, done in milestone 3.
 4. **Modules, imports and .NET interop.**
 5. **Smaller features:** tuples and destructuring, lambdas, `defer`, `use`, async/await, and a pipe operator `|>`.

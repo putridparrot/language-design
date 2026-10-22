@@ -137,34 +137,34 @@ public class BinderTests
     }
 
     private const string Declarations =
-        "trait T { fn m(self) -> Int; } record R(x: Int); enum O<V> { S(v: V), N } record B<X: T>(x: X); ";
+        "trait T { fn m() -> Int; } record R(x: Int); enum O<V> { S(v: V), N } record B<X: T>(x: X); ";
 
     [Theory]
-    [InlineData("PIP0201", "extend R { fn x(self) -> Int = 1; }")]
-    [InlineData("PIP0201", "enum E { A(name: String) } extend E { fn name(self) -> String = \"\"; }")]
+    [InlineData("PIP0201", "extend R { fn x() -> Int = 1; }")]
+    [InlineData("PIP0201", "enum E { A(name: String) } extend E { fn name() -> String = \"\"; }")]
     [InlineData("PIP0202", "fn f() { let t: T = R(1); }")]
     [InlineData("PIP0203", "fn eq<Q>(a: Q, b: Q) -> Bool = a == b;")]
-    [InlineData("PIP0217", "extend R { fn g(self) -> Int = 1; } fn f(r: R) { let v = r.g; }")]
+    [InlineData("PIP0217", "extend R { fn g() -> Int = 1; } fn f(r: R) { let v = r.g; }")]
     [InlineData("PIP0240", "fn f() { let x = O.N; }")]
     [InlineData("PIP0241", "fn f(r: R<Int>) {}")]
     [InlineData("PIP0241", "fn f(o: O) {}")]
     [InlineData("PIP0242", "fn f(b: B<Int>) {}")]
     [InlineData("PIP0242", "fn f() { let b = B(1); }")]
     [InlineData("PIP0243", "fn f(r: R) { r.nope(); }")]
-    [InlineData("PIP0244", "fn f() -> R = self;")]
-    [InlineData("PIP0244", "fn f(self) {}")]
-    [InlineData("PIP0244", "extend R { fn make() -> R = R(1); } fn f(r: R) { r.make(); }")]
-    [InlineData("PIP0244", "extend R { fn get(self) -> Int = self.x; } fn f() { R.get(); }")]
+    [InlineData("PIP0244", "fn f() -> R = this;")]
+    [InlineData("PIP0244", "static fn f() {}")]
+    [InlineData("PIP0244", "extend R { static fn make() -> R = R(1); } fn f(r: R) { r.make(); }")]
+    [InlineData("PIP0244", "extend R { fn get() -> Int = this.x; } fn f() { R.get(); }")]
     [InlineData("PIP0245", "extend R: T { }")]
-    [InlineData("PIP0246", "extend R: T { fn m(self) -> String = \"\"; }")]
+    [InlineData("PIP0246", "extend R: T { fn m() -> String = \"\"; }")]
     [InlineData("PIP0247", "extend Int: T { }")]
     [InlineData("PIP0247", "extend T { }")]
     [InlineData("PIP0247", "extend O<Int> { }")]
     [InlineData("PIP0248", "fn f<X: R>(x: X) {}")]
-    [InlineData("PIP0250", "trait U { fn make() -> Int; }")]
+    [InlineData("PIP0250", "trait U { static fn make() -> Int; }")]
     [InlineData("PIP0251", "fn f();")]
-    [InlineData("PIP0251", "extend R { fn g(self); }")]
-    [InlineData("PIP0252", "extend String { fn Length(self) -> Int = 0; }")]
+    [InlineData("PIP0251", "extend R { fn g(); }")]
+    [InlineData("PIP0252", "extend String { fn Length() -> Int = 0; }")]
     public void Generics_and_trait_errors_are_reported(string code, string program)
     {
         AssertSingleError(code, Declarations + program);
@@ -178,10 +178,10 @@ public class BinderTests
             fn id<Q>(q: Q) -> Q = q;
             fn none<Q>() -> O<Q> = O.N;
             extend O {
-                fn either<U>(self, whenSome: U, whenNone: U) -> U = match self { S(_) => whenSome, N => whenNone };
-                fn empty() -> O<V> = O.N;
+                fn either<U>(whenSome: U, whenNone: U) -> U = match this { S(_) => whenSome, N => whenNone };
+                static fn empty() -> O<V> = O.N;
             }
-            extend R: T { fn m(self) -> Int = self.x; }
+            extend R: T { fn m() -> Int = this.x; }
             fn useBound<Y: T>(b: B<Y>) -> Int = b.x.m();
             fn main() {
                 let p: Pair<O<Int>, Long> = Pair(O.N, 1);
@@ -201,6 +201,58 @@ public class BinderTests
         var program = Declarations + "fn f(o: O<Bool>) -> Int = match o { S(true) => 1, N => 0 };";
         var diagnostic = Assert.Single(Compilation.Compile(program).Diagnostics);
         Assert.Contains("'O.S(false)' is not covered", diagnostic.Message);
+    }
+
+    private const string Users = "record U(name: String, nick: String?); ";
+
+    [Theory]
+    [InlineData("PIP0202", "fn f(r: Result<Int, String>) -> Result<Int, Int> = Ok(r?);")]
+    [InlineData("PIP0212", "fn f(u: U?) -> String = u.name;")]
+    [InlineData("PIP0230", "fn f(x: Int?) -> Int = match x { Some(v) => v };")]
+    [InlineData("PIP0234", "fn f(x: Int) -> Int = match x { null => 0, _ => 1 };")]
+    [InlineData("PIP0260", "fn f() { let x = null; }")]
+    [InlineData("PIP0260", "fn f() { let s: String = null; }")]
+    [InlineData("PIP0261", "fn f(n: Int) -> Int = n ?? 0;")]
+    [InlineData("PIP0261", "fn f(u: U) -> String? = u?.name;")]
+    [InlineData("PIP0262", "fn f(x: Int?) -> Bool { let b = x is Some(v); b }")]
+    [InlineData("PIP0262", "fn f(x: Int?) { if !(x is Some(v)) { } }")]
+    [InlineData("PIP0262", "fn f(x: Int?) { if x is Some(v) || true { } }")]
+    [InlineData("PIP0263", "fn f(x: Int?) -> Int = x?;")]
+    [InlineData("PIP0263", "fn f(x: Int) -> Int? = x?;")]
+    [InlineData("PIP0263", "fn f(r: Result<Int, String>) -> Int? = r?;")]
+    [InlineData("PIP0264", "enum Option { A }")]
+    [InlineData("PIP0264", "record Result(x: Int);")]
+    public void Null_safety_errors_are_reported(string code, string program)
+    {
+        AssertSingleError(code, Users + program);
+    }
+
+    [Fact]
+    public void Missing_none_is_reported_by_name()
+    {
+        var diagnostic = Assert.Single(Compilation.Compile("fn f(x: Int?) -> Int = match x { Some(v) => v };").Diagnostics);
+        Assert.Contains("'Option.None' is not covered", diagnostic.Message);
+    }
+
+    [Fact]
+    public void Optional_values_work_without_ceremony()
+    {
+        AssertNoErrors(Users + """
+            extend U { fn label() -> String = this.name; }
+            fn a(x: Int?) -> Int = x ?? 0;
+            fn b(u: U?) -> String? = u?.nick;
+            fn c(u: U?) -> String? = u?.label();
+            fn e() -> Int? = 5;
+            fn g(r: Result<Int, String>) -> Result<Int, String> = Ok(r? + 1);
+            fn k(x: Int?) -> Bool = x == null || x == 3;
+            fn m<T>(v: T?) -> Bool = v is Some(_);
+            fn n() -> Bool = m(5);
+            fn p(x: Int?) -> String { if x is Some(v) && v > 1 { "{v}" } else { "none" } }
+            fn q(x: Int?) -> Int = match x { Some(v) if v is 1 | 2 => v, _ => 0 };
+            fn r(flag: Bool) -> Long? = if flag { 1 } else { null };
+            fn s() -> Result<Int, String> = if true { Ok(1) } else { Err("no") };
+            fn t(x: Int?) -> Int { var total = 0; var y = x; while y is Some(v) && v > 0 { total += v; y = v - 1; } total }
+            """);
     }
 
     [Fact]

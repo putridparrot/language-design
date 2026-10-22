@@ -15,7 +15,12 @@ public sealed partial class Binder
     {
         LiteralExpressionSyntax s => BindLiteral(s),
         InterpolatedStringExpressionSyntax s => BindInterpolatedString(s),
-        NameExpressionSyntax s => BindName(s),
+        NullLiteralExpressionSyntax s => BindNull(s, expected),
+        NameExpressionSyntax s => BindName(s, expected),
+        IsExpressionSyntax s => BindIs(s, allowBindings: false),
+        ConditionalAccessExpressionSyntax s => BindConditionalAccess(s),
+        ImplicitReceiverSyntax => new BoundVariableExpression(_implicitReceivers.Peek()),
+        TryExpressionSyntax s => BindTry(s),
         UnaryExpressionSyntax s => BindUnary(s),
         BinaryExpressionSyntax s => BindBinary(s),
         RangeExpressionSyntax s => BindRange(s),
@@ -52,7 +57,7 @@ public sealed partial class Binder
         return new BoundInterpolatedStringExpression([.. parts]);
     }
 
-    private BoundExpression BindName(NameExpressionSyntax syntax)
+    private BoundExpression BindName(NameExpressionSyntax syntax, TypeSymbol? expected = null)
     {
         var name = syntax.Identifier;
         if (name.IsMissing)
@@ -62,6 +67,9 @@ public sealed partial class Binder
         {
             case VariableSymbol variable:
                 return new BoundVariableExpression(variable);
+            case VariantSymbol variant:
+                // A built-in variant used bare: `None`.
+                return BindVariantCreation(variant.Enum, variant, null, syntax.Span, expected);
             case FunctionSymbol:
                 _diagnostics.ReportNotAValue(name.Span, name.Text, "function");
                 return new BoundErrorExpression();
@@ -69,8 +77,8 @@ public sealed partial class Binder
                 _diagnostics.ReportNotAValue(name.Span, name.Text, "type");
                 return new BoundErrorExpression();
             default:
-                if (name.Kind == TokenKind.SelfKeyword)
-                    _diagnostics.ReportSelfOutsideMethod(name.Span);
+                if (name.Kind == TokenKind.ThisKeyword)
+                    _diagnostics.ReportThisOutsideInstanceMethod(name.Span);
                 else
                     _diagnostics.ReportUndefinedName(name.Span, name.Text);
                 return new BoundErrorExpression();
@@ -95,12 +103,36 @@ public sealed partial class Binder
 
     private BoundExpression BindBinary(BinaryExpressionSyntax syntax)
     {
-        var left = RequireValue(BindExpression(syntax.Left), syntax.Left.Span);
-        var right = RequireValue(BindExpression(syntax.Right), syntax.Right.Span);
+        if (syntax.Operator.Kind == TokenKind.QuestionQuestion)
+            return BindNullCoalescing(syntax);
+
+        var kind = Operators.GetBinaryKind(syntax.Operator.Kind)!.Value;
+        bool isEquality = kind is BoundBinaryOperatorKind.Equals or BoundBinaryOperatorKind.NotEquals;
+
+        // `x == null`: bind the other side first so `null` knows which optional type it is.
+        BoundExpression left, right;
+        if (isEquality && syntax.Left is NullLiteralExpressionSyntax)
+        {
+            right = RequireValue(BindExpression(syntax.Right), syntax.Right.Span);
+            left = BindExpression(syntax.Left, right.Type);
+        }
+        else
+        {
+            left = RequireValue(BindExpression(syntax.Left), syntax.Left.Span);
+            right = RequireValue(BindExpression(syntax.Right, isEquality ? left.Type : null), syntax.Right.Span);
+        }
         if (left.Type == TypeSymbol.Error || right.Type == TypeSymbol.Error)
             return new BoundErrorExpression();
 
-        var kind = Operators.GetBinaryKind(syntax.Operator.Kind)!.Value;
+        // `maybe == 5` compares with Some(5), as C# compares an int? with an int.
+        if (isEquality && left.Type != right.Type)
+        {
+            if (left.Type.IsOption && IsConvertible(right.Type, left.Type))
+                right = Convert(right, left.Type, syntax.Right.Span);
+            else if (right.Type.IsOption && IsConvertible(left.Type, right.Type))
+                left = Convert(left, right.Type, syntax.Left.Span);
+        }
+
         var resolution = Operators.ResolveBinary(kind, left.Type, right.Type);
         if (resolution is null)
         {
@@ -136,7 +168,10 @@ public sealed partial class Binder
         if (_scope.Lookup(name.Identifier.Text) is not VariableSymbol variable)
         {
             BindExpression(syntax.Value);
-            BindName(name);
+            if (_scope.Lookup(name.Identifier.Text) is null)
+                BindName(name);
+            else
+                _diagnostics.ReportInvalidAssignmentTarget(syntax.Target.Span);
             return new BoundErrorExpression();
         }
 
@@ -229,6 +264,10 @@ public sealed partial class Binder
 
             case RecordSymbol record:
                 return BindRecordCreation(record, syntax, expected);
+
+            case VariantSymbol variant:
+                // A built-in variant used bare: `Some(1)`, `Ok(x)`, `Err(e)`.
+                return BindVariantCreation(variant.Enum, variant, syntax.Arguments, syntax.Span, expected);
 
             case null:
                 BindArgumentsForDiagnostics(syntax.Arguments);
@@ -482,6 +521,10 @@ public sealed partial class Binder
                 for (int i = 0; i < constructed.TypeArguments.Length; i++)
                     Infer(constructed.TypeArguments[i], other.TypeArguments[i], map, inferred);
                 break;
+            case ConstructedTypeSymbol { IsOption: true } optional:
+                // A plain value passed for a T? parameter (implicit Some) still tells us T.
+                Infer(optional.TypeArguments[0], actual, map, inferred);
+                break;
         }
     }
 
@@ -518,8 +561,12 @@ public sealed partial class Binder
 
     private BoundExpression BindIf(IfExpressionSyntax syntax, TypeSymbol? expected)
     {
-        var condition = BindCondition(syntax.Condition);
+        // Variables bound by `is` in the condition are in scope in the then-block, but not the else.
+        var outer = _scope;
+        _scope = new Scope(outer);
+        var condition = BindCondition(syntax.Condition, allowPatternBindings: true);
         var then = BindBlock(syntax.Then, expected);
+        _scope = outer;
         if (syntax.Else is null)
             return new BoundIfExpression(condition, then, null, TypeSymbol.Unit);
 
@@ -582,23 +629,182 @@ public sealed partial class Binder
         return null;
     }
 
-    private static bool NeedsBranchConversion(TypeSymbol type) => type.IsNumeric || type is TraitSymbol;
+    private static bool NeedsBranchConversion(TypeSymbol type) => type.IsNumeric || type is TraitSymbol || type.IsOption;
 
-    private BoundExpression BindCondition(ExpressionSyntax syntax)
+    /// <param name="allowPatternBindings">
+    /// True for if/while conditions and match guards: an <c>is</c> pattern there may bind variables, which
+    /// are then in scope for the rest of a <c>&amp;&amp;</c> chain and the body, as with C#'s definite assignment.
+    /// </param>
+    private BoundExpression BindCondition(ExpressionSyntax syntax, bool allowPatternBindings = false)
     {
-        var condition = BindExpression(syntax);
+        var condition = allowPatternBindings ? BindBindingCondition(syntax) : BindExpression(syntax);
         if (condition.Type == TypeSymbol.Error || condition.Type == TypeSymbol.Bool)
             return condition;
         _diagnostics.ReportConditionNotBool(syntax.Span, condition.Type);
         return new BoundErrorExpression();
     }
 
+    private BoundExpression BindBindingCondition(ExpressionSyntax syntax)
+    {
+        switch (syntax)
+        {
+            case IsExpressionSyntax test:
+                return BindIs(test, allowBindings: true);
+
+            case ParenthesizedExpressionSyntax parenthesized:
+                return BindBindingCondition(parenthesized.Expression);
+
+            case BinaryExpressionSyntax { Operator.Kind: TokenKind.AmpersandAmpersand } and:
+            {
+                var left = BindCondition(and.Left, allowPatternBindings: true);
+                var right = BindCondition(and.Right, allowPatternBindings: true);
+                if (left.Type == TypeSymbol.Error || right.Type == TypeSymbol.Error)
+                    return new BoundErrorExpression();
+
+                // Lowering would evaluate a right side with statements after storing the left in a temporary,
+                // which loses C#'s knowledge that the pattern variables are assigned.
+                if (BindsVariables(left) && ContainsStatements(right))
+                    _diagnostics.ReportIsBindingBeforeStatements(and.Right.Span);
+                return new BoundBinaryExpression(left, BoundBinaryOperatorKind.LogicalAnd, right, TypeSymbol.Bool);
+            }
+
+            default:
+                return BindExpression(syntax);
+        }
+    }
+
+    private static bool BindsVariables(BoundExpression condition) => condition switch
+    {
+        BoundIsPatternExpression test => test.Pattern.HasBindings,
+        BoundBinaryExpression { Operator: BoundBinaryOperatorKind.LogicalAnd } and => BindsVariables(and.Left) || BindsVariables(and.Right),
+        _ => false,
+    };
+
+    // Null safety
+
+    /// <summary><c>value is Pattern</c>. Bindings are declared in the current scope, which the caller has set up.</summary>
+    private BoundExpression BindIs(IsExpressionSyntax syntax, bool allowBindings)
+    {
+        var value = RequireValue(BindExpression(syntax.Expression), syntax.Expression.Span);
+        var pattern = BindPattern(syntax.Pattern, value.Type, allowBindings: true);
+        if (!allowBindings && pattern.HasBindings)
+            _diagnostics.ReportIsBindingOutsideCondition(syntax.Pattern.Span);
+        if (value.Type == TypeSymbol.Error)
+            return new BoundErrorExpression();
+        return new BoundIsPatternExpression(value, pattern);
+    }
+
+    /// <summary><c>null</c> is the None of the optional type the context expects.</summary>
+    private BoundExpression BindNull(NullLiteralExpressionSyntax syntax, TypeSymbol? expected)
+    {
+        if (expected is { IsOption: true })
+            return new BoundVariantCreationExpression(_option.FindVariant("None")!, [], expected);
+        if (expected != TypeSymbol.Error)
+            _diagnostics.ReportNullWithoutOptionalType(syntax.Span);
+        return new BoundErrorExpression();
+    }
+
+    /// <summary><c>left ?? right</c>: the left's value if it has one, otherwise <c>right</c> (only evaluated then).</summary>
+    private BoundExpression BindNullCoalescing(BinaryExpressionSyntax syntax)
+    {
+        var left = RequireValue(BindExpression(syntax.Left), syntax.Left.Span);
+        if (left.Type == TypeSymbol.Error || !left.Type.IsOption)
+        {
+            if (left.Type != TypeSymbol.Error)
+                _diagnostics.ReportRequiresOptional(syntax.Operator.Span, "??", left.Type);
+            BindExpression(syntax.Right);
+            return new BoundErrorExpression();
+        }
+
+        var valueType = left.Type.TypeArguments[0];
+        var right = RequireValue(BindExpression(syntax.Right, valueType), syntax.Right.Span);
+
+        // `a ?? b ?? c` where b is optional too keeps the result optional.
+        if (right.Type == left.Type)
+            return new BoundNullCoalescingExpression(left, right, left.Type);
+
+        return new BoundNullCoalescingExpression(left, Convert(right, valueType, syntax.Right.Span), valueType);
+    }
+
+    /// <summary>
+    /// <c>target?.chain</c>: the chain is bound against the unwrapped target. The result is optional
+    /// (flattened if the chain already is), or Unit when the chain is a call made for its effect.
+    /// </summary>
+    private BoundExpression BindConditionalAccess(ConditionalAccessExpressionSyntax syntax)
+    {
+        var target = RequireValue(BindExpression(syntax.Target), syntax.Target.Span);
+        bool valid = target.Type.IsOption;
+        if (!valid && target.Type != TypeSymbol.Error)
+            _diagnostics.ReportRequiresOptional(syntax.WhenNotNull.Span, "?.", target.Type);
+
+        var receiverType = valid ? target.Type.TypeArguments[0] : target.Type;
+        var receiver = new VariableSymbol("value", receiverType, isMutable: false, VariableKind.Temporary);
+        _implicitReceivers.Push(receiver);
+        var whenNotNull = BindExpression(syntax.WhenNotNull);
+        _implicitReceivers.Pop();
+
+        if (!valid || whenNotNull.Type == TypeSymbol.Error)
+            return new BoundErrorExpression();
+
+        var type = whenNotNull.Type switch
+        {
+            { IsValueType: false } => TypeSymbol.Unit,
+            { IsOption: true } optional => optional,
+            var value => _option.Construct([value]),
+        };
+        return new BoundConditionalAccessExpression(target, receiver, whenNotNull, type);
+    }
+
+    /// <summary><c>operand?</c>: unwraps, or returns the None/Err to the caller (the function must return the same kind).</summary>
+    private BoundExpression BindTry(TryExpressionSyntax syntax)
+    {
+        var operand = RequireValue(BindExpression(syntax.Operand), syntax.Operand.Span);
+        if (operand.Type == TypeSymbol.Error)
+            return new BoundErrorExpression();
+
+        var returnType = _function!.ReturnType;
+        if (operand.Type.IsOption)
+        {
+            if (returnType.IsOption)
+                return new BoundTryExpression(operand, operand.Type.TypeArguments[0], returnType);
+            if (returnType != TypeSymbol.Error)
+                _diagnostics.ReportTryOutsideOptionalFunction(syntax.Span, "Option");
+            return new BoundErrorExpression();
+        }
+
+        if (operand.Type.IsResult)
+        {
+            if (!returnType.IsResult)
+            {
+                if (returnType != TypeSymbol.Error)
+                    _diagnostics.ReportTryOutsideOptionalFunction(syntax.Span, "Result");
+                return new BoundErrorExpression();
+            }
+
+            var error = operand.Type.TypeArguments[1];
+            var returnedError = returnType.TypeArguments[1];
+            if (!IsConvertible(error, returnedError))
+            {
+                _diagnostics.ReportCannotConvert(syntax.Span, error, returnedError);
+                return new BoundErrorExpression();
+            }
+            return new BoundTryExpression(operand, operand.Type.TypeArguments[0], returnType);
+        }
+
+        _diagnostics.ReportTryOperandNotOptional(syntax.Span, operand.Type);
+        return new BoundErrorExpression();
+    }
+
     // Conversions
 
-    /// <summary>Numeric widening, or a value of a type that implements a trait used as that trait.</summary>
+    /// <summary>
+    /// Numeric widening; a value of a type that implements a trait used as that trait; or a plain value
+    /// used as an optional one (implicit Some, like C#'s <c>int</c> to <c>int?</c>).
+    /// </summary>
     private static bool IsConvertible(TypeSymbol from, TypeSymbol to) =>
         Operators.IsImplicitlyConvertible(from, to) ||
-        (to is TraitSymbol trait && from.IsValueType && Implements(from, trait));
+        (to is TraitSymbol trait && from.IsValueType && Implements(from, trait)) ||
+        (to.IsOption && from.IsValueType && IsConvertible(from, to.TypeArguments[0]));
 
     /// <summary>Converts to <paramref name="type"/> implicitly, or reports an error.</summary>
     private BoundExpression Convert(BoundExpression expression, TypeSymbol type, TextSpan span)
@@ -623,10 +829,20 @@ public sealed partial class Binder
         return new BoundErrorExpression();
     }
 
-    private static BoundExpression Widen(BoundExpression expression, TypeSymbol type) =>
-        expression.Type == type || expression.Type == TypeSymbol.Never || expression.Type == TypeSymbol.Error
-            ? expression
-            : new BoundConversionExpression(type, expression);
+    private static BoundExpression Widen(BoundExpression expression, TypeSymbol type)
+    {
+        if (expression.Type == type || expression.Type == TypeSymbol.Never || expression.Type == TypeSymbol.Error)
+            return expression;
+
+        // Implicit Some: wrap (after converting to the optional's value type, e.g. Int → Some(Long)).
+        if (type.IsOption)
+        {
+            var some = ((EnumSymbol)type.OriginalDefinition).FindVariant("Some")!;
+            return new BoundVariantCreationExpression(some, [Widen(expression, type.TypeArguments[0])], type);
+        }
+
+        return new BoundConversionExpression(type, expression);
+    }
 
     /// <summary>Pushes a conversion into a block's trailing value so the branches of an if or match agree.</summary>
     private static BoundBlockExpression ConvertBlock(BoundBlockExpression block, TypeSymbol type) =>

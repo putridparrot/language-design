@@ -2,43 +2,38 @@
 // and user records and enums (as members of the generated C# type).
 
 extend Int {
-    fn squared(self) -> Int = self * self;
-    fn isEven(self) -> Bool = self % 2 == 0;
-    fn clamp(self, low: Int, high: Int) -> Int = if self < low { low } else if self > high { high } else { self };
-    fn zero() -> Int = 0;
+    fn squared() -> Int = this * this;
+    fn isEven() -> Bool = this % 2 == 0;
+    fn clamp(low: Int, high: Int) -> Int = if this < low { low } else if this > high { high } else { this };
+    static fn zero() -> Int = 0;
 }
 
 extend String {
-    fn shout(self) -> String = self + "!";
+    fn shout() -> String = this + "!";
 
-    fn repeat(self, times: Int) -> String {
+    fn repeat(times: Int) -> String {
         var result = "";
-        for i in 0..times { result = result + self; }
+        for i in 0..times { result = result + this; }
         result
     }
 }
 
 extend Double {
-    fn half(self) -> Double = self / 2.0;
+    fn half() -> Double = this / 2.0;
 }
 
 record Point(x: Int, y: Int);
 
 extend Point {
-    fn origin() -> Point = Point(0, 0);
-    fn plus(self, other: Point) -> Point = Point(self.x + other.x, self.y + other.y);
-    fn lengthSquared(self) -> Int = self.x.squared() + self.y.squared();
-}
-
-enum Option<T> {
-    Some(value: T),
-    None,
+    static fn origin() -> Point = Point(0, 0);
+    fn plus(other: Point) -> Point = Point(this.x + other.x, this.y + other.y);
+    fn lengthSquared() -> Int = this.x.squared() + this.y.squared();
 }
 
 extend Option {
-    fn isSome(self) -> Bool = match self { Some(_) => true, None => false };
-    fn getOr(self, fallback: T) -> T = match self { Some(v) => v, None => fallback };
-    fn none() -> Option<T> = Option.None;
+    fn isSome() -> Bool = match this { Some(_) => true, None => false };
+    fn getOr(fallback: T) -> T = match this { Some(v) => v, None => fallback };
+    static fn none() -> Option<T> = Option.None;
 }
 
 fn main() {

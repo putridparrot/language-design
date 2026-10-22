@@ -107,7 +107,7 @@ public sealed class Parser
     {
         switch (Current.Kind)
         {
-            case TokenKind.FnKeyword:
+            case TokenKind.FnKeyword or TokenKind.StaticKeyword:
                 return ParseFunction();
             case TokenKind.RecordKeyword:
                 return ParseRecord();
@@ -126,28 +126,23 @@ public sealed class Parser
     }
 
     private static bool IsDeclarationStart(TokenKind kind) => kind is
-        TokenKind.FnKeyword or TokenKind.RecordKeyword or TokenKind.EnumKeyword or
+        TokenKind.FnKeyword or TokenKind.StaticKeyword or TokenKind.RecordKeyword or TokenKind.EnumKeyword or
         TokenKind.TraitKeyword or TokenKind.ExtendKeyword;
 
     /// <summary>
-    /// function = "fn" IDENT [ typeParameters ] "(" [ "self" [ "," ] ] [ parameter { "," parameter } [ "," ] ] ")"
+    /// function = [ "static" ] "fn" IDENT [ typeParameters ] "(" [ parameter { "," parameter } [ "," ] ] ")"
     ///            [ "->" type ] ( block | "=" expression ";" | ";" ) ;
-    /// The bodiless form declares a required trait method; elsewhere the binder reports it.
+    /// The bodiless form declares a required trait method, and 'static' only makes sense on methods;
+    /// the binder reports either one elsewhere.
     /// </summary>
     private FunctionDeclarationSyntax ParseFunction()
     {
+        Token? @static = Current.Kind == TokenKind.StaticKeyword ? NextToken() : null;
         var keyword = Expect(TokenKind.FnKeyword);
+        var first = @static ?? keyword;
         var name = Expect(TokenKind.Identifier);
         var typeParameters = ParseTypeParameters();
         Expect(TokenKind.OpenParen);
-
-        Token? self = null;
-        if (Current.Kind == TokenKind.SelfKeyword)
-        {
-            self = NextToken();
-            if (Current.Kind == TokenKind.Comma)
-                NextToken();
-        }
 
         var parameters = ParseSeparatedList(ParseParameter, TokenKind.CloseParen);
         Expect(TokenKind.CloseParen);
@@ -176,7 +171,7 @@ public sealed class Parser
             block = ParseBlock();
         }
 
-        return new FunctionDeclarationSyntax(SpanFrom(keyword), name, typeParameters, self, parameters, returnType, block, expression);
+        return new FunctionDeclarationSyntax(SpanFrom(first), name, typeParameters, @static, parameters, returnType, block, expression);
     }
 
     /// <summary>
@@ -250,7 +245,7 @@ public sealed class Parser
     private ExtendDeclarationSyntax ParseExtend()
     {
         var keyword = Expect(TokenKind.ExtendKeyword);
-        var target = ParseType();
+        var target = ParseNamedType();
         var traits = ImmutableArray.CreateBuilder<TypeSyntax>();
         if (Current.Kind == TokenKind.Colon)
         {
@@ -263,7 +258,7 @@ public sealed class Parser
             }
         }
         var methods = ParseMethodBlock();
-        return new ExtendDeclarationSyntax(SpanFrom(keyword), ((NamedTypeSyntax)target).Name, target, traits.ToImmutable(), methods);
+        return new ExtendDeclarationSyntax(SpanFrom(keyword), target.Name, target, traits.ToImmutable(), methods);
     }
 
     private ImmutableArray<FunctionDeclarationSyntax> ParseMethodBlock()
@@ -272,7 +267,7 @@ public sealed class Parser
         var methods = ImmutableArray.CreateBuilder<FunctionDeclarationSyntax>();
         while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
         {
-            if (Current.Kind == TokenKind.FnKeyword)
+            if (Current.Kind is TokenKind.FnKeyword or TokenKind.StaticKeyword)
             {
                 methods.Add(ParseFunction());
                 continue;
@@ -310,8 +305,22 @@ public sealed class Parser
         return new ParameterSyntax(Span(name, type), name, type);
     }
 
-    /// <summary>type = IDENT [ "&lt;" type { "," type } [ "," ] "&gt;" ] ;</summary>
+    /// <summary>type = namedType { "?" } ;   (* T? is Option&lt;T&gt;; the lexer's "??" counts as two *)</summary>
     private TypeSyntax ParseType()
+    {
+        TypeSyntax type = ParseNamedType();
+        while (Current.Kind is TokenKind.Question or TokenKind.QuestionQuestion)
+        {
+            int levels = Current.Kind == TokenKind.QuestionQuestion ? 2 : 1;
+            var question = NextToken();
+            for (int i = 0; i < levels; i++)
+                type = new OptionalTypeSyntax(TextSpan.FromBounds(type.Span.Start, question.Span.End), type);
+        }
+        return type;
+    }
+
+    /// <summary>namedType = IDENT [ "&lt;" type { "," type } [ "," ] "&gt;" ] ;</summary>
+    private NamedTypeSyntax ParseNamedType()
     {
         if (Current.Kind == TokenKind.Identifier)
         {
@@ -551,25 +560,49 @@ public sealed class Parser
 
         while (true)
         {
+            // isExpression = binary "is" pattern ;
+            if (Current.Kind == TokenKind.IsKeyword && SyntaxFacts.IsPrecedence > parentPrecedence)
+            {
+                NextToken();
+                var pattern = ParsePattern();
+                left = new IsExpressionSyntax(TextSpan.FromBounds(left.Span.Start, pattern.Span.End), left, pattern);
+                continue;
+            }
+
             int precedence = SyntaxFacts.GetBinaryPrecedence(Current.Kind);
             if (precedence == 0 || precedence <= parentPrecedence)
                 return left;
 
             var op = NextToken();
-            var right = ParseBinary(precedence);
+            var right = ParseBinary(SyntaxFacts.IsRightAssociative(op.Kind) ? precedence - 1 : precedence);
             left = op.Kind is TokenKind.DotDot or TokenKind.DotDotEquals
                 ? new RangeExpressionSyntax(Span(left, right), left, op, right)
                 : new BinaryExpressionSyntax(Span(left, right), left, op, right);
         }
     }
 
-    /// <summary>postfix = primary { "(" [ expression { "," expression } [ "," ] ] ")" | "." IDENT } ;</summary>
+    /// <summary>
+    /// postfix = primary { "(" [ expression { "," expression } [ "," ] ] ")" | "." IDENT | "?" | "?." IDENT postfixChain } ;
+    /// After "?." the rest of the chain is parsed on an implicit receiver, so `a?.b.c()` skips `.c()` too when `a` is None.
+    /// </summary>
     private ExpressionSyntax ParsePostfix(ExpressionSyntax expression)
     {
         while (true)
         {
             switch (Current.Kind)
             {
+                case TokenKind.QuestionDot:
+                {
+                    var receiver = new ImplicitReceiverSyntax(NextToken().Span);
+                    var name = Expect(TokenKind.Identifier);
+                    var first = new MemberAccessExpressionSyntax(TextSpan.FromBounds(receiver.Span.Start, Previous.Span.End), receiver, name);
+                    var chain = ParsePostfix(first);
+                    return new ConditionalAccessExpressionSyntax(Span(expression, chain), expression, chain);
+                }
+                case TokenKind.Question:
+                    NextToken();
+                    expression = new TryExpressionSyntax(TextSpan.FromBounds(expression.Span.Start, Previous.Span.End), expression);
+                    break;
                 case TokenKind.OpenParen:
                     NextToken();
                     var arguments = ParseSeparatedList(ParseExpression, TokenKind.CloseParen);
@@ -609,7 +642,12 @@ public sealed class Parser
             }
             case TokenKind.InterpolatedStringLiteral:
                 return ParseInterpolatedString();
-            case TokenKind.Identifier or TokenKind.SelfKeyword:
+            case TokenKind.NullKeyword:
+            {
+                var keyword = NextToken();
+                return new NullLiteralExpressionSyntax(keyword.Span, keyword);
+            }
+            case TokenKind.Identifier or TokenKind.ThisKeyword:
             {
                 var identifier = NextToken();
                 return new NameExpressionSyntax(identifier.Span, identifier);
@@ -724,6 +762,9 @@ public sealed class Parser
     /// </summary>
     private PatternSyntax ParsePrimaryPattern()
     {
+        if (Current.Kind == TokenKind.NullKeyword)
+            return new NullPatternSyntax(NextToken().Span);
+
         if (Current.Kind == TokenKind.Identifier)
         {
             var name = NextToken();
