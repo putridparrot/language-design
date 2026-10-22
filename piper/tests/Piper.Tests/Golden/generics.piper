@@ -1,0 +1,60 @@
+// Generic records, enums and functions. Type arguments are inferred from arguments
+// or from the expected type; the generated C# always spells them out.
+
+record Pair<A, B>(first: A, second: B);
+
+enum Option<T> {
+    Some(value: T),
+    None,
+}
+
+enum List<T> {
+    Cons(head: T, tail: List<T>),
+    Nil,
+}
+
+fn swap<A, B>(p: Pair<A, B>) -> Pair<B, A> = Pair(p.second, p.first);
+
+fn unwrapOr<T>(o: Option<T>, fallback: T) -> T = match o {
+    Some(v) => v,
+    None => fallback,
+};
+
+fn length<T>(items: List<T>) -> Int = match items {
+    Cons(_, tail) => 1 + length(tail),
+    Nil => 0,
+};
+
+fn indexOf(items: List<String>, target: String, start: Int) -> Option<Int> = match items {
+    Cons(head, _) if head == target => Option.Some(start),
+    Cons(_, tail) => indexOf(tail, target, start + 1),
+    Nil => Option.None,
+};
+
+fn describe(found: Option<Int>) -> String = match found {
+    Some(i) => "found at {i}",
+    None => "missing",
+};
+
+fn main() {
+    let p = Pair(1, "one");
+    let q = swap(p);
+    print("{q.first} {q.second}");
+
+    let some: Option<Int> = Option.Some(42);
+    let none: Option<Int> = Option.None;
+    print(unwrapOr(some, 0));
+    print(unwrapOr(none, -1));
+
+    let words = List.Cons("piper", List.Cons("is", List.Cons("generic", List.Nil)));
+    print(length(words));
+    print(describe(indexOf(words, "generic", 0)));
+    print(describe(indexOf(words, "rust", 0)));
+
+    // Exhaustiveness looks through type arguments: Option<Bool> has exactly three cases.
+    let flag: Option<Bool> = Option.Some(true);
+    print(match flag { Some(true) => "yes", Some(false) => "no", None => "unknown" });
+
+    let widened: Pair<Long, Double> = Pair(1, 2);
+    print("{widened.first} {widened.second}");
+}

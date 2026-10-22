@@ -163,6 +163,47 @@ public class ParserTests
     }
 
     [Fact]
+    public void Generic_declarations_and_types()
+    {
+        var record = Assert.IsType<RecordDeclarationSyntax>(Assert.Single(
+            ParseClean("record Pair<A, B: Show + Eq>(first: A, second: Pair<A, List<B>>);").Declarations));
+        Assert.Equal(["A", "B"], record.TypeParameters.Select(p => p.Name.Text));
+        Assert.Equal(2, record.TypeParameters[1].Constraints.Length);
+        var second = Assert.IsType<NamedTypeSyntax>(record.Fields[1].Type);
+        Assert.Equal("Pair", second.Name.Text);
+        Assert.Equal("List", Assert.IsType<NamedTypeSyntax>(second.TypeArguments[1]).Name.Text);
+    }
+
+    [Fact]
+    public void Trait_with_required_and_default_methods()
+    {
+        var trait = Assert.IsType<TraitDeclarationSyntax>(Assert.Single(
+            ParseClean("trait Shape { fn area(self) -> Double; fn describe(self, prefix: String) -> String = prefix; }").Declarations));
+        Assert.Equal(2, trait.Methods.Length);
+        Assert.False(trait.Methods[0].HasBody);
+        Assert.NotNull(trait.Methods[1].Self);
+        Assert.Equal(["prefix"], trait.Methods[1].Parameters.Select(p => p.Name.Text));
+    }
+
+    [Fact]
+    public void Extend_block_with_traits()
+    {
+        var extend = Assert.IsType<ExtendDeclarationSyntax>(Assert.Single(
+            ParseClean("extend Circle: Shape, Show { fn area(self) -> Double = 1.0; fn unit() -> Circle = Circle(1.0); }").Declarations));
+        Assert.Equal("Circle", extend.Name.Text);
+        Assert.Equal(2, extend.Traits.Length);
+        Assert.Null(extend.Methods[1].Self);
+    }
+
+    [Fact]
+    public void Generic_function_with_self_used_in_body()
+    {
+        var function = (FunctionDeclarationSyntax)ParseClean("fn first<T>(self, p: Pair<T, T>) -> T = self.x;").Declarations[0];
+        Assert.Equal("T", Assert.Single(function.TypeParameters).Name.Text);
+        Assert.Equal("self.x", Show(function.ExpressionBody!));
+    }
+
+    [Fact]
     public void Missing_comma_between_arms_is_reported_once()
     {
         var unit = Parse("fn f() { match x { 1 => a 2 => b } }", out var diagnostics);

@@ -21,10 +21,9 @@ public sealed class Lowerer
     public static BoundProgram Lower(BoundProgram program)
     {
         var lowerer = new Lowerer();
-        var functions = program.Functions
-            .Select(f => new BoundFunction(f.Symbol, lowerer.LowerFunction(f), f.IsExpressionBodied))
-            .ToImmutableArray();
-        return new BoundProgram(program.Types, functions, program.Main);
+        ImmutableArray<BoundFunction> LowerAll(ImmutableArray<BoundFunction> functions) =>
+            [.. functions.Select(f => new BoundFunction(f.Symbol, lowerer.LowerFunction(f), f.IsExpressionBodied))];
+        return new BoundProgram(program.Types, LowerAll(program.Functions), LowerAll(program.Methods), program.Main);
     }
 
     private BoundBlockStatement LowerFunction(BoundFunction function)
@@ -257,13 +256,25 @@ public sealed class Lowerer
             }
 
             case BoundCallExpression call:
-                return new BoundCallExpression(call.Function, LowerOperands(call.Arguments, prelude));
+                return new BoundCallExpression(call.Function, call.TypeArguments, LowerOperands(call.Arguments, prelude), call.Type);
+
+            case BoundMethodCallExpression { Receiver: { } receiver } call:
+            {
+                // The receiver is evaluated before the arguments.
+                var operands = LowerOperands([receiver, .. call.Arguments], prelude);
+                return new BoundMethodCallExpression(
+                    operands[0], call.ReceiverType, call.Method, call.TypeArguments, operands[1..], call.Type);
+            }
+
+            case BoundMethodCallExpression call:
+                return new BoundMethodCallExpression(
+                    null, call.ReceiverType, call.Method, call.TypeArguments, LowerOperands(call.Arguments, prelude), call.Type);
 
             case BoundRecordCreationExpression creation:
-                return new BoundRecordCreationExpression(creation.Record, LowerOperands(creation.Arguments, prelude));
+                return new BoundRecordCreationExpression(creation.Record, LowerOperands(creation.Arguments, prelude), creation.Type);
 
             case BoundVariantCreationExpression creation:
-                return new BoundVariantCreationExpression(creation.Variant, LowerOperands(creation.Arguments, prelude));
+                return new BoundVariantCreationExpression(creation.Variant, LowerOperands(creation.Arguments, prelude), creation.Type);
 
             case BoundMatchExpression match:
             {
@@ -274,7 +285,7 @@ public sealed class Lowerer
             }
 
             case BoundFieldAccessExpression access:
-                return new BoundFieldAccessExpression(LowerForValue(access.Target, prelude), access.Field);
+                return new BoundFieldAccessExpression(LowerForValue(access.Target, prelude), access.Field, access.Type);
 
             case BoundInterpolatedStringExpression interpolated:
                 return new BoundInterpolatedStringExpression(LowerOperands(interpolated.Parts, prelude));

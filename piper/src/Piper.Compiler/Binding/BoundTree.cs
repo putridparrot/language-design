@@ -11,12 +11,17 @@ public abstract class BoundNode;
 public sealed class BoundProgram(
     ImmutableArray<TypeSymbol> types,
     ImmutableArray<BoundFunction> functions,
+    ImmutableArray<BoundFunction> methods,
     FunctionSymbol? main)
 {
-    /// <summary>User-declared records and enums, in declaration order.</summary>
+    /// <summary>User-declared records, enums and traits, in declaration order.</summary>
     public ImmutableArray<TypeSymbol> Types { get; } = types;
 
+    /// <summary>Top-level functions.</summary>
     public ImmutableArray<BoundFunction> Functions { get; } = functions;
+
+    /// <summary>Methods with bodies, from extend blocks and trait defaults; each symbol is a <see cref="MethodSymbol"/>.</summary>
+    public ImmutableArray<BoundFunction> Methods { get; } = methods;
 
     public FunctionSymbol? Main { get; } = main;
 }
@@ -160,31 +165,67 @@ public sealed class BoundBinaryExpression(BoundExpression left, BoundBinaryOpera
     public override TypeSymbol Type { get; } = type;
 }
 
-public sealed class BoundCallExpression(FunctionSymbol function, ImmutableArray<BoundExpression> arguments) : BoundExpression
+/// <summary>A call to a top-level function. <see cref="TypeArguments"/> are the inferred type arguments of a generic function.</summary>
+public sealed class BoundCallExpression(
+    FunctionSymbol function,
+    ImmutableArray<TypeSymbol> typeArguments,
+    ImmutableArray<BoundExpression> arguments,
+    TypeSymbol type) : BoundExpression
 {
     public FunctionSymbol Function { get; } = function;
 
+    public ImmutableArray<TypeSymbol> TypeArguments { get; } = typeArguments;
+
     public ImmutableArray<BoundExpression> Arguments { get; } = arguments;
 
-    public override TypeSymbol Type => Function.ReturnType;
+    public override TypeSymbol Type { get; } = type;
 }
 
-public sealed class BoundRecordCreationExpression(RecordSymbol record, ImmutableArray<BoundExpression> arguments) : BoundExpression
+/// <summary>
+/// <c>receiver.method(args)</c>, or <c>Type.method(args)</c> for a static method (<see cref="Receiver"/> is null).
+/// <see cref="ReceiverType"/> is the receiver's (instantiated) type; <see cref="TypeArguments"/> are the method's own.
+/// </summary>
+public sealed class BoundMethodCallExpression(
+    BoundExpression? receiver,
+    TypeSymbol receiverType,
+    MethodSymbol method,
+    ImmutableArray<TypeSymbol> typeArguments,
+    ImmutableArray<BoundExpression> arguments,
+    TypeSymbol type) : BoundExpression
+{
+    public BoundExpression? Receiver { get; } = receiver;
+
+    public TypeSymbol ReceiverType { get; } = receiverType;
+
+    public MethodSymbol Method { get; } = method;
+
+    public ImmutableArray<TypeSymbol> TypeArguments { get; } = typeArguments;
+
+    public ImmutableArray<BoundExpression> Arguments { get; } = arguments;
+
+    public override TypeSymbol Type { get; } = type;
+}
+
+public sealed class BoundRecordCreationExpression(RecordSymbol record, ImmutableArray<BoundExpression> arguments, TypeSymbol type)
+    : BoundExpression
 {
     public RecordSymbol Record { get; } = record;
 
     public ImmutableArray<BoundExpression> Arguments { get; } = arguments;
 
-    public override TypeSymbol Type => Record;
+    /// <summary>The record itself, or its instantiation for a generic record.</summary>
+    public override TypeSymbol Type { get; } = type;
 }
 
-public sealed class BoundVariantCreationExpression(VariantSymbol variant, ImmutableArray<BoundExpression> arguments) : BoundExpression
+public sealed class BoundVariantCreationExpression(VariantSymbol variant, ImmutableArray<BoundExpression> arguments, TypeSymbol type)
+    : BoundExpression
 {
     public VariantSymbol Variant { get; } = variant;
 
     public ImmutableArray<BoundExpression> Arguments { get; } = arguments;
 
-    public override TypeSymbol Type => Variant.Enum;
+    /// <summary>The enum itself, or its instantiation for a generic enum.</summary>
+    public override TypeSymbol Type { get; } = type;
 }
 
 public sealed class BoundMatchExpression(BoundExpression scrutinee, ImmutableArray<BoundMatchArm> arms, TypeSymbol type)
@@ -216,13 +257,14 @@ public sealed class BoundIsPatternExpression(BoundExpression expression, BoundPa
     public override TypeSymbol Type => TypeSymbol.Bool;
 }
 
-public sealed class BoundFieldAccessExpression(BoundExpression target, FieldSymbol field) : BoundExpression
+public sealed class BoundFieldAccessExpression(BoundExpression target, FieldSymbol field, TypeSymbol type) : BoundExpression
 {
     public BoundExpression Target { get; } = target;
 
     public FieldSymbol Field { get; } = field;
 
-    public override TypeSymbol Type => Field.Type;
+    /// <summary>The field's type with the target's type arguments substituted.</summary>
+    public override TypeSymbol Type { get; } = type;
 }
 
 /// <summary>Text segments are represented as String literals; every other part is an interpolation hole.</summary>

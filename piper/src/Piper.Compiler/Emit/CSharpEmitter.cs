@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Text;
 using Piper.Binding;
@@ -42,14 +43,31 @@ public sealed class CSharpEmitter
 
     private readonly CodeWriter _writer = new();
     private readonly string _moduleClassName;
+    private readonly string _extensionsClassName;
     private readonly HashSet<string> _topLevelNames;
+    private readonly Dictionary<MethodSymbol, BoundFunction> _methodBodies;
     private NameAllocator _names = new([]);
+
+    /// <summary>How <c>self</c> is spelled in the method being emitted: <c>this</c> in members, a parameter in extension blocks.</summary>
+    private string _selfName = "this";
+
+    /// <summary>Top-level functions are called unqualified from the module class and qualified from anywhere else.</summary>
+    private bool _inModuleClass;
 
     private CSharpEmitter(BoundProgram program, string moduleName)
     {
         _topLevelNames = [.. program.Types.Select(t => t.Name), .. program.Functions.Select(f => f.Symbol.Name), EntryPointClassName];
-        _moduleClassName = _topLevelNames.Contains(moduleName) ? moduleName + "Module" : moduleName;
-        _topLevelNames.Add(_moduleClassName);
+        _moduleClassName = UniqueTopLevelName(moduleName, "Module");
+        _extensionsClassName = UniqueTopLevelName(_moduleClassName + "Extensions", "_");
+        _methodBodies = program.Methods.ToDictionary(m => (MethodSymbol)m.Symbol);
+    }
+
+    private string UniqueTopLevelName(string name, string suffix)
+    {
+        while (_topLevelNames.Contains(name))
+            name += suffix;
+        _topLevelNames.Add(name);
+        return name;
     }
 
     public static string Emit(BoundProgram program, string moduleName)
@@ -69,22 +87,34 @@ public sealed class CSharpEmitter
 
         foreach (var type in program.Types)
         {
-            if (type is RecordSymbol record)
-                _writer.WriteLine($"public sealed record {Escape(record.Name)}({Fields(record.Fields)});");
-            else if (type is EnumSymbol @enum)
-                EmitEnum(@enum);
+            switch (type)
+            {
+                case RecordSymbol record:
+                    EmitRecord(record);
+                    break;
+                case EnumSymbol @enum:
+                    EmitEnum(@enum);
+                    break;
+                case TraitSymbol trait:
+                    EmitTrait(trait);
+                    break;
+            }
             _writer.WriteLine();
         }
 
         _writer.WriteLine($"public static class {Escape(_moduleClassName)}");
         _writer.OpenBrace();
+        _inModuleClass = true;
         for (int i = 0; i < program.Functions.Length; i++)
         {
             if (i > 0)
                 _writer.WriteLine();
-            EmitFunction(program.Functions[i]);
+            EmitFunction(program.Functions[i], "public static ");
         }
+        _inModuleClass = false;
         _writer.CloseBrace();
+
+        EmitExtensions(program);
 
         if (program.Main is not null)
         {
@@ -102,16 +132,37 @@ public sealed class CSharpEmitter
     }
 
     /// <summary>
+    /// <c>public sealed record Pair&lt;A, B&gt;(A first, B second) : Trait where A : Bound</c>, with a body
+    /// holding any extend methods (which is what lets the record implement trait interfaces).
+    /// </summary>
+    private void EmitRecord(RecordSymbol record)
+    {
+        var header = $"public sealed record {Escape(record.Name)}{TypeParameterList(record.TypeParameters)}" +
+                     $"({Fields(record.Fields)}){BaseList(record.Traits)}{Constraints(record.TypeParameters)}";
+        if (record.Methods.Count == 0)
+        {
+            _writer.WriteLine(header + ";");
+            return;
+        }
+
+        _writer.WriteLine(header);
+        _writer.OpenBrace();
+        EmitMembers(record.Methods);
+        _writer.CloseBrace();
+    }
+
+    /// <summary>
     /// An enum is a closed record hierarchy: the private constructor means only the nested variant
     /// records can derive from it.
     /// </summary>
     private void EmitEnum(EnumSymbol @enum)
     {
         var name = Escape(@enum.Name);
+        var selfType = TypeName(@enum.SelfType);
         // Inside the enum a variant name hides any top-level type of the same name, so qualify those.
         var variantNames = @enum.Variants.Select(v => v.Name).ToHashSet();
 
-        _writer.WriteLine($"public abstract record {name}");
+        _writer.WriteLine($"public abstract record {name}{TypeParameterList(@enum.TypeParameters)}{BaseList(@enum.Traits)}{Constraints(@enum.TypeParameters)}");
         _writer.OpenBrace();
         _writer.WriteLine($"private {name}()");
         _writer.OpenBrace();
@@ -119,26 +170,127 @@ public sealed class CSharpEmitter
         foreach (var variant in @enum.Variants)
         {
             _writer.WriteLine();
-            _writer.WriteLine($"public sealed record {Escape(variant.Name)}({Fields(variant.Fields, variantNames)}) : {name};");
+            _writer.WriteLine($"public sealed record {Escape(variant.Name)}({Fields(variant.Fields, variantNames)}) : {selfType};");
+        }
+        if (@enum.Methods.Count > 0)
+        {
+            _writer.WriteLine();
+            EmitMembers(@enum.Methods);
         }
         _writer.CloseBrace();
     }
 
-    private static string Fields(IEnumerable<FieldSymbol> fields, ISet<string>? shadowedNames = null) =>
-        string.Join(", ", fields.Select(f =>
-        {
-            var type = TypeName(f.Type);
-            if (shadowedNames is not null && f.Type is RecordSymbol or EnumSymbol && shadowedNames.Contains(f.Type.Name))
-                type = "global::" + type;
-            return $"{type} {Escape(f.Name)}";
-        }));
-
-    private void EmitFunction(BoundFunction function)
+    /// <summary>A trait is an interface; methods with a body become default interface methods.</summary>
+    private void EmitTrait(TraitSymbol trait)
     {
-        _names = new NameAllocator([.. _topLevelNames, "_"]);
-        var symbol = function.Symbol;
+        _writer.WriteLine($"public interface {Escape(trait.Name)}");
+        _writer.OpenBrace();
+        for (int i = 0; i < trait.Methods.Length; i++)
+        {
+            if (i > 0)
+                _writer.WriteLine();
+            var method = trait.Methods[i];
+            _selfName = "this";
+            if (_methodBodies.TryGetValue(method, out var body))
+            {
+                EmitFunction(body, "");
+            }
+            else
+            {
+                _names = NewNameAllocator(method);
+                _writer.WriteLine($"{Signature(method, "")};");
+            }
+        }
+        _writer.CloseBrace();
+    }
+
+    private void EmitMembers(IReadOnlyList<MethodSymbol> methods)
+    {
+        _selfName = "this";
+        for (int i = 0; i < methods.Count; i++)
+        {
+            if (i > 0)
+                _writer.WriteLine();
+            EmitFunction(_methodBodies[methods[i]], methods[i].IsStatic ? "public static " : "public ");
+        }
+    }
+
+    /// <summary>
+    /// Methods on builtin types become C# 14 extension members:
+    /// <c>extension(int self) { public int squared() =&gt; self * self; }</c>.
+    /// </summary>
+    private void EmitExtensions(BoundProgram program)
+    {
+        var groups = program.Methods
+            .Select(m => (MethodSymbol)m.Symbol)
+            .Where(m => m.ContainingType is not (NamedTypeDefinition or TraitSymbol))
+            .GroupBy(m => (m.ContainingType, m.IsStatic))
+            .ToList();
+        if (groups.Count == 0)
+            return;
+
+        _writer.WriteLine();
+        _writer.WriteLine($"public static class {Escape(_extensionsClassName)}");
+        _writer.OpenBrace();
+        for (int i = 0; i < groups.Count; i++)
+        {
+            if (i > 0)
+                _writer.WriteLine();
+            var (type, isStatic) = groups[i].Key;
+            _writer.WriteLine(isStatic ? $"extension({TypeName(type)})" : $"extension({TypeName(type)} self)");
+            _writer.OpenBrace();
+            var methods = groups[i].ToList();
+            for (int j = 0; j < methods.Count; j++)
+            {
+                if (j > 0)
+                    _writer.WriteLine();
+                _selfName = "self";
+                EmitFunction(_methodBodies[methods[j]], isStatic ? "public static " : "public ");
+            }
+            _writer.CloseBrace();
+        }
+        _writer.CloseBrace();
+        _selfName = "this";
+    }
+
+    private static string Fields(IEnumerable<FieldSymbol> fields, ISet<string>? shadowedNames = null) =>
+        string.Join(", ", fields.Select(f => $"{TypeName(f.Type, shadowedNames)} {Escape(f.Name)}"));
+
+    private static string TypeParameterList(IEnumerable<TypeParameterSymbol> parameters) =>
+        parameters.Any() ? $"<{string.Join(", ", parameters.Select(p => Escape(p.Name)))}>" : "";
+
+    private static string BaseList(IEnumerable<TraitSymbol> traits) =>
+        traits.Any() ? $" : {string.Join(", ", traits.Select(t => Escape(t.Name)))}" : "";
+
+    private static string Constraints(IEnumerable<TypeParameterSymbol> parameters) =>
+        string.Concat(parameters
+            .Where(p => p.Constraints.Length > 0)
+            .Select(p => $" where {Escape(p.Name)} : {string.Join(", ", p.Constraints.Select(c => Escape(c.Name)))}"));
+
+    private NameAllocator NewNameAllocator(FunctionSymbol function)
+    {
+        IEnumerable<string> typeParameters = function.TypeParameters.Select(p => p.Name);
+        if (function is MethodSymbol { ContainingType: NamedTypeDefinition definition })
+            typeParameters = typeParameters.Concat(definition.TypeParameters.Select(p => p.Name));
+        return new NameAllocator([.. _topLevelNames, "_", .. typeParameters]);
+    }
+
+    /// <summary>e.g. <c>public static T first&lt;T&gt;(Pair&lt;T, T&gt; pair) where T : Show</c>; declares the parameter names.</summary>
+    private string Signature(FunctionSymbol symbol, string modifiers)
+    {
         var parameters = string.Join(", ", symbol.Parameters.Select(p => $"{TypeName(p.Type)} {Escape(_names.Declare(p))}"));
-        var signature = $"public static {TypeName(symbol.ReturnType)} {Escape(symbol.Name)}({parameters})";
+        return $"{modifiers}{TypeName(symbol.ReturnType)} {Escape(symbol.Name)}{TypeParameterList(symbol.TypeParameters)}" +
+               $"({parameters}){Constraints(symbol.TypeParameters)}";
+    }
+
+    private void EmitFunction(BoundFunction function, string modifiers)
+    {
+        var symbol = function.Symbol;
+        _names = NewNameAllocator(symbol);
+        if (symbol is MethodSymbol { Self: { } self } && _selfName != "this")
+            _names.Declare(self);
+
+        var signature = Signature(symbol, modifiers);
         var body = (BoundBlockStatement)function.Body;
 
         if (function.IsExpressionBodied && body.Statements is [var only])
@@ -146,7 +298,8 @@ public sealed class CSharpEmitter
             var expression = only switch
             {
                 BoundReturnStatement { Value: { } value } => value,
-                BoundExpressionStatement { Expression: BoundCallExpression or BoundAssignmentExpression } statement => statement.Expression,
+                BoundExpressionStatement { Expression: BoundCallExpression or BoundMethodCallExpression or BoundAssignmentExpression } statement =>
+                    statement.Expression,
                 _ => null,
             };
             if (expression is not null)
@@ -195,7 +348,7 @@ public sealed class CSharpEmitter
                 break;
             }
 
-            case BoundExpressionStatement { Expression: BoundCallExpression or BoundAssignmentExpression } expressionStatement:
+            case BoundExpressionStatement { Expression: BoundCallExpression or BoundMethodCallExpression or BoundAssignmentExpression } expressionStatement:
                 _writer.WriteLine($"{Expr(expressionStatement.Expression, AssignmentPrecedence)};");
                 break;
 
@@ -278,22 +431,24 @@ public sealed class CSharpEmitter
         var (text, precedence) = expression switch
         {
             BoundLiteralExpression literal => (Literal(literal.Value), PrimaryPrecedence),
+            BoundVariableExpression { Variable.Kind: VariableKind.Self } => (_selfName, PrimaryPrecedence),
             BoundVariableExpression variable => (Escape(_names.Get(variable.Variable)), PrimaryPrecedence),
             BoundUnaryExpression unary => (Unary(unary), UnaryPrecedence),
             BoundBinaryExpression binary => Binary(binary),
             BoundAssignmentExpression assignment => (Assignment(assignment), AssignmentPrecedence),
             BoundCallExpression call => (Call(call), PrimaryPrecedence),
+            BoundMethodCallExpression call => (MethodCall(call), PrimaryPrecedence),
             BoundRecordCreationExpression creation =>
-                ($"new {TypeName(creation.Record)}({Arguments(creation.Arguments)})", PrimaryPrecedence),
+                ($"new {TypeName(creation.Type)}({Arguments(creation.Arguments)})", PrimaryPrecedence),
             BoundVariantCreationExpression creation =>
-                ($"new {ConstructorName(creation.Variant)}({Arguments(creation.Arguments)})", PrimaryPrecedence),
+                ($"new {ConstructorName(creation.Variant, creation.Type)}({Arguments(creation.Arguments)})", PrimaryPrecedence),
             BoundIsPatternExpression test =>
                 ($"{Expr(test.Expression, PrimaryPrecedence)} is {Pattern(test.Pattern)}", RelationalPrecedence),
             BoundFieldAccessExpression access =>
                 ($"{Expr(access.Target, PrimaryPrecedence)}.{Escape(access.Field.Name)}", PrimaryPrecedence),
             BoundInterpolatedStringExpression interpolated => (InterpolatedString(interpolated), PrimaryPrecedence),
             BoundConditionalExpression conditional => (
-                $"{Expr(conditional.Condition, LogicalOrPrecedence)} ? {Expr(conditional.WhenTrue, ConditionalPrecedence)} : {Expr(conditional.WhenFalse, ConditionalPrecedence)}",
+                $"{Expr(conditional.Condition, LogicalOrPrecedence)} ? {Branch(conditional.WhenTrue)} : {Branch(conditional.WhenFalse)}",
                 ConditionalPrecedence),
             _ => throw new InvalidOperationException($"{expression.GetType().Name} should have been lowered or rejected before emit."),
         };
@@ -337,12 +492,41 @@ public sealed class CSharpEmitter
         return $"{Escape(_names.Get(assignment.Variable))} {op} {Expr(assignment.Value, AssignmentPrecedence)}";
     }
 
+    /// <summary>
+    /// A ternary needs its branches to share a type, which two records implementing the same trait
+    /// don't; casting a branch converted to a trait gives the expression that type.
+    /// </summary>
+    private string Branch(BoundExpression branch) =>
+        branch is BoundConversionExpression { Type: TraitSymbol trait } conversion
+            ? $"({Escape(trait.Name)}){Expr(conversion.Expression, UnaryPrecedence)}"
+            : Expr(branch, ConditionalPrecedence);
+
     private string Call(BoundCallExpression call)
     {
         if (call.Function == BuiltinFunctions.Print)
             return $"global::System.Console.WriteLine({DisplayValue(call.Arguments[0], ConditionalPrecedence)})";
-        return $"{Escape(call.Function.Name)}({Arguments(call.Arguments)})";
+        var qualifier = _inModuleClass ? "" : Escape(_moduleClassName) + ".";
+        return $"{qualifier}{Escape(call.Function.Name)}{TypeArgumentList(call.TypeArguments)}({Arguments(call.Arguments)})";
     }
+
+    /// <summary>
+    /// <c>receiver.method(args)</c> or <c>Type.method(args)</c>. C# only exposes a default interface method
+    /// through the interface, so a default trait method called on a concrete type casts the receiver first.
+    /// </summary>
+    private string MethodCall(BoundMethodCallExpression call)
+    {
+        var method = $"{Escape(call.Method.Name)}{TypeArgumentList(call.TypeArguments)}({Arguments(call.Arguments)})";
+        if (call.Receiver is null)
+            return $"{TypeName(call.ReceiverType)}.{method}";
+
+        if (call.Method.Trait is { } trait && call.ReceiverType is not (TraitSymbol or TypeParameterSymbol))
+            return $"(({Escape(trait.Name)}){Expr(call.Receiver, UnaryPrecedence)}).{method}";
+
+        return $"{Expr(call.Receiver, PrimaryPrecedence)}.{method}";
+    }
+
+    private static string TypeArgumentList(ImmutableArray<TypeSymbol> arguments) =>
+        arguments.IsEmpty ? "" : $"<{string.Join(", ", arguments.Select(a => TypeName(a)))}>";
 
     private string Arguments(IEnumerable<BoundExpression> arguments) =>
         string.Join(", ", arguments.Select(argument =>
@@ -391,18 +575,19 @@ public sealed class CSharpEmitter
         BoundLiteralPattern literal => Literal(literal.Value),
         BoundRangePattern range =>
             $">= {Literal(range.Lower)} and {(range.IsInclusive ? "<=" : "<")} {Literal(range.Upper)}",
-        BoundConstructorPattern { Arguments.Length: 0 } constructor => ConstructorName(constructor.Constructor),
+        BoundConstructorPattern { Arguments.Length: 0 } constructor => ConstructorName(constructor.Constructor, constructor.Type),
         BoundConstructorPattern constructor =>
-            $"{ConstructorName(constructor.Constructor)}({string.Join(", ", constructor.Arguments.Select(Pattern))})",
+            $"{ConstructorName(constructor.Constructor, constructor.Type)}({string.Join(", ", constructor.Arguments.Select(Pattern))})",
         BoundOrPattern alternatives => string.Join(" or ", alternatives.Alternatives.Select(a =>
             a is BoundRangePattern ? $"({Pattern(a)})" : Pattern(a))),
         _ => throw new InvalidOperationException($"Unexpected pattern {pattern.GetType().Name}"),
     };
 
-    private static string ConstructorName(Symbol constructor) => constructor switch
+    /// <summary><c>Option&lt;int&gt;.Some</c> for a variant of <paramref name="type"/>, or the record type itself.</summary>
+    private static string ConstructorName(Symbol constructor, TypeSymbol type) => constructor switch
     {
-        VariantSymbol variant => $"{Escape(variant.Enum.Name)}.{Escape(variant.Name)}",
-        RecordSymbol record => Escape(record.Name),
+        VariantSymbol variant => $"{TypeName(type)}.{Escape(variant.Name)}",
+        RecordSymbol => TypeName(type),
         _ => throw new InvalidOperationException($"Unexpected constructor {constructor.GetType().Name}"),
     };
 
@@ -411,7 +596,8 @@ public sealed class CSharpEmitter
 
     // Names, types and literals
 
-    private static string TypeName(TypeSymbol type)
+    /// <param name="shadowedNames">User type names hidden by a nested type at this point (enum variants); those are emitted with <c>global::</c>.</param>
+    private static string TypeName(TypeSymbol type, ISet<string>? shadowedNames = null)
     {
         if (type == TypeSymbol.Int) return "int";
         if (type == TypeSymbol.Long) return "long";
@@ -420,8 +606,16 @@ public sealed class CSharpEmitter
         if (type == TypeSymbol.String) return "string";
         if (type == TypeSymbol.Char) return "char";
         if (type == TypeSymbol.Unit) return "void";
-        if (type is RecordSymbol or EnumSymbol) return Escape(type.Name);
-        throw new InvalidOperationException($"Type '{type}' cannot be emitted.");
+
+        string Qualify(string name) => shadowedNames?.Contains(name) == true ? "global::" + Escape(name) : Escape(name);
+        return type switch
+        {
+            NamedTypeDefinition or TraitSymbol => Qualify(type.Name),
+            ConstructedTypeSymbol constructed =>
+                $"{Qualify(constructed.Definition.Name)}<{string.Join(", ", constructed.TypeArguments.Select(a => TypeName(a, shadowedNames)))}>",
+            TypeParameterSymbol parameter => Escape(parameter.Name),
+            _ => throw new InvalidOperationException($"Type '{type}' cannot be emitted."),
+        };
     }
 
     private static string Escape(string name) => CSharpKeywords.Contains(name) ? "@" + name : name;

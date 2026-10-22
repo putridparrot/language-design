@@ -1,0 +1,77 @@
+// Traits with required and default methods, implemented by records and enums.
+// Traits work both as generic constraints (static dispatch) and as types (dynamic dispatch).
+
+trait Shape {
+    fn area(self) -> Double;
+    fn name(self) -> String;
+    fn describe(self) -> String = "{self.name()} with area {self.area()}";
+}
+
+record Circle(radius: Double);
+record Rect(width: Double, height: Double);
+
+extend Circle: Shape {
+    fn area(self) -> Double = 3.0 * self.radius * self.radius;
+    fn name(self) -> String = "circle";
+}
+
+extend Rect: Shape {
+    fn area(self) -> Double = self.width * self.height;
+    fn name(self) -> String = if self.width == self.height { "square" } else { "rectangle" };
+    fn describe(self) -> String = "a {self.width}x{self.height} {self.name()}";
+}
+
+enum List<T> {
+    Cons(head: T, tail: List<T>),
+    Nil,
+}
+
+fn largest<T: Shape>(a: T, b: T) -> T = if a.area() >= b.area() { a } else { b };
+
+fn summary<T: Shape>(shape: T) -> String = shape.describe();
+
+fn totalArea(shapes: List<Shape>) -> Double = match shapes {
+    Cons(s, rest) => s.area() + totalArea(rest),
+    Nil => 0.0,
+};
+
+trait Speak {
+    fn sound(self) -> String;
+    fn speak(self) -> String = "says {self.sound()}";
+}
+
+enum Animal {
+    Dog(name: String),
+    Cat(name: String, lives: Int),
+}
+
+extend Animal: Speak {
+    fn sound(self) -> String = match self {
+        Dog(_) => "woof",
+        Cat(_, _) => "meow",
+    };
+
+    fn nickname(self) -> String = match self {
+        Dog(n) => n,
+        Cat(n, _) => n,
+    };
+}
+
+fn main() {
+    let c = Circle(1.0);
+    let r = Rect(2.0, 3.0);
+    print(c.describe());
+    print(r.describe());
+    print(summary(Rect(2.0, 2.0)));
+    print(largest(c, Circle(2.0)).radius);
+
+    let s: Shape = if r.area() > c.area() { r } else { c };
+    print(s.name());
+
+    let shapes: List<Shape> = List.Cons(c, List.Cons(r, List.Cons(Rect(1.0, 1.0), List.Nil)));
+    print(totalArea(shapes));
+
+    let tom = Animal.Cat("Tom", 9);
+    print("{tom.nickname()} {tom.speak()}");
+    print("{Animal.Dog("Rex").nickname()} {Animal.Dog("Rex").speak()}");
+}

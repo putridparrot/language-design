@@ -42,7 +42,7 @@ public static class Exhaustiveness
         if (!IsWildcard(head))
         {
             var key = KeyOf(head)!;
-            return IsUseful(Specialize(rows, key, Arity(key)), [.. Arguments(head), .. rest]);
+            return IsUseful(Specialize(rows, key, head.Type), [.. Arguments(head), .. rest]);
         }
 
         var all = AllConstructors(head.Type);
@@ -50,7 +50,7 @@ public static class Exhaustiveness
         if (all is not null && all.All(heads.Contains))
         {
             return all.Any(c =>
-                IsUseful(Specialize(rows, c, Arity(c)), [.. FieldTypes(c).Select(Wildcard), .. rest]));
+                IsUseful(Specialize(rows, c, head.Type), [.. FieldTypes(c, head.Type).Select(Wildcard), .. rest]));
         }
 
         return IsUseful(Default(rows), rest);
@@ -72,7 +72,7 @@ public static class Exhaustiveness
             foreach (var constructor in all)
             {
                 int arity = Arity(constructor);
-                var witness = FindWitness(Specialize(rows, constructor, arity), [.. FieldTypes(constructor), .. rest]);
+                var witness = FindWitness(Specialize(rows, constructor, type), [.. FieldTypes(constructor, type), .. rest]);
                 if (witness is not null)
                     return [Format(constructor, witness[..arity]), .. witness[arity..]];
             }
@@ -92,14 +92,14 @@ public static class Exhaustiveness
     }
 
     /// <summary>Rows that can match constructor <paramref name="key"/>, with its fields expanded into columns.</summary>
-    private static List<BoundPattern[]> Specialize(List<BoundPattern[]> rows, object key, int arity)
+    private static List<BoundPattern[]> Specialize(List<BoundPattern[]> rows, object key, TypeSymbol columnType)
     {
         var result = new List<BoundPattern[]>();
         foreach (var row in ExpandOrHeads(rows))
         {
             var head = row[0];
             if (IsWildcard(head))
-                result.Add([.. FieldTypes(key).Select(Wildcard), .. row[1..]]);
+                result.Add([.. FieldTypes(key, columnType).Select(Wildcard), .. row[1..]]);
             else if (Equals(KeyOf(head), key))
                 result.Add([.. Arguments(head), .. row[1..]]);
         }
@@ -143,17 +143,18 @@ public static class Exhaustiveness
     private static IEnumerable<BoundPattern> Arguments(BoundPattern pattern) =>
         pattern is BoundConstructorPattern constructor ? constructor.Arguments : [];
 
-    private static int Arity(object key) => FieldTypes(key).Count();
+    private static int Arity(object key) => key switch { VariantSymbol v => v.Fields.Length, RecordSymbol r => r.Fields.Length, _ => 0 };
 
-    private static IEnumerable<TypeSymbol> FieldTypes(object key) => key switch
+    /// <summary>Field types of a constructor of <paramref name="columnType"/>, e.g. Int for <c>Some</c> of <c>Option&lt;Int&gt;</c>.</summary>
+    private static IEnumerable<TypeSymbol> FieldTypes(object key, TypeSymbol columnType) => key switch
     {
-        VariantSymbol variant => variant.Fields.Select(f => f.Type),
-        RecordSymbol record => record.Fields.Select(f => f.Type),
+        VariantSymbol variant => variant.Fields.Select(f => TypeSubstitution.FieldType(f, columnType)),
+        RecordSymbol record => record.Fields.Select(f => TypeSubstitution.FieldType(f, columnType)),
         _ => [],
     };
 
     /// <summary>The complete set of constructors for types with finitely many, or null.</summary>
-    private static List<object>? AllConstructors(TypeSymbol type) => type switch
+    private static List<object>? AllConstructors(TypeSymbol type) => type.OriginalDefinition switch
     {
         EnumSymbol @enum => [.. @enum.Variants],
         RecordSymbol record => [record],

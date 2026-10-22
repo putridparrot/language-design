@@ -85,7 +85,9 @@ public static class Operators
             case BoundBinaryOperatorKind.Equals or BoundBinaryOperatorKind.NotEquals:
                 if (numeric is not null)
                     return new(kind, numeric, TypeSymbol.Bool);
-                if (left == right && left.IsValueType)
+                // C# can't compare an unconstrained type parameter with ==, and == on an interface would
+                // compare references, so neither type parameters nor traits support equality (yet).
+                if (left == right && left.IsValueType && left is not (TypeParameterSymbol or TraitSymbol))
                     return new(kind, left, TypeSymbol.Bool);
                 return null;
 

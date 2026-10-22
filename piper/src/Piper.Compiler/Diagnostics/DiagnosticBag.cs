@@ -67,7 +67,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0101", span, $"Expected an expression but found {Describe(actual)}.");
 
     public void ReportExpectedDeclaration(TextSpan span, Token actual) =>
-        Error("PIP0102", span, $"Expected 'fn', 'record' or 'enum' but found {Describe(actual)}.");
+        Error("PIP0102", span, $"Expected 'fn', 'record', 'enum', 'trait' or 'extend' but found {Describe(actual)}.");
 
     public void ReportExpectedType(TextSpan span, Token actual) =>
         Error("PIP0103", span, $"Expected a type but found {Describe(actual)}.");
@@ -116,6 +116,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
             VariableKind.Parameter => $"Cannot assign to parameter '{variable.Name}'; parameters are immutable.",
             VariableKind.LoopVariable => $"Cannot assign to loop variable '{variable.Name}'.",
             VariableKind.PatternVariable => $"Cannot assign to pattern variable '{variable.Name}'.",
+            VariableKind.Self => "Cannot assign to 'self'.",
             _ => $"Cannot assign to '{variable.Name}' because it is immutable; declare it with 'var' instead of 'let'.",
         });
 
@@ -216,6 +217,53 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportInvalidRangePattern(TextSpan span, TypeSymbol type) =>
         Error("PIP0239", span, $"Range patterns need Int, Long or Char bounds, not '{type}'.");
+
+    // Generics, traits and methods
+
+    public void ReportCannotInferTypeArgument(TextSpan span, string parameter, string callee) =>
+        Error("PIP0240", span, $"Cannot infer type argument '{parameter}' for '{callee}'; add a type annotation, e.g. 'let x: Option<Int> = ...'.");
+
+    public void ReportNotGeneric(TextSpan span, string name) =>
+        Error("PIP0241", span, $"'{name}' is not generic and takes no type arguments.");
+
+    public void ReportTypeArgumentCount(TextSpan span, string name, int expected, int actual) =>
+        Error("PIP0241", span, $"'{name}' takes {expected} type argument{(expected == 1 ? "" : "s")} but was given {actual}.");
+
+    public void ReportConstraintNotSatisfied(TextSpan span, TypeSymbol argument, TraitSymbol trait, TypeParameterSymbol parameter) =>
+        Error("PIP0242", span, $"'{argument}' does not implement '{trait}', which type parameter '{parameter}' requires.");
+
+    public void ReportUnknownMethod(TextSpan span, TypeSymbol type, string name) =>
+        Error("PIP0243", span, $"Type '{type}' has no method '{name}'.");
+
+    public void ReportSelfOutsideMethod(TextSpan span) =>
+        Error("PIP0244", span, "'self' can only be used in methods declared in a trait or extend block.");
+
+    public void ReportStaticMethodOnInstance(TextSpan span, string method, TypeSymbol type) =>
+        Error("PIP0244", span, $"'{method}' has no 'self' parameter; call it on the type: {type.OriginalDefinition}.{method}(...).");
+
+    public void ReportInstanceMethodCalledStatically(TextSpan span, string method) =>
+        Error("PIP0244", span, $"'{method}' takes 'self'; call it on a value: value.{method}(...).");
+
+    public void ReportMissingTraitMethod(TextSpan span, TypeSymbol type, string method, TraitSymbol trait) =>
+        Error("PIP0245", span, $"'{type}' does not implement '{method}', which trait '{trait}' requires.");
+
+    public void ReportTraitSignatureMismatch(TextSpan span, string method, TraitSymbol trait, string expected) =>
+        Error("PIP0246", span, $"'{method}' does not match its declaration in trait '{trait}': expected {expected}.");
+
+    public void ReportInvalidExtendTarget(TextSpan span, string reason) =>
+        Error("PIP0247", span, reason);
+
+    public void ReportNotATrait(TextSpan span, string name) =>
+        Error("PIP0248", span, $"'{name}' is not a trait.");
+
+    public void ReportInvalidTraitMethod(TextSpan span, string reason) =>
+        Error("PIP0250", span, reason);
+
+    public void ReportMissingBody(TextSpan span, string name) =>
+        Error("PIP0251", span, $"'{name}' needs a body; only trait methods can be declared without one.");
+
+    public void ReportExistingClrMember(TextSpan span, TypeSymbol type, string name) =>
+        Error("PIP0252", span, $"'{type}' already has a member named '{name}', which would hide this method.");
 
     public void ReportEmptyRangePattern(TextSpan span) =>
         Error("PIP0239", span, "This range pattern is empty: its lower bound is not below its upper bound.");

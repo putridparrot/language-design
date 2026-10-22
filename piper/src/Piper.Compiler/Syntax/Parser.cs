@@ -102,7 +102,7 @@ public sealed class Parser
         return new CompilationUnitSyntax(new TextSpan(0, _source.Length), declarations.ToImmutable());
     }
 
-    /// <summary>declaration = function | record | enum ;</summary>
+    /// <summary>declaration = function | record | enum | trait | extend ;</summary>
     private DeclarationSyntax? ParseDeclaration()
     {
         switch (Current.Kind)
@@ -113,6 +113,10 @@ public sealed class Parser
                 return ParseRecord();
             case TokenKind.EnumKeyword:
                 return ParseEnum();
+            case TokenKind.TraitKeyword:
+                return ParseTrait();
+            case TokenKind.ExtendKeyword:
+                return ParseExtend();
             default:
                 ReportOnce(Current.Span, () => _diagnostics.ReportExpectedDeclaration(Current.Span, Current));
                 while (!IsDeclarationStart(Current.Kind) && Current.Kind != TokenKind.EndOfFile)
@@ -121,18 +125,30 @@ public sealed class Parser
         }
     }
 
-    private static bool IsDeclarationStart(TokenKind kind) =>
-        kind is TokenKind.FnKeyword or TokenKind.RecordKeyword or TokenKind.EnumKeyword;
+    private static bool IsDeclarationStart(TokenKind kind) => kind is
+        TokenKind.FnKeyword or TokenKind.RecordKeyword or TokenKind.EnumKeyword or
+        TokenKind.TraitKeyword or TokenKind.ExtendKeyword;
 
     /// <summary>
-    /// function = "fn" IDENT "(" [ parameter { "," parameter } [ "," ] ] ")" [ "->" type ]
-    ///            ( block | "=" expression ";" ) ;
+    /// function = "fn" IDENT [ typeParameters ] "(" [ "self" [ "," ] ] [ parameter { "," parameter } [ "," ] ] ")"
+    ///            [ "->" type ] ( block | "=" expression ";" | ";" ) ;
+    /// The bodiless form declares a required trait method; elsewhere the binder reports it.
     /// </summary>
     private FunctionDeclarationSyntax ParseFunction()
     {
         var keyword = Expect(TokenKind.FnKeyword);
         var name = Expect(TokenKind.Identifier);
+        var typeParameters = ParseTypeParameters();
         Expect(TokenKind.OpenParen);
+
+        Token? self = null;
+        if (Current.Kind == TokenKind.SelfKeyword)
+        {
+            self = NextToken();
+            if (Current.Kind == TokenKind.Comma)
+                NextToken();
+        }
+
         var parameters = ParseSeparatedList(ParseParameter, TokenKind.CloseParen);
         Expect(TokenKind.CloseParen);
 
@@ -143,42 +159,133 @@ public sealed class Parser
             returnType = ParseType();
         }
 
+        BlockExpressionSyntax? block = null;
+        ExpressionSyntax? expression = null;
         if (Current.Kind == TokenKind.Equals)
         {
             NextToken();
-            var expression = ParseExpression();
+            expression = ParseExpression();
             Expect(TokenKind.Semicolon);
-            return new FunctionDeclarationSyntax(SpanFrom(keyword), name, parameters, returnType, null, expression);
+        }
+        else if (Current.Kind == TokenKind.Semicolon)
+        {
+            NextToken();
+        }
+        else
+        {
+            block = ParseBlock();
         }
 
-        var body = ParseBlock();
-        return new FunctionDeclarationSyntax(SpanFrom(keyword), name, parameters, returnType, body, null);
+        return new FunctionDeclarationSyntax(SpanFrom(keyword), name, typeParameters, self, parameters, returnType, block, expression);
     }
 
-    /// <summary>record = "record" IDENT "(" [ parameter { "," parameter } [ "," ] ] ")" ";" ;</summary>
+    /// <summary>
+    /// typeParameters = "&lt;" typeParameter { "," typeParameter } [ "," ] "&gt;" ;
+    /// typeParameter  = IDENT [ ":" type { "+" type } ] ;
+    /// </summary>
+    private ImmutableArray<TypeParameterSyntax> ParseTypeParameters()
+    {
+        if (Current.Kind != TokenKind.Less)
+            return [];
+
+        NextToken();
+        var parameters = ParseSeparatedList(() =>
+        {
+            var name = Expect(TokenKind.Identifier);
+            var constraints = ImmutableArray.CreateBuilder<TypeSyntax>();
+            if (Current.Kind == TokenKind.Colon)
+            {
+                NextToken();
+                constraints.Add(ParseType());
+                while (Current.Kind == TokenKind.Plus)
+                {
+                    NextToken();
+                    constraints.Add(ParseType());
+                }
+            }
+            return new TypeParameterSyntax(SpanFrom(name), name, constraints.ToImmutable());
+        }, TokenKind.Greater);
+        Expect(TokenKind.Greater);
+        return parameters;
+    }
+
+    /// <summary>record = "record" IDENT [ typeParameters ] "(" [ parameter { "," parameter } [ "," ] ] ")" ";" ;</summary>
     private RecordDeclarationSyntax ParseRecord()
     {
         var keyword = Expect(TokenKind.RecordKeyword);
         var name = Expect(TokenKind.Identifier);
+        var typeParameters = ParseTypeParameters();
         Expect(TokenKind.OpenParen);
         var fields = ParseSeparatedList(ParseParameter, TokenKind.CloseParen);
         Expect(TokenKind.CloseParen);
         Expect(TokenKind.Semicolon);
-        return new RecordDeclarationSyntax(SpanFrom(keyword), name, fields);
+        return new RecordDeclarationSyntax(SpanFrom(keyword), name, typeParameters, fields);
     }
 
     /// <summary>
-    /// enum    = "enum" IDENT "{" [ variant { "," variant } [ "," ] ] "}" ;
+    /// enum    = "enum" IDENT [ typeParameters ] "{" [ variant { "," variant } [ "," ] ] "}" ;
     /// variant = IDENT [ "(" [ parameter { "," parameter } [ "," ] ] ")" ] ;
     /// </summary>
     private EnumDeclarationSyntax ParseEnum()
     {
         var keyword = Expect(TokenKind.EnumKeyword);
         var name = Expect(TokenKind.Identifier);
+        var typeParameters = ParseTypeParameters();
         Expect(TokenKind.OpenBrace);
         var variants = ParseSeparatedList(ParseVariant, TokenKind.CloseBrace);
         Expect(TokenKind.CloseBrace);
-        return new EnumDeclarationSyntax(SpanFrom(keyword), name, variants);
+        return new EnumDeclarationSyntax(SpanFrom(keyword), name, typeParameters, variants);
+    }
+
+    /// <summary>trait = "trait" IDENT "{" { function } "}" ;</summary>
+    private TraitDeclarationSyntax ParseTrait()
+    {
+        var keyword = Expect(TokenKind.TraitKeyword);
+        var name = Expect(TokenKind.Identifier);
+        var methods = ParseMethodBlock();
+        return new TraitDeclarationSyntax(SpanFrom(keyword), name, methods);
+    }
+
+    /// <summary>extend = "extend" type [ ":" type { "," type } ] "{" { function } "}" ;</summary>
+    private ExtendDeclarationSyntax ParseExtend()
+    {
+        var keyword = Expect(TokenKind.ExtendKeyword);
+        var target = ParseType();
+        var traits = ImmutableArray.CreateBuilder<TypeSyntax>();
+        if (Current.Kind == TokenKind.Colon)
+        {
+            NextToken();
+            traits.Add(ParseType());
+            while (Current.Kind == TokenKind.Comma)
+            {
+                NextToken();
+                traits.Add(ParseType());
+            }
+        }
+        var methods = ParseMethodBlock();
+        return new ExtendDeclarationSyntax(SpanFrom(keyword), ((NamedTypeSyntax)target).Name, target, traits.ToImmutable(), methods);
+    }
+
+    private ImmutableArray<FunctionDeclarationSyntax> ParseMethodBlock()
+    {
+        Expect(TokenKind.OpenBrace);
+        var methods = ImmutableArray.CreateBuilder<FunctionDeclarationSyntax>();
+        while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
+        {
+            if (Current.Kind == TokenKind.FnKeyword)
+            {
+                methods.Add(ParseFunction());
+                continue;
+            }
+
+            // Another declaration keyword probably means a missing '}'.
+            if (IsDeclarationStart(Current.Kind))
+                break;
+            ReportOnce(Current.Span, () => _diagnostics.ReportExpectedToken(Current.Span, TokenKind.FnKeyword, Current));
+            NextToken();
+        }
+        Expect(TokenKind.CloseBrace);
+        return methods.ToImmutable();
     }
 
     private VariantSyntax ParseVariant()
@@ -203,18 +310,24 @@ public sealed class Parser
         return new ParameterSyntax(Span(name, type), name, type);
     }
 
-    /// <summary>type = IDENT ;</summary>
+    /// <summary>type = IDENT [ "&lt;" type { "," type } [ "," ] "&gt;" ] ;</summary>
     private TypeSyntax ParseType()
     {
         if (Current.Kind == TokenKind.Identifier)
         {
             var name = NextToken();
-            return new NamedTypeSyntax(name.Span, name);
+            if (Current.Kind != TokenKind.Less)
+                return new NamedTypeSyntax(name.Span, name, []);
+
+            NextToken();
+            var arguments = ParseSeparatedList(ParseType, TokenKind.Greater);
+            Expect(TokenKind.Greater);
+            return new NamedTypeSyntax(SpanFrom(name), name, arguments);
         }
 
         ReportOnce(Current.Span, () => _diagnostics.ReportExpectedType(Current.Span, Current));
         var missing = Missing(TokenKind.Identifier);
-        return new NamedTypeSyntax(missing.Span, missing);
+        return new NamedTypeSyntax(missing.Span, missing, []);
     }
 
     private ImmutableArray<T> ParseSeparatedList<T>(Func<T> parseItem, TokenKind close)
@@ -243,8 +356,8 @@ public sealed class Parser
     /// <summary>Tokens that can't continue a list; the caller's Expect(close) reports the error.</summary>
     private static bool IsListTerminator(TokenKind kind) => kind is
         TokenKind.Semicolon or TokenKind.OpenBrace or TokenKind.CloseBrace or TokenKind.EndOfFile or
-        TokenKind.FnKeyword or TokenKind.RecordKeyword or TokenKind.EnumKeyword or TokenKind.LetKeyword or
-        TokenKind.VarKeyword or TokenKind.FatArrow;
+        TokenKind.FnKeyword or TokenKind.RecordKeyword or TokenKind.EnumKeyword or TokenKind.TraitKeyword or
+        TokenKind.ExtendKeyword or TokenKind.LetKeyword or TokenKind.VarKeyword or TokenKind.FatArrow;
 
     /// <summary>
     /// block = "{" { statement } [ expression ] "}" ;
@@ -496,7 +609,7 @@ public sealed class Parser
             }
             case TokenKind.InterpolatedStringLiteral:
                 return ParseInterpolatedString();
-            case TokenKind.Identifier:
+            case TokenKind.Identifier or TokenKind.SelfKeyword:
             {
                 var identifier = NextToken();
                 return new NameExpressionSyntax(identifier.Span, identifier);

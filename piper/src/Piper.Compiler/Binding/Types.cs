@@ -3,6 +3,11 @@ using Piper.Syntax;
 
 namespace Piper.Binding;
 
+/// <summary>
+/// A type. Builtins are singletons; user types are per-compilation symbols. Types are compared by
+/// reference: generic instantiations are interned by <see cref="NamedTypeDefinition.Construct"/>, so
+/// <c>Option&lt;Int&gt;</c> is always the same object.
+/// </summary>
 public class TypeSymbol : Symbol
 {
     public static readonly TypeSymbol Int = new("Int");
@@ -37,10 +42,64 @@ public class TypeSymbol : Symbol
     /// <summary>False for types that cannot be stored in a variable, field or parameter.</summary>
     public bool IsValueType => this != Unit && this != Never;
 
+    /// <summary>For <c>Option&lt;Int&gt;</c>, the generic definition <c>Option</c>; otherwise the type itself.</summary>
+    public virtual TypeSymbol OriginalDefinition => this;
+
+    public virtual ImmutableArray<TypeSymbol> TypeArguments => [];
+
     public override string ToString() => Name;
 }
 
-public sealed class RecordSymbol : TypeSymbol
+/// <summary>A type parameter such as <c>T</c> in <c>fn id&lt;T&gt;(x: T) -> T</c>.</summary>
+public sealed class TypeParameterSymbol(string name) : TypeSymbol(name)
+{
+    public ImmutableArray<TraitSymbol> Constraints { get; internal set; } = [];
+}
+
+/// <summary>A user-declared record or enum: possibly generic, possibly extended with methods and traits.</summary>
+public abstract class NamedTypeDefinition : TypeSymbol
+{
+    private readonly List<ConstructedTypeSymbol> _instantiations = [];
+    private readonly List<MethodSymbol> _methods = [];
+
+    protected NamedTypeDefinition(string name) : base(name)
+    {
+    }
+
+    public ImmutableArray<TypeParameterSymbol> TypeParameters { get; internal set; } = [];
+
+    public bool IsGeneric => TypeParameters.Length > 0;
+
+    /// <summary>Traits this type implements, declared with <c>extend Type: Trait { … }</c>.</summary>
+    public ImmutableArray<TraitSymbol> Traits { get; internal set; } = [];
+
+    /// <summary>Methods declared in <c>extend</c> blocks.</summary>
+    public IReadOnlyList<MethodSymbol> Methods => _methods;
+
+    internal void AddMethod(MethodSymbol method) => _methods.Add(method);
+
+    /// <summary>The type as seen from inside its own declaration: <c>Option&lt;T&gt;</c> for a generic <c>Option</c>.</summary>
+    public TypeSymbol SelfType => IsGeneric ? Construct([.. TypeParameters]) : this;
+
+    /// <summary>Returns the (interned) instantiation of this definition with <paramref name="arguments"/>.</summary>
+    public TypeSymbol Construct(ImmutableArray<TypeSymbol> arguments)
+    {
+        if (!IsGeneric)
+            return this;
+
+        var existing = _instantiations.FirstOrDefault(c =>
+            c.TypeArguments.Length == arguments.Length &&
+            c.TypeArguments.Zip(arguments).All(pair => ReferenceEquals(pair.First, pair.Second)));
+        if (existing is not null)
+            return existing;
+
+        var constructed = new ConstructedTypeSymbol(this, arguments);
+        _instantiations.Add(constructed);
+        return constructed;
+    }
+}
+
+public sealed class RecordSymbol : NamedTypeDefinition
 {
     public RecordSymbol(RecordDeclarationSyntax declaration) : base(declaration.Name.Text)
     {
@@ -49,11 +108,12 @@ public sealed class RecordSymbol : TypeSymbol
 
     public RecordDeclarationSyntax Declaration { get; }
 
+    /// <summary>Field types are written in terms of the record's own type parameters; see <see cref="TypeSubstitution"/>.</summary>
     public ImmutableArray<FieldSymbol> Fields { get; internal set; } = [];
 }
 
 /// <summary>A sum type: a value is exactly one of its <see cref="Variants"/>.</summary>
-public sealed class EnumSymbol : TypeSymbol
+public sealed class EnumSymbol : NamedTypeDefinition
 {
     public EnumSymbol(EnumDeclarationSyntax declaration) : base(declaration.Name.Text)
     {
@@ -75,4 +135,66 @@ public sealed class VariantSymbol(string name, EnumSymbol @enum) : Symbol(name)
     public ImmutableArray<FieldSymbol> Fields { get; internal set; } = [];
 
     public string QualifiedName => $"{Enum.Name}.{Name}";
+}
+
+/// <summary>A generic record or enum applied to type arguments, e.g. <c>Option&lt;Int&gt;</c>.</summary>
+public sealed class ConstructedTypeSymbol(NamedTypeDefinition definition, ImmutableArray<TypeSymbol> arguments)
+    : TypeSymbol($"{definition.Name}<{string.Join(", ", arguments)}>")
+{
+    public NamedTypeDefinition Definition { get; } = definition;
+
+    public override TypeSymbol OriginalDefinition => Definition;
+
+    public override ImmutableArray<TypeSymbol> TypeArguments { get; } = arguments;
+}
+
+/// <summary>An interface-like set of methods. A trait is also a type: a value of any type that implements it.</summary>
+public sealed class TraitSymbol : TypeSymbol
+{
+    public TraitSymbol(TraitDeclarationSyntax declaration) : base(declaration.Name.Text)
+    {
+        Declaration = declaration;
+    }
+
+    public TraitDeclarationSyntax Declaration { get; }
+
+    public ImmutableArray<MethodSymbol> Methods { get; internal set; } = [];
+}
+
+public static class TypeSubstitution
+{
+    /// <summary>Replaces type parameters in <paramref name="type"/> according to <paramref name="map"/>.</summary>
+    public static TypeSymbol Substitute(TypeSymbol type, IReadOnlyDictionary<TypeParameterSymbol, TypeSymbol> map)
+    {
+        if (map.Count == 0)
+            return type;
+        return type switch
+        {
+            TypeParameterSymbol parameter => map.TryGetValue(parameter, out var replacement) ? replacement : parameter,
+            ConstructedTypeSymbol constructed => constructed.Definition.Construct([.. constructed.TypeArguments.Select(a => Substitute(a, map))]),
+            _ => type,
+        };
+    }
+
+    /// <summary>For <c>Option&lt;Int&gt;</c> the map <c>T → Int</c>; empty for non-generic types.</summary>
+    public static Dictionary<TypeParameterSymbol, TypeSymbol> MapFor(TypeSymbol type)
+    {
+        var map = new Dictionary<TypeParameterSymbol, TypeSymbol>();
+        if (type.OriginalDefinition is NamedTypeDefinition { IsGeneric: true } definition && type != definition)
+        {
+            for (int i = 0; i < definition.TypeParameters.Length; i++)
+                map[definition.TypeParameters[i]] = type.TypeArguments[i];
+        }
+        return map;
+    }
+
+    /// <summary>The type of <paramref name="field"/> when its record or enum is instantiated as <paramref name="owner"/>.</summary>
+    public static TypeSymbol FieldType(FieldSymbol field, TypeSymbol owner) => Substitute(field.Type, MapFor(owner));
+
+    public static bool Mentions(TypeSymbol type, IReadOnlySet<TypeParameterSymbol> parameters) => type switch
+    {
+        TypeParameterSymbol parameter => parameters.Contains(parameter),
+        ConstructedTypeSymbol constructed => constructed.TypeArguments.Any(a => Mentions(a, parameters)),
+        _ => false,
+    };
 }

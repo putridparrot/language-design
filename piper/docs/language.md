@@ -1,8 +1,9 @@
-# The Piper language (milestone 2)
+# The Piper language (milestone 3)
 
 Piper is a small, C-style, expression-oriented language that transpiles to C#. It borrows
-immutable-by-default bindings, block expressions, enums (sum types) and exhaustive `match` from
-Rust, `let`/`var` from Swift, and records and string interpolation from C#.
+immutable-by-default bindings, block expressions, enums (sum types), exhaustive `match` and traits
+from Rust, `let`/`var` and retroactive `extend` from Swift, and records, generics and string
+interpolation from C#. Generated code needs C# 14 (.NET 10), which is used for extension members.
 
 ```piper
 record Point(x: Int, y: Int);
@@ -31,15 +32,20 @@ Notation: `{ x }` is zero or more, `[ x ]` is optional, `|` separates alternativ
 
 ```ebnf
 compilationUnit = { declaration } EOF ;
-declaration     = function | record | enum ;
+declaration     = function | record | enum | trait | extend ;
 
-function        = "fn" IDENT "(" [ parameters ] ")" [ "->" type ] ( block | "=" expression ";" ) ;
-record          = "record" IDENT "(" [ parameters ] ")" ";" ;
-enum            = "enum" IDENT "{" [ variant { "," variant } [ "," ] ] "}" ;
+function        = "fn" IDENT [ typeParameters ] "(" [ "self" [ "," ] ] [ parameters ] ")" [ "->" type ]
+                  ( block | "=" expression ";" | ";" ) ;      (* ";" only for required trait methods *)
+record          = "record" IDENT [ typeParameters ] "(" [ parameters ] ")" ";" ;
+enum            = "enum" IDENT [ typeParameters ] "{" [ variant { "," variant } [ "," ] ] "}" ;
 variant         = IDENT [ "(" [ parameters ] ")" ] ;
+trait           = "trait" IDENT "{" { function } "}" ;
+extend          = "extend" type [ ":" type { "," type } ] "{" { function } "}" ;
+typeParameters  = "<" typeParameter { "," typeParameter } [ "," ] ">" ;
+typeParameter   = IDENT [ ":" type { "+" type } ] ;           (* bounds must be traits *)
 parameters      = parameter { "," parameter } [ "," ] ;
 parameter       = IDENT ":" type ;
-type            = IDENT ;
+type            = IDENT [ "<" type { "," type } [ "," ] ">" ] ;
 
 block           = "{" { statement } [ expression ] "}" ;      (* final expression = block's value *)
 statement       = variableDecl | while | for | return | "break" ";" | "continue" ";"
@@ -56,7 +62,7 @@ binary          = unary { binaryOp unary } ;                  (* precedence tabl
 unary           = ( "-" | "!" ) unary | postfix ;
 postfix         = primary { "(" [ arguments ] ")" | "." IDENT } ;
 arguments       = expression { "," expression } [ "," ] ;
-primary         = INT | DOUBLE | CHAR | STRING | "true" | "false" | IDENT
+primary         = INT | DOUBLE | CHAR | STRING | "true" | "false" | IDENT | "self"
                 | "(" expression ")" | block | if | match ;
 if              = "if" expression block [ "else" ( block | if ) ] ;
 
@@ -92,7 +98,7 @@ number there is all it takes to change precedence.
 ### Lexical structure
 
 - **Identifiers:** ASCII letters, digits and `_`, not starting with a digit.
-- **Keywords:** `fn let var if else while for in return break continue record enum match true false`.
+- **Keywords:** `fn let var if else while for in return break continue record enum match trait extend self true false`.
 - **Comments:** `// line` and `/* block */`. Block comments nest.
 - **Integers:** `42`, `1_000_000`, `0xFF`, `0b1010`. Add an `L` suffix for Long: `3_000_000_000L`. An unsuffixed literal must fit in Int.
 - **Doubles:** `1.5`, `2e3`, `2.5E-1`. A digit is required after the `.`, so `0..10` is a range.
@@ -167,6 +173,72 @@ Patterns nest to any depth, e.g. `Add(Num(0), x)`.
 - **Jumps in arms:** an arm may also be `return …`, `break` or `continue`. These have type Never and jump out of the enclosing function or loop.
 - **Guards:** guards are Bool expressions evaluated after the pattern matches, with its bindings in scope. A guard cannot (yet) contain a block with statements or a nested `match`.
 
+### Generics
+
+Records, enums, functions and methods can take type parameters.
+
+```piper
+record Pair<A, B>(first: A, second: B);
+enum Option<T> { Some(value: T), None }
+
+fn swap<A, B>(p: Pair<A, B>) -> Pair<B, A> = Pair(p.second, p.first);
+```
+
+- **Inferred type arguments:** type arguments are never written in expressions. They are inferred from the arguments, e.g. `Pair(1, "one")` is a `Pair<Int, String>`.
+- **The expected type helps.** When the arguments don't settle a type argument, the expected type does: `let x: Option<Int> = Option.None;` or `fn f() -> Option<Int> = Option.None;`. If neither settles it, you get an error asking for a type annotation.
+- **Numeric widening applies:** `let p: Pair<Long, Double> = Pair(1, 2);` converts the arguments.
+- **Bounds:** `fn largest<T: Shape>(a: T, b: T) -> T` requires `T` to implement the `Shape` trait, so `a.area()` can be called. Write several bounds as `T: A + B`. Bounds are checked wherever a type is instantiated.
+- **No equality on type parameters:** `==` isn't available on type parameters yet.
+- **Exhaustiveness sees through type arguments:** `match o { Some(true) => …, None => … }` on an `Option<Bool>` reports `'Option.Some(false)' is not covered`.
+
+### Traits
+
+A trait is a named set of methods, like a Rust trait or a Swift protocol. A method without a body must be
+implemented; a method with a body is a default that implementers may override.
+
+```piper
+trait Shape {
+    fn area(self) -> Double;
+    fn describe(self) -> String = "area {self.area()}";
+}
+
+record Circle(radius: Double);
+
+extend Circle: Shape {
+    fn area(self) -> Double = 3.14159 * self.radius * self.radius;
+}
+```
+
+- **Implementing a trait:** `extend Type: Trait1, Trait2 { … }` declares that a record or enum implements traits. Every required method must be present, with exactly the trait's signature.
+- **Traits as types:** a trait is also a type. A `Circle` converts implicitly to `Shape`, and calls through a `Shape` value dispatch dynamically.
+- **Traits as bounds:** a type parameter bound by a trait gets static dispatch.
+- **Using the expected type:** when an `if` or `match` produces different types that all implement the expected trait, the trait is used, e.g. `let s: Shape = if c { circle } else { rect };`.
+- **Not yet supported:** traits can't be generic, inherit from each other, have static methods or mention `Self`. Builtin types can't implement traits.
+
+### Methods and `extend`
+
+`extend` adds methods to an existing type: a record, an enum, or a builtin such as `Int` or `String`.
+
+```piper
+extend Int {
+    fn squared(self) -> Int = self * self;
+    fn zero() -> Int = 0;                 // no self: a static method, called as Int.zero()
+}
+
+extend Option {                           // generic types: their type parameters are in scope
+    fn getOr(self, fallback: T) -> T = match self { Some(v) => v, None => fallback };
+}
+
+let n = 7.squared();
+let s = Option.Some(5).getOr(0);
+```
+
+- **Instance and static methods:** a method whose first parameter is `self` is called on a value. Without `self` it's static and is called on the type.
+- **`self` is immutable.**
+- **Generic types:** write `extend Option`, not `extend Option<Int>`. Methods apply to every instantiation.
+- **Name clashes are errors.** A method can't share a name with a field, a variant, a variant's field (variants inherit their enum's methods) or another method.
+- **Builtin members:** on builtin types, a method can't reuse a name the .NET type already has (such as `String.Length`), because the .NET member would silently win.
+
 ### Bindings
 
 - `let` declares an immutable binding and `var` a mutable one. Assigning to a `let` binding, a parameter or a `for` loop variable is a compile error.
@@ -202,6 +274,13 @@ locale-independent. `main()` takes no parameters and returns Unit; it is the pro
 | `Shape.Circle(1.0)` | `new Shape.Circle(1.0)` |
 | `match s { Circle(r) if r > 1.0 => a, Empty => b, … }` | `if (s is Shape.Circle(var r) && r > 1.0) { … } else if … else { … }` |
 | patterns `1 \| 2`, `1..=9`, `_` | C# patterns `1 or 2`, `>= 1 and <= 9`, `_` |
+| `record Pair<A, B: Show>(…)` | `public sealed record Pair<A, B>(…) where B : Show` |
+| `swap(p)` (generic) | `swap<int, string>(p)`: type arguments are always explicit |
+| `trait Shape { fn area(self) -> Double; fn d(self) -> String = …; }` | `public interface Shape { double area(); string d() => …; }` |
+| `extend Circle: Shape { fn area(self) … }` | members inside `public sealed record Circle(…) : Shape { public double area() … }` |
+| `c.d()` where `d` is an un-overridden default | `((Shape)c).d()` (C# only exposes default interface methods through the interface) |
+| `extend Int { fn squared(self) … fn zero() … }` | C# 14 `extension(int self) { public int squared() … }` and `extension(int) { public static int zero() … }` |
+| `self` | `this` in members, the `self` receiver parameter in extension blocks |
 | `fn f(a: Int) -> Int { … }` | `public static int f(int a) { … }` in a static module class |
 | `fn f(a: Int) -> Int = e;` | `public static int f(int a) => e;` |
 | `let x = e;` / `var x = e;` | `int x = e;` (immutability is checked by Piper, not C#) |
@@ -228,13 +307,17 @@ The match is known to be exhaustive, so a final arm without a guard or bindings 
 - Integer overflow wraps silently, as in unchecked C#. `-2147483648` can't be written as a literal, because `2147483648` doesn't fit in Int.
 - Match guards can't contain statements, and `|` alternatives can't bind variables.
 - Overlapping literal and range patterns (`1..=5` followed by `3`) aren't reported as unreachable.
-- There are no generic enums (such as `Option<T>`), lambdas, nullability, collections, modules or .NET interop yet. See the roadmap.
+- Type arguments can't be written explicitly in expressions, so a call whose type arguments can't be inferred needs a type annotation.
+- Traits: no generic traits, trait inheritance, static trait methods or `Self` type. Builtin types can't implement traits.
+- `==` isn't defined on type parameters or trait-typed values.
+- A function ending in `while true { … }` is still reported as "not all code paths return a value".
+- There are no lambdas, nullability, collections, modules or .NET interop yet. See the roadmap.
 
 ## Roadmap
 
 1. ~~**Sum types and `match`**~~, done in milestone 2.
-2. **Null safety and errors:** `T?`, `?.`, `??`, `if let` / `guard let`, `Option`/`Result`, and a `?` operator for propagating errors. Generic enums are a prerequisite, so this may follow item 3.
-3. **Traits, generics and extensions:** traits become interfaces, generics take `where` constraints, and `extend` blocks become C# 14 extensions.
+2. **Null safety and errors:** `T?`, `?.`, `??`, `if let` / `guard let`, a standard `Option`/`Result`, and a `?` operator for propagating errors. Generic enums now exist, so this can go next.
+3. ~~**Traits, generics and extensions**~~, done in milestone 3.
 4. **Modules, imports and .NET interop.**
 5. **Smaller features:** tuples and destructuring, lambdas, `defer`, `use`, async/await, and a pipe operator `|>`.
 6. **A language server** that reuses the fault-tolerant parser and binder.

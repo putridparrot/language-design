@@ -13,20 +13,51 @@ public sealed record CompilationUnitSyntax(TextSpan Span, ImmutableArray<Declara
 
 public abstract record DeclarationSyntax(TextSpan Span, Token Name) : SyntaxNode(Span);
 
-/// <summary>Exactly one of <see cref="BlockBody"/> and <see cref="ExpressionBody"/> is set.</summary>
+/// <summary>
+/// A function or method. At most one of <see cref="BlockBody"/> and <see cref="ExpressionBody"/> is set;
+/// neither is for a required trait method (<c>fn area(self) -> Double;</c>).
+/// <see cref="Self"/> is the <c>self</c> token for instance methods; it is not part of <see cref="Parameters"/>.
+/// </summary>
 public sealed record FunctionDeclarationSyntax(
     TextSpan Span,
     Token Name,
+    ImmutableArray<TypeParameterSyntax> TypeParameters,
+    Token? Self,
     ImmutableArray<ParameterSyntax> Parameters,
     TypeSyntax? ReturnType,
     BlockExpressionSyntax? BlockBody,
-    ExpressionSyntax? ExpressionBody) : DeclarationSyntax(Span, Name);
+    ExpressionSyntax? ExpressionBody) : DeclarationSyntax(Span, Name)
+{
+    public bool HasBody => BlockBody is not null || ExpressionBody is not null;
+}
 
-public sealed record RecordDeclarationSyntax(TextSpan Span, Token Name, ImmutableArray<ParameterSyntax> Fields)
+public sealed record RecordDeclarationSyntax(
+    TextSpan Span,
+    Token Name,
+    ImmutableArray<TypeParameterSyntax> TypeParameters,
+    ImmutableArray<ParameterSyntax> Fields) : DeclarationSyntax(Span, Name);
+
+public sealed record EnumDeclarationSyntax(
+    TextSpan Span,
+    Token Name,
+    ImmutableArray<TypeParameterSyntax> TypeParameters,
+    ImmutableArray<VariantSyntax> Variants) : DeclarationSyntax(Span, Name);
+
+public sealed record TraitDeclarationSyntax(TextSpan Span, Token Name, ImmutableArray<FunctionDeclarationSyntax> Methods)
     : DeclarationSyntax(Span, Name);
 
-public sealed record EnumDeclarationSyntax(TextSpan Span, Token Name, ImmutableArray<VariantSyntax> Variants)
-    : DeclarationSyntax(Span, Name);
+/// <summary>
+/// <c>extend Target: Trait1, Trait2 { methods }</c>. <see cref="DeclarationSyntax.Name"/> is the target type's name token.
+/// </summary>
+public sealed record ExtendDeclarationSyntax(
+    TextSpan Span,
+    Token Name,
+    TypeSyntax Target,
+    ImmutableArray<TypeSyntax> Traits,
+    ImmutableArray<FunctionDeclarationSyntax> Methods) : DeclarationSyntax(Span, Name);
+
+/// <summary><c>T</c> or <c>T: Trait1 + Trait2</c>.</summary>
+public sealed record TypeParameterSyntax(TextSpan Span, Token Name, ImmutableArray<TypeSyntax> Constraints) : SyntaxNode(Span);
 
 /// <summary>A variant of an enum; <see cref="Fields"/> is empty for a fieldless variant such as <c>Empty</c>.</summary>
 public sealed record VariantSyntax(TextSpan Span, Token Name, ImmutableArray<ParameterSyntax> Fields) : SyntaxNode(Span);
@@ -37,7 +68,8 @@ public sealed record ParameterSyntax(TextSpan Span, Token Name, TypeSyntax Type)
 
 public abstract record TypeSyntax(TextSpan Span) : SyntaxNode(Span);
 
-public sealed record NamedTypeSyntax(TextSpan Span, Token Name) : TypeSyntax(Span);
+/// <summary><c>Int</c> or a generic instantiation such as <c>Pair&lt;Int, String&gt;</c>.</summary>
+public sealed record NamedTypeSyntax(TextSpan Span, Token Name, ImmutableArray<TypeSyntax> TypeArguments) : TypeSyntax(Span);
 
 // Statements
 

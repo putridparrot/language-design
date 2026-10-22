@@ -28,6 +28,9 @@ public enum TokenKind
     RecordKeyword,
     EnumKeyword,
     MatchKeyword,
+    TraitKeyword,
+    ExtendKeyword,
+    SelfKeyword,
     TrueKeyword,
     FalseKeyword,
 

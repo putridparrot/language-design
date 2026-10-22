@@ -136,6 +136,73 @@ public class BinderTests
         AssertNoErrors(Shapes + "fn f(s: S) -> Int { let n = match s { A => return 0, B(x) => x }; n * 2 }");
     }
 
+    private const string Declarations =
+        "trait T { fn m(self) -> Int; } record R(x: Int); enum O<V> { S(v: V), N } record B<X: T>(x: X); ";
+
+    [Theory]
+    [InlineData("PIP0201", "extend R { fn x(self) -> Int = 1; }")]
+    [InlineData("PIP0201", "enum E { A(name: String) } extend E { fn name(self) -> String = \"\"; }")]
+    [InlineData("PIP0202", "fn f() { let t: T = R(1); }")]
+    [InlineData("PIP0203", "fn eq<Q>(a: Q, b: Q) -> Bool = a == b;")]
+    [InlineData("PIP0217", "extend R { fn g(self) -> Int = 1; } fn f(r: R) { let v = r.g; }")]
+    [InlineData("PIP0240", "fn f() { let x = O.N; }")]
+    [InlineData("PIP0241", "fn f(r: R<Int>) {}")]
+    [InlineData("PIP0241", "fn f(o: O) {}")]
+    [InlineData("PIP0242", "fn f(b: B<Int>) {}")]
+    [InlineData("PIP0242", "fn f() { let b = B(1); }")]
+    [InlineData("PIP0243", "fn f(r: R) { r.nope(); }")]
+    [InlineData("PIP0244", "fn f() -> R = self;")]
+    [InlineData("PIP0244", "fn f(self) {}")]
+    [InlineData("PIP0244", "extend R { fn make() -> R = R(1); } fn f(r: R) { r.make(); }")]
+    [InlineData("PIP0244", "extend R { fn get(self) -> Int = self.x; } fn f() { R.get(); }")]
+    [InlineData("PIP0245", "extend R: T { }")]
+    [InlineData("PIP0246", "extend R: T { fn m(self) -> String = \"\"; }")]
+    [InlineData("PIP0247", "extend Int: T { }")]
+    [InlineData("PIP0247", "extend T { }")]
+    [InlineData("PIP0247", "extend O<Int> { }")]
+    [InlineData("PIP0248", "fn f<X: R>(x: X) {}")]
+    [InlineData("PIP0250", "trait U { fn make() -> Int; }")]
+    [InlineData("PIP0251", "fn f();")]
+    [InlineData("PIP0251", "extend R { fn g(self); }")]
+    [InlineData("PIP0252", "extend String { fn Length(self) -> Int = 0; }")]
+    public void Generics_and_trait_errors_are_reported(string code, string program)
+    {
+        AssertSingleError(code, Declarations + program);
+    }
+
+    [Fact]
+    public void Type_arguments_are_inferred_from_arguments_and_expected_types()
+    {
+        AssertNoErrors(Declarations + """
+            record Pair<A, C>(a: A, c: C);
+            fn id<Q>(q: Q) -> Q = q;
+            fn none<Q>() -> O<Q> = O.N;
+            extend O {
+                fn either<U>(self, whenSome: U, whenNone: U) -> U = match self { S(_) => whenSome, N => whenNone };
+                fn empty() -> O<V> = O.N;
+            }
+            extend R: T { fn m(self) -> Int = self.x; }
+            fn useBound<Y: T>(b: B<Y>) -> Int = b.x.m();
+            fn main() {
+                let p: Pair<O<Int>, Long> = Pair(O.N, 1);
+                let d: Double = id(1);
+                let n: O<String> = none();
+                let e: O<Bool> = O.empty();
+                let s = O.S(R(1)).either("yes", "no");
+                let t: T = if d > 0.0 { R(1) } else { R(2) };
+                print(useBound(B(R(3))) + t.m());
+            }
+            """);
+    }
+
+    [Fact]
+    public void Exhaustiveness_substitutes_type_arguments()
+    {
+        var program = Declarations + "fn f(o: O<Bool>) -> Int = match o { S(true) => 1, N => 0 };";
+        var diagnostic = Assert.Single(Compilation.Compile(program).Diagnostics);
+        Assert.Contains("'O.S(false)' is not covered", diagnostic.Message);
+    }
+
     [Fact]
     public void Errors_do_not_cascade()
     {
