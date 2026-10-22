@@ -1,0 +1,77 @@
+// Literal, range, alternative, record, Bool and String patterns, guards, and match in loops.
+
+record Point(x: Int, y: Int);
+
+fn classify(n: Int) -> String = match n {
+    0 => "zero",
+    1 | 2 | 3 => "small",
+    4..=9 => "digit",
+    -9..0 => "small negative",
+    n if n < 0 => "negative {n}",
+    _ => "large",
+};
+
+fn quadrant(p: Point) -> String = match p {
+    Point(0, 0) => "origin",
+    Point(0, _) | Point(_, 0) => "on an axis",
+    Point(x, y) if x > 0 && y > 0 => "first quadrant",
+    Point(x, y) if x < 0 && y > 0 => "second quadrant",
+    Point(_, _) => "lower half",
+};
+
+fn kind(c: Char) -> String = match c {
+    'a'..='z' => "lower",
+    'A'..='Z' => "upper",
+    '0'..='9' => "digit",
+    _ => "other",
+};
+
+fn bits(a: Bool, b: Bool) -> String {
+    // Bool matches are exhaustive without a wildcard.
+    let first = match a { true => "1", false => "0" };
+    first + match b { true => "1", false => "0" }
+}
+
+fn greet(language: String) -> String = match language {
+    "en" => "Hello",
+    "fr" => "Bonjour",
+    "es" | "pt" => "Hola",
+    other => "? ({other})",
+};
+
+fn size(n: Long) -> String = match n {
+    0 => "none",
+    1..=999 => "some",
+    _ => "lots",
+};
+
+fn main() {
+    for n in -12..12 {
+        if n % 4 == 0 || n == -3 || n == 2 || n == 7 { print("{n}: {classify(n)}"); }
+    }
+    print(quadrant(Point(0, 0)));
+    print(quadrant(Point(0, 5)));
+    print(quadrant(Point(3, 4)));
+    print(quadrant(Point(-3, 4)));
+    print(quadrant(Point(1, -1)));
+    print("{kind('q')} {kind('Q')} {kind('7')} {kind('?')}");
+    print("{bits(true, false)} {bits(false, true)}");
+    print("{greet("fr")} {greet("pt")} {greet("de")}");
+    print("{size(0L)} {size(500L)} {size(5000000000L)}");
+
+    // break and continue inside match arms affect the enclosing loop.
+    var found = -1;
+    for i in 1..100 {
+        match i % 7 {
+            0 => {
+                found = i;
+                break;
+            }
+            _ => continue,
+        }
+    }
+    print("first multiple of 7: {found}");
+
+    // A match passed straight to a function.
+    print(match found { 7 => "as expected", _ => "surprising" });
+}

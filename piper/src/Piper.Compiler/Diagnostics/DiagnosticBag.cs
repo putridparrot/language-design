@@ -24,6 +24,9 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     private void Error(string code, TextSpan span, string message) =>
         _diagnostics.Add(new Diagnostic(code, DiagnosticSeverity.Error, span, message));
 
+    private void Warning(string code, TextSpan span, string message) =>
+        _diagnostics.Add(new Diagnostic(code, DiagnosticSeverity.Warning, span, message));
+
     // Lexer
 
     public void ReportUnexpectedCharacter(TextSpan span, string text) =>
@@ -64,13 +67,16 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0101", span, $"Expected an expression but found {Describe(actual)}.");
 
     public void ReportExpectedDeclaration(TextSpan span, Token actual) =>
-        Error("PIP0102", span, $"Expected 'fn' or 'record' but found {Describe(actual)}.");
+        Error("PIP0102", span, $"Expected 'fn', 'record' or 'enum' but found {Describe(actual)}.");
 
     public void ReportExpectedType(TextSpan span, Token actual) =>
         Error("PIP0103", span, $"Expected a type but found {Describe(actual)}.");
 
     public void ReportUnexpectedTokenInInterpolation(TextSpan span, Token actual) =>
         Error("PIP0104", span, $"Unexpected {Describe(actual)} in interpolation.");
+
+    public void ReportExpectedPattern(TextSpan span, Token actual) =>
+        Error("PIP0105", span, $"Expected a pattern but found {Describe(actual)}.");
 
     private static string Describe(Token token) => token.Kind switch
     {
@@ -109,6 +115,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         {
             VariableKind.Parameter => $"Cannot assign to parameter '{variable.Name}'; parameters are immutable.",
             VariableKind.LoopVariable => $"Cannot assign to loop variable '{variable.Name}'.",
+            VariableKind.PatternVariable => $"Cannot assign to pattern variable '{variable.Name}'.",
             _ => $"Cannot assign to '{variable.Name}' because it is immutable; declare it with 'var' instead of 'let'.",
         });
 
@@ -162,4 +169,54 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportIncompatibleBranches(TextSpan span, TypeSymbol thenType, TypeSymbol elseType) =>
         Error("PIP0221", span, $"The 'if' and 'else' branches have incompatible types '{thenType}' and '{elseType}'.");
+
+    public void ReportIncompatibleArms(TextSpan span, TypeSymbol expected, TypeSymbol actual) =>
+        Error("PIP0221", span, $"This match arm has type '{actual}', which is incompatible with the earlier arms' type '{expected}'.");
+
+    public void ReportReservedMemberName(TextSpan span, string name) =>
+        Error("PIP0222", span, $"'{name}' is reserved (it clashes with a member every record has) and cannot be used here.");
+
+    // Enums and pattern matching
+
+    public void ReportNonExhaustiveMatch(TextSpan span, string missing) =>
+        Error("PIP0230", span, $"The match is not exhaustive; '{missing}' is not covered.");
+
+    public void ReportUnreachableArm(TextSpan span) =>
+        Warning("PIP0231", span, "This match arm is unreachable; earlier arms already cover every value it matches.");
+
+    public void ReportVariantRequiresArguments(TextSpan span, string variant, string fields) =>
+        Error("PIP0232", span, $"Variant '{variant}' has fields and must be constructed with arguments: {variant}({fields}).");
+
+    public void ReportVariantHasNoFields(TextSpan span, string variant) =>
+        Error("PIP0232", span, $"Variant '{variant}' has no fields; write '{variant}' without parentheses.");
+
+    public void ReportGuardContainsStatements(TextSpan span) =>
+        Error("PIP0233", span, "A match guard cannot (yet) contain blocks with statements or match expressions.");
+
+    public void ReportPatternTypeMismatch(TextSpan span, string pattern, TypeSymbol expected) =>
+        Error("PIP0234", span, $"{pattern} cannot match a value of type '{expected}'.");
+
+    public void ReportUnknownVariant(TextSpan span, TypeSymbol enumType, string name) =>
+        Error("PIP0235", span, $"Enum '{enumType}' has no variant '{name}'.");
+
+    public void ReportUnknownConstructorPattern(TextSpan span, string name, TypeSymbol expected) =>
+        Error("PIP0235", span, $"'{name}' is neither a variant of '{expected}' nor a record.");
+
+    public void ReportPatternArity(TextSpan span, string name, int expected, int actual) =>
+        Error("PIP0236", span, $"'{name}' has {expected} field{(expected == 1 ? "" : "s")} but the pattern has {actual}.");
+
+    public void ReportBindingInOrPattern(TextSpan span) =>
+        Error("PIP0237", span, "Variables cannot (yet) be bound inside '|' patterns.");
+
+    public void ReportEmptyEnum(TextSpan span, string name) =>
+        Error("PIP0238", span, $"Enum '{name}' must have at least one variant.");
+
+    public void ReportVariantNamedAsEnum(TextSpan span, string name) =>
+        Error("PIP0238", span, $"A variant cannot have the same name as its enum '{name}'.");
+
+    public void ReportInvalidRangePattern(TextSpan span, TypeSymbol type) =>
+        Error("PIP0239", span, $"Range patterns need Int, Long or Char bounds, not '{type}'.");
+
+    public void ReportEmptyRangePattern(TextSpan span) =>
+        Error("PIP0239", span, "This range pattern is empty: its lower bound is not below its upper bound.");
 }

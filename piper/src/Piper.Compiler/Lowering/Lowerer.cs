@@ -24,7 +24,7 @@ public sealed class Lowerer
         var functions = program.Functions
             .Select(f => new BoundFunction(f.Symbol, lowerer.LowerFunction(f), f.IsExpressionBodied))
             .ToImmutableArray();
-        return new BoundProgram(program.Records, functions, program.Main);
+        return new BoundProgram(program.Types, functions, program.Main);
     }
 
     private BoundBlockStatement LowerFunction(BoundFunction function)
@@ -52,7 +52,7 @@ public sealed class Lowerer
         switch (statement)
         {
             case BoundVariableDeclaration { Initializer: { } initializer } declaration:
-                if (initializer is BoundIfExpression or BoundBlockExpression && !TryLowerPure(initializer, out _))
+                if (initializer is BoundIfExpression or BoundBlockExpression or BoundMatchExpression && !TryLowerPure(initializer, out _))
                 {
                     // `let x = if c { ...; a } else { b };` → `T x; if (c) { ...; x = a; } else { x = b; }`
                     output.Add(new BoundVariableDeclaration(declaration.Variable, null));
@@ -170,6 +170,10 @@ public sealed class Lowerer
                 output.Add(BlockForEffect(block));
                 break;
 
+            case BoundMatchExpression match:
+                LowerMatch(match, sink: null, output);
+                break;
+
             case BoundConversionExpression conversion:
                 LowerForEffect(conversion.Expression, output);
                 break;
@@ -211,7 +215,11 @@ public sealed class Lowerer
                     LowerInto(block.Trailing, sink, output);
                 break;
 
-            case BoundConversionExpression { Expression: BoundIfExpression or BoundBlockExpression } conversion:
+            case BoundMatchExpression match:
+                LowerMatch(match, sink, output);
+                break;
+
+            case BoundConversionExpression { Expression: BoundIfExpression or BoundBlockExpression or BoundMatchExpression } conversion:
                 LowerInto(conversion.Expression, value => sink(Widen(value, conversion.Type)), output);
                 break;
 
@@ -253,6 +261,17 @@ public sealed class Lowerer
 
             case BoundRecordCreationExpression creation:
                 return new BoundRecordCreationExpression(creation.Record, LowerOperands(creation.Arguments, prelude));
+
+            case BoundVariantCreationExpression creation:
+                return new BoundVariantCreationExpression(creation.Variant, LowerOperands(creation.Arguments, prelude));
+
+            case BoundMatchExpression match:
+            {
+                var temp = NewTemp(match.Type);
+                prelude.Add(new BoundVariableDeclaration(temp, null));
+                LowerMatch(match, value => Assign(temp, value), prelude);
+                return new BoundVariableExpression(temp);
+            }
 
             case BoundFieldAccessExpression access:
                 return new BoundFieldAccessExpression(LowerForValue(access.Target, prelude), access.Field);
@@ -306,7 +325,71 @@ public sealed class Lowerer
             @else is [BoundIfStatement elseIf] ? elseIf : new BoundBlockStatement([.. @else]));
     }
 
-    /// <summary>`a &amp;&amp; { s; b }` → `bool t = a; if (t) { s; t = b; }` so the right side still runs only when needed.</summary>
+    /// <summary>
+    /// <c>match s { P1 if g => a, P2 => b, P3 => c }</c> becomes
+    /// <c>if (s is P1 &amp;&amp; g) { a } else if (s is P2) { b } else { c }</c>, with each arm's value passed to
+    /// <paramref name="sink"/> (or evaluated for effect when it is null). The binder has proved the match
+    /// exhaustive, so a final arm without guard or bindings needs no test; otherwise the chain ends in
+    /// an unreachable throw, which also satisfies C#'s definite-assignment rules.
+    /// </summary>
+    private void LowerMatch(BoundMatchExpression match, Func<BoundExpression, BoundStatement>? sink, List<BoundStatement> output)
+    {
+        // The scrutinee is tested once per arm, so evaluate it only once.
+        var scrutinee = LowerForValue(match.Scrutinee, output);
+        if (scrutinee is not BoundVariableExpression)
+            scrutinee = Spill(scrutinee, output);
+
+        BoundStatement? chain = null;
+        for (int i = match.Arms.Length - 1; i >= 0; i--)
+        {
+            var arm = match.Arms[i];
+            var body = new List<BoundStatement>();
+            bool isLast = chain is null;
+
+            if (isLast && arm.Guard is null && (arm.Pattern is BoundBindingPattern || !arm.Pattern.HasBindings))
+            {
+                if (arm.Pattern is BoundBindingPattern binding)
+                    body.Add(new BoundVariableDeclaration(binding.Variable, scrutinee));
+                LowerArmBody(arm.Body, sink, body);
+                chain = new BoundBlockStatement([.. body]);
+                continue;
+            }
+
+            LowerArmBody(arm.Body, sink, body);
+            chain = new BoundIfStatement(ArmCondition(scrutinee, arm), new BoundBlockStatement([.. body]), chain ?? new BoundUnreachableStatement());
+        }
+
+        if (chain is BoundBlockStatement block)
+            output.AddRange(block.Statements);
+        else if (chain is not null)
+            output.Add(chain);
+    }
+
+    private BoundExpression ArmCondition(BoundExpression scrutinee, BoundMatchArm arm)
+    {
+        BoundExpression? condition = arm.Pattern is BoundWildcardPattern ? null : new BoundIsPatternExpression(scrutinee, arm.Pattern);
+        if (arm.Guard is not null)
+        {
+            var guardPrelude = new List<BoundStatement>();
+            var guard = LowerForValue(arm.Guard, guardPrelude);
+            if (guardPrelude.Count > 0)
+                throw new InvalidOperationException("The binder should have rejected a guard that needs statements.");
+            condition = condition is null ? guard : new BoundBinaryExpression(condition, BoundBinaryOperatorKind.LogicalAnd, guard, TypeSymbol.Bool);
+        }
+        return condition ?? new BoundLiteralExpression(true, TypeSymbol.Bool);
+    }
+
+    private void LowerArmBody(BoundExpression body, Func<BoundExpression, BoundStatement>? sink, List<BoundStatement> output)
+    {
+        var statements = new List<BoundStatement>();
+        if (sink is null)
+            LowerForEffect(body, statements);
+        else
+            LowerInto(body, sink, statements);
+        output.AddRange(Flatten(statements is [var only] ? only : new BoundBlockStatement([.. statements])));
+    }
+
+    /// <summary>`a &amp;&amp; { s; b }` →`bool t = a; if (t) { s; t = b; }` so the right side still runs only when needed.</summary>
     private BoundExpression LowerShortCircuit(BoundBinaryExpression logical, List<BoundStatement> prelude)
     {
         var left = LowerForValue(logical.Left, prelude);
@@ -357,7 +440,7 @@ public sealed class Lowerer
             {
                 for (int i = 0; i < results.Count; i++)
                 {
-                    if (!IsConstant(results[i]))
+                    if (!IsInvariant(results[i]))
                         results[i] = Spill(results[i], prelude);
                 }
                 prelude.AddRange(local);

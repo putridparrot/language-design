@@ -56,6 +56,86 @@ public class BinderTests
         AssertSingleError(code, program);
     }
 
+    private const string Shapes = "enum S { A, B(x: Int) } record P(a: Int, b: Int); ";
+
+    [Theory]
+    [InlineData("PIP0201", "fn f(p: P) -> Int = match p { P(x, x) => x };")]
+    [InlineData("PIP0207", "fn f(n: Int) { match n { x => { x = 1; } } }")]
+    [InlineData("PIP0221", "fn f(n: Int) { let a = match n { 0 => 1, _ => \"s\" }; }")]
+    [InlineData("PIP0222", "enum E { ToString }")]
+    [InlineData("PIP0222", "record R(Equals: Int);")]
+    [InlineData("PIP0230", "fn f(s: S) -> Int = match s { A => 1 };")]
+    [InlineData("PIP0232", "fn f() { let s = S.B; }")]
+    [InlineData("PIP0232", "fn f() { let s = S.A(); }")]
+    [InlineData("PIP0233", "fn f(n: Int) -> Int = match n { x if { let y = 1; y > x } => 1, _ => 2 };")]
+    [InlineData("PIP0234", "fn f(n: Int) -> Int = match n { \"a\" => 1, _ => 2 };")]
+    [InlineData("PIP0234", "fn f(s: S) -> Int = match s { P(_, _) => 1, _ => 2 };")]
+    [InlineData("PIP0235", "fn f() { let s = S.C; }")]
+    [InlineData("PIP0235", "fn f(s: S) -> Int = match s { C(x) => 1, _ => 2 };")]
+    [InlineData("PIP0236", "fn f(s: S) -> Int = match s { B(x, y) => 1, _ => 2 };")]
+    [InlineData("PIP0236", "fn f(s: S) -> Int = match s { B => 1, _ => 2 };")]
+    [InlineData("PIP0237", "fn f(s: S) -> Int = match s { B(x) | A => 1, _ => 2 };")]
+    [InlineData("PIP0238", "enum E {}")]
+    [InlineData("PIP0238", "enum E { E }")]
+    [InlineData("PIP0239", "fn f(t: String) -> Int = match t { \"a\"..\"z\" => 1, _ => 2 };")]
+    [InlineData("PIP0239", "fn f(n: Int) -> Int = match n { 5..=1 => 1, _ => 2 };")]
+    public void Pattern_matching_errors_are_reported(string code, string program)
+    {
+        AssertSingleError(code, Shapes + program);
+    }
+
+    [Theory]
+    [InlineData("match s { A => 1 }", "S.B(_)")]
+    [InlineData("match s { B(_) => 1 }", "S.A")]
+    [InlineData("match s { A => 1, B(0) => 2 }", "S.B(_)")]
+    [InlineData("match s { A => 1, B(x) if x > 0 => 2 }", "S.B(_)")]
+    [InlineData("match flag { true => 1 }", "false")]
+    [InlineData("match n { 0 => 1, 1..=9 => 2 }", "_")]
+    [InlineData("match p { P(0, _) => 1, P(_, 0) => 2 }", "P(_, _)")]
+    [InlineData("match pair { Pair(true, true) => 1, Pair(false, _) => 2 }", "Pair(true, false)")]
+    public void Non_exhaustive_matches_name_a_missing_case(string match, string missing)
+    {
+        var program = Shapes + "record Pair(l: Bool, r: Bool); " +
+            $"fn f(s: S, flag: Bool, n: Int, p: P, pair: Pair) -> Int = {match};";
+        var diagnostic = Assert.Single(Compilation.Compile(program).Diagnostics);
+        Assert.Equal("PIP0230", diagnostic.Code);
+        Assert.Contains($"'{missing}' is not covered", diagnostic.Message);
+    }
+
+    [Theory]
+    [InlineData("match n { _ => 1, 0 => 2 }")]
+    [InlineData("match s { A => 1, A => 2, B(_) => 3 }")]
+    [InlineData("match s { B(_) => 1, B(5) => 2, A => 3 }")]
+    [InlineData("match flag { true | false => 1, true => 2 }")]
+    [InlineData("match s { Typo => 1, A => 2 }")]
+    public void Unreachable_arms_are_warnings(string match)
+    {
+        var result = Compilation.Compile(Shapes + $"fn f(s: S, flag: Bool, n: Int) -> Int = {match};");
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        var warning = Assert.Single(result.Diagnostics);
+        Assert.Equal(("PIP0231", Diagnostics.DiagnosticSeverity.Warning), (warning.Code, warning.Severity));
+    }
+
+    [Fact]
+    public void Exhaustive_matches_need_no_wildcard()
+    {
+        AssertNoErrors(Shapes + """
+            record Pair(l: Bool, r: Bool);
+            enum Tree { Leaf, Node(left: Tree, right: Tree) }
+            fn a(s: S) -> Int = match s { A => 0, B(0) => 1, B(n) => n };
+            fn b(p: Pair) -> Int = match p { Pair(true, true) => 1, Pair(false, _) => 2, Pair(_, false) => 3 };
+            fn c(t: Tree) -> Int = match t { Leaf => 0, Node(Leaf, _) => 1, Node(Node(_, _), r) => 2 };
+            fn d(flag: Bool) -> Int = match flag { true => 1, false => 0 };
+            fn e(s: S) -> Int = match s { S.A | S.B(_) => 1 };
+            """);
+    }
+
+    [Fact]
+    public void Arms_that_return_have_type_Never()
+    {
+        AssertNoErrors(Shapes + "fn f(s: S) -> Int { let n = match s { A => return 0, B(x) => x }; n * 2 }");
+    }
+
     [Fact]
     public void Errors_do_not_cascade()
     {

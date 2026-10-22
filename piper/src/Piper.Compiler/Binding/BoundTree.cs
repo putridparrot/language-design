@@ -9,11 +9,12 @@ namespace Piper.Binding;
 public abstract class BoundNode;
 
 public sealed class BoundProgram(
-    ImmutableArray<RecordSymbol> records,
+    ImmutableArray<TypeSymbol> types,
     ImmutableArray<BoundFunction> functions,
     FunctionSymbol? main)
 {
-    public ImmutableArray<RecordSymbol> Records { get; } = records;
+    /// <summary>User-declared records and enums, in declaration order.</summary>
+    public ImmutableArray<TypeSymbol> Types { get; } = types;
 
     public ImmutableArray<BoundFunction> Functions { get; } = functions;
 
@@ -91,6 +92,9 @@ public sealed class BoundForStatement(
 
     public BoundStatement Body { get; } = body;
 }
+
+/// <summary>Produced only by lowering: the impossible fall-through at the end of an exhaustive match.</summary>
+public sealed class BoundUnreachableStatement : BoundStatement;
 
 public sealed class BoundBreakStatement : BoundStatement;
 
@@ -172,6 +176,44 @@ public sealed class BoundRecordCreationExpression(RecordSymbol record, Immutable
     public ImmutableArray<BoundExpression> Arguments { get; } = arguments;
 
     public override TypeSymbol Type => Record;
+}
+
+public sealed class BoundVariantCreationExpression(VariantSymbol variant, ImmutableArray<BoundExpression> arguments) : BoundExpression
+{
+    public VariantSymbol Variant { get; } = variant;
+
+    public ImmutableArray<BoundExpression> Arguments { get; } = arguments;
+
+    public override TypeSymbol Type => Variant.Enum;
+}
+
+public sealed class BoundMatchExpression(BoundExpression scrutinee, ImmutableArray<BoundMatchArm> arms, TypeSymbol type)
+    : BoundExpression
+{
+    public BoundExpression Scrutinee { get; } = scrutinee;
+
+    public ImmutableArray<BoundMatchArm> Arms { get; } = arms;
+
+    public override TypeSymbol Type { get; } = type;
+}
+
+public sealed class BoundMatchArm(BoundPattern pattern, BoundExpression? guard, BoundExpression body)
+{
+    public BoundPattern Pattern { get; } = pattern;
+
+    public BoundExpression? Guard { get; } = guard;
+
+    public BoundExpression Body { get; } = body;
+}
+
+/// <summary>Produced only by lowering: <c>expression is pattern</c>, which also binds the pattern's variables.</summary>
+public sealed class BoundIsPatternExpression(BoundExpression expression, BoundPattern pattern) : BoundExpression
+{
+    public BoundExpression Expression { get; } = expression;
+
+    public BoundPattern Pattern { get; } = pattern;
+
+    public override TypeSymbol Type => TypeSymbol.Bool;
 }
 
 public sealed class BoundFieldAccessExpression(BoundExpression target, FieldSymbol field) : BoundExpression

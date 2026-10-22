@@ -102,7 +102,7 @@ public sealed class Parser
         return new CompilationUnitSyntax(new TextSpan(0, _source.Length), declarations.ToImmutable());
     }
 
-    /// <summary>declaration = function | record ;</summary>
+    /// <summary>declaration = function | record | enum ;</summary>
     private DeclarationSyntax? ParseDeclaration()
     {
         switch (Current.Kind)
@@ -111,13 +111,18 @@ public sealed class Parser
                 return ParseFunction();
             case TokenKind.RecordKeyword:
                 return ParseRecord();
+            case TokenKind.EnumKeyword:
+                return ParseEnum();
             default:
                 ReportOnce(Current.Span, () => _diagnostics.ReportExpectedDeclaration(Current.Span, Current));
-                while (Current.Kind is not (TokenKind.FnKeyword or TokenKind.RecordKeyword or TokenKind.EndOfFile))
+                while (!IsDeclarationStart(Current.Kind) && Current.Kind != TokenKind.EndOfFile)
                     NextToken();
                 return null;
         }
     }
+
+    private static bool IsDeclarationStart(TokenKind kind) =>
+        kind is TokenKind.FnKeyword or TokenKind.RecordKeyword or TokenKind.EnumKeyword;
 
     /// <summary>
     /// function = "fn" IDENT "(" [ parameter { "," parameter } [ "," ] ] ")" [ "->" type ]
@@ -160,6 +165,33 @@ public sealed class Parser
         Expect(TokenKind.CloseParen);
         Expect(TokenKind.Semicolon);
         return new RecordDeclarationSyntax(SpanFrom(keyword), name, fields);
+    }
+
+    /// <summary>
+    /// enum    = "enum" IDENT "{" [ variant { "," variant } [ "," ] ] "}" ;
+    /// variant = IDENT [ "(" [ parameter { "," parameter } [ "," ] ] ")" ] ;
+    /// </summary>
+    private EnumDeclarationSyntax ParseEnum()
+    {
+        var keyword = Expect(TokenKind.EnumKeyword);
+        var name = Expect(TokenKind.Identifier);
+        Expect(TokenKind.OpenBrace);
+        var variants = ParseSeparatedList(ParseVariant, TokenKind.CloseBrace);
+        Expect(TokenKind.CloseBrace);
+        return new EnumDeclarationSyntax(SpanFrom(keyword), name, variants);
+    }
+
+    private VariantSyntax ParseVariant()
+    {
+        var name = Expect(TokenKind.Identifier);
+        var fields = ImmutableArray<ParameterSyntax>.Empty;
+        if (Current.Kind == TokenKind.OpenParen)
+        {
+            NextToken();
+            fields = ParseSeparatedList(ParseParameter, TokenKind.CloseParen);
+            Expect(TokenKind.CloseParen);
+        }
+        return new VariantSyntax(SpanFrom(name), name, fields);
     }
 
     /// <summary>parameter = IDENT ":" type ;</summary>
@@ -211,7 +243,8 @@ public sealed class Parser
     /// <summary>Tokens that can't continue a list; the caller's Expect(close) reports the error.</summary>
     private static bool IsListTerminator(TokenKind kind) => kind is
         TokenKind.Semicolon or TokenKind.OpenBrace or TokenKind.CloseBrace or TokenKind.EndOfFile or
-        TokenKind.FnKeyword or TokenKind.RecordKeyword or TokenKind.LetKeyword or TokenKind.VarKeyword;
+        TokenKind.FnKeyword or TokenKind.RecordKeyword or TokenKind.EnumKeyword or TokenKind.LetKeyword or
+        TokenKind.VarKeyword or TokenKind.FatArrow;
 
     /// <summary>
     /// block = "{" { statement } [ expression ] "}" ;
@@ -226,7 +259,7 @@ public sealed class Parser
         while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
         {
             // A declaration keyword inside a block almost always means a missing '}'.
-            if (Current.Kind is TokenKind.FnKeyword or TokenKind.RecordKeyword)
+            if (IsDeclarationStart(Current.Kind))
                 break;
 
             int start = _position;
@@ -278,16 +311,20 @@ public sealed class Parser
 
     /// <summary>
     /// expressionStatement = blockLike [ ";" ] | expression ";" ;
-    /// blockLike = if | block ;
+    /// blockLike = if | match | block ;
     /// Returns the expression if it is the block's trailing value (immediately followed by '}').
-    /// Like Rust, a statement that starts with 'if' or '{' ends at its closing brace.
+    /// Like Rust, a statement that starts with 'if', 'match' or '{' ends at its closing brace.
     /// </summary>
     private ExpressionSyntax? ParseExpressionStatementOrTrailing(ImmutableArray<StatementSyntax>.Builder statements)
     {
-        bool isBlockLike = Current.Kind is TokenKind.IfKeyword or TokenKind.OpenBrace;
-        var expression = isBlockLike
-            ? Current.Kind == TokenKind.IfKeyword ? ParseIf() : ParseBlock()
-            : ParseExpression();
+        bool isBlockLike = Current.Kind is TokenKind.IfKeyword or TokenKind.MatchKeyword or TokenKind.OpenBrace;
+        var expression = Current.Kind switch
+        {
+            TokenKind.IfKeyword => ParseIf(),
+            TokenKind.MatchKeyword => ParseMatch(),
+            TokenKind.OpenBrace => ParseBlock(),
+            _ => ParseExpression(),
+        };
 
         if (Current.Kind == TokenKind.Semicolon)
         {
@@ -346,11 +383,14 @@ public sealed class Parser
     }
 
     /// <summary>return = "return" [ expression ] ";" ;</summary>
-    private ReturnStatementSyntax ParseReturn()
+    private ReturnStatementSyntax ParseReturn(bool requireSemicolon = true)
     {
         var keyword = NextToken();
-        ExpressionSyntax? value = Current.Kind is TokenKind.Semicolon or TokenKind.CloseBrace ? null : ParseExpression();
-        Expect(TokenKind.Semicolon);
+        ExpressionSyntax? value = Current.Kind is TokenKind.Semicolon or TokenKind.CloseBrace or TokenKind.Comma
+            ? null
+            : ParseExpression();
+        if (requireSemicolon)
+            Expect(TokenKind.Semicolon);
         return new ReturnStatementSyntax(SpanFrom(keyword), keyword, value);
     }
 
@@ -472,6 +512,8 @@ public sealed class Parser
                 return ParseBlock();
             case TokenKind.IfKeyword:
                 return ParseIf();
+            case TokenKind.MatchKeyword:
+                return ParseMatch();
             default:
                 ReportOnce(Current.Span, () => _diagnostics.ReportExpectedExpression(Current.Span, Current));
                 return new ErrorExpressionSyntax(new TextSpan(Current.Span.Start, 0));
@@ -493,7 +535,161 @@ public sealed class Parser
         return new IfExpressionSyntax(SpanFrom(keyword), condition, then, @else);
     }
 
-    /// <summary>interpolatedString = '"' { text | "{" expression "}" } '"' ;  each hole is lexed and parsed separately.</summary>
+    /// <summary>
+    /// match   = "match" expression "{" { arm ( "," | (* nothing after a block-like body *) ) } "}" ;
+    /// arm     = pattern [ "if" expression ] "=>" armBody ;
+    /// armBody = expression | "return" [ expression ] | "break" | "continue" ;
+    /// </summary>
+    private MatchExpressionSyntax ParseMatch()
+    {
+        var keyword = Expect(TokenKind.MatchKeyword);
+        var scrutinee = ParseExpression();
+        Expect(TokenKind.OpenBrace);
+
+        var arms = ImmutableArray.CreateBuilder<MatchArmSyntax>();
+        while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile) && !IsDeclarationStart(Current.Kind))
+        {
+            int start = _position;
+            var pattern = ParsePattern();
+            ExpressionSyntax? guard = null;
+            if (Current.Kind == TokenKind.IfKeyword)
+            {
+                NextToken();
+                guard = ParseExpression();
+            }
+            Expect(TokenKind.FatArrow);
+            var body = ParseArmBody();
+            arms.Add(new MatchArmSyntax(TextSpan.FromBounds(pattern.Span.Start, body.Span.End), pattern, guard, body));
+
+            if (Current.Kind == TokenKind.Comma)
+                NextToken();
+            else if (Current.Kind != TokenKind.CloseBrace && body is not (BlockExpressionSyntax or IfExpressionSyntax or MatchExpressionSyntax))
+                Expect(TokenKind.Comma);
+
+            if (_position == start)
+                NextToken();
+        }
+
+        Expect(TokenKind.CloseBrace);
+        return new MatchExpressionSyntax(SpanFrom(keyword), keyword, scrutinee, arms.ToImmutable());
+    }
+
+    /// <summary>`return`, `break` and `continue` arms are wrapped in a block so the rest of the compiler sees an ordinary block.</summary>
+    private ExpressionSyntax ParseArmBody()
+    {
+        StatementSyntax? jump = Current.Kind switch
+        {
+            TokenKind.ReturnKeyword => ParseReturn(requireSemicolon: false),
+            TokenKind.BreakKeyword => new BreakStatementSyntax(Current.Span, NextToken()),
+            TokenKind.ContinueKeyword => new ContinueStatementSyntax(Current.Span, NextToken()),
+            _ => null,
+        };
+        return jump is null ? ParseExpression() : new BlockExpressionSyntax(jump.Span, [jump], null);
+    }
+
+    /// <summary>pattern = primaryPattern { "|" primaryPattern } ;</summary>
+    private PatternSyntax ParsePattern()
+    {
+        var first = ParsePrimaryPattern();
+        if (Current.Kind != TokenKind.Pipe)
+            return first;
+
+        var alternatives = ImmutableArray.CreateBuilder<PatternSyntax>();
+        alternatives.Add(first);
+        while (Current.Kind == TokenKind.Pipe)
+        {
+            NextToken();
+            alternatives.Add(ParsePrimaryPattern());
+        }
+        return new OrPatternSyntax(TextSpan.FromBounds(first.Span.Start, Previous.Span.End), alternatives.ToImmutable());
+    }
+
+    /// <summary>
+    /// primaryPattern = "_" | IDENT | [ IDENT "." ] IDENT [ "(" [ pattern { "," pattern } [ "," ] ] ")" ]
+    ///                | literalPattern [ ( ".." | "..=" ) literalPattern ] ;
+    /// literalPattern = [ "-" ] ( INT | DOUBLE ) | CHAR | STRING | "true" | "false" ;
+    /// </summary>
+    private PatternSyntax ParsePrimaryPattern()
+    {
+        if (Current.Kind == TokenKind.Identifier)
+        {
+            var name = NextToken();
+            if (name.Text == "_")
+                return new WildcardPatternSyntax(name.Span);
+
+            Token? qualifier = null;
+            if (Current.Kind == TokenKind.Dot)
+            {
+                NextToken();
+                qualifier = name;
+                name = Expect(TokenKind.Identifier);
+            }
+
+            if (Current.Kind == TokenKind.OpenParen)
+            {
+                NextToken();
+                var arguments = ParseSeparatedList(ParsePattern, TokenKind.CloseParen);
+                Expect(TokenKind.CloseParen);
+                return new ConstructorPatternSyntax(SpanFrom(qualifier ?? name), qualifier, name, arguments, HasArgumentList: true);
+            }
+
+            return qualifier is null
+                ? new IdentifierPatternSyntax(name.Span, name)
+                : new ConstructorPatternSyntax(SpanFrom(qualifier), qualifier, name, [], HasArgumentList: false);
+        }
+
+        if (ParseLiteralPattern() is not { } literal)
+        {
+            ReportOnce(Current.Span, () => _diagnostics.ReportExpectedPattern(Current.Span, Current));
+            return new ErrorPatternSyntax(new TextSpan(Current.Span.Start, 0));
+        }
+
+        if (Current.Kind is not (TokenKind.DotDot or TokenKind.DotDotEquals))
+            return literal;
+
+        var op = NextToken();
+        if (ParseLiteralPattern() is not { } end)
+        {
+            ReportOnce(Current.Span, () => _diagnostics.ReportExpectedPattern(Current.Span, Current));
+            return new ErrorPatternSyntax(TextSpan.FromBounds(literal.Span.Start, op.Span.End));
+        }
+        return new RangePatternSyntax(Span(literal, end), literal, op, end);
+    }
+
+    private LiteralPatternSyntax? ParseLiteralPattern()
+    {
+        if (Current.Kind == TokenKind.Minus && Peek(1).Kind is TokenKind.IntegerLiteral or TokenKind.DoubleLiteral)
+        {
+            var minus = NextToken();
+            var number = NextToken();
+            object? negated = number.Value switch
+            {
+                int i => -i,
+                long l => -l,
+                double d => -d,
+                _ => null,
+            };
+            return new LiteralPatternSyntax(TextSpan.FromBounds(minus.Span.Start, number.Span.End), number, negated);
+        }
+
+        switch (Current.Kind)
+        {
+            case TokenKind.IntegerLiteral or TokenKind.DoubleLiteral or TokenKind.CharLiteral or TokenKind.StringLiteral:
+            {
+                var literal = NextToken();
+                return new LiteralPatternSyntax(literal.Span, literal, literal.Value);
+            }
+            case TokenKind.TrueKeyword or TokenKind.FalseKeyword:
+            {
+                var literal = NextToken();
+                return new LiteralPatternSyntax(literal.Span, literal, literal.Kind == TokenKind.TrueKeyword);
+            }
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>interpolatedString ='"' { text | "{" expression "}" } '"' ;  each hole is lexed and parsed separately.</summary>
     private InterpolatedStringExpressionSyntax ParseInterpolatedString()
     {
         var token = NextToken();

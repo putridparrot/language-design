@@ -113,7 +113,7 @@ public sealed class Lexer
             case '/': return Peek(1) == '=' ? Punctuation(TokenKind.SlashEquals, 2) : Punctuation(TokenKind.Slash, 1);
             case '%': return Peek(1) == '=' ? Punctuation(TokenKind.PercentEquals, 2) : Punctuation(TokenKind.Percent, 1);
             case '&' when Peek(1) == '&': return Punctuation(TokenKind.AmpersandAmpersand, 2);
-            case '|' when Peek(1) == '|': return Punctuation(TokenKind.PipePipe, 2);
+            case '|': return Peek(1) == '|' ? Punctuation(TokenKind.PipePipe, 2) : Punctuation(TokenKind.Pipe, 1);
         }
 
         int length = char.IsHighSurrogate(c) && char.IsLowSurrogate(Peek(1)) ? 2 : 1;

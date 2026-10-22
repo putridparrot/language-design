@@ -21,6 +21,9 @@ public enum VariableKind
     Parameter,
     LoopVariable,
 
+    /// <summary>Bound by a pattern in a match arm.</summary>
+    PatternVariable,
+
     /// <summary>Introduced by the lowerer; never visible to Piper code.</summary>
     Temporary,
 }

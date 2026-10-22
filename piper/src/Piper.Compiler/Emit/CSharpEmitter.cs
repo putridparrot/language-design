@@ -47,7 +47,7 @@ public sealed class CSharpEmitter
 
     private CSharpEmitter(BoundProgram program, string moduleName)
     {
-        _topLevelNames = [.. program.Records.Select(r => r.Name), .. program.Functions.Select(f => f.Symbol.Name), EntryPointClassName];
+        _topLevelNames = [.. program.Types.Select(t => t.Name), .. program.Functions.Select(f => f.Symbol.Name), EntryPointClassName];
         _moduleClassName = _topLevelNames.Contains(moduleName) ? moduleName + "Module" : moduleName;
         _topLevelNames.Add(_moduleClassName);
     }
@@ -67,10 +67,12 @@ public sealed class CSharpEmitter
         _writer.WriteLine("#nullable enable");
         _writer.WriteLine();
 
-        foreach (var record in program.Records)
+        foreach (var type in program.Types)
         {
-            var fields = string.Join(", ", record.Fields.Select(f => $"{TypeName(f.Type)} {Escape(f.Name)}"));
-            _writer.WriteLine($"public sealed record {Escape(record.Name)}({fields});");
+            if (type is RecordSymbol record)
+                _writer.WriteLine($"public sealed record {Escape(record.Name)}({Fields(record.Fields)});");
+            else if (type is EnumSymbol @enum)
+                EmitEnum(@enum);
             _writer.WriteLine();
         }
 
@@ -98,6 +100,38 @@ public sealed class CSharpEmitter
             _writer.CloseBrace();
         }
     }
+
+    /// <summary>
+    /// An enum is a closed record hierarchy: the private constructor means only the nested variant
+    /// records can derive from it.
+    /// </summary>
+    private void EmitEnum(EnumSymbol @enum)
+    {
+        var name = Escape(@enum.Name);
+        // Inside the enum a variant name hides any top-level type of the same name, so qualify those.
+        var variantNames = @enum.Variants.Select(v => v.Name).ToHashSet();
+
+        _writer.WriteLine($"public abstract record {name}");
+        _writer.OpenBrace();
+        _writer.WriteLine($"private {name}()");
+        _writer.OpenBrace();
+        _writer.CloseBrace();
+        foreach (var variant in @enum.Variants)
+        {
+            _writer.WriteLine();
+            _writer.WriteLine($"public sealed record {Escape(variant.Name)}({Fields(variant.Fields, variantNames)}) : {name};");
+        }
+        _writer.CloseBrace();
+    }
+
+    private static string Fields(IEnumerable<FieldSymbol> fields, ISet<string>? shadowedNames = null) =>
+        string.Join(", ", fields.Select(f =>
+        {
+            var type = TypeName(f.Type);
+            if (shadowedNames is not null && f.Type is RecordSymbol or EnumSymbol && shadowedNames.Contains(f.Type.Name))
+                type = "global::" + type;
+            return $"{type} {Escape(f.Name)}";
+        }));
 
     private void EmitFunction(BoundFunction function)
     {
@@ -199,6 +233,10 @@ public sealed class CSharpEmitter
                 break;
             }
 
+            case BoundUnreachableStatement:
+                _writer.WriteLine("throw new global::System.Diagnostics.UnreachableException();");
+                break;
+
             case BoundBreakStatement:
                 _writer.WriteLine("break;");
                 break;
@@ -247,6 +285,10 @@ public sealed class CSharpEmitter
             BoundCallExpression call => (Call(call), PrimaryPrecedence),
             BoundRecordCreationExpression creation =>
                 ($"new {TypeName(creation.Record)}({Arguments(creation.Arguments)})", PrimaryPrecedence),
+            BoundVariantCreationExpression creation =>
+                ($"new {ConstructorName(creation.Variant)}({Arguments(creation.Arguments)})", PrimaryPrecedence),
+            BoundIsPatternExpression test =>
+                ($"{Expr(test.Expression, PrimaryPrecedence)} is {Pattern(test.Pattern)}", RelationalPrecedence),
             BoundFieldAccessExpression access =>
                 ($"{Expr(access.Target, PrimaryPrecedence)}.{Escape(access.Field.Name)}", PrimaryPrecedence),
             BoundInterpolatedStringExpression interpolated => (InterpolatedString(interpolated), PrimaryPrecedence),
@@ -338,6 +380,32 @@ public sealed class CSharpEmitter
         return builder.Append('"').ToString();
     }
 
+    /// <summary>
+    /// Piper patterns map onto C# patterns: variants and records become positional patterns (or type
+    /// patterns when fieldless), ranges become relational patterns and '|' becomes 'or'.
+    /// </summary>
+    private string Pattern(BoundPattern pattern) => pattern switch
+    {
+        BoundWildcardPattern => "_",
+        BoundBindingPattern binding => $"var {Escape(_names.Declare(binding.Variable))}",
+        BoundLiteralPattern literal => Literal(literal.Value),
+        BoundRangePattern range =>
+            $">= {Literal(range.Lower)} and {(range.IsInclusive ? "<=" : "<")} {Literal(range.Upper)}",
+        BoundConstructorPattern { Arguments.Length: 0 } constructor => ConstructorName(constructor.Constructor),
+        BoundConstructorPattern constructor =>
+            $"{ConstructorName(constructor.Constructor)}({string.Join(", ", constructor.Arguments.Select(Pattern))})",
+        BoundOrPattern alternatives => string.Join(" or ", alternatives.Alternatives.Select(a =>
+            a is BoundRangePattern ? $"({Pattern(a)})" : Pattern(a))),
+        _ => throw new InvalidOperationException($"Unexpected pattern {pattern.GetType().Name}"),
+    };
+
+    private static string ConstructorName(Symbol constructor) => constructor switch
+    {
+        VariantSymbol variant => $"{Escape(variant.Enum.Name)}.{Escape(variant.Name)}",
+        RecordSymbol record => Escape(record.Name),
+        _ => throw new InvalidOperationException($"Unexpected constructor {constructor.GetType().Name}"),
+    };
+
     private static BoundExpression Unwrap(BoundExpression expression) =>
         expression is BoundConversionExpression conversion ? Unwrap(conversion.Expression) : expression;
 
@@ -352,7 +420,7 @@ public sealed class CSharpEmitter
         if (type == TypeSymbol.String) return "string";
         if (type == TypeSymbol.Char) return "char";
         if (type == TypeSymbol.Unit) return "void";
-        if (type is RecordSymbol record) return Escape(record.Name);
+        if (type is RecordSymbol or EnumSymbol) return Escape(type.Name);
         throw new InvalidOperationException($"Type '{type}' cannot be emitted.");
     }
 

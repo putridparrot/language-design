@@ -118,6 +118,66 @@ public class ParserTests
     }
 
     [Fact]
+    public void Enum_declaration()
+    {
+        var @enum = Assert.IsType<EnumDeclarationSyntax>(Assert.Single(
+            ParseClean("enum Shape { Circle(radius: Double), Rect(w: Double, h: Double), Empty, }").Declarations));
+        Assert.Equal(["Circle", "Rect", "Empty"], @enum.Variants.Select(v => v.Name.Text));
+        Assert.Equal([1, 2, 0], @enum.Variants.Select(v => v.Fields.Length));
+    }
+
+    [Fact]
+    public void Match_arms_with_guards_and_block_bodies()
+    {
+        var body = Body(ParseClean("""
+            fn f(s: Shape) -> Int {
+                match s {
+                    Circle(r) if r > 1.0 => 1,
+                    Rect(_, _) => { 2 }
+                    Empty => return 3,
+                }
+            }
+            """));
+        var match = Assert.IsType<MatchExpressionSyntax>(body.Trailing);
+        Assert.Equal(3, match.Arms.Length);
+        Assert.NotNull(match.Arms[0].Guard);
+        Assert.IsType<BlockExpressionSyntax>(match.Arms[1].Body);
+        var jump = Assert.IsType<BlockExpressionSyntax>(match.Arms[2].Body);
+        Assert.IsType<ReturnStatementSyntax>(Assert.Single(jump.Statements));
+    }
+
+    [Fact]
+    public void Pattern_forms()
+    {
+        var body = Body(ParseClean("fn f() { match x { 1 | 2 => 0, -9..=-1 => 0, Shape.Rect(Num(0), _) => 0, Shape.Empty => 0, y => 0, _ => 0 } }"));
+        var arms = Assert.IsType<MatchExpressionSyntax>(body.Trailing).Arms;
+        Assert.Equal(2, Assert.IsType<OrPatternSyntax>(arms[0].Pattern).Alternatives.Length);
+        var range = Assert.IsType<RangePatternSyntax>(arms[1].Pattern);
+        Assert.Equal((-9, -1, true), (range.Start.Value, range.End.Value, range.IsInclusive));
+        var rect = Assert.IsType<ConstructorPatternSyntax>(arms[2].Pattern);
+        Assert.Equal("Shape", rect.Qualifier!.Text);
+        Assert.IsType<ConstructorPatternSyntax>(rect.Arguments[0]);
+        Assert.False(Assert.IsType<ConstructorPatternSyntax>(arms[3].Pattern).HasArgumentList);
+        Assert.IsType<IdentifierPatternSyntax>(arms[4].Pattern);
+        Assert.IsType<WildcardPatternSyntax>(arms[5].Pattern);
+    }
+
+    [Fact]
+    public void Missing_comma_between_arms_is_reported_once()
+    {
+        var unit = Parse("fn f() { match x { 1 => a 2 => b } }", out var diagnostics);
+        Assert.Equal("PIP0100", Assert.Single(diagnostics).Code);
+        Assert.Equal(2, Assert.IsType<MatchExpressionSyntax>(Body(unit).Trailing).Arms.Length);
+    }
+
+    [Fact]
+    public void Missing_pattern_is_reported()
+    {
+        Parse("fn f() { match x { => 1 } }", out var diagnostics);
+        Assert.Equal("PIP0105", Assert.Single(diagnostics).Code);
+    }
+
+    [Fact]
     public void Missing_semicolon_reports_one_error_and_recovers()
     {
         var unit = Parse("fn main() { let a = 1 let b = 2; }\nfn other() {}", out var diagnostics);

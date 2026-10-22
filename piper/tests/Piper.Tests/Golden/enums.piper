@@ -1,0 +1,53 @@
+// Enums are sum types: a Shape is exactly one of its variants.
+
+enum Shape {
+    Circle(radius: Double),
+    Rect(width: Double, height: Double),
+    Empty,
+}
+
+fn area(shape: Shape) -> Double = match shape {
+    Circle(r) => 3.0 * r * r,
+    Rect(w, h) => w * h,
+    Empty => 0.0,
+};
+
+fn describe(shape: Shape) -> String {
+    match shape {
+        Shape.Circle(r) if r > 10.0 => "a big circle",
+        Circle(_) => "a circle",
+        Rect(w, h) if w == h => "a {w}x{h} square",
+        Rect(_, _) => "a rectangle",
+        Empty => "nothing",
+    }
+}
+
+fn initial(shape: Shape) -> Char {
+    let letter = match shape {
+        Circle(_) => 'C',
+        Rect(_, _) => 'R',
+        Empty => return '-',
+    };
+    letter
+}
+
+fn main() {
+    let shapes = Shape.Rect(2.0, 3.0);
+    print(area(Shape.Circle(2.0)));
+    print(area(shapes));
+    print(area(Shape.Empty));
+    print(describe(Shape.Circle(20.0)));
+    print(describe(Shape.Circle(1.0)));
+    print(describe(Shape.Rect(4.0, 4.0)));
+    print(describe(shapes));
+    print(describe(Shape.Empty));
+    print("{initial(shapes)}{initial(Shape.Circle(1.0))}{initial(Shape.Empty)}");
+    print(Shape.Rect(2.0, 3.0) == shapes);
+    print(shapes);
+
+    // A match used as a statement; its arms run for their effect.
+    match shapes {
+        Rect(w, _) if w > 1.0 => print("wide"),
+        _ => {}
+    }
+}

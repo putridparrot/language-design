@@ -25,6 +25,12 @@ public sealed record FunctionDeclarationSyntax(
 public sealed record RecordDeclarationSyntax(TextSpan Span, Token Name, ImmutableArray<ParameterSyntax> Fields)
     : DeclarationSyntax(Span, Name);
 
+public sealed record EnumDeclarationSyntax(TextSpan Span, Token Name, ImmutableArray<VariantSyntax> Variants)
+    : DeclarationSyntax(Span, Name);
+
+/// <summary>A variant of an enum; <see cref="Fields"/> is empty for a fieldless variant such as <c>Empty</c>.</summary>
+public sealed record VariantSyntax(TextSpan Span, Token Name, ImmutableArray<ParameterSyntax> Fields) : SyntaxNode(Span);
+
 public sealed record ParameterSyntax(TextSpan Span, Token Name, TypeSyntax Type) : SyntaxNode(Span);
 
 // Types
@@ -107,5 +113,45 @@ public sealed record IfExpressionSyntax(TextSpan Span, ExpressionSyntax Conditio
 public sealed record BlockExpressionSyntax(TextSpan Span, ImmutableArray<StatementSyntax> Statements, ExpressionSyntax? Trailing)
     : ExpressionSyntax(Span);
 
+public sealed record MatchExpressionSyntax(TextSpan Span, Token Keyword, ExpressionSyntax Scrutinee, ImmutableArray<MatchArmSyntax> Arms)
+    : ExpressionSyntax(Span);
+
+public sealed record MatchArmSyntax(TextSpan Span, PatternSyntax Pattern, ExpressionSyntax? Guard, ExpressionSyntax Body)
+    : SyntaxNode(Span);
+
 /// <summary>Placeholder produced by error recovery; binds to the error type without further diagnostics.</summary>
 public sealed record ErrorExpressionSyntax(TextSpan Span) : ExpressionSyntax(Span);
+
+// Patterns
+
+public abstract record PatternSyntax(TextSpan Span) : SyntaxNode(Span);
+
+public sealed record WildcardPatternSyntax(TextSpan Span) : PatternSyntax(Span);
+
+/// <summary>A bare name: a fieldless variant of the matched enum if one has that name, otherwise a new binding.</summary>
+public sealed record IdentifierPatternSyntax(TextSpan Span, Token Identifier) : PatternSyntax(Span);
+
+/// <summary>
+/// <c>Circle(r)</c>, <c>Shape.Circle(r)</c>, <c>Shape.Empty</c> or a record deconstruction <c>Point(x, 0)</c>.
+/// <see cref="Qualifier"/> is the enum name when written.
+/// </summary>
+public sealed record ConstructorPatternSyntax(
+    TextSpan Span,
+    Token? Qualifier,
+    Token Name,
+    ImmutableArray<PatternSyntax> Arguments,
+    bool HasArgumentList) : PatternSyntax(Span);
+
+/// <summary><see cref="Value"/> already includes a leading minus sign, if any.</summary>
+public sealed record LiteralPatternSyntax(TextSpan Span, Token Literal, object? Value) : PatternSyntax(Span);
+
+public sealed record RangePatternSyntax(TextSpan Span, LiteralPatternSyntax Start, Token Operator, LiteralPatternSyntax End)
+    : PatternSyntax(Span)
+{
+    public bool IsInclusive => Operator.Kind == TokenKind.DotDotEquals;
+}
+
+public sealed record OrPatternSyntax(TextSpan Span, ImmutableArray<PatternSyntax> Alternatives) : PatternSyntax(Span);
+
+/// <summary>Placeholder produced by error recovery; binds like a wildcard so no follow-on errors are reported.</summary>
+public sealed record ErrorPatternSyntax(TextSpan Span) : PatternSyntax(Span);

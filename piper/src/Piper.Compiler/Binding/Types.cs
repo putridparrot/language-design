@@ -51,3 +51,28 @@ public sealed class RecordSymbol : TypeSymbol
 
     public ImmutableArray<FieldSymbol> Fields { get; internal set; } = [];
 }
+
+/// <summary>A sum type: a value is exactly one of its <see cref="Variants"/>.</summary>
+public sealed class EnumSymbol : TypeSymbol
+{
+    public EnumSymbol(EnumDeclarationSyntax declaration) : base(declaration.Name.Text)
+    {
+        Declaration = declaration;
+    }
+
+    public EnumDeclarationSyntax Declaration { get; }
+
+    public ImmutableArray<VariantSymbol> Variants { get; internal set; } = [];
+
+    public VariantSymbol? FindVariant(string name) => Variants.FirstOrDefault(v => v.Name == name);
+}
+
+/// <summary>One case of an enum. Variants are not types themselves: <c>Shape.Circle(1.0)</c> has type <c>Shape</c>.</summary>
+public sealed class VariantSymbol(string name, EnumSymbol @enum) : Symbol(name)
+{
+    public EnumSymbol Enum { get; } = @enum;
+
+    public ImmutableArray<FieldSymbol> Fields { get; internal set; } = [];
+
+    public string QualifiedName => $"{Enum.Name}.{Name}";
+}

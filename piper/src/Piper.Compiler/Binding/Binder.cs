@@ -37,22 +37,40 @@ public sealed class Binder
     public static BoundProgram BindProgram(CompilationUnitSyntax unit, DiagnosticBag diagnostics) =>
         new Binder(diagnostics).Bind(unit);
 
+    /// <summary>Names every C# record already has as members; a field or variant with one of these names wouldn't compile.</summary>
+    private static readonly HashSet<string> ReservedMemberNames =
+    [
+        "Equals", "GetHashCode", "ToString", "GetType", "EqualityContract", "PrintMembers", "Deconstruct",
+        "MemberwiseClone", "Finalize", "ReferenceEquals",
+    ];
+
     private BoundProgram Bind(CompilationUnitSyntax unit)
     {
-        var records = new List<RecordSymbol>();
-        foreach (var declaration in unit.Declarations.OfType<RecordDeclarationSyntax>())
+        var types = new List<TypeSymbol>();
+        foreach (var declaration in unit.Declarations)
         {
-            if (declaration.Name.IsMissing)
+            TypeSymbol? type = declaration switch
+            {
+                RecordDeclarationSyntax record => new RecordSymbol(record),
+                EnumDeclarationSyntax @enum => new EnumSymbol(@enum),
+                _ => null,
+            };
+            if (type is null || declaration.Name.IsMissing)
                 continue;
-            var record = new RecordSymbol(declaration);
-            if (_globalScope.TryDeclare(record))
-                records.Add(record);
+
+            if (_globalScope.TryDeclare(type))
+                types.Add(type);
             else
-                _diagnostics.ReportDuplicateDeclaration(declaration.Name.Span, record.Name);
+                _diagnostics.ReportDuplicateDeclaration(declaration.Name.Span, type.Name);
         }
 
-        foreach (var record in records)
-            BindRecordFields(record);
+        foreach (var type in types)
+        {
+            if (type is RecordSymbol record)
+                record.Fields = BindFields(record.Declaration.Fields, record.Name);
+            else if (type is EnumSymbol @enum)
+                BindVariants(@enum);
+        }
 
         var functions = new List<(FunctionSymbol Symbol, FunctionDeclarationSyntax Syntax)>();
         foreach (var declaration in unit.Declarations.OfType<FunctionDeclarationSyntax>())
@@ -69,14 +87,15 @@ public sealed class Binder
         if (main is not null && (main.Parameters.Length != 0 || main.ReturnType != TypeSymbol.Unit))
             _diagnostics.ReportInvalidMain(main.Declaration!.Name.Span);
 
-        return new BoundProgram([.. records], boundFunctions, main);
+        return new BoundProgram([.. types], boundFunctions, main);
     }
 
-    private void BindRecordFields(RecordSymbol record)
+    /// <summary>Binds the fields of a record or variant named <paramref name="owner"/>.</summary>
+    private ImmutableArray<FieldSymbol> BindFields(ImmutableArray<ParameterSyntax> syntax, string owner)
     {
         var fields = ImmutableArray.CreateBuilder<FieldSymbol>();
         var names = new HashSet<string>();
-        foreach (var field in record.Declaration.Fields)
+        foreach (var field in syntax)
         {
             var type = BindValueType(field.Type, "field");
             if (field.Name.IsMissing)
@@ -84,12 +103,40 @@ public sealed class Binder
 
             if (!names.Add(field.Name.Text))
                 _diagnostics.ReportDuplicateDeclaration(field.Name.Span, field.Name.Text);
-            else if (field.Name.Text == record.Name)
-                _diagnostics.ReportFieldNamedAsRecord(field.Name.Span, record.Name);
+            else if (field.Name.Text == owner)
+                _diagnostics.ReportFieldNamedAsRecord(field.Name.Span, owner);
+            else if (ReservedMemberNames.Contains(field.Name.Text))
+                _diagnostics.ReportReservedMemberName(field.Name.Span, field.Name.Text);
             else
                 fields.Add(new FieldSymbol(field.Name.Text, type));
         }
-        record.Fields = fields.ToImmutable();
+        return fields.ToImmutable();
+    }
+
+    private void BindVariants(EnumSymbol @enum)
+    {
+        var declaration = @enum.Declaration;
+        if (declaration.Variants.IsEmpty)
+            _diagnostics.ReportEmptyEnum(declaration.Name.Span, @enum.Name);
+
+        var variants = ImmutableArray.CreateBuilder<VariantSymbol>();
+        var names = new HashSet<string>();
+        foreach (var syntax in declaration.Variants)
+        {
+            var name = syntax.Name;
+            if (name.IsMissing)
+                continue;
+
+            if (!names.Add(name.Text))
+                _diagnostics.ReportDuplicateDeclaration(name.Span, name.Text);
+            else if (name.Text == @enum.Name)
+                _diagnostics.ReportVariantNamedAsEnum(name.Span, @enum.Name);
+            else if (ReservedMemberNames.Contains(name.Text))
+                _diagnostics.ReportReservedMemberName(name.Span, name.Text);
+            else
+                variants.Add(new VariantSymbol(name.Text, @enum) { Fields = BindFields(syntax.Fields, name.Text) });
+        }
+        @enum.Variants = variants.ToImmutable();
     }
 
     private FunctionSymbol BindFunctionSignature(FunctionDeclarationSyntax declaration)
@@ -339,6 +386,7 @@ public sealed class Binder
         MemberAccessExpressionSyntax s => BindMemberAccess(s),
         ParenthesizedExpressionSyntax s => BindExpression(s.Expression),
         IfExpressionSyntax s => BindIf(s),
+        MatchExpressionSyntax s => BindMatch(s),
         BlockExpressionSyntax s => BindBlock(s),
         ErrorExpressionSyntax => new BoundErrorExpression(),
         _ => throw new InvalidOperationException($"Unexpected expression {syntax.GetType().Name}"),
@@ -478,6 +526,12 @@ public sealed class Binder
     {
         var arguments = syntax.Arguments.Select(a => (Syntax: a, Bound: BindExpression(a))).ToList();
 
+        if (syntax.Callee is MemberAccessExpressionSyntax { Target: NameExpressionSyntax typeName } member &&
+            LookupEnum(typeName) is { } calleeEnum)
+        {
+            return BindVariantReference(calleeEnum, member.Member, syntax.Span, arguments);
+        }
+
         if (syntax.Callee is not NameExpressionSyntax name)
         {
             if (BindExpression(syntax.Callee).Type != TypeSymbol.Error)
@@ -500,12 +554,12 @@ public sealed class Binder
                 return new BoundCallExpression(function, [RequireValue(arguments[0].Bound, arguments[0].Syntax.Span)]);
 
             case FunctionSymbol function:
-                return BindArguments(syntax, calleeName, function.Parameters.Select(p => p.Type), arguments) is { } args
+                return BindArguments(syntax.Span, calleeName, function.Parameters.Select(p => p.Type), arguments) is { } args
                     ? new BoundCallExpression(function, args)
                     : new BoundErrorExpression();
 
             case RecordSymbol record:
-                return BindArguments(syntax, calleeName, record.Fields.Select(f => f.Type), arguments) is { } fieldArgs
+                return BindArguments(syntax.Span, calleeName, record.Fields.Select(f => f.Type), arguments) is { } fieldArgs
                     ? new BoundRecordCreationExpression(record, fieldArgs)
                     : new BoundErrorExpression();
 
@@ -520,7 +574,7 @@ public sealed class Binder
     }
 
     private ImmutableArray<BoundExpression>? BindArguments(
-        CallExpressionSyntax syntax,
+        TextSpan span,
         string calleeName,
         IEnumerable<TypeSymbol> parameterTypes,
         List<(ExpressionSyntax Syntax, BoundExpression Bound)> arguments)
@@ -528,7 +582,7 @@ public sealed class Binder
         var types = parameterTypes.ToList();
         if (types.Count != arguments.Count)
         {
-            _diagnostics.ReportWrongArgumentCount(syntax.Span, calleeName, types.Count, arguments.Count);
+            _diagnostics.ReportWrongArgumentCount(span, calleeName, types.Count, arguments.Count);
             return null;
         }
 
@@ -536,8 +590,53 @@ public sealed class Binder
             Convert(RequireValue(argument.Bound, argument.Syntax.Span), type, argument.Syntax.Span))];
     }
 
+    private EnumSymbol? LookupEnum(NameExpressionSyntax name) =>
+        name.Identifier.IsMissing ? null : _scope.Lookup(name.Identifier.Text) as EnumSymbol;
+
+    /// <summary>
+    /// <c>Shape.Empty</c> (<paramref name="arguments"/> is null) or <c>Shape.Circle(1.0)</c>.
+    /// Fieldless variants are written without parentheses, variants with fields always with them.
+    /// </summary>
+    private BoundExpression BindVariantReference(
+        EnumSymbol @enum,
+        Token member,
+        TextSpan span,
+        List<(ExpressionSyntax Syntax, BoundExpression Bound)>? arguments)
+    {
+        if (member.IsMissing)
+            return new BoundErrorExpression();
+
+        if (@enum.FindVariant(member.Text) is not { } variant)
+        {
+            _diagnostics.ReportUnknownVariant(member.Span, @enum, member.Text);
+            return new BoundErrorExpression();
+        }
+
+        if (arguments is null)
+        {
+            if (variant.Fields.IsEmpty)
+                return new BoundVariantCreationExpression(variant, []);
+            var fields = string.Join(", ", variant.Fields.Select(f => $"{f.Name}: {f.Type}"));
+            _diagnostics.ReportVariantRequiresArguments(span, variant.QualifiedName, fields);
+            return new BoundErrorExpression();
+        }
+
+        if (variant.Fields.IsEmpty)
+        {
+            _diagnostics.ReportVariantHasNoFields(span, variant.QualifiedName);
+            return new BoundErrorExpression();
+        }
+
+        return BindArguments(span, variant.QualifiedName, variant.Fields.Select(f => f.Type), arguments) is { } args
+            ? new BoundVariantCreationExpression(variant, args)
+            : new BoundErrorExpression();
+    }
+
     private BoundExpression BindMemberAccess(MemberAccessExpressionSyntax syntax)
     {
+        if (syntax.Target is NameExpressionSyntax typeName && LookupEnum(typeName) is { } @enum)
+            return BindVariantReference(@enum, syntax.Member, syntax.Span, arguments: null);
+
         var target = RequireValue(BindExpression(syntax.Target), syntax.Target.Span);
         if (target.Type == TypeSymbol.Error || syntax.Member.IsMissing)
             return new BoundErrorExpression();
@@ -559,29 +658,299 @@ public sealed class Binder
             return new BoundIfExpression(condition, then, null, TypeSymbol.Unit);
 
         var @else = BindExpression(syntax.Else);
-        var thenType = then.Type;
-        var elseType = @else.Type;
-
-        TypeSymbol type;
-        if (thenType == TypeSymbol.Error || elseType == TypeSymbol.Error)
-            type = TypeSymbol.Error;
-        else if (thenType == TypeSymbol.Never)
-            type = elseType;
-        else if (elseType == TypeSymbol.Never || thenType == elseType)
-            type = thenType;
-        else if (Operators.IsImplicitlyConvertible(thenType, elseType))
-            type = elseType;
-        else if (Operators.IsImplicitlyConvertible(elseType, thenType))
-            type = thenType;
-        else
+        var type = UnifyBranchTypes(then.Type, @else.Type);
+        if (type is null)
         {
-            _diagnostics.ReportIncompatibleBranches(new TextSpan(syntax.Span.Start, 2), thenType, elseType);
+            _diagnostics.ReportIncompatibleBranches(new TextSpan(syntax.Span.Start, 2), then.Type, @else.Type);
             type = TypeSymbol.Error;
         }
 
         if (type.IsNumeric)
             return new BoundIfExpression(condition, WidenBlock(then, type), WidenBranch(@else, type), type);
         return new BoundIfExpression(condition, then, @else, type);
+    }
+
+    /// <summary>
+    /// The type of an expression whose value comes from one of several branches: Never is ignored,
+    /// numeric types widen. Null if the branch types are incompatible.
+    /// </summary>
+    private static TypeSymbol? UnifyBranchTypes(TypeSymbol a, TypeSymbol b)
+    {
+        if (a == TypeSymbol.Error || b == TypeSymbol.Error)
+            return TypeSymbol.Error;
+        if (a == TypeSymbol.Never || a == b)
+            return b;
+        if (b == TypeSymbol.Never)
+            return a;
+        if (Operators.IsImplicitlyConvertible(a, b))
+            return b;
+        if (Operators.IsImplicitlyConvertible(b, a))
+            return a;
+        return null;
+    }
+
+    private BoundExpression BindMatch(MatchExpressionSyntax syntax)
+    {
+        var scrutinee = RequireValue(BindExpression(syntax.Scrutinee), syntax.Scrutinee.Span);
+        var scrutineeType = scrutinee.Type;
+
+        var arms = new List<BoundMatchArm>();
+        bool patternErrors = false;
+        foreach (var arm in syntax.Arms)
+        {
+            var outer = _scope;
+            _scope = new Scope(outer);
+
+            int errorsBefore = _diagnostics.Count;
+            var pattern = BindPattern(arm.Pattern, scrutineeType, allowBindings: true);
+            patternErrors |= _diagnostics.Count != errorsBefore;
+
+            BoundExpression? guard = null;
+            if (arm.Guard is not null)
+            {
+                guard = BindCondition(arm.Guard);
+                if (ContainsStatements(guard))
+                    _diagnostics.ReportGuardContainsStatements(arm.Guard.Span);
+            }
+
+            var body = BindExpression(arm.Body);
+            _scope = outer;
+            arms.Add(new BoundMatchArm(pattern, guard, body));
+        }
+
+        var type = TypeSymbol.Never;
+        for (int i = 0; i < arms.Count; i++)
+        {
+            var unified = UnifyBranchTypes(type, arms[i].Body.Type);
+            if (unified is null)
+            {
+                _diagnostics.ReportIncompatibleArms(syntax.Arms[i].Body.Span, type, arms[i].Body.Type);
+                type = TypeSymbol.Error;
+                break;
+            }
+            type = unified;
+        }
+
+        if (type.IsNumeric)
+            arms = arms.Select(a => new BoundMatchArm(a.Pattern, a.Guard, WidenBranch(a.Body, type))).ToList();
+
+        // A pattern that failed to bind acts as a wildcard; analysing it would only add noise.
+        if (scrutineeType != TypeSymbol.Error && !patternErrors)
+            CheckArms(syntax, scrutineeType, arms);
+
+        return new BoundMatchExpression(scrutinee, [.. arms], type);
+    }
+
+    /// <summary>Warns about unreachable arms and reports a match that doesn't handle every value.</summary>
+    private void CheckArms(MatchExpressionSyntax syntax, TypeSymbol scrutineeType, List<BoundMatchArm> arms)
+    {
+        // Guarded arms may not match, so they never make later arms unreachable or the match exhaustive.
+        var covering = new List<BoundPattern>();
+        for (int i = 0; i < arms.Count; i++)
+        {
+            if (!Exhaustiveness.IsUseful(covering, arms[i].Pattern))
+                _diagnostics.ReportUnreachableArm(syntax.Arms[i].Pattern.Span);
+            if (arms[i].Guard is null)
+                covering.Add(arms[i].Pattern);
+        }
+
+        if (Exhaustiveness.FindMissingPattern(scrutineeType, covering) is { } missing)
+            _diagnostics.ReportNonExhaustiveMatch(syntax.Keyword.Span, missing);
+    }
+
+    /// <summary>
+    /// Lowering turns a match into an if/else-if chain whose conditions are `x is Pattern &amp;&amp; guard`,
+    /// which leaves no place to run statements hoisted out of a guard. Blocks with statements and
+    /// nested matches are the only expressions that need such statements.
+    /// </summary>
+    private static bool ContainsStatements(BoundExpression expression) => expression switch
+    {
+        BoundBlockExpression block => block.Statements.Length > 0 || (block.Trailing is { } t && ContainsStatements(t)),
+        BoundMatchExpression => true,
+        BoundIfExpression @if => ContainsStatements(@if.Condition) || ContainsStatements(@if.Then) ||
+                                 (@if.Else is { } e && ContainsStatements(e)),
+        BoundUnaryExpression unary => ContainsStatements(unary.Operand),
+        BoundBinaryExpression binary => ContainsStatements(binary.Left) || ContainsStatements(binary.Right),
+        BoundConversionExpression conversion => ContainsStatements(conversion.Expression),
+        BoundFieldAccessExpression access => ContainsStatements(access.Target),
+        BoundAssignmentExpression assignment => ContainsStatements(assignment.Value),
+        BoundCallExpression call => call.Arguments.Any(ContainsStatements),
+        BoundRecordCreationExpression creation => creation.Arguments.Any(ContainsStatements),
+        BoundVariantCreationExpression creation => creation.Arguments.Any(ContainsStatements),
+        BoundInterpolatedStringExpression interpolated => interpolated.Parts.Any(ContainsStatements),
+        _ => false,
+    };
+
+    // Patterns
+
+    /// <param name="allowBindings">False inside '|' alternatives, where bindings aren't supported yet.</param>
+    private BoundPattern BindPattern(PatternSyntax syntax, TypeSymbol expected, bool allowBindings)
+    {
+        switch (syntax)
+        {
+            case WildcardPatternSyntax or ErrorPatternSyntax:
+                return new BoundWildcardPattern(expected);
+
+            case IdentifierPatternSyntax { Identifier: var name }:
+            {
+                if (name.IsMissing)
+                    return new BoundWildcardPattern(expected);
+
+                // A bare name is a fieldless variant of the matched enum if there is one, otherwise a binding.
+                if (expected is EnumSymbol @enum && @enum.FindVariant(name.Text) is { } variant)
+                {
+                    if (variant.Fields.IsEmpty)
+                        return new BoundConstructorPattern(variant, [], expected);
+                    _diagnostics.ReportPatternArity(syntax.Span, variant.QualifiedName, variant.Fields.Length, 0);
+                    return new BoundWildcardPattern(expected);
+                }
+
+                if (!allowBindings)
+                {
+                    _diagnostics.ReportBindingInOrPattern(syntax.Span);
+                    return new BoundWildcardPattern(expected);
+                }
+
+                var variable = new VariableSymbol(name.Text, expected, isMutable: false, VariableKind.PatternVariable);
+                if (!_scope.TryDeclare(variable))
+                    _diagnostics.ReportDuplicateDeclaration(name.Span, name.Text);
+                return new BoundBindingPattern(variable);
+            }
+
+            case ConstructorPatternSyntax constructor:
+                return BindConstructorPattern(constructor, expected, allowBindings);
+
+            case LiteralPatternSyntax literal:
+                return ConvertPatternLiteral(literal, expected) is { } value
+                    ? new BoundLiteralPattern(value, expected)
+                    : new BoundWildcardPattern(expected);
+
+            case RangePatternSyntax range:
+                return BindRangePattern(range, expected);
+
+            case OrPatternSyntax alternatives:
+                return new BoundOrPattern(
+                    [.. alternatives.Alternatives.Select(a => BindPattern(a, expected, allowBindings: false))],
+                    expected);
+
+            default:
+                throw new InvalidOperationException($"Unexpected pattern {syntax.GetType().Name}");
+        }
+    }
+
+    private BoundPattern BindConstructorPattern(ConstructorPatternSyntax syntax, TypeSymbol expected, bool allowBindings)
+    {
+        var name = syntax.Name;
+        if (name.IsMissing || syntax.Qualifier is { IsMissing: true })
+            return new BoundWildcardPattern(expected);
+
+        Symbol constructor;
+        TypeSymbol constructedType;
+        ImmutableArray<FieldSymbol> fields;
+        string displayName;
+
+        if (syntax.Qualifier is { } qualifier)
+        {
+            if (_scope.Lookup(qualifier.Text) is not EnumSymbol @enum)
+            {
+                _diagnostics.ReportUnknownConstructorPattern(syntax.Span, $"{qualifier.Text}.{name.Text}", expected);
+                return new BoundWildcardPattern(expected);
+            }
+            if (@enum.FindVariant(name.Text) is not { } variant)
+            {
+                _diagnostics.ReportUnknownVariant(name.Span, @enum, name.Text);
+                return new BoundWildcardPattern(expected);
+            }
+            (constructor, constructedType, fields, displayName) = (variant, @enum, variant.Fields, variant.QualifiedName);
+        }
+        else if (expected is EnumSymbol @enum && @enum.FindVariant(name.Text) is { } variant)
+        {
+            (constructor, constructedType, fields, displayName) = (variant, @enum, variant.Fields, variant.QualifiedName);
+        }
+        else if (_scope.Lookup(name.Text) is RecordSymbol record)
+        {
+            (constructor, constructedType, fields, displayName) = (record, record, record.Fields, record.Name);
+        }
+        else
+        {
+            if (expected != TypeSymbol.Error)
+                _diagnostics.ReportUnknownConstructorPattern(name.Span, name.Text, expected);
+            return new BoundWildcardPattern(expected);
+        }
+
+        if (expected != TypeSymbol.Error && constructedType != expected)
+        {
+            _diagnostics.ReportPatternTypeMismatch(syntax.Span, $"A '{displayName}' pattern", expected);
+            return new BoundWildcardPattern(expected);
+        }
+
+        if (syntax.Arguments.Length != fields.Length)
+        {
+            _diagnostics.ReportPatternArity(syntax.Span, displayName, fields.Length, syntax.Arguments.Length);
+            return new BoundWildcardPattern(expected);
+        }
+
+        var arguments = syntax.Arguments.Zip(fields, (argument, field) => BindPattern(argument, field.Type, allowBindings));
+        return new BoundConstructorPattern(constructor, [.. arguments], constructedType);
+    }
+
+    private BoundPattern BindRangePattern(RangePatternSyntax syntax, TypeSymbol expected)
+    {
+        if (expected == TypeSymbol.Error)
+            return new BoundWildcardPattern(expected);
+
+        if (expected != TypeSymbol.Int && expected != TypeSymbol.Long && expected != TypeSymbol.Char)
+        {
+            _diagnostics.ReportInvalidRangePattern(syntax.Span, expected);
+            return new BoundWildcardPattern(expected);
+        }
+
+        if (ConvertPatternLiteral(syntax.Start, expected) is not { } lower ||
+            ConvertPatternLiteral(syntax.End, expected) is not { } upper)
+        {
+            return new BoundWildcardPattern(expected);
+        }
+
+        int comparison = Comparer<object>.Default.Compare(lower, upper);
+        if (comparison > 0 || (comparison == 0 && !syntax.IsInclusive))
+        {
+            _diagnostics.ReportEmptyRangePattern(syntax.Span);
+            return new BoundWildcardPattern(expected);
+        }
+
+        return new BoundRangePattern(lower, upper, syntax.IsInclusive, expected);
+    }
+
+    /// <summary>Converts a literal pattern's value to the matched type (widening Int to Long/Double), or reports a mismatch.</summary>
+    private object? ConvertPatternLiteral(LiteralPatternSyntax syntax, TypeSymbol expected)
+    {
+        object? converted = (syntax.Value, expected.Name) switch
+        {
+            (null, _) => null,
+            (_, "?") => null,
+            (int i, "Int") => i,
+            (int i, "Long") => (long)i,
+            (int i, "Double") => (double)i,
+            (long l, "Long") => l,
+            (long l, "Double") => (double)l,
+            (double d, "Double") => d,
+            (char c, "Char") => c,
+            (string s, "String") => s,
+            (bool b, "Bool") => b,
+            _ => null,
+        };
+
+        // Only builtin types have literals, so compare by identity rather than trusting the name (records could shadow it).
+        bool builtinTarget = TypeSymbol.Builtins.Contains(expected);
+        if (converted is not null && builtinTarget)
+            return converted;
+
+        if (syntax.Value is not null && expected != TypeSymbol.Error)
+        {
+            var literalType = BindLiteral(new LiteralExpressionSyntax(syntax.Span, syntax.Literal, syntax.Value)).Type;
+            _diagnostics.ReportPatternTypeMismatch(syntax.Span, $"A literal of type '{literalType}'", expected);
+        }
+        return null;
     }
 
     private BoundExpression BindCondition(ExpressionSyntax syntax)

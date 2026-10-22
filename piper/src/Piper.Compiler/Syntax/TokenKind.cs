@@ -26,6 +26,8 @@ public enum TokenKind
     BreakKeyword,
     ContinueKeyword,
     RecordKeyword,
+    EnumKeyword,
+    MatchKeyword,
     TrueKeyword,
     FalseKeyword,
 
@@ -62,6 +64,7 @@ public enum TokenKind
     Percent,
     AmpersandAmpersand,
     PipePipe,
+    Pipe,
     PlusEquals,
     MinusEquals,
     StarEquals,

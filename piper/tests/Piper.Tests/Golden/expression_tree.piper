@@ -1,0 +1,49 @@
+// A recursive enum with an evaluator, a printer and a simplifier that uses nested patterns.
+
+enum Expr {
+    Num(value: Int),
+    Add(left: Expr, right: Expr),
+    Mul(left: Expr, right: Expr),
+    Neg(operand: Expr),
+}
+
+fn eval(e: Expr) -> Int = match e {
+    Num(n) => n,
+    Add(l, r) => eval(l) + eval(r),
+    Mul(l, r) => eval(l) * eval(r),
+    Neg(x) => -eval(x),
+};
+
+fn show(e: Expr) -> String = match e {
+    Num(n) if n < 0 => "({n})",
+    Num(n) => "{n}",
+    Add(l, r) => "({show(l)} + {show(r)})",
+    Mul(l, r) => "{show(l)} * {show(r)}",
+    Neg(x) => "-{show(x)}",
+};
+
+fn simplify(e: Expr) -> Expr = match e {
+    Add(Num(0), x) => simplify(x),
+    Add(x, Num(0)) => simplify(x),
+    Mul(Num(0), _) | Mul(_, Num(0)) => Expr.Num(0),
+    Mul(Num(1), x) => simplify(x),
+    Mul(x, Num(1)) => simplify(x),
+    Neg(Neg(x)) => simplify(x),
+    Add(l, r) => Expr.Add(simplify(l), simplify(r)),
+    Mul(l, r) => Expr.Mul(simplify(l), simplify(r)),
+    Neg(x) => Expr.Neg(simplify(x)),
+    Num(_) => e,
+};
+
+fn main() {
+    // (2 + 3) * -(-4) + 0 * 7
+    let e = Expr.Add(
+        Expr.Mul(Expr.Add(Expr.Num(2), Expr.Num(3)), Expr.Neg(Expr.Neg(Expr.Num(4)))),
+        Expr.Mul(Expr.Num(0), Expr.Num(7)));
+    print(show(e));
+    print(eval(e));
+    let simple = simplify(e);
+    print(show(simple));
+    print(eval(simple));
+    print(show(simplify(Expr.Mul(Expr.Num(1), Expr.Num(-5)))));
+}
