@@ -1,0 +1,33 @@
+// Lowering hoists statements out of expressions; these checks make sure
+// Piper's left-to-right evaluation order survives that.
+
+fn log(label: String, value: Int) -> Int {
+    print("eval {label}");
+    value
+}
+
+fn sum3(a: Int, b: Int, c: Int) -> Int = a + b + c;
+
+fn main() {
+    // Arguments are evaluated left to right even when one of them is a block.
+    let total = sum3(log("a", 1), { let t = log("b", 2); t * 10 }, log("c", 3));
+    print("total = {total}");
+
+    // The right side of && and || only runs when needed, even if it contains statements.
+    let skipped = false && { print("should not print"); true };
+    print("skipped = {skipped}");
+    let ran = true && { print("right side ran"); true };
+    print("ran = {ran}");
+    let either = true || { print("should not print"); false };
+    print("either = {either}");
+
+    // The left side of += is read before the right side's statements run.
+    var x = 1;
+    x += { x = 100; 5 };
+    print("x = {x}");
+
+    // A for loop's upper bound is evaluated exactly once.
+    var count = 0;
+    for i in 0..log("bound", 3) { count += 1; }
+    print("count = {count}");
+}

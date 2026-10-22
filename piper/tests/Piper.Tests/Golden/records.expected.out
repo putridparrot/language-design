@@ -1,0 +1,5 @@
+squared length: 25
+true
+true
+Ada is 36, active: true
+Person { name = Ada, age = 36, active = True }

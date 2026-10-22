@@ -1,0 +1,416 @@
+using System.Collections.Immutable;
+using Piper.Binding;
+
+namespace Piper.Lowering;
+
+/// <summary>
+/// Rewrites the bound tree into a form that maps directly onto C#. Piper's blocks and ifs are
+/// expressions, C#'s are not, so a value-producing <c>if</c> or block becomes either a ternary
+/// (when its branches are plain expressions) or statements that store into a temporary / return.
+///
+/// Statements hoisted out of an expression run before it, so to preserve left-to-right evaluation
+/// any operand evaluated earlier is spilled into a temporary first, and the right side of
+/// <c>&amp;&amp;</c>/<c>||</c> stays conditional.
+/// </summary>
+public sealed class Lowerer
+{
+    private Lowerer()
+    {
+    }
+
+    public static BoundProgram Lower(BoundProgram program)
+    {
+        var lowerer = new Lowerer();
+        var functions = program.Functions
+            .Select(f => new BoundFunction(f.Symbol, lowerer.LowerFunction(f), f.IsExpressionBodied))
+            .ToImmutableArray();
+        return new BoundProgram(program.Records, functions, program.Main);
+    }
+
+    private BoundBlockStatement LowerFunction(BoundFunction function)
+    {
+        var body = (BoundBlockExpression)function.Body;
+        var output = new List<BoundStatement>();
+        if (function.Symbol.ReturnType == TypeSymbol.Unit)
+        {
+            foreach (var statement in body.Statements)
+                LowerStatement(statement, output);
+            if (body.Trailing is not null)
+                LowerForEffect(body.Trailing, output);
+        }
+        else
+        {
+            LowerInto(body, value => new BoundReturnStatement(value), output);
+        }
+        return new BoundBlockStatement([.. output]);
+    }
+
+    // Statements
+
+    private void LowerStatement(BoundStatement statement, List<BoundStatement> output)
+    {
+        switch (statement)
+        {
+            case BoundVariableDeclaration { Initializer: { } initializer } declaration:
+                if (initializer is BoundIfExpression or BoundBlockExpression && !TryLowerPure(initializer, out _))
+                {
+                    // `let x = if c { ...; a } else { b };` → `T x; if (c) { ...; x = a; } else { x = b; }`
+                    output.Add(new BoundVariableDeclaration(declaration.Variable, null));
+                    LowerInto(initializer, value => Assign(declaration.Variable, value), output);
+                }
+                else
+                {
+                    output.Add(new BoundVariableDeclaration(declaration.Variable, LowerForValue(initializer, output)));
+                }
+                break;
+
+            case BoundExpressionStatement expressionStatement:
+                LowerForEffect(expressionStatement.Expression, output);
+                break;
+
+            case BoundReturnStatement { Value: { } value }:
+                LowerInto(value, v => new BoundReturnStatement(v), output);
+                break;
+
+            case BoundWhileStatement loop:
+                LowerWhile(loop, output);
+                break;
+
+            case BoundForStatement loop:
+                LowerFor(loop, output);
+                break;
+
+            case BoundBlockStatement block:
+                output.Add(LowerBlockStatement(block.Statements));
+                break;
+
+            default:
+                output.Add(statement);
+                break;
+        }
+    }
+
+    private void LowerWhile(BoundWhileStatement loop, List<BoundStatement> output)
+    {
+        var conditionPrelude = new List<BoundStatement>();
+        var condition = LowerForValue(loop.Condition, conditionPrelude);
+        var body = LowerToStatement(loop.Body);
+
+        if (conditionPrelude.Count == 0)
+        {
+            output.Add(new BoundWhileStatement(condition, body));
+            return;
+        }
+
+        // The condition needs statements: `while (true) { prelude; if (!cond) break; body }`.
+        var inner = new List<BoundStatement>(conditionPrelude)
+        {
+            new BoundIfStatement(Not(condition), new BoundBreakStatement(), null),
+        };
+        inner.AddRange(Flatten(body));
+        output.Add(new BoundWhileStatement(new BoundLiteralExpression(true, TypeSymbol.Bool), new BoundBlockStatement([.. inner])));
+    }
+
+    /// <summary>The upper bound is evaluated once, before the loop (C# would re-evaluate it every iteration).</summary>
+    private void LowerFor(BoundForStatement loop, List<BoundStatement> output)
+    {
+        var bounds = LowerOperands([loop.Lower, loop.Upper], output);
+        var lower = bounds[0];
+        var upper = bounds[1];
+
+        if (!IsInvariant(upper))
+        {
+            if (!IsConstant(lower))
+                lower = Spill(lower, output);
+            upper = Spill(upper, output);
+        }
+
+        output.Add(new BoundForStatement(loop.Variable, lower, upper, loop.IsInclusive, LowerToStatement(loop.Body)));
+    }
+
+    private BoundStatement LowerToStatement(BoundStatement statement)
+    {
+        var output = new List<BoundStatement>();
+        LowerStatement(statement, output);
+        return output is [BoundBlockStatement block] ? block : new BoundBlockStatement([.. output]);
+    }
+
+    private BoundBlockStatement LowerBlockStatement(IEnumerable<BoundStatement> statements)
+    {
+        var output = new List<BoundStatement>();
+        foreach (var statement in statements)
+            LowerStatement(statement, output);
+        return new BoundBlockStatement([.. output]);
+    }
+
+    // Expressions evaluated only for their side effects
+
+    private void LowerForEffect(BoundExpression expression, List<BoundStatement> output)
+    {
+        switch (expression)
+        {
+            case BoundIfExpression @if:
+            {
+                var condition = LowerForValue(@if.Condition, output);
+                var then = BlockForEffect(@if.Then);
+                BoundStatement? @else = null;
+                if (@if.Else is not null)
+                {
+                    var elseOutput = new List<BoundStatement>();
+                    LowerForEffect(@if.Else, elseOutput);
+                    @else = elseOutput is [BoundStatement single and (BoundIfStatement or BoundBlockStatement)]
+                        ? single
+                        : new BoundBlockStatement([.. elseOutput]);
+                }
+                output.Add(new BoundIfStatement(condition, then, @else));
+                break;
+            }
+
+            case BoundBlockExpression block:
+                output.Add(BlockForEffect(block));
+                break;
+
+            case BoundConversionExpression conversion:
+                LowerForEffect(conversion.Expression, output);
+                break;
+
+            case BoundLiteralExpression or BoundVariableExpression:
+                break;
+
+            default:
+                output.Add(new BoundExpressionStatement(LowerForValue(expression, output)));
+                break;
+        }
+    }
+
+    private BoundBlockStatement BlockForEffect(BoundBlockExpression block)
+    {
+        var output = new List<BoundStatement>();
+        foreach (var statement in block.Statements)
+            LowerStatement(statement, output);
+        if (block.Trailing is not null)
+            LowerForEffect(block.Trailing, output);
+        return new BoundBlockStatement([.. output]);
+    }
+
+    // Expressions whose value is consumed by a statement (assignment to a variable, or return)
+
+    private void LowerInto(BoundExpression expression, Func<BoundExpression, BoundStatement> sink, List<BoundStatement> output)
+    {
+        switch (expression)
+        {
+            case BoundIfExpression { Else: not null } @if when !TryLowerPure(@if, out _):
+                output.Add(IfInto(LowerForValue(@if.Condition, output), @if, sink));
+                break;
+
+            case BoundBlockExpression block:
+                foreach (var statement in block.Statements)
+                    LowerStatement(statement, output);
+                // A block without a trailing value here has type Never: every path already returned or jumped.
+                if (block.Trailing is not null)
+                    LowerInto(block.Trailing, sink, output);
+                break;
+
+            case BoundConversionExpression { Expression: BoundIfExpression or BoundBlockExpression } conversion:
+                LowerInto(conversion.Expression, value => sink(Widen(value, conversion.Type)), output);
+                break;
+
+            default:
+                output.Add(sink(LowerForValue(expression, output)));
+                break;
+        }
+    }
+
+    // Expressions whose value is used inside another expression
+
+    /// <summary>
+    /// Returns an expression with no blocks or ifs in it; statements that must run first are appended to <paramref name="prelude"/>.
+    /// </summary>
+    private BoundExpression LowerForValue(BoundExpression expression, List<BoundStatement> prelude)
+    {
+        switch (expression)
+        {
+            case BoundLiteralExpression or BoundVariableExpression or BoundErrorExpression:
+                return expression;
+
+            case BoundConversionExpression conversion:
+                return Widen(LowerForValue(conversion.Expression, prelude), conversion.Type);
+
+            case BoundUnaryExpression unary:
+                return new BoundUnaryExpression(unary.Operator, LowerForValue(unary.Operand, prelude), unary.Type);
+
+            case BoundBinaryExpression { Operator: BoundBinaryOperatorKind.LogicalAnd or BoundBinaryOperatorKind.LogicalOr } logical:
+                return LowerShortCircuit(logical, prelude);
+
+            case BoundBinaryExpression binary:
+            {
+                var operands = LowerOperands([binary.Left, binary.Right], prelude);
+                return new BoundBinaryExpression(operands[0], binary.Operator, operands[1], binary.Type);
+            }
+
+            case BoundCallExpression call:
+                return new BoundCallExpression(call.Function, LowerOperands(call.Arguments, prelude));
+
+            case BoundRecordCreationExpression creation:
+                return new BoundRecordCreationExpression(creation.Record, LowerOperands(creation.Arguments, prelude));
+
+            case BoundFieldAccessExpression access:
+                return new BoundFieldAccessExpression(LowerForValue(access.Target, prelude), access.Field);
+
+            case BoundInterpolatedStringExpression interpolated:
+                return new BoundInterpolatedStringExpression(LowerOperands(interpolated.Parts, prelude));
+
+            case BoundAssignmentExpression assignment:
+                return LowerAssignment(assignment, prelude);
+
+            case BoundIfExpression @if:
+                return LowerIfForValue(@if, prelude);
+
+            case BoundBlockExpression block:
+                foreach (var statement in block.Statements)
+                    LowerStatement(statement, prelude);
+                // Only reachable for blocks of type Never, whose value is never observed.
+                return block.Trailing is null ? new BoundErrorExpression() : LowerForValue(block.Trailing, prelude);
+
+            default:
+                throw new InvalidOperationException($"Unexpected expression {expression.GetType().Name}");
+        }
+    }
+
+    private BoundExpression LowerIfForValue(BoundIfExpression @if, List<BoundStatement> prelude)
+    {
+        var condition = LowerForValue(@if.Condition, prelude);
+        if (@if.Else is not null &&
+            TryLowerPure(@if.Then, out var whenTrue) &&
+            TryLowerPure(@if.Else, out var whenFalse))
+        {
+            return new BoundConditionalExpression(condition, whenTrue, whenFalse, @if.Type);
+        }
+
+        var temp = NewTemp(@if.Type);
+        prelude.Add(new BoundVariableDeclaration(temp, null));
+        prelude.Add(IfInto(condition, @if, value => Assign(temp, value)));
+        return new BoundVariableExpression(temp);
+    }
+
+    /// <summary>Builds <c>if (condition) { ...; sink(a) } else { ...; sink(b) }</c> from an already-lowered condition.</summary>
+    private BoundIfStatement IfInto(BoundExpression condition, BoundIfExpression @if, Func<BoundExpression, BoundStatement> sink)
+    {
+        var then = new List<BoundStatement>();
+        LowerInto(@if.Then, sink, then);
+        var @else = new List<BoundStatement>();
+        LowerInto(@if.Else!, sink, @else);
+        return new BoundIfStatement(
+            condition,
+            new BoundBlockStatement([.. then]),
+            @else is [BoundIfStatement elseIf] ? elseIf : new BoundBlockStatement([.. @else]));
+    }
+
+    /// <summary>`a &amp;&amp; { s; b }` → `bool t = a; if (t) { s; t = b; }` so the right side still runs only when needed.</summary>
+    private BoundExpression LowerShortCircuit(BoundBinaryExpression logical, List<BoundStatement> prelude)
+    {
+        var left = LowerForValue(logical.Left, prelude);
+        var rightPrelude = new List<BoundStatement>();
+        var right = LowerForValue(logical.Right, rightPrelude);
+        if (rightPrelude.Count == 0)
+            return new BoundBinaryExpression(left, logical.Operator, right, logical.Type);
+
+        var temp = NewTemp(TypeSymbol.Bool);
+        prelude.Add(new BoundVariableDeclaration(temp, left));
+        rightPrelude.Add(Assign(temp, right));
+        BoundExpression test = new BoundVariableExpression(temp);
+        if (logical.Operator == BoundBinaryOperatorKind.LogicalOr)
+            test = Not(test);
+        prelude.Add(new BoundIfStatement(test, new BoundBlockStatement([.. rightPrelude]), null));
+        return new BoundVariableExpression(temp);
+    }
+
+    /// <summary>`x += { s; e }` reads x before s runs, so it becomes `T t = x; s; x = t + e;`.</summary>
+    private BoundExpression LowerAssignment(BoundAssignmentExpression assignment, List<BoundStatement> prelude)
+    {
+        if (assignment.CompoundOperator is not { } op)
+            return new BoundAssignmentExpression(assignment.Variable, null, LowerForValue(assignment.Value, prelude));
+
+        var valuePrelude = new List<BoundStatement>();
+        var value = LowerForValue(assignment.Value, valuePrelude);
+        if (valuePrelude.Count == 0)
+            return new BoundAssignmentExpression(assignment.Variable, op, value);
+
+        var original = Spill(new BoundVariableExpression(assignment.Variable), prelude);
+        prelude.AddRange(valuePrelude);
+        var combined = new BoundBinaryExpression(original, op, value, assignment.Variable.Type);
+        return new BoundAssignmentExpression(assignment.Variable, null, combined);
+    }
+
+    /// <summary>
+    /// Lowers operands left to right. If a later operand needs prelude statements, earlier operands
+    /// are first spilled into temporaries so they are still evaluated before those statements run.
+    /// </summary>
+    private ImmutableArray<BoundExpression> LowerOperands(ImmutableArray<BoundExpression> operands, List<BoundStatement> prelude)
+    {
+        var results = new List<BoundExpression>();
+        foreach (var operand in operands)
+        {
+            var local = new List<BoundStatement>();
+            var value = LowerForValue(operand, local);
+            if (local.Count > 0)
+            {
+                for (int i = 0; i < results.Count; i++)
+                {
+                    if (!IsConstant(results[i]))
+                        results[i] = Spill(results[i], prelude);
+                }
+                prelude.AddRange(local);
+            }
+            results.Add(value);
+        }
+        return [.. results];
+    }
+
+    /// <summary>Lowers <paramref name="expression"/> and succeeds only if that needed no prelude statements.</summary>
+    private bool TryLowerPure(BoundExpression expression, out BoundExpression lowered)
+    {
+        var scratch = new List<BoundStatement>();
+        lowered = LowerForValue(expression, scratch);
+        return scratch.Count == 0;
+    }
+
+    // Helpers
+
+    private static VariableSymbol NewTemp(TypeSymbol type) =>
+        new("temp", type, isMutable: true, VariableKind.Temporary);
+
+    private static BoundVariableExpression Spill(BoundExpression value, List<BoundStatement> prelude)
+    {
+        var temp = NewTemp(value.Type);
+        prelude.Add(new BoundVariableDeclaration(temp, value));
+        return new BoundVariableExpression(temp);
+    }
+
+    private static bool IsConstant(BoundExpression expression) => expression switch
+    {
+        BoundLiteralExpression => true,
+        BoundConversionExpression conversion => IsConstant(conversion.Expression),
+        _ => false,
+    };
+
+    /// <summary>Constants and immutable variables cannot change while a loop runs.</summary>
+    private static bool IsInvariant(BoundExpression expression) => expression switch
+    {
+        BoundVariableExpression variable => !variable.Variable.IsMutable,
+        BoundConversionExpression conversion => IsInvariant(conversion.Expression),
+        _ => IsConstant(expression),
+    };
+
+    private static BoundExpressionStatement Assign(VariableSymbol variable, BoundExpression value) =>
+        new(new BoundAssignmentExpression(variable, null, value));
+
+    private static BoundExpression Widen(BoundExpression expression, TypeSymbol type) =>
+        expression.Type == type ? expression : new BoundConversionExpression(type, expression);
+
+    private static BoundUnaryExpression Not(BoundExpression operand) =>
+        new(BoundUnaryOperatorKind.LogicalNot, operand, TypeSymbol.Bool);
+
+    private static IEnumerable<BoundStatement> Flatten(BoundStatement statement) =>
+        statement is BoundBlockStatement block ? block.Statements : [statement];
+}

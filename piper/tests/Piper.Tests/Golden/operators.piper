@@ -1,0 +1,21 @@
+fn main() {
+    print(1 + 2 * 3);
+    print((1 + 2) * 3);
+    print(10 - 4 - 3);
+    print(-7 / 2);
+    print(-7 % 3);
+    print(- -5);
+    print(2147483647L + 1);
+    print(1 < 2 && 2 < 3);
+    print(!(1 == 1) || false);
+    print('a' < 'b');
+    print(1 == 1.0);
+    let flag = !true;
+    print(flag);
+    var n = 10;
+    n *= 3;
+    n /= 4;
+    n %= 4;
+    n -= 1;
+    print(n);
+}

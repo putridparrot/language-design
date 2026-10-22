@@ -1,0 +1,28 @@
+// Piper allows shadowing in nested scopes; C# does not, so the emitter renames.
+// Names that are C# keywords are escaped with '@'.
+
+fn value(x: Int) -> Int = x * 2;
+
+fn main() {
+    let x = 1;
+    let y = {
+        let x = x + 10;
+        x * 2
+    };
+    print("x={x} y={y}");
+
+    for i in 0..2 {
+        let x = i * 100;
+        print("loop x={x}");
+    }
+
+    let string = "a C# keyword as a name";
+    let class = 42;
+    print("{string} / {class}");
+
+    let temp = 7;   // the lowerer also introduces temporaries named `temp`
+    let r = if temp > 5 { let z = temp; z + 1 } else { 0 };
+    print("r={r} temp={temp}");
+
+    print(value(21));
+}

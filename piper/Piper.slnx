@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Piper.Cli/Piper.Cli.csproj" />
+    <Project Path="src/Piper.Compiler/Piper.Compiler.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Piper.Tests/Piper.Tests.csproj" />
+  </Folder>
+</Solution>

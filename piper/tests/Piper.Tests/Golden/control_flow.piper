@@ -1,0 +1,36 @@
+fn fizzbuzz(n: Int) -> String {
+    if n % 15 == 0 { "FizzBuzz" } else if n % 3 == 0 { "Fizz" } else if n % 5 == 0 { "Buzz" } else { "{n}" }
+}
+
+fn isPrime(n: Int) -> Bool {
+    if n < 2 { return false; }
+    var d = 2;
+    while d * d <= n {
+        if n % d == 0 { return false; }
+        d += 1;
+    }
+    true
+}
+
+fn main() {
+    for i in 1..=15 { print(fizzbuzz(i)); }
+
+    var primes = "";
+    for n in 0..30 {
+        if !isPrime(n) { continue; }
+        primes = primes + "{n} ";
+    }
+    print(primes);
+
+    var steps = 0;
+    while true {
+        steps += 1;
+        if steps == 5 { break; }
+    }
+    print("stopped after {steps} steps");
+
+    let big: Long = 3_000_000_000L;
+    var total = 0L;
+    for k in 0L..3L { total += big; }
+    print(total);
+}

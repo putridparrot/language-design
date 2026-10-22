@@ -1,0 +1,18 @@
+// A tour of Piper's milestone-1 features.
+
+record Point(x: Int, y: Int);
+
+fn add(a: Int, b: Int) -> Int = a + b;      // expression-bodied
+
+fn classify(n: Int) -> String {
+    let kind = if n < 0 { "negative" } else if n == 0 { "zero" } else { "positive" };
+    return kind;
+}
+
+fn main() {
+    let p = Point(1, 2);
+    var total = 0;
+    for i in 0..10 { total += i; }           // half-open range; 0..=10 is inclusive
+    while total > 40 { total -= 1; }
+    print("p=({p.x}, {p.y}) total={total} {classify(-3)} {add(2, 3)}");
+}

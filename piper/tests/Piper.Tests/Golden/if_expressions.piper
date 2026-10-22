@@ -1,0 +1,49 @@
+// `if` and blocks are expressions. Simple branches become C# ternaries;
+// branches containing statements are lowered to statements.
+
+fn sign(n: Int) -> Int {
+    if n < 0 { -1 } else if n == 0 { 0 } else { 1 }
+}
+
+fn describe(n: Int) -> String {
+    let parity = if n % 2 == 0 {
+        let half = n / 2;
+        "even (half is {half})"
+    } else {
+        "odd"
+    };
+    parity
+}
+
+fn firstPositive(a: Int, b: Int) -> Int {
+    // A branch that returns has type Never, so it fits wherever a value is expected.
+    let chosen = if a > 0 { a } else if b > 0 { b } else { return -1; };
+    chosen * 100
+}
+
+fn mixed(flag: Bool) -> Double = if flag { 1 } else { 2.5 };
+
+fn absolute(n: Int) -> Int {
+    if n < 0 {
+        return -n;
+    } else {
+        return n;
+    }
+}
+
+fn main() {
+    print(sign(-5));
+    print(sign(0));
+    print(sign(7));
+    print(describe(10));
+    print(describe(7));
+    print(firstPositive(3, 4));
+    print(firstPositive(-3, 4));
+    print(firstPositive(-3, -4));
+    print(mixed(true));
+    print(mixed(false));
+    print(absolute(-9));
+    let label = { let a = 2; let b = 3; "block value {a * b}" };
+    print(label);
+    if sign(1) == 1 { print("statement if"); }
+}

@@ -1,0 +1,18 @@
+fn main() {
+    let name = "Piper";
+    let version = 1.5;
+    print("Hello, {name}! Version {version}.");
+    print("Braces: \{ and \}, quote: \", backslash: \\, tab:[\t]");
+    print("Nested: {"inner {name}"}");
+    print("Math: {1 + 2 * 3}, conditional: {if version > 1.0 { "new" } else { "old" }}");
+    let c = 'P';
+    print("Char: {c}, newline escape: [\n]");
+    print("Unicode: \u{1F99C}");
+    print(true);
+    print("Bool in string: {1 < 2}");
+    print("con" + "cat" + "enation");
+    print(0.1 + 0.2);
+    print(10 / 4);
+    print(10.0 / 4.0);
+    print('\'');
+}

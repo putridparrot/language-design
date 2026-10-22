@@ -1,0 +1,14 @@
+Hello, Piper! Version 1.5.
+Braces: { and }, quote: ", backslash: \, tab:[	]
+Nested: inner Piper
+Math: 7, conditional: new
+Char: P, newline escape: [
+]
+Unicode: 🦜
+true
+Bool in string: true
+concatenation
+0.30000000000000004
+2
+2.5
+'

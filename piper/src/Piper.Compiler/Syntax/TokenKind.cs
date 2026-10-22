@@ -1,0 +1,70 @@
+namespace Piper.Syntax;
+
+public enum TokenKind
+{
+    EndOfFile,
+    BadToken,
+
+    // Literals and names
+    Identifier,
+    IntegerLiteral,
+    DoubleLiteral,
+    CharLiteral,
+    StringLiteral,
+    InterpolatedStringLiteral,
+
+    // Keywords
+    FnKeyword,
+    LetKeyword,
+    VarKeyword,
+    IfKeyword,
+    ElseKeyword,
+    WhileKeyword,
+    ForKeyword,
+    InKeyword,
+    ReturnKeyword,
+    BreakKeyword,
+    ContinueKeyword,
+    RecordKeyword,
+    TrueKeyword,
+    FalseKeyword,
+
+    // Punctuation
+    OpenParen,
+    CloseParen,
+    OpenBrace,
+    CloseBrace,
+    OpenBracket,
+    CloseBracket,
+    Comma,
+    Semicolon,
+    Colon,
+    Dot,
+    DotDot,
+    DotDotEquals,
+    Arrow,
+    FatArrow,
+    Question,
+
+    // Operators
+    Equals,
+    EqualsEquals,
+    Bang,
+    BangEquals,
+    Less,
+    LessEquals,
+    Greater,
+    GreaterEquals,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    AmpersandAmpersand,
+    PipePipe,
+    PlusEquals,
+    MinusEquals,
+    StarEquals,
+    SlashEquals,
+    PercentEquals,
+}

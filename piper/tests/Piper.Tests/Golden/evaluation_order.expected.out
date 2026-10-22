@@ -1,0 +1,11 @@
+eval a
+eval b
+eval c
+total = 24
+skipped = false
+right side ran
+ran = true
+either = true
+x = 6
+eval bound
+count = 3
