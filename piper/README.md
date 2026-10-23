@@ -15,10 +15,14 @@ Piper needs the .NET 10 SDK.
 dotnet tool install -g Piper --prerelease
 piper run hello.piper         # transpile, compile and run
 piper build src/ -o out/      # write the C# (one .cs per .piper file; it references the Piper.Runtime package)
+piper build app.piper --exe   # compile to bin/app.exe (plus app.dll, its .pdb and Piper.Runtime.dll)
+piper build src/ --library    # compile to bin/src.dll; --name and -o choose the name and folder
 piper emit hello.piper        # print the C#
 ```
 
-To compile `.piper` files as part of a .NET project, alongside its C#, reference the `Piper.Build` package:
+`--exe` makes a native launcher from the .NET SDK's apphost, as `dotnet build` does; with only a runtime installed you get
+the DLL, which runs with `dotnet app.dll`. For NuGet packages, publishing (single-file, AOT) or mixing with C#, use a project:
+to compile `.piper` files as part of a .NET project, alongside its C#, reference the `Piper.Build` package:
 
 ```xml
 <ItemGroup>

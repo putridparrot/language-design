@@ -17,6 +17,9 @@ public sealed record CompilationResult(ImmutableArray<SourceText> Sources, Immut
 
     public IEnumerable<string> FormattedDiagnostics => Diagnostics.Select(d => d.Format());
 
+    /// <summary>Whether the program has a `main` function (an entry point), so it can be built as an executable.</summary>
+    public bool HasMain { get; init; }
+
     /// <summary>All generated C#; with several files each is preceded by a <c>// ==== name ====</c> line.</summary>
     public string? CSharp => !Success
         ? null
@@ -51,7 +54,7 @@ public static class Compilation
             return new CompilationResult(files, sorted, []);
 
         var lowered = Lowerer.Lower(program);
-        return new CompilationResult(files, sorted, CSharpEmitter.Emit(lowered, options.LineDirectives));
+        return new CompilationResult(files, sorted, CSharpEmitter.Emit(lowered, options.LineDirectives)) { HasMain = program.Main is not null };
     }
 
     public static CompilationResult Compile(SourceText source, CompilationOptions? options = null) => Compile([source], options);

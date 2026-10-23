@@ -31,7 +31,8 @@ public static class Runner
     public static CSharpBuildResult Build(string csharp, string assemblyName = "PiperProgram") =>
         Build([new GeneratedFile("Program.cs", csharp)], assemblyName);
 
-    public static CSharpBuildResult Build(IEnumerable<GeneratedFile> files, string assemblyName = "PiperProgram")
+    /// <param name="executable">Build a console application whose entry point is the program's `main`, rather than a library.</param>
+    public static CSharpBuildResult Build(IEnumerable<GeneratedFile> files, string assemblyName = "PiperProgram", bool executable = false)
     {
         var options = new CSharpParseOptions(LanguageVersion.Latest);
         var trees = files.Select(f => CSharpSyntaxTree.ParseText(f.Text, options, path: f.Name, encoding: System.Text.Encoding.UTF8)).ToList();
@@ -39,7 +40,10 @@ public static class Runner
             assemblyName,
             trees,
             References.Value,
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+            new CSharpCompilationOptions(
+                executable ? OutputKind.ConsoleApplication : OutputKind.DynamicallyLinkedLibrary,
+                mainTypeName: executable ? CSharpEmitter.EntryPointClassName : null,
+                nullableContextOptions: NullableContextOptions.Enable));
 
         using var stream = new MemoryStream();
         using var pdb = new MemoryStream();

@@ -4,6 +4,11 @@ using Piper.Text;
 const string Usage = """
     Usage:
       piper build <inputs...> [-o <dir>]   Transpile to C#: one .cs per .piper (default: next to each source file)
+      piper build <inputs...> --exe [-o <dir>] [--name <name>]
+                                           Compile to an executable: <name>.exe (or <name>), .dll, .pdb and Piper.Runtime.dll
+                                           (default: a bin folder next to the first input; name: the first input's)
+      piper build <inputs...> --library [-o <dir>] [--name <name>]
+                                           Compile to a library: <name>.dll, .pdb and Piper.Runtime.dll
       piper emit  <inputs...>              Print the generated C# to stdout
       piper run   <inputs...>              Transpile, compile and run
       piper --version                      Show the compiler's version
@@ -31,10 +36,18 @@ if (args.Length < 2 || args[0] is not ("build" or "emit" or "run"))
 var command = args[0];
 var inputs = new List<string>();
 string? outputDirectory = null;
+string? assemblyName = null;
+bool executable = false, library = false;
 for (int i = 1; i < args.Length; i++)
 {
     if (args[i] is "-o" or "--output" && i + 1 < args.Length)
         outputDirectory = args[++i];
+    else if (args[i] == "--name" && i + 1 < args.Length)
+        assemblyName = args[++i];
+    else if (args[i] == "--exe" && command == "build")
+        executable = true;
+    else if (args[i] == "--library" && command == "build")
+        library = true;
     else if (args[i].StartsWith('-'))
     {
         Console.Error.WriteLine($"Unknown argument '{args[i]}'.");
@@ -80,6 +93,34 @@ switch (command)
         Console.Write(result.CSharp);
         return 0;
 
+    case "build" when executable || library:
+    {
+        if (executable && library)
+        {
+            Console.Error.WriteLine("Use --exe or --library, not both.");
+            return 2;
+        }
+        if (executable && !result.HasMain)
+        {
+            Console.Error.WriteLine("An executable needs a 'main' function; use --library to build a library instead.");
+            return 1;
+        }
+
+        // Named after the first input (`app.piper` → app, `src/` → src), and written to a bin folder beside it.
+        var first = Path.GetFullPath(inputs[0]).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var name = assemblyName ?? Path.GetFileNameWithoutExtension(first);
+        var directory = outputDirectory ?? Path.Combine(Directory.Exists(first) ? first : Path.GetDirectoryName(first)!, "bin");
+        var output = AssemblyWriter.Write(result.Files, directory, name, executable);
+        foreach (var error in output.Errors)
+            Console.Error.WriteLine(error);
+        if (!output.Success)
+            return 1;
+        foreach (var path in output.Files)
+            Console.WriteLine($"Wrote {path}");
+        if (executable && output.Launcher is null)
+            Console.WriteLine($"(No .NET SDK apphost was found for a native launcher; run it with: dotnet \"{Path.Combine(directory, name + ".dll")}\")");
+        return 0;
+    }
     case "build":
         for (int i = 0; i < result.Files.Length; i++)
         {

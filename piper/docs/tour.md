@@ -22,8 +22,8 @@ fn main() {
 }
 ```
 
-`piper build` writes the C#, and `piper emit` prints it, which is a good way to see what anything in this tour
-turns into. To mix Piper into a C# project instead, see [Using Piper in a .NET project](#using-piper-in-a-net-project).
+`piper build app.piper --exe` compiles it to an executable (`bin/app.exe`), and `--library` to a DLL. Plain
+`piper build` writes the C#, and `piper emit` prints it, which is a good way to see what anything in this tour turns into. To mix Piper into a C# project instead, see [Using Piper in a .NET project](#using-piper-in-a-net-project).
 
 ## Values and functions
 
