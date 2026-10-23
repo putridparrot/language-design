@@ -18,4 +18,12 @@ fn main() {
     n %= 4;
     n -= 1;
     print(n);
+
+    // The minimum values can be written as literals, as in C#; arithmetic wraps on overflow (unchecked).
+    let min = -2147483648;
+    print(min == Int.MinValue);
+    print(-9223372036854775808L == Long.MinValue);
+    let max = Int.MaxValue;
+    print(max + 1 == min);
+    print(match min { -2147483648 => "min", _ => "other" });
 }

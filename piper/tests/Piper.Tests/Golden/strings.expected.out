@@ -5,8 +5,8 @@ Math: 7, conditional: new
 Char: P, newline escape: [
 ]
 Unicode: 🦜
-true
-Bool in string: true
+True
+Bool in string: True
 concatenation
 0.30000000000000004
 2

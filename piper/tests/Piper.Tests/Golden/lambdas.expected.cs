@@ -41,13 +41,13 @@ public static class Lambdas
         global::System.Collections.Generic.List<int> numbers = new global::System.Collections.Generic.List<int> { 5, 3, 8, 1, 9, 2 };
         global::System.Collections.Generic.List<int> evens = global::System.Linq.Enumerable.ToList<int>(global::System.Linq.Enumerable.Select<int, int>(global::System.Linq.Enumerable.Where<int>(numbers, (int n_2) => n_2 % 2 == 0), (int n_3) => n_3 * 10));
         global::System.Console.WriteLine(string.Join<int>(", ", evens));
-        global::System.Console.WriteLine(global::System.Linq.Enumerable.Any<int>(numbers, (int n_4) => n_4 > 8) ? "true" : "false");
+        global::System.Console.WriteLine(global::System.Linq.Enumerable.Any<int>(numbers, (int n_4) => n_4 > 8));
         global::System.Console.WriteLine(global::System.Linq.Enumerable.Sum(numbers));
         global::System.Console.WriteLine(string.Join(" ", global::System.Linq.Enumerable.Select<int, string>(global::System.Linq.Enumerable.OrderBy<int, int>(numbers, (int n_5) => n_5), (int n_6) => $"<{n_6}>")));
         global::System.Collections.Generic.List<string> names = new global::System.Collections.Generic.List<string> { "Grace", "Ada", "Linus" };
         names.Sort((string a_1, string b_1) => a_1.Length - b_1.Length);
         global::System.Console.WriteLine(string.Join(", ", names));
-        global::System.Console.WriteLine(names.Exists((string name) => name.StartsWith("L")) ? "true" : "false");
+        global::System.Console.WriteLine(names.Exists((string name) => name.StartsWith("L")));
     }
 }
 

@@ -11,6 +11,7 @@ public abstract class BoundPattern(TypeSymbol type)
     {
         BoundBindingPattern => true,
         BoundConstructorPattern constructor => constructor.Arguments.Any(a => a.HasBindings),
+        BoundTuplePattern tuple => tuple.Elements.Any(e => e.HasBindings),
         BoundOrPattern either => either.Alternatives.Any(a => a.HasBindings),
         _ => false,
     };
@@ -46,6 +47,12 @@ public sealed class BoundConstructorPattern(Symbol constructor, ImmutableArray<B
     public Symbol Constructor { get; } = constructor;
 
     public ImmutableArray<BoundPattern> Arguments { get; } = arguments;
+}
+
+/// <summary><c>(0, _)</c>: one pattern per element of a tuple.</summary>
+public sealed class BoundTuplePattern(ImmutableArray<BoundPattern> elements, TupleTypeSymbol type) : BoundPattern(type)
+{
+    public ImmutableArray<BoundPattern> Elements { get; } = elements;
 }
 
 public sealed class BoundOrPattern(ImmutableArray<BoundPattern> alternatives, TypeSymbol type) : BoundPattern(type)

@@ -24,7 +24,9 @@ public sealed partial class Binder
         LambdaExpressionSyntax s => BindLambda(s, expected),
         IndexExpressionSyntax s => BindIndex(s),
         CollectionExpressionSyntax s => BindCollection(s, expected),
+        TupleExpressionSyntax s => BindTuple(s, expected),
         ThrowExpressionSyntax s => BindThrow(s),
+        OutArgumentSyntax s => ReportMisplacedOut(s),
         UnaryExpressionSyntax s => BindUnary(s),
         BinaryExpressionSyntax s => BindBinary(s),
         RangeExpressionSyntax s => BindRange(s),
@@ -67,12 +69,54 @@ public sealed partial class Binder
         if (name.IsMissing)
             return new BoundErrorExpression();
 
-        return BindSymbolAsValue(_scope.Lookup(name.Text), name, syntax.Span, expected);
+        return BindSymbolAsValue(_scope.Lookup(name.Text), name, syntax.Span, expected, syntax.TypeArguments);
+    }
+
+    /// <summary>The type arguments written in <c>f&lt;Int&gt;</c>, or null when there are none.</summary>
+    private ImmutableArray<TypeSymbol>? ExplicitTypeArguments(ImmutableArray<TypeSyntax> syntax) =>
+        syntax.IsEmpty ? null : [.. syntax.Select(t => BindValueType(t, "type argument"))];
+
+    /// <summary>
+    /// Puts explicit type arguments for <paramref name="parameters"/> into an inference map; reports and returns
+    /// false if their number is wrong. Does nothing when none were written.
+    /// </summary>
+    private bool ApplyExplicitTypeArguments(
+        ImmutableArray<TypeSymbol>? explicitArguments,
+        ImmutableArray<TypeParameterSymbol> parameters,
+        Dictionary<TypeParameterSymbol, TypeSymbol> map,
+        TextSpan span,
+        string name)
+    {
+        if (explicitArguments is not { } arguments)
+            return true;
+        if (arguments.Length != parameters.Length)
+        {
+            if (parameters.IsEmpty)
+                _diagnostics.ReportNotGeneric(span, name);
+            else
+                _diagnostics.ReportTypeArgumentCount(span, name, parameters.Length, arguments.Length);
+            return false;
+        }
+        for (int i = 0; i < parameters.Length; i++)
+            map[parameters[i]] = arguments[i];
+        return true;
     }
 
     /// <summary>Uses a resolved name as a value: a variable, or a fieldless built-in variant such as <c>None</c>.</summary>
-    private BoundExpression BindSymbolAsValue(Symbol? symbol, Token name, TextSpan span, TypeSymbol? expected)
+    private BoundExpression BindSymbolAsValue(
+        Symbol? symbol,
+        Token name,
+        TextSpan span,
+        TypeSymbol? expected,
+        ImmutableArray<TypeSyntax> typeArguments = default)
     {
+        var explicitArguments = ExplicitTypeArguments(typeArguments.IsDefault ? [] : typeArguments);
+        if (explicitArguments is not null && symbol is not (FunctionSymbol or null or ErrorSymbol or AmbiguousSymbol))
+        {
+            _diagnostics.ReportNotGeneric(span, name.Text);
+            return new BoundErrorExpression();
+        }
+
         switch (symbol)
         {
             case VariableSymbol variable:
@@ -80,7 +124,9 @@ public sealed partial class Binder
             case VariantSymbol variant:
                 // A built-in variant used bare: `None`.
                 return BindVariantCreation(variant.Enum, variant, null, span, expected);
-            case FunctionSymbol function when BindFunctionReference(function, expected) is { } reference:
+            case FunctionSymbol function when explicitArguments is not null:
+                return BindFunctionReference(function, expected, explicitArguments, span) ?? new BoundErrorExpression();
+            case FunctionSymbol function when BindFunctionReference(function, expected, null, span) is { } reference:
                 return reference;
             case FunctionSymbol:
                 _diagnostics.ReportNotAValue(name.Span, name.Text, "function");
@@ -151,6 +197,13 @@ public sealed partial class Binder
                 right = Convert(right, left.Type, syntax.Right.Span);
             else if (right.Type.IsOption && IsConvertible(left.Type, right.Type))
                 left = Convert(left, right.Type, syntax.Left.Span);
+            // `(1, 2) == pair`: tuples whose names or element types differ compare at their common type.
+            else if (left.Type is TupleTypeSymbol && right.Type is TupleTypeSymbol &&
+                     CommonType([left.Type, right.Type], null, out _) is TupleTypeSymbol common)
+            {
+                left = Convert(left, common, syntax.Left.Span);
+                right = Convert(right, common, syntax.Right.Span);
+            }
         }
 
         var resolution = Operators.ResolveBinary(kind, left.Type, right.Type);
@@ -174,6 +227,10 @@ public sealed partial class Binder
 
     private BoundExpression BindAssignment(AssignmentExpressionSyntax syntax)
     {
+        // `(a, b) = (b, a)`: deconstruction into existing variables.
+        if (syntax.Target is TupleExpressionSyntax tupleTarget)
+            return BindDeconstructionAssignment(syntax, tupleTarget);
+
         // .NET properties and indexers can be assigned: `sb.Length = 0`, `ages["Ada"] = 37`.
         if (syntax.Target is IndexExpressionSyntax or MemberAccessExpressionSyntax && BindClrAssignment(syntax) is { } clrAssignment)
             return clrAssignment;
@@ -233,24 +290,24 @@ public sealed partial class Binder
                 {
                     // Geometry.area(c), System.Text.StringBuilder()
                     NamespaceSymbol @namespace when !member.Member.IsMissing =>
-                        BindCallTo(MemberOf(@namespace, member.Member.Text) ?? NotInNamespace(member.Member, @namespace), member.Member, syntax, expected),
-                    // Point.origin(), Shape.Circle(1.0), Math.Sqrt(2.0)
-                    TypeSymbol type => BindStaticMember(type, member.Member, syntax.Arguments, syntax.Span, expected),
+                        BindCallTo(MemberOf(@namespace, member.Member.Text) ?? NotInNamespace(member.Member, @namespace), member.Member, syntax, expected, member.TypeArguments),
+                    // Point.origin(), Shape.Circle(1.0), Math.Sqrt(2.0), Enumerable.Empty<Int>()
+                    TypeSymbol type => BindStaticMember(type, member.Member, syntax.Arguments, syntax.Span, expected, member.TypeArguments),
                     ClrTypeGroupSymbol group when NonGenericMember(group) is { } type =>
-                        BindStaticMember(type, member.Member, syntax.Arguments, syntax.Span, expected),
+                        BindStaticMember(type, member.Member, syntax.Arguments, syntax.Span, expected, member.TypeArguments),
                     _ => BindArgumentsForDiagnostics(syntax.Arguments),
                 };
 
             case MemberAccessExpressionSyntax member:
             {
                 var receiver = RequireValue(BindExpression(member.Target), member.Target.Span);
-                return BindMethodCall(receiver, member.Member, syntax, expected);
+                return BindMethodCall(receiver, member.Member, syntax, expected, member.TypeArguments);
             }
 
             case NameExpressionSyntax name:
                 return name.Identifier.IsMissing
                     ? BindArgumentsForDiagnostics(syntax.Arguments)
-                    : BindCallTo(_scope.Lookup(name.Identifier.Text), name.Identifier, syntax, expected);
+                    : BindCallTo(_scope.Lookup(name.Identifier.Text), name.Identifier, syntax, expected, name.TypeArguments);
 
             default:
             {
@@ -274,6 +331,12 @@ public sealed partial class Binder
     {
         switch (syntax)
         {
+            // `Box<Int>.empty()`, `List<Int>[3]`: a type name with type arguments.
+            case NameExpressionSyntax { Identifier: { IsMissing: false } name, TypeArguments.IsEmpty: false } generic:
+                return _scope.Lookup(name.Text) is (TypeSymbol or ClrTypeGroupSymbol) and var genericType
+                    ? Constructed(genericType, name, name.Text, generic.TypeArguments, generic.Span, isQualified: false)
+                    : null;
+
             case NameExpressionSyntax { Identifier: { IsMissing: false } name }:
                 return _scope.Lookup(name.Text) switch
                 {
@@ -287,6 +350,8 @@ public sealed partial class Binder
                 when ResolveContainer(access.Target) is NamespaceSymbol @namespace:
                 return MemberOf(@namespace, member.Text) switch
                 {
+                    (TypeSymbol or ClrTypeGroupSymbol) and var symbol when !access.TypeArguments.IsEmpty =>
+                        Constructed(symbol, member, $"{@namespace.FullName}.{member.Text}", access.TypeArguments, access.Span, isQualified: true),
                     (NamespaceSymbol or TypeSymbol or ClrTypeGroupSymbol) and var symbol => symbol,
                     null => NotInNamespace(member, @namespace),
                     _ => null,
@@ -299,6 +364,12 @@ public sealed partial class Binder
                 return null;
         }
     }
+
+    /// <summary>A generic type named in an expression with its type arguments, or <see cref="ErrorSymbol"/> once reported.</summary>
+    private Symbol Constructed(Symbol symbol, Token name, string displayName, ImmutableArray<TypeSyntax> arguments, TextSpan span, bool isQualified) =>
+        BindNamedType(symbol, name, displayName, arguments, span, isQualified) is var type && type != TypeSymbol.Error
+            ? type
+            : ErrorSymbol.Instance;
 
     private static ErrorSymbol Reported(Action report)
     {
@@ -318,11 +389,38 @@ public sealed partial class Binder
         group.WithArity(0) is { } type ? ClrTypes.FromClr(type, new Dictionary<Type, TypeSymbol>(), _option) : null;
 
     /// <summary>Calls whatever <paramref name="symbol"/> (named by <paramref name="name"/>) is: a function, a record or .NET type (construction), or a variant.</summary>
-    private BoundExpression BindCallTo(Symbol? symbol, Token name, CallExpressionSyntax syntax, TypeSymbol? expected)
+    private BoundExpression BindCallTo(
+        Symbol? symbol,
+        Token name,
+        CallExpressionSyntax syntax,
+        TypeSymbol? expected,
+        ImmutableArray<TypeSyntax> typeArgumentSyntax = default)
     {
         var calleeName = name.Text;
+        typeArgumentSyntax = typeArgumentSyntax.IsDefault ? [] : typeArgumentSyntax;
+
+        // `List<Int>()`, `Pair<Int, String>(1, "a")`: construct the type with the written type arguments.
+        if (!typeArgumentSyntax.IsEmpty && symbol is TypeSymbol or ClrTypeGroupSymbol)
+        {
+            var type = BindNamedType(symbol, name, calleeName, typeArgumentSyntax, syntax.Callee.Span, isQualified: false);
+            return type switch
+            {
+                ConstructedTypeSymbol { Definition: RecordSymbol record } => BindRecordCreation(record, syntax, type),
+                ClrTypeSymbol clr => BindClrConstruction(clr, syntax.Arguments, syntax.Span, expected),
+                _ when type == TypeSymbol.Error => BindArgumentsForDiagnostics(syntax.Arguments),
+                _ => BindCallTo(type, name, syntax, expected),
+            };
+        }
+
+        var explicitArguments = ExplicitTypeArguments(typeArgumentSyntax);
         switch (symbol)
         {
+            case not FunctionSymbol and not (null or ErrorSymbol or AmbiguousSymbol) when explicitArguments is not null:
+            case FunctionSymbol when explicitArguments is not null && symbol == BuiltinFunctions.Print:
+                BindArgumentsForDiagnostics(syntax.Arguments);
+                _diagnostics.ReportNotGeneric(syntax.Callee.Span, calleeName);
+                return new BoundErrorExpression();
+
             case FunctionSymbol function when function == BuiltinFunctions.Print:
             {
                 if (syntax.Arguments.Length != 1)
@@ -342,6 +440,8 @@ public sealed partial class Binder
             case FunctionSymbol function:
             {
                 var map = new Dictionary<TypeParameterSymbol, TypeSymbol>();
+                if (!ApplyExplicitTypeArguments(explicitArguments, function.TypeParameters, map, syntax.Callee.Span, calleeName))
+                    return BindArgumentsForDiagnostics(syntax.Arguments);
                 Seed(function.ReturnType, expected, map, function.TypeParameters);
                 var arguments = BindArguments(syntax.Span, calleeName, function.Parameters.Select(p => p.Type), function.TypeParameters, map, syntax.Arguments);
                 if (arguments is null)
@@ -410,20 +510,32 @@ public sealed partial class Binder
         Token member,
         ImmutableArray<ExpressionSyntax>? arguments,
         TextSpan span,
-        TypeSymbol? expected)
+        TypeSymbol? expected,
+        ImmutableArray<TypeSyntax> typeArgumentSyntax = default)
     {
         if (member.IsMissing)
             return BindArgumentsForDiagnostics(arguments);
 
-        if (type is EnumSymbol @enum && @enum.FindVariant(member.Text) is { } variant)
-            return BindVariantCreation(@enum, variant, arguments, span, expected);
+        var explicitArguments = ExplicitTypeArguments(typeArgumentSyntax.IsDefault ? [] : typeArgumentSyntax);
+
+        // `Shape.Circle(1.0)`; `Option<Int>.None` takes the enum's type arguments from its name.
+        if (type.OriginalDefinition is EnumSymbol @enum && @enum.FindVariant(member.Text) is { } variant)
+        {
+            if (explicitArguments is not null)
+            {
+                BindArgumentsForDiagnostics(arguments);
+                _diagnostics.ReportNotGeneric(member.Span, variant.QualifiedName);
+                return new BoundErrorExpression();
+            }
+            return BindVariantCreation(@enum, variant, arguments, span, type == @enum ? expected : type);
+        }
 
         var method = FindMethod(type, member.Text);
         if (method is null)
         {
-            // Math.Sqrt(2.0), Math.PI, Int.MaxValue
+            // Math.Sqrt(2.0), Math.PI, Int.MaxValue, Enumerable.Empty<Int>()
             if (IsClrBacked(type))
-                return BindClrStaticMember(type, member, arguments, span);
+                return BindClrStaticMember(type, member, arguments, span, explicitArguments);
 
             BindArgumentsForDiagnostics(arguments);
             if (type is EnumSymbol enumType)
@@ -447,10 +559,12 @@ public sealed partial class Binder
             return new BoundErrorExpression();
         }
 
-        // `Stack.empty()` infers the type's own type arguments as well as the method's.
-        var definition = type as NamedTypeDefinition;
+        // `Stack.empty()` infers the type's own type arguments as well as the method's; `Stack<Int>.empty()` names them.
+        var definition = type.OriginalDefinition as NamedTypeDefinition;
         ImmutableArray<TypeParameterSymbol> inferred = [.. definition?.TypeParameters ?? [], .. method.TypeParameters];
-        var map = new Dictionary<TypeParameterSymbol, TypeSymbol>();
+        var map = TypeSubstitution.MapFor(type);
+        if (!ApplyExplicitTypeArguments(explicitArguments, method.TypeParameters, map, member.Span, method.Name))
+            return BindArgumentsForDiagnostics(arguments);
         Seed(method.ReturnType, expected, map, inferred);
         var boundArguments = BindArguments(span, $"{type}.{method.Name}", method.Parameters.Select(p => p.Type), inferred, map, arguments.Value);
         if (boundArguments is null)
@@ -464,11 +578,17 @@ public sealed partial class Binder
             null, receiverType, method, typeArguments, boundArguments.Value, TypeSubstitution.Substitute(method.ReturnType, map));
     }
 
-    private BoundExpression BindMethodCall(BoundExpression receiver, Token member, CallExpressionSyntax syntax, TypeSymbol? expected)
+    private BoundExpression BindMethodCall(
+        BoundExpression receiver,
+        Token member,
+        CallExpressionSyntax syntax,
+        TypeSymbol? expected,
+        ImmutableArray<TypeSyntax> typeArgumentSyntax)
     {
         if (receiver.Type == TypeSymbol.Error || member.IsMissing)
             return BindArgumentsForDiagnostics(syntax.Arguments);
 
+        var explicitArguments = ExplicitTypeArguments(typeArgumentSyntax);
         var method = FindMethod(receiver.Type, member.Text);
 
         // A record field holding a function: `handler.onClick(event)`.
@@ -480,7 +600,7 @@ public sealed partial class Binder
         }
 
         if (method is null && IsClrBacked(receiver.Type))
-            return BindClrInstanceCall(receiver, member, syntax.Arguments, syntax.Span);
+            return BindClrInstanceCall(receiver, member, syntax.Arguments, syntax.Span, explicitArguments);
 
         if (method is not null)
             CheckAccessible(method, member);
@@ -501,8 +621,10 @@ public sealed partial class Binder
             return new BoundErrorExpression();
         }
 
-        // The receiver fixes the type's own type arguments (Box<Int> → T = Int); infer the method's.
+        // The receiver fixes the type's own type arguments (Box<Int> → T = Int); infer the method's, unless written.
         var map = TypeSubstitution.MapFor(receiver.Type);
+        if (!ApplyExplicitTypeArguments(explicitArguments, method.TypeParameters, map, member.Span, method.Name))
+            return BindArgumentsForDiagnostics(syntax.Arguments);
         Seed(method.ReturnType, expected, map, method.TypeParameters);
         var arguments = BindArguments(syntax.Span, method.Name, method.Parameters.Select(p => p.Type), method.TypeParameters, map, syntax.Arguments);
         if (arguments is null)
@@ -569,7 +691,17 @@ public sealed partial class Binder
     private BoundErrorExpression BindArgumentsForDiagnostics(ImmutableArray<ExpressionSyntax>? arguments)
     {
         foreach (var argument in arguments ?? [])
-            BindExpression(argument);
+        {
+            if (argument is not OutArgumentSyntax)
+                BindExpression(argument);
+        }
+        return new BoundErrorExpression();
+    }
+
+    /// <summary><c>out</c> outside an argument for a .NET out parameter (Piper functions and function values have none).</summary>
+    private BoundErrorExpression ReportMisplacedOut(OutArgumentSyntax syntax)
+    {
+        _diagnostics.ReportMisplacedOut(syntax.Span);
         return new BoundErrorExpression();
     }
 
@@ -642,7 +774,7 @@ public sealed partial class Binder
     }
 
     /// <summary>Uses the expected type of a call's result to fix type parameters before looking at the arguments.</summary>
-    private static void Seed(
+    private void Seed(
         TypeSymbol declaredResult,
         TypeSymbol? expected,
         Dictionary<TypeParameterSymbol, TypeSymbol> map,
@@ -653,7 +785,7 @@ public sealed partial class Binder
     }
 
     /// <summary>Matches <paramref name="declared"/> against <paramref name="actual"/>, binding type parameters it finds.</summary>
-    private static void Infer(
+    private void Infer(
         TypeSymbol declared,
         TypeSymbol actual,
         Dictionary<TypeParameterSymbol, TypeSymbol> map,
@@ -675,6 +807,21 @@ public sealed partial class Binder
                 // A plain value passed for a T? parameter (implicit Some) still tells us T.
                 Infer(optional.TypeArguments[0], actual, map, inferred);
                 break;
+            case TupleTypeSymbol tuple when actual is TupleTypeSymbol other && other.ElementTypes.Length == tuple.ElementTypes.Length:
+                for (int i = 0; i < tuple.ElementTypes.Length; i++)
+                    Infer(tuple.ElementTypes[i], other.ElementTypes[i], map, inferred);
+                break;
+            case ClrTypeSymbol { TypeArguments.IsEmpty: false } clr:
+            {
+                // List<T> against List<Int>, IEnumerable<T> against Int[].
+                var match = SelfAndBaseTypes(actual).OfType<ClrTypeSymbol>().FirstOrDefault(t => t.Definition == clr.Definition);
+                if (match is not null)
+                {
+                    for (int i = 0; i < clr.TypeArguments.Length; i++)
+                        Infer(clr.TypeArguments[i], match.TypeArguments[i], map, inferred);
+                }
+                break;
+            }
         }
     }
 
@@ -695,8 +842,12 @@ public sealed partial class Binder
             case NamespaceSymbol @namespace when !syntax.Member.IsMissing:
             {
                 var member = MemberOf(@namespace, syntax.Member.Text) ?? NotInNamespace(syntax.Member, @namespace);
-                return BindSymbolAsValue(member, syntax.Member, syntax.Span, expected);
+                return BindSymbolAsValue(member, syntax.Member, syntax.Span, expected, syntax.TypeArguments);
             }
+            // Only functions and types take type arguments: `p.x<Int>` and `Int.MaxValue<Long>` are errors.
+            case var _ when !syntax.TypeArguments.IsEmpty:
+                _diagnostics.ReportNotGeneric(syntax.Member.Span, syntax.Member.Text);
+                return new BoundErrorExpression();
             case TypeSymbol type:
                 return BindStaticMember(type, syntax.Member, arguments: null, syntax.Span, expected);
             case ClrTypeGroupSymbol group when NonGenericMember(group) is { } nonGeneric:
@@ -711,6 +862,10 @@ public sealed partial class Binder
 
         if (FindField(target.Type, syntax.Member.Text) is { } field)
             return new BoundFieldAccessExpression(target, field, TypeSubstitution.FieldType(field, target.Type));
+
+        // `pair.Item1`, `point.x`.
+        if (target.Type is TupleTypeSymbol tuple && tuple.IndexOf(syntax.Member.Text) is >= 0 and var index)
+            return new BoundTupleElementExpression(target, index, tuple.ElementTypes[index]);
 
         // sb.Length, list.Count, "abc".Length
         if (FindMethod(target.Type, syntax.Member.Text) is null && IsClrBacked(target.Type))
@@ -730,7 +885,10 @@ public sealed partial class Binder
         // Variables bound by `is` in the condition are in scope in the then-block, but not the else.
         var outer = _scope;
         _scope = new Scope(outer);
+        var outerOutScope = _outScope;
+        _outScope = outer;
         var condition = BindCondition(syntax.Condition, allowPatternBindings: true);
+        _outScope = outerOutScope;
         var then = BindBlock(syntax.Then, expected);
         _scope = outer;
         if (syntax.Else is null)
@@ -795,7 +953,7 @@ public sealed partial class Binder
         return null;
     }
 
-    private static bool NeedsBranchConversion(TypeSymbol type) => type.IsNumeric || type is TraitSymbol || type.IsOption;
+    private static bool NeedsBranchConversion(TypeSymbol type) => type.IsNumeric || type is TraitSymbol or TupleTypeSymbol || type.IsOption;
 
     /// <param name="allowPatternBindings">
     /// True for if/while conditions and match guards: an <c>is</c> pattern there may bind variables, which
@@ -976,7 +1134,8 @@ public sealed partial class Binder
         (to is TraitSymbol trait && from.IsValueType && Implements(from, trait)) ||
         (to.IsOption && from.IsValueType && IsConvertible(from, to.TypeArguments[0])) ||
         // .NET reference conversions: List<Int> to IEnumerable<Int>, String to IEnumerable<Char>, anything to object.
-        (to is ClrTypeSymbol && from.IsValueType && (ClrTypes.ToClr(to) == typeof(object) || SelfAndBaseTypes(from).Contains(to)));
+        (to is ClrTypeSymbol && from.IsValueType && (ClrTypes.ToClr(to) == typeof(object) || SelfAndBaseTypes(from).Contains(to))) ||
+        (from is TupleTypeSymbol fromTuple && to is TupleTypeSymbol toTuple && IsTupleConvertible(fromTuple, toTuple));
 
     /// <summary>Converts to <paramref name="type"/> implicitly, or reports an error.</summary>
     private BoundExpression Convert(BoundExpression expression, TypeSymbol type, TextSpan span)
@@ -1012,6 +1171,10 @@ public sealed partial class Binder
             var some = ((EnumSymbol)type.OriginalDefinition).FindVariant("Some")!;
             return new BoundVariantCreationExpression(some, [Widen(expression, type.TypeArguments[0])], type);
         }
+
+        // A tuple literal converts element by element, so `(1, 2)` can become `(Long, Int?)`.
+        if (type is TupleTypeSymbol tuple && expression is BoundTupleExpression literal)
+            return new BoundTupleExpression([.. literal.Elements.Select((e, i) => Widen(e, tuple.ElementTypes[i]))], tuple);
 
         return new BoundConversionExpression(type, expression);
     }

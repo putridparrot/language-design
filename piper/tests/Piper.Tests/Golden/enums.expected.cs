@@ -88,7 +88,7 @@ public static class Enums
         global::System.Console.WriteLine(describe(shapes));
         global::System.Console.WriteLine(describe(new Shape.Empty()));
         global::System.Console.WriteLine($"{initial(shapes)}{initial(new Shape.Circle(1.0))}{initial(new Shape.Empty())}");
-        global::System.Console.WriteLine(new Shape.Rect(2.0, 3.0) == shapes ? "true" : "false");
+        global::System.Console.WriteLine(new Shape.Rect(2.0, 3.0) == shapes);
         global::System.Console.WriteLine(shapes);
         if (shapes is Shape.Rect(var w, _) && w > 1.0)
         {

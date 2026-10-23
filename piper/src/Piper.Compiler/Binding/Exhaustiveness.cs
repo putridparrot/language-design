@@ -7,7 +7,7 @@ namespace Piper.Binding;
 /// pattern is not useful against the arms before it, and a match is exhaustive when a wildcard is not
 /// useful against all of its arms.
 ///
-/// Constructors are enum variants, record types (a record has exactly one) and true/false. Every
+/// Constructors are enum variants, record types (a record has exactly one), tuple types (likewise) and true/false. Every
 /// other literal or range is treated as one constructor of an infinite type, so those types are never
 /// exhausted without a wildcard or binding. That is conservative but sound: overlapping ranges are
 /// not detected as unreachable.
@@ -135,21 +135,29 @@ public static class Exhaustiveness
     private static object? KeyOf(BoundPattern pattern) => pattern switch
     {
         BoundConstructorPattern constructor => constructor.Constructor,
+        BoundTuplePattern tuple => tuple.Type,
         BoundLiteralPattern literal => literal.Value,
         BoundRangePattern range => range,
         _ => null,
     };
 
     private static IEnumerable<BoundPattern> Arguments(BoundPattern pattern) =>
-        pattern is BoundConstructorPattern constructor ? constructor.Arguments : [];
+        pattern switch { BoundConstructorPattern constructor => constructor.Arguments, BoundTuplePattern tuple => tuple.Elements, _ => [] };
 
-    private static int Arity(object key) => key switch { VariantSymbol v => v.Fields.Length, RecordSymbol r => r.Fields.Length, _ => 0 };
+    private static int Arity(object key) => key switch
+    {
+        VariantSymbol v => v.Fields.Length,
+        RecordSymbol r => r.Fields.Length,
+        TupleTypeSymbol t => t.ElementTypes.Length,
+        _ => 0,
+    };
 
     /// <summary>Field types of a constructor of <paramref name="columnType"/>, e.g. Int for <c>Some</c> of <c>Option&lt;Int&gt;</c>.</summary>
     private static IEnumerable<TypeSymbol> FieldTypes(object key, TypeSymbol columnType) => key switch
     {
         VariantSymbol variant => variant.Fields.Select(f => TypeSubstitution.FieldType(f, columnType)),
         RecordSymbol record => record.Fields.Select(f => TypeSubstitution.FieldType(f, columnType)),
+        TupleTypeSymbol tuple => tuple.ElementTypes,
         _ => [],
     };
 
@@ -158,6 +166,7 @@ public static class Exhaustiveness
     {
         EnumSymbol @enum => [.. @enum.Variants],
         RecordSymbol record => [record],
+        TupleTypeSymbol tuple => [tuple],
         _ when type == TypeSymbol.Bool => [true, false],
         _ => null,
     };
@@ -170,6 +179,7 @@ public static class Exhaustiveness
             ? variant.QualifiedName
             : $"{variant.QualifiedName}({string.Join(", ", arguments)})",
         RecordSymbol record => $"{record.Name}({string.Join(", ", arguments)})",
+        TupleTypeSymbol => $"({string.Join(", ", arguments)})",
         bool b => b ? "true" : "false",
         _ => "_",
     };

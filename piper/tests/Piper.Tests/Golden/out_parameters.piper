@@ -1,0 +1,60 @@
+// .NET out parameters, as in C#: `out let n` declares n (`out var n` declares it mutable),
+// `out n` assigns an existing var, and `out _` discards.
+
+using System;
+using System.Collections.Generic;
+
+fn parseOr(text: String, fallback: Int) -> Int = if Int.TryParse(text, out let n) { n } else { fallback };
+
+fn describe(text: String) -> String {
+    // As in C#, a variable declared in an if condition is still in scope after the if.
+    if !Double.TryParse(text, out let value) {
+        return "'{text}' is not a number";
+    }
+    "'{text}' is {value * 2} doubled"
+}
+
+fn main() {
+    print(parseOr("42", 0));
+    print(parseOr("forty-two", -1));
+    print(describe("1.25"));
+    print(describe("abc"));
+
+    // An existing var, and a discard.
+    var count = 0;
+    if Int.TryParse("7", out count) {
+        count += 1;
+    }
+    print(count);
+    print(Int.TryParse("8", out _));
+
+    // `out var` declares a mutable variable.
+    if Long.TryParse("10", out var big) {
+        big *= 3;
+        print(big);
+    }
+
+    // Where .NET may write null, the variable is optional.
+    let names: Dictionary<String, String> = Dictionary();
+    names["ada"] = "Ada Lovelace";
+    if names.TryGetValue("ada", out let full) {
+        print(full ?? "?");
+    }
+    let found = names.TryGetValue("bob", out let missing);
+    print("{found} {missing ?? "none"}");
+
+    // A value type comes back as itself.
+    let ages: Dictionary<String, Int> = Dictionary();
+    ages["Ada"] = 36;
+    print(ages.TryGetValue("Ada", out let age) && age > 30);
+
+    // In a loop condition.
+    let inputs = ["1", "x", "3"];
+    var total = 0;
+    for input in inputs {
+        if Int.TryParse(input, out let n) {
+            total += n;
+        }
+    }
+    print(total);
+}

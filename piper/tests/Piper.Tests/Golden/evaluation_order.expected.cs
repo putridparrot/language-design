@@ -26,7 +26,7 @@ public static class Evaluation_order
             temp_1 = true;
         }
         bool skipped = temp_1;
-        global::System.Console.WriteLine($"skipped = {(skipped ? "true" : "false")}");
+        global::System.Console.WriteLine($"skipped = {skipped}");
         bool temp_2 = true;
         if (temp_2)
         {
@@ -34,7 +34,7 @@ public static class Evaluation_order
             temp_2 = true;
         }
         bool ran = temp_2;
-        global::System.Console.WriteLine($"ran = {(ran ? "true" : "false")}");
+        global::System.Console.WriteLine($"ran = {ran}");
         bool temp_3 = true;
         if (!temp_3)
         {
@@ -42,7 +42,7 @@ public static class Evaluation_order
             temp_3 = false;
         }
         bool either = temp_3;
-        global::System.Console.WriteLine($"either = {(either ? "true" : "false")}");
+        global::System.Console.WriteLine($"either = {either}");
         int x = 1;
         int temp_4 = x;
         x = 100;

@@ -87,6 +87,9 @@ public static class Operators
                     return new(kind, numeric, TypeSymbol.Bool);
                 // C# can't compare an unconstrained type parameter with ==, and == on an interface would
                 // compare references, so neither type parameters nor traits support equality (yet).
+                // Tuples compare element by element, as in C#, so each element must support ==.
+                if (left == right && left is TupleTypeSymbol tuple)
+                    return tuple.ElementTypes.All(e => ResolveBinary(kind, e, e) is not null) ? new(kind, left, TypeSymbol.Bool) : null;
                 if (left == right && left.IsValueType && left is not (TypeParameterSymbol or TraitSymbol))
                     return new(kind, left, TypeSymbol.Bool);
                 return null;

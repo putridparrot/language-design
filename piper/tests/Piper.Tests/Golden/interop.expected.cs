@@ -19,14 +19,14 @@ public static class Interop
         global::System.Console.WriteLine(global::System.Math.Max(3, 7));
         global::System.Console.WriteLine(global::System.Math.Max(2.5, 1.0));
         global::System.Console.WriteLine(global::System.Math.Abs(-5L));
-        global::System.Console.WriteLine(global::System.Math.PI > 3.14 ? "true" : "false");
+        global::System.Console.WriteLine(global::System.Math.PI > 3.14);
         global::System.Console.WriteLine(int.MaxValue);
         global::System.Console.WriteLine(int.Parse("42") + 1);
-        global::System.Console.WriteLine(char.IsDigit('7') ? "true" : "false");
+        global::System.Console.WriteLine(char.IsDigit('7'));
         string name = "Piper";
         global::System.Console.WriteLine(name.Length);
         global::System.Console.WriteLine(name.ToUpper());
-        global::System.Console.WriteLine(name.Contains("ip") ? "true" : "false");
+        global::System.Console.WriteLine(name.Contains("ip"));
         global::System.Console.WriteLine(name.Replace('p', 'P'));
         global::System.Console.WriteLine(name.Substring(1, 3));
         global::System.Console.WriteLine("a,b,c".Split(',').Length);
@@ -41,16 +41,21 @@ public static class Interop
         points.Add(new Point(1, 2));
         points.Add(new Point(3, 4));
         global::System.Console.WriteLine(points.Count);
-        global::System.Console.WriteLine(points.Contains(new Point(3, 4)) ? "true" : "false");
+        global::System.Console.WriteLine(points.Contains(new Point(3, 4)));
+        global::System.Collections.Generic.Dictionary<string, long> scores = new global::System.Collections.Generic.Dictionary<string, long>();
+        scores.Add("Ada", 1);
+        global::System.Console.WriteLine(scores.Count);
+        global::System.Console.WriteLine(global::System.Linq.Enumerable.Count<int>(global::System.Linq.Enumerable.Empty<int>()));
+        global::System.Console.WriteLine(string.Join<long>(",", global::System.Linq.Enumerable.Repeat<long>(7, 3)));
         global::System.Collections.Generic.Dictionary<string, int> ages = new global::System.Collections.Generic.Dictionary<string, int>();
         ages.Add("Ada", 36);
-        global::System.Console.WriteLine(ages.ContainsKey("Ada") ? "true" : "false");
+        global::System.Console.WriteLine(ages.ContainsKey("Ada"));
         global::System.Console.WriteLine(describe("notes.txt"));
         Option<string> temp = global::PiperInterop.FromNullableReference(global::System.Environment.GetEnvironmentVariable("PIPER_SURELY_UNSET_VARIABLE"));
         global::System.Console.WriteLine(temp.IsSome ? temp.Value : "unset");
         Option<string> missing = Option<string>.None;
         Option<string> present = Option<string>.Some("here");
-        global::System.Console.WriteLine($"{(string.IsNullOrEmpty(global::PiperInterop.ToNullableReference(missing)) ? "true" : "false")} {(string.IsNullOrEmpty(global::PiperInterop.ToNullableReference(present)) ? "true" : "false")}");
+        global::System.Console.WriteLine($"{(string.IsNullOrEmpty(global::PiperInterop.ToNullableReference(missing)))} {(string.IsNullOrEmpty(global::PiperInterop.ToNullableReference(present)))}");
         global::System.Console.WriteLine(string.Join(", ", "a", "b", "c"));
     }
 }

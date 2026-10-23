@@ -48,6 +48,12 @@ public sealed partial class Binder
     private int _finallyLoopDepth = -1;
 
     /// <summary>
+    /// Where <c>out let n</c> declares n, when not the current scope: while binding an if condition, the scope around
+    /// the if (as in C#, where such variables outlive the if statement).
+    /// </summary>
+    private Scope? _outScope;
+
+    /// <summary>
     /// <paramref name="Inferred"/> is set while binding a lambda whose return type isn't known yet: returned values
     /// are collected (not converted) so their common type can become the return type.
     /// </summary>
@@ -743,6 +749,7 @@ public sealed partial class Binder
     private static string? PrivateTypeIn(TypeSymbol type) => type switch
     {
         _ when type.OriginalDefinition.IsPrivate => type.OriginalDefinition.Name,
+        TupleTypeSymbol tuple => tuple.ElementTypes.Select(PrivateTypeIn).FirstOrDefault(n => n is not null),
         _ => type.TypeArguments.Select(PrivateTypeIn).FirstOrDefault(n => n is not null),
     };
 
@@ -872,6 +879,15 @@ public sealed partial class Binder
             return inner == TypeSymbol.Error ? TypeSymbol.Error : _option.Construct([inner]);
         }
 
+        if (syntax is TupleTypeSyntax tuple)
+            return BindTupleType(tuple);
+
+        if (syntax is ArrayTypeSyntax array)
+        {
+            var element = BindValueType(array.Element, "array element");
+            return element == TypeSymbol.Error ? TypeSymbol.Error : ClrTypeSymbol.ArrayOf(element, array.Rank);
+        }
+
         // (Int, String) -> Bool is Func<Int, String, Bool>; a function returning Unit is an Action.
         if (syntax is FunctionTypeSyntax function)
         {
@@ -884,15 +900,30 @@ public sealed partial class Binder
         if (name.IsMissing || named.Qualifier.Any(q => q.IsMissing))
             return TypeSymbol.Error;
 
-        var symbol = ResolveTypeName(named);
-        var arguments = named.TypeArguments.Select(a => BindValueType(a, "type argument")).ToImmutableArray();
+        var displayName = named.Qualifier.IsEmpty ? name.Text : $"{string.Join(".", named.Qualifier.Select(q => q.Text))}.{name.Text}";
+        return BindNamedType(ResolveTypeName(named), name, displayName, named.TypeArguments, syntax.Span, isQualified: !named.Qualifier.IsEmpty);
+    }
+
+    /// <summary>
+    /// Applies written type arguments (possibly none) to a resolved type name: <c>List&lt;Int&gt;</c>, <c>Pair&lt;A, B&gt;</c>, <c>Int</c>.
+    /// Also used for type names in expressions, such as <c>List&lt;Int&gt;()</c> and <c>Box&lt;Int&gt;.empty()</c>.
+    /// </summary>
+    private TypeSymbol BindNamedType(
+        Symbol? symbol,
+        Token name,
+        string displayName,
+        ImmutableArray<TypeSyntax> argumentSyntax,
+        TextSpan span,
+        bool isQualified)
+    {
+        var arguments = argumentSyntax.Select(a => BindValueType(a, "type argument")).ToImmutableArray();
 
         // `List<Int>`: pick the .NET type with the right number of type parameters.
         if (symbol is ClrTypeGroupSymbol group)
         {
             if (group.WithArity(arguments.Length) is not { } chosen)
             {
-                _diagnostics.ReportTypeArgumentCount(syntax.Span, group.Name, group.Types.Max(t => t.GetGenericArguments().Length), arguments.Length);
+                _diagnostics.ReportTypeArgumentCount(span, group.Name, group.Types.Max(t => t.GetGenericArguments().Length), arguments.Length);
                 return TypeSymbol.Error;
             }
             symbol = ClrTypes.FromClr(chosen, new Dictionary<Type, TypeSymbol>(), _option) ?? ClrTypeSymbol.For(chosen);
@@ -912,38 +943,38 @@ public sealed partial class Binder
                 int arity = clr.Type.GetGenericArguments().Length;
                 if (arity != arguments.Length)
                 {
-                    _diagnostics.ReportTypeArgumentCount(syntax.Span, clr.Name, arity, arguments.Length);
+                    _diagnostics.ReportTypeArgumentCount(span, clr.Name, arity, arguments.Length);
                     return TypeSymbol.Error;
                 }
                 return arguments.Contains(TypeSymbol.Error) ? TypeSymbol.Error : clr.Construct(arguments);
             }
 
             case NamespaceSymbol:
-                _diagnostics.ReportNotAType(name.Span, named.Qualifier.IsEmpty ? name.Text : $"{string.Join(".", named.Qualifier.Select(q => q.Text))}.{name.Text}", "namespace");
+                _diagnostics.ReportNotAType(name.Span, displayName, "namespace");
                 return TypeSymbol.Error;
             case NamedTypeDefinition definition:
                 if (definition.TypeParameters.Length != arguments.Length)
                 {
                     if (definition.IsGeneric)
-                        _diagnostics.ReportTypeArgumentCount(syntax.Span, definition.Name, definition.TypeParameters.Length, arguments.Length);
+                        _diagnostics.ReportTypeArgumentCount(span, definition.Name, definition.TypeParameters.Length, arguments.Length);
                     else
-                        _diagnostics.ReportNotGeneric(syntax.Span, definition.Name);
+                        _diagnostics.ReportNotGeneric(span, definition.Name);
                     return TypeSymbol.Error;
                 }
                 if (arguments.Contains(TypeSymbol.Error))
                     return TypeSymbol.Error;
-                CheckConstraints(definition.TypeParameters, arguments, syntax.Span);
+                CheckConstraints(definition.TypeParameters, arguments, span);
                 return definition.Construct(arguments);
 
             case TypeSymbol type when type != TypeSymbol.Never && type != TypeSymbol.Error:
                 if (!arguments.IsEmpty)
                 {
-                    _diagnostics.ReportNotGeneric(syntax.Span, type.Name);
+                    _diagnostics.ReportNotGeneric(span, type.Name);
                     return TypeSymbol.Error;
                 }
                 return type;
 
-            case null when named.Qualifier.IsEmpty && ReportIfPrivateElsewhere(name):
+            case null when !isQualified && ReportIfPrivateElsewhere(name):
                 return TypeSymbol.Error;
 
             case null:
@@ -1044,6 +1075,7 @@ public sealed partial class Binder
     private BoundStatement BindStatement(StatementSyntax syntax) => syntax switch
     {
         VariableDeclarationSyntax s => BindVariableDeclaration(s),
+        DeconstructionDeclarationSyntax s => BindDeconstructionDeclaration(s),
         ExpressionStatementSyntax s => new BoundExpressionStatement(BindExpression(s.Expression)),
         WhileStatementSyntax s => BindWhile(s),
         ForStatementSyntax s => BindFor(s),
@@ -1095,7 +1127,7 @@ public sealed partial class Binder
         BoundExpression lower, upper;
         TypeSymbol type;
         bool inclusive = false;
-        if (syntax.Range is RangeExpressionSyntax range)
+        if (syntax.Range is RangeExpressionSyntax range && syntax.Deconstruction is null)
         {
             inclusive = range.IsInclusive;
             lower = BindExpression(range.Start);

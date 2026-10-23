@@ -5,9 +5,9 @@ Some(37)
 None
 big: 5
 has a value
-true
-true
-true
+True
+True
+True
 5, nothing, negative -2
 Hello, Ada!
 second

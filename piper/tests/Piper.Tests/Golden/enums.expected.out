@@ -7,6 +7,6 @@ a 4x4 square
 a rectangle
 nothing
 RC-
-true
+True
 Rect { width = 2, height = 3 }
 wide

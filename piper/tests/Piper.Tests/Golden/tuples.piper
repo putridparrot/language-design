@@ -1,0 +1,85 @@
+// Tuples and deconstruction, as in C#: (Int, String) is a ValueTuple.
+
+using System;
+using System.Collections.Generic;
+
+record Point(x: Int, y: Int);
+
+// Several results at once.
+fn divide(a: Int, b: Int) -> (quotient: Int, remainder: Int) = (a / b, a % b);
+
+fn swap<A, B>(pair: (A, B)) -> (B, A) = (pair.Item2, pair.Item1);
+
+fn describe(cell: (Bool, Bool)) -> String = match cell {
+    (true, true) => "both",
+    (true, false) | (false, true) => "one",
+    (false, false) => "neither",
+};
+
+fn classify(point: (Int, Int)) -> String = match point {
+    (0, 0) => "origin",
+    (0, _) | (_, 0) => "axis",
+    (x, y) if x == y => "diagonal",
+    _ => "elsewhere",
+};
+
+fn main() {
+    // Literals, element names and positional access.
+    let pair = (1, "one");
+    print(pair);
+    print(pair.Item1 + 1);
+    let result = divide(17, 5);
+    print("{result.quotient} r {result.remainder}");
+    print(result.Item2);
+
+    // Names are inferred from variables and members, as in C#.
+    let p = Point(3, 4);
+    let name = "p";
+    let labelled = (name, p.x);
+    print("{labelled.name} {labelled.x}");
+
+    // Deconstruction: tuples, records (by field), and .NET types with Deconstruct.
+    let (q, r) = divide(7, 2);
+    print("{q} {r}");
+    let (px, py) = p;
+    print(px * py);
+    let (first, (_, third)) = (1, (2, 3));
+    print(first + third);
+
+    var a = 1;
+    var b = 2;
+    (a, b) = (b, a);
+    print("{a} {b}");
+
+    let ages: Dictionary<String, Int> = Dictionary();
+    ages["Ada"] = 36;
+    ages["Grace"] = 45;
+    for (who, age) in ages {
+        print("{who}: {age}");
+    }
+    for (index, word) in [(1, "a"), (2, "b")] {
+        print("{index}{word}");
+    }
+
+    // Generic functions, conversions and equality.
+    print(swap((1, "x")));
+    let widened: (Long, Int?) = (1, 2);
+    print(widened.Item1 + 3_000_000_000L);
+    print((1, 2) == (1, 2));
+    print(result == (3, 2));
+    print((1, "a") != (1, "b"));
+
+    // Matching: tuple patterns, checked for exhaustiveness.
+    print(describe((true, false)));
+    print(describe((false, false)));
+    print(classify((0, 5)));
+    print(classify((2, 2)));
+    print(classify((1, 2)));
+
+    // .NET methods returning tuples.
+    let (quotient, remainder) = Math.DivRem(20, 6);
+    print("{quotient} {remainder}");
+
+    let pairs: List<(String, Int)> = [("x", 1), ("y", 2)];
+    print(String.Join(";", System.Linq.Enumerable.Select(pairs, entry => "{entry.Item1}={entry.Item2 * 10}")));
+}

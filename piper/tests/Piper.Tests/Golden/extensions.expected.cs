@@ -18,7 +18,7 @@ public static class Extensions
     {
         global::System.Console.WriteLine(7.squared());
         global::System.Console.WriteLine((-3).squared());
-        global::System.Console.WriteLine(4.isEven() ? "true" : "false");
+        global::System.Console.WriteLine(4.isEven());
         global::System.Console.WriteLine(15.clamp(0, 10));
         global::System.Console.WriteLine(int.zero());
         global::System.Console.WriteLine("hey".shout());
@@ -27,7 +27,7 @@ public static class Extensions
         Point p = Point.origin().plus(new Point(2, 3)).plus(new Point(1, 1));
         global::System.Console.WriteLine($"{p.x},{p.y} -> {p.lengthSquared()}");
         Option<string> o = Option<string>.none();
-        global::System.Console.WriteLine(o.isSome() ? "true" : "false");
+        global::System.Console.WriteLine(o.isSome());
         global::System.Console.WriteLine(o.getOr("default"));
         global::System.Console.WriteLine(Option<int>.Some(5).getOr(0));
     }

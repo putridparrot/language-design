@@ -84,7 +84,7 @@ public sealed class Lowerer
             case BoundForEachStatement loop:
             {
                 var collection = LowerForValue(loop.Collection, output);
-                output.Add(new BoundForEachStatement(loop.Variable, collection, LowerToStatement(loop.Body)));
+                output.Add(new BoundForEachStatement(loop.Variable, collection, LowerToStatement(loop.Body), loop.Deconstruction));
                 break;
             }
 
@@ -341,7 +341,7 @@ public sealed class Lowerer
                     lambda.Parameters, LowerBody((BoundBlockExpression)lambda.Body, lambda.ReturnType), lambda.ReturnType,
                     lambda.BodyType, lambda.IsExpressionBodied, lambda.Type);
 
-            case BoundFunctionReferenceExpression:
+            case BoundFunctionReferenceExpression or BoundOutArgument:
                 return expression;
 
             // Only reached where C# allows a throw expression: a ?: branch or the right of ??.
@@ -362,6 +362,19 @@ public sealed class Lowerer
 
             case BoundCollectionExpression collection:
                 return new BoundCollectionExpression(LowerOperands(collection.Elements, prelude), collection.Type);
+
+            case BoundArrayCreationExpression creation:
+                return new BoundArrayCreationExpression(LowerOperands(creation.Sizes, prelude), creation.Type);
+
+            case BoundTupleExpression tuple:
+                return new BoundTupleExpression(LowerOperands(tuple.Elements, prelude), (TupleTypeSymbol)tuple.Type);
+
+            case BoundTupleElementExpression element:
+                return new BoundTupleElementExpression(LowerForValue(element.Tuple, prelude), element.Index, element.Type);
+
+            case BoundDeconstructionExpression deconstruction:
+                return new BoundDeconstructionExpression(
+                    deconstruction.Designation, LowerForValue(deconstruction.Value, prelude), deconstruction.Declares);
 
             case BoundClrAssignmentExpression assignment:
             {
@@ -664,6 +677,15 @@ public sealed class Lowerer
         var results = new List<BoundExpression>();
         foreach (var operand in operands)
         {
+            // `out let n`: declare n before the call (`int n; f(out n)`). Declaring evaluates nothing, so earlier
+            // operands needn't be spilled.
+            if (operand is BoundOutArgument { Declares: true, Variable: { } declared } output)
+            {
+                prelude.Add(new BoundVariableDeclaration(declared, null));
+                results.Add(new BoundOutArgument(declared, declares: false, output.ClrType, output.Boundary, output.Type));
+                continue;
+            }
+
             var local = new List<BoundStatement>();
             var value = LowerForValue(operand, local);
             if (local.Count > 0)
@@ -714,6 +736,8 @@ public sealed class Lowerer
         BoundConversionExpression conversion => IsInvariant(conversion.Expression),
         // Creating a lambda or function value has no effects worth ordering (captures are by reference anyway).
         BoundLambdaExpression or BoundFunctionReferenceExpression => true,
+        // An out argument is a variable's address, not a value to evaluate early.
+        BoundOutArgument => true,
         _ => IsConstant(expression),
     };
 

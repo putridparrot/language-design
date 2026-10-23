@@ -24,10 +24,10 @@ public static class Records
     {
         Line line = new Line(origin(), new Point(3, 4));
         global::System.Console.WriteLine($"squared length: {lengthSquared(line)}");
-        global::System.Console.WriteLine(new Point(1, 2) == new Point(1, 2) ? "true" : "false");
-        global::System.Console.WriteLine(new Point(1, 2) != new Point(2, 1) ? "true" : "false");
+        global::System.Console.WriteLine(new Point(1, 2) == new Point(1, 2));
+        global::System.Console.WriteLine(new Point(1, 2) != new Point(2, 1));
         Person person = new Person("Ada", 36, true);
-        global::System.Console.WriteLine($"{person.name} is {person.age}, active: {(person.active ? "true" : "false")}");
+        global::System.Console.WriteLine($"{person.name} is {person.age}, active: {person.active}");
         global::System.Console.WriteLine(person);
     }
 }

@@ -16,8 +16,8 @@ public static class Strings
         char c = 'P';
         global::System.Console.WriteLine($"Char: {c}, newline escape: [\n]");
         global::System.Console.WriteLine("Unicode: 🦜");
-        global::System.Console.WriteLine(true ? "true" : "false");
-        global::System.Console.WriteLine($"Bool in string: {(1 < 2 ? "true" : "false")}");
+        global::System.Console.WriteLine(true);
+        global::System.Console.WriteLine($"Bool in string: {1 < 2}");
         global::System.Console.WriteLine("con" + "cat" + "enation");
         global::System.Console.WriteLine(0.1 + 0.2);
         global::System.Console.WriteLine(10 / 4);

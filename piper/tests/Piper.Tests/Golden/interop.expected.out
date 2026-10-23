@@ -2,22 +2,25 @@
 7
 2.5
 5
-true
+True
 2147483647
 43
-true
+True
 5
 PIPER
-true
+True
 PiPer
 ipe
 3
 x = 42, ok = True
 1.5
 2
-true
-true
+True
+1
+0
+7,7,7
+True
 notes.txt: .txt
 unset
-true false
+True False
 a, b, c

@@ -49,6 +49,13 @@ fn main() {
     print(points.Count);
     print(points.Contains(Point(3, 4)));
 
+    // ...or from type arguments written out, as in C#.
+    let scores = Dictionary<String, Long>();
+    scores.Add("Ada", 1);
+    print(scores.Count);
+    print(System.Linq.Enumerable.Count(System.Linq.Enumerable.Empty<Int>()));
+    print(String.Join(",", System.Linq.Enumerable.Repeat<Long>(7, 3)));
+
     let ages: Dictionary<String, Int> = Dictionary();
     ages.Add("Ada", 36);
     print(ages.ContainsKey("Ada"));

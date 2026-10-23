@@ -142,7 +142,8 @@ public sealed partial class Binder
         ReturnContext context,
         TypeSymbol? returnType)
     {
-        var (outerScope, outerReturn, outerLoopDepth, outerFinally) = (_scope, _return, _loopDepth, _finallyLoopDepth);
+        var (outerScope, outerReturn, outerLoopDepth, outerFinally, outerOutScope) = (_scope, _return, _loopDepth, _finallyLoopDepth, _outScope);
+        _outScope = null;
         _scope = new Scope(_scope);
         foreach (var (parameter, syntaxParameter) in parameters.Zip(syntax.Parameters))
         {
@@ -182,26 +183,53 @@ public sealed partial class Binder
         }
         finally
         {
-            (_scope, _return, _loopDepth, _finallyLoopDepth) = (outerScope, outerReturn, outerLoopDepth, outerFinally);
+            (_scope, _return, _loopDepth, _finallyLoopDepth, _outScope) = (outerScope, outerReturn, outerLoopDepth, outerFinally, outerOutScope);
         }
     }
 
-    /// <summary>A top-level function used as a value becomes a delegate (its natural type, or the expected one).</summary>
-    private BoundExpression? BindFunctionReference(FunctionSymbol function, TypeSymbol? expected)
+    /// <summary>
+    /// A top-level function used as a value becomes a delegate (its natural type, or the expected one). A generic
+    /// function needs its type arguments written (<c>identity&lt;Int&gt;</c>) or inferable from the expected function type.
+    /// Null if the function can't be a value (the caller reports that).
+    /// </summary>
+    private BoundExpression? BindFunctionReference(
+        FunctionSymbol function,
+        TypeSymbol? expected,
+        ImmutableArray<TypeSymbol>? explicitArguments,
+        TextSpan span)
     {
-        if (function.Declaration is null || !function.TypeParameters.IsEmpty)
+        if (function.Declaration is null)
             return null;
 
-        var parameters = function.Parameters.Select(p => p.Type).ToImmutableArray();
-        if (expected is not null && DelegateSignature(expected) is { } signature &&
-            signature.Parameters.SequenceEqual(parameters) &&
-            (signature.Return == function.ReturnType || (signature.Return == TypeSymbol.Unit && function.ReturnType == TypeSymbol.Unit)))
+        var signature = expected is null ? null : DelegateSignature(expected);
+        var map = new Dictionary<TypeParameterSymbol, TypeSymbol>();
+        if (!ApplyExplicitTypeArguments(explicitArguments, function.TypeParameters, map, span, function.Name))
+            return new BoundErrorExpression();
+        if (!function.TypeParameters.IsEmpty && explicitArguments is null)
         {
-            return new BoundFunctionReferenceExpression(function, expected);
+            // `let f: (Int) -> Int = identity;`
+            var unresolved = function.TypeParameters.ToHashSet();
+            if (signature is { } wanted && wanted.Parameters.Length == function.Parameters.Length)
+            {
+                foreach (var (parameter, type) in function.Parameters.Zip(wanted.Parameters))
+                    Infer(parameter.Type, type, map, unresolved);
+                Infer(function.ReturnType, wanted.Return, map, unresolved);
+            }
+            if (function.TypeParameters.FirstOrDefault(p => !map.ContainsKey(p)) is { } missing)
+            {
+                _diagnostics.ReportCannotInferTypeArgument(span, missing.Name, function.Name);
+                return new BoundErrorExpression();
+            }
         }
 
-        var natural = FunctionType(parameters, function.ReturnType);
-        return natural == TypeSymbol.Error ? null : new BoundFunctionReferenceExpression(function, natural);
+        var typeArguments = TypeArgumentsFrom(function.TypeParameters, map, span);
+        var parameters = function.Parameters.Select(p => TypeSubstitution.Substitute(p.Type, map)).ToImmutableArray();
+        var returnType = TypeSubstitution.Substitute(function.ReturnType, map);
+        if (signature is { } exact && exact.Parameters.SequenceEqual(parameters) && exact.Return == returnType)
+            return new BoundFunctionReferenceExpression(function, typeArguments, expected!);
+
+        var natural = FunctionType(parameters, returnType);
+        return natural == TypeSymbol.Error ? null : new BoundFunctionReferenceExpression(function, typeArguments, natural);
     }
 
     /// <summary>Calling a function value: <c>f(1)</c>.</summary>
@@ -256,10 +284,9 @@ public sealed partial class Binder
     {
         TypeSymbol? elementType = null;
         TypeSymbol? arrayType = null;
-        if (expected is ClrTypeSymbol { Type.IsArray: true } array &&
-            ClrTypes.FromClr(array.Type.GetElementType()!, new Dictionary<Type, TypeSymbol>(), _option) is { } arrayElement)
+        if (expected is ClrTypeSymbol { IsArray: true, Rank: 1 } array)
         {
-            (elementType, arrayType) = (arrayElement, array);
+            (elementType, arrayType) = (array.TypeArguments[0], array);
         }
         else if (expected is ClrTypeSymbol { TypeArguments.Length: 1 } collection && CollectionTypes.Contains(collection.Definition.Type))
         {
@@ -300,27 +327,54 @@ public sealed partial class Binder
         var outer = _scope;
         _scope = new Scope(outer);
         var variable = new VariableSymbol(syntax.Variable.Text, elementType, isMutable: false, VariableKind.LoopVariable);
-        if (!syntax.Variable.IsMissing)
+        BoundParenthesizedDesignation? deconstruction = null;
+        if (syntax.Deconstruction is { } designation)
+        {
+            // `for (key, value) in dictionary`
+            var declared = new List<(VariableSymbol, Token)>();
+            deconstruction = BindDesignation(designation, elementType, isMutable: false, VariableKind.LoopVariable, declared);
+            DeclareAll(declared);
+        }
+        else if (!syntax.Variable.IsMissing)
+        {
             _scope.TryDeclare(variable);
+        }
 
         _loopDepth++;
         var body = BindBlock(syntax.Body);
         _loopDepth--;
         _scope = outer;
 
-        return new BoundForEachStatement(variable, collection, new BoundExpressionStatement(body));
+        return new BoundForEachStatement(variable, collection, new BoundExpressionStatement(body), deconstruction);
     }
 
     /// <summary><c>array[i]</c>, <c>text[i]</c>, <c>list[i]</c>, <c>dictionary[key]</c>.</summary>
     private BoundExpression BindIndex(IndexExpressionSyntax syntax)
     {
+        // `Int[5]`: indexing a type creates an array, as calling one constructs it. `String?[5]` is an array of Nones.
+        if (syntax.Target is TryExpressionSyntax { Operand: var operand } && ResolveContainer(operand) is TypeSymbol optionalElement)
+            return BindArrayCreation(optionalElement.IsValueType ? _option.Construct([optionalElement]) : optionalElement, syntax);
+
+        switch (ResolveContainer(syntax.Target))
+        {
+            case TypeSymbol element:
+                return BindArrayCreation(element, syntax);
+            case ClrTypeGroupSymbol group when NonGenericMember(group) is { } element:
+                return BindArrayCreation(element, syntax);
+            case ErrorSymbol:
+                return BindArgumentsForDiagnostics(syntax.Arguments);
+            case (NamespaceSymbol or ClrTypeGroupSymbol) and var container:
+                _diagnostics.ReportNotAValue(syntax.Target.Span, container.Name, container is NamespaceSymbol ? "namespace" : "type");
+                return BindArgumentsForDiagnostics(syntax.Arguments);
+        }
+
         var target = RequireValue(BindExpression(syntax.Target), syntax.Target.Span);
         if (target.Type == TypeSymbol.Error)
             return BindArgumentsForDiagnostics(syntax.Arguments);
 
-        if (target.Type is ClrTypeSymbol { Type.IsArray: true } array && array.Type.GetArrayRank() == syntax.Arguments.Length)
+        if (target.Type is ClrTypeSymbol { IsArray: true } array && array.Rank == syntax.Arguments.Length)
         {
-            var element = ClrTypes.FromClr(array.Type.GetElementType()!, new Dictionary<Type, TypeSymbol>(), _option) ?? TypeSymbol.Error;
+            var element = array.TypeArguments[0];
             var indices = syntax.Arguments.Select(a => Convert(RequireValue(BindExpression(a, TypeSymbol.Int), a.Span), TypeSymbol.Int, a.Span));
             return new BoundIndexExpression(target, null, [.. indices], element);
         }
@@ -346,6 +400,37 @@ public sealed partial class Binder
         _diagnostics.ReportNotIndexable(syntax.Target.Span, target.Type);
         return new BoundErrorExpression();
     }
+
+    /// <summary>
+    /// <c>Int[5]</c>, <c>Double[2, 3]</c>: an array of default values. Only for element types whose default isn't
+    /// null (numbers, Bool, Char, optionals, .NET structs), since Piper has no null references; a <c>String[]</c> comes
+    /// from a collection literal or .NET instead.
+    /// </summary>
+    private BoundExpression BindArrayCreation(TypeSymbol element, IndexExpressionSyntax syntax)
+    {
+        var sizes = syntax.Arguments
+            .Select(a => Convert(RequireValue(BindExpression(a, TypeSymbol.Int), a.Span), TypeSymbol.Int, a.Span))
+            .ToImmutableArray();
+        if (element == TypeSymbol.Error)
+            return new BoundErrorExpression();
+        if (!element.IsValueType || element is ClrTypeSymbol { IsGenericDefinition: true } || element is NamedTypeDefinition { IsGeneric: true })
+        {
+            _diagnostics.ReportNotAValue(syntax.Target.Span, element.Name, "type");
+            return new BoundErrorExpression();
+        }
+        if (!HasNonNullDefault(element))
+        {
+            _diagnostics.ReportArrayOfNullDefaults(syntax.Span, element);
+            return new BoundErrorExpression();
+        }
+        return new BoundArrayCreationExpression(sizes, ClrTypeSymbol.ArrayOf(element, sizes.Length));
+    }
+
+    /// <summary>True if C#'s <c>default</c> of the type is a valid Piper value (not a null reference).</summary>
+    private static bool HasNonNullDefault(TypeSymbol type) =>
+        type.IsNumeric || type == TypeSymbol.Bool || type == TypeSymbol.Char || type.IsOption ||
+        type is ClrTypeSymbol { IsReferenceType: false } ||
+        (type is TupleTypeSymbol tuple && tuple.ElementTypes.All(HasNonNullDefault));
 
     /// <summary>Assigning a .NET property or indexer: <c>sb.Length = 0</c>, <c>scores["Ada"] += 1</c>.</summary>
     private BoundExpression? BindClrAssignment(AssignmentExpressionSyntax syntax)

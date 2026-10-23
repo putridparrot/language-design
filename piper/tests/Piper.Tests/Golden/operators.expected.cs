@@ -14,18 +14,33 @@ public static class Operators
         global::System.Console.WriteLine(-7 % 3);
         global::System.Console.WriteLine(-(-5));
         global::System.Console.WriteLine(2147483647L + 1);
-        global::System.Console.WriteLine(1 < 2 && 2 < 3 ? "true" : "false");
-        global::System.Console.WriteLine(!(1 == 1) || false ? "true" : "false");
-        global::System.Console.WriteLine('a' < 'b' ? "true" : "false");
-        global::System.Console.WriteLine(1 == 1.0 ? "true" : "false");
+        global::System.Console.WriteLine(1 < 2 && 2 < 3);
+        global::System.Console.WriteLine(!(1 == 1) || false);
+        global::System.Console.WriteLine('a' < 'b');
+        global::System.Console.WriteLine(1 == 1.0);
         bool flag = !true;
-        global::System.Console.WriteLine(flag ? "true" : "false");
+        global::System.Console.WriteLine(flag);
         int n = 10;
         n *= 3;
         n /= 4;
         n %= 4;
         n -= 1;
         global::System.Console.WriteLine(n);
+        int min = -2147483648;
+        global::System.Console.WriteLine(min == int.MinValue);
+        global::System.Console.WriteLine(-9223372036854775808L == long.MinValue);
+        int max = int.MaxValue;
+        global::System.Console.WriteLine(max + 1 == min);
+        string temp;
+        if (min is -2147483648)
+        {
+            temp = "min";
+        }
+        else
+        {
+            temp = "other";
+        }
+        global::System.Console.WriteLine(temp);
     }
 }
 

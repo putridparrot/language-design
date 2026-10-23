@@ -86,6 +86,9 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportExpectedPattern(TextSpan span, Token actual) =>
         Error("PIP0105", span, $"Expected a pattern but found {Describe(actual)}.");
 
+    public void ReportTupleTooShort(TextSpan span) =>
+        Error("PIP0107", span, "A tuple needs at least two elements; for a function type, add a return type, e.g. '(Int) -> Bool'.");
+
     private static string Describe(Token token) => token.Kind switch
     {
         TokenKind.EndOfFile => "end of file",
@@ -231,7 +234,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     // Generics, traits and methods
 
     public void ReportCannotInferTypeArgument(TextSpan span, string parameter, string callee) =>
-        Error("PIP0240", span, $"Cannot infer type argument '{parameter}' for '{callee}'; add a type annotation, e.g. 'let x: Option<Int> = ...'.");
+        Error("PIP0240", span, $"Cannot infer type argument '{parameter}' for '{callee}'; write the type arguments, e.g. '{callee}<Int>', or add a type annotation, e.g. 'let x: Option<Int> = ...'.");
 
     public void ReportNotGeneric(TextSpan span, string name) =>
         Error("PIP0241", span, $"'{name}' is not generic and takes no type arguments.");
@@ -370,6 +373,21 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportCannotInferCollection(TextSpan span) =>
         Error("PIP0286", span, "Can't infer the element type of an empty collection; add a type annotation, e.g. 'let xs: List<Int> = [];'.");
+
+    public void ReportArrayOfNullDefaults(TextSpan span, TypeSymbol element) =>
+        Error("PIP0288", span, $"An array of '{element}' can't be created empty, as its elements would be null; use a collection literal ([…]), Enumerable.Repeat(value, n).ToArray(), or an array of '{element}?'.");
+
+    public void ReportCannotDeconstruct(TextSpan span, TypeSymbol type, int count) =>
+        Error("PIP0289", span, $"A '{type}' can't be deconstructed into {count} parts; tuples, records and .NET types with a matching Deconstruct method can.");
+
+    public void ReportDuplicateTupleName(TextSpan span, string name) =>
+        Error("PIP0290", span, $"Tuple element name '{name}' is used more than once.");
+
+    public void ReportReservedTupleName(TextSpan span, string name) =>
+        Error("PIP0290", span, $"'{name}' can't name a tuple element: Item1, Item2, … are reserved for element positions.");
+
+    public void ReportMisplacedOut(TextSpan span) =>
+        Error("PIP0291", span, "'out' can only pass a variable to a .NET method's out parameter; Piper functions return several values as a tuple instead.");
 
     public void ReportEmptyRangePattern(TextSpan span) =>
         Error("PIP0239", span, "This range pattern is empty: its lower bound is not below its upper bound.");

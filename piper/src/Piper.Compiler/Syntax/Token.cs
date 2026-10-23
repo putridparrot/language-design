@@ -15,6 +15,12 @@ public sealed record Token(TokenKind Kind, TextSpan Span, string Text, object? V
     public bool IsMissing { get; init; }
 }
 
+/// <summary>
+/// The value of <c>2147483648</c> or <c>9223372036854775808L</c>: one past Int's (Long's) maximum, valid only after a
+/// unary minus, where the parser folds it into <see cref="Negated"/> (<c>int.MinValue</c>/<c>long.MinValue</c>), as in C#.
+/// </summary>
+public sealed record NegatableLiteral(object Negated, string TypeName);
+
 public abstract record InterpolationPart(TextSpan Span);
 
 /// <summary>Literal text of an interpolated string, with escapes already decoded.</summary>

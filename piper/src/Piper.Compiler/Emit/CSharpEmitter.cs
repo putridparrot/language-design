@@ -67,6 +67,7 @@ public sealed class CSharpEmitter
     /// <summary>Option/Result and the interop helpers are only emitted if the program uses them.</summary>
     private readonly HashSet<EnumSymbol> _usedBuiltins = [];
     private bool _usesInterop;
+    private bool _usesOutConversion;
 
     private CSharpEmitter(BoundProgram program)
     {
@@ -428,6 +429,25 @@ public sealed class CSharpEmitter
         _writer.WriteLine("public static T? ToNullableReference<T>(Option<T> value) where T : class => value.IsSome ? value.Value : null;");
         _writer.WriteLine();
         _writer.WriteLine("public static T? ToNullableValue<T>(Option<T> value) where T : struct => value.IsSome ? value.Value : null;");
+        if (_usesOutConversion)
+            EmitOutConversions();
+        _writer.CloseBrace();
+    }
+
+    private void EmitOutConversions()
+    {
+        _writer.WriteLine();
+        // `out let v` where .NET may write null: the call's own result passes through, and v gets the converted value.
+        _writer.WriteLine("public static TResult AfterOutReference<TResult, T>(TResult result, T? value, out Option<T> converted) where T : class");
+        _writer.OpenBrace();
+        _writer.WriteLine("converted = FromNullableReference(value);");
+        _writer.WriteLine("return result;");
+        _writer.CloseBrace();
+        _writer.WriteLine();
+        _writer.WriteLine("public static TResult AfterOutValue<TResult, T>(TResult result, T? value, out Option<T> converted) where T : struct");
+        _writer.OpenBrace();
+        _writer.WriteLine("converted = FromNullableValue(value);");
+        _writer.WriteLine("return result;");
         _writer.CloseBrace();
     }
 
@@ -557,14 +577,14 @@ public sealed class CSharpEmitter
     private static BoundExpression? ExpressionBody(BoundBlockStatement body) => body.Statements switch
     {
         [BoundReturnStatement { Value: { } value }] => value,
-        [BoundExpressionStatement { Expression: var expression }] when IsStatementExpression(expression) => expression,
+        [BoundExpressionStatement { Expression: var expression }] when IsStatementExpression(expression) && !IsVoidCallWithOutConversions(expression) => expression,
         _ => null,
     };
 
     /// <summary>C# only allows calls and assignments as expression statements.</summary>
     private static bool IsStatementExpression(BoundExpression expression) =>
         expression is BoundCallExpression or BoundMethodCallExpression or BoundClrInvocationExpression or BoundAssignmentExpression
-            or BoundDelegateInvocationExpression or BoundClrAssignmentExpression;
+            or BoundDelegateInvocationExpression or BoundClrAssignmentExpression or BoundDeconstructionExpression;
 
     // Statements
 
@@ -598,6 +618,18 @@ public sealed class CSharpEmitter
                 _writer.WriteLine(declaration.Initializer is null
                     ? $"{type} {name};"
                     : $"{type} {name} = {Expr(declaration.Initializer, AssignmentPrecedence)};");
+                break;
+            }
+
+            case BoundExpressionStatement { Expression: BoundClrInvocationExpression invocation } when IsVoidCallWithOutConversions(invocation):
+            {
+                var (call, conversions) = ClrCallWithOutTemps(invocation);
+                _writer.WriteLine($"{call};");
+                foreach (var (temp, output) in conversions)
+                {
+                    var kind = output.Boundary == ClrBoundary.NullableReference ? "Reference" : "Value";
+                    _writer.WriteLine($"{Escape(_names.Get(output.Variable!))} = global::{InteropClassName}.FromNullable{kind}({temp});");
+                }
                 break;
             }
 
@@ -642,7 +674,10 @@ public sealed class CSharpEmitter
             case BoundForEachStatement loop:
             {
                 var collection = Expr(loop.Collection, AssignmentPrecedence);
-                _writer.WriteLine($"foreach ({TypeName(loop.Variable.Type)} {Escape(_names.Declare(loop.Variable))} in {collection})");
+                var variable = loop.Deconstruction is { } deconstruction
+                    ? $"var {Designation(deconstruction, declares: true)}"
+                    : $"{TypeName(loop.Variable.Type)} {Escape(_names.Declare(loop.Variable))}";
+                _writer.WriteLine($"foreach ({variable} in {collection})");
                 EmitBlock(loop.Body);
                 break;
             }
@@ -739,16 +774,24 @@ public sealed class CSharpEmitter
                 ($"{Expr(member.Operand, PrimaryPrecedence)}.{member.Member}", PrimaryPrecedence),
             BoundClrInvocationExpression { Member: ConstructorInfo } construction =>
                 ($"new {TypeName(construction.ContainerType)}({Arguments(construction.Arguments)})", PrimaryPrecedence),
-            BoundClrInvocationExpression invocation =>
-                ($"{ClrReceiver(invocation.Receiver, invocation.ContainerType)}.{Escape(invocation.Member.Name)}{TypeArgumentList(invocation.TypeArguments)}({Arguments(invocation.Arguments)})", PrimaryPrecedence),
+            BoundClrInvocationExpression invocation => (ClrInvocation(invocation), PrimaryPrecedence),
+            BoundOutArgument output => (output.Variable is { } variable ? $"out {Escape(_names.Get(variable))}" : "out _", PrimaryPrecedence),
             BoundClrAssignmentExpression assignment => (ClrAssignment(assignment), AssignmentPrecedence),
             BoundIndexExpression index =>
                 ($"{Expr(index.Target, PrimaryPrecedence)}[{Arguments(index.Arguments)}]", PrimaryPrecedence),
             BoundCollectionExpression collection => (Collection(collection), PrimaryPrecedence),
+            BoundTupleExpression tuple => ($"({Arguments(tuple.Elements)})", PrimaryPrecedence),
+            // Always by position: a name may not be part of the C# expression's static type.
+            BoundTupleElementExpression element => ($"{Expr(element.Tuple, PrimaryPrecedence)}.Item{element.Index + 1}", PrimaryPrecedence),
+            BoundDeconstructionExpression deconstruction => (
+                $"{(deconstruction.Declares ? "var " : "")}{Designation(deconstruction.Designation, deconstruction.Declares)} = {Expr(deconstruction.Value, AssignmentPrecedence)}",
+                AssignmentPrecedence),
+            BoundArrayCreationExpression creation =>
+                ($"new {ArrayTypeName((ClrTypeSymbol)creation.Type, Arguments(creation.Sizes))}", PrimaryPrecedence),
             BoundLambdaExpression lambda => (Lambda(lambda), AssignmentPrecedence),
             // A method group; it converts to the delegate type the context gives it.
             BoundFunctionReferenceExpression reference =>
-                ($"{(reference.Function.DeclaringFile == _moduleFile ? "" : FunctionContainer(reference.Function) + ".")}{Escape(reference.Function.Name)}", PrimaryPrecedence),
+                ($"{(reference.Function.DeclaringFile == _moduleFile ? "" : FunctionContainer(reference.Function) + ".")}{Escape(reference.Function.Name)}{TypeArgumentList(reference.TypeArguments)}", PrimaryPrecedence),
             BoundDelegateInvocationExpression invocation => (DelegateInvocation(invocation), PrimaryPrecedence),
             // Lowering leaves throw expressions only where C# allows them (a ?: branch, the right of ??), which can't be parenthesized.
             BoundThrowExpression thrown => ($"throw {Expr(thrown.Exception, LogicalOrPrecedence)}", PrimaryPrecedence),
@@ -844,6 +887,18 @@ public sealed class CSharpEmitter
         }
     }
 
+    /// <summary>
+    /// <c>(a, (b, _))</c> of C#'s <c>var (a, (b, _)) = value</c> (declaring the names) or <c>(a, b) = value</c>
+    /// (assigning existing variables). C# finds the tuple elements, a record's or a .NET type's Deconstruct.
+    /// </summary>
+    private string Designation(BoundParenthesizedDesignation designation, bool declares) =>
+        $"({string.Join(", ", designation.Elements.Select(element => element switch
+        {
+            BoundVariableDesignation variable => Escape(declares ? _names.Declare(variable.Variable) : _names.Get(variable.Variable)),
+            BoundParenthesizedDesignation nested => Designation(nested, declares),
+            _ => "_",
+        }))})";
+
     /// <summary><c>f(1)</c>; a lambda called directly is cast to its delegate type first, as C# can't invoke a lambda.</summary>
     private string DelegateInvocation(BoundDelegateInvocationExpression invocation)
     {
@@ -862,6 +917,46 @@ public sealed class CSharpEmitter
             ? $"({Escape(trait.Name)}){Expr(conversion.Expression, UnaryPrecedence)}"
             : Expr(branch, ConditionalPrecedence);
 
+    /// <summary>
+    /// <c>receiver.Method&lt;T&gt;(args)</c>. An out argument whose variable is an Option (.NET may write null) goes to a
+    /// temporary that a helper converts once the call returns:
+    /// <c>PiperInterop.AfterOutReference(d.TryGetValue(k, out var t), t, out value)</c>.
+    /// </summary>
+    private string ClrInvocation(BoundClrInvocationExpression invocation)
+    {
+        var (call, conversions) = ClrCallWithOutTemps(invocation);
+        _usesOutConversion |= conversions.Count > 0;
+        foreach (var (temp, output) in conversions)
+        {
+            var kind = output.Boundary == ClrBoundary.NullableReference ? "Reference" : "Value";
+            call = $"global::{InteropClassName}.AfterOut{kind}({call}, {temp}, out {Escape(_names.Get(output.Variable!))})";
+        }
+        return call;
+    }
+
+    /// <summary>The call with out-to-Option arguments written to temporaries, and those still to convert.</summary>
+    private (string Call, List<(string Temp, BoundOutArgument Output)> Conversions) ClrCallWithOutTemps(BoundClrInvocationExpression invocation)
+    {
+        var conversions = new List<(string Temp, BoundOutArgument Output)>();
+        var arguments = string.Join(", ", invocation.Arguments.Select(argument =>
+        {
+            if (argument is not BoundOutArgument { Boundary: not ClrBoundary.None, Variable: not null } output)
+                return Arguments([argument]);
+            _usesInterop = true;
+            var temp = Escape(_names.Declare(new VariableSymbol("outValue", output.ClrType, isMutable: true, VariableKind.Temporary)));
+            conversions.Add((temp, output));
+            return $"out var {temp}";
+        }));
+        var call = $"{ClrReceiver(invocation.Receiver, invocation.ContainerType)}.{Escape(invocation.Member.Name)}" +
+                   $"{TypeArgumentList(invocation.TypeArguments)}({arguments})";
+        return (call, conversions);
+    }
+
+    /// <summary>A void .NET call with out-to-Option arguments, which can't pass through a helper: convert after it instead.</summary>
+    private static bool IsVoidCallWithOutConversions(BoundExpression expression) =>
+        expression is BoundClrInvocationExpression { Member: MethodInfo { ReturnType: var returns } } invocation && returns == typeof(void) &&
+        invocation.Arguments.Any(a => a is BoundOutArgument { Boundary: not ClrBoundary.None, Variable: not null });
+
     /// <summary>The value an instance member is used on, or the type a static one belongs to.</summary>
     private string ClrReceiver(BoundExpression? receiver, TypeSymbol container) =>
         receiver is null ? TypeName(container) : Expr(receiver, PrimaryPrecedence);
@@ -877,7 +972,7 @@ public sealed class CSharpEmitter
     private string Call(BoundCallExpression call)
     {
         if (call.Function == BuiltinFunctions.Print)
-            return $"global::System.Console.WriteLine({DisplayValue(call.Arguments[0], ConditionalPrecedence)})";
+            return $"global::System.Console.WriteLine({Expr(call.Arguments[0], ConditionalPrecedence)})";
         var qualifier = call.Function.DeclaringFile == _moduleFile ? "" : FunctionContainer(call.Function) + ".";
         return $"{qualifier}{Escape(call.Function.Name)}{TypeArgumentList(call.TypeArguments)}({Arguments(call.Arguments)})";
     }
@@ -912,15 +1007,6 @@ public sealed class CSharpEmitter
                 : text;
         }));
 
-    /// <summary>Booleans display as Piper spells them (true/false) rather than C#'s True/False.</summary>
-    private string DisplayValue(BoundExpression value, int minPrecedence)
-    {
-        if (value.Type != TypeSymbol.Bool)
-            return Expr(value, minPrecedence);
-        var conditional = $"{Expr(value, LogicalOrPrecedence)} ? \"true\" : \"false\"";
-        return ConditionalPrecedence < minPrecedence ? $"({conditional})" : conditional;
-    }
-
     private string InterpolatedString(BoundInterpolatedStringExpression interpolated)
     {
         if (interpolated.Parts.All(p => p is BoundLiteralExpression { Value: string }))
@@ -934,7 +1020,7 @@ public sealed class CSharpEmitter
             else
             {
                 // A top-level ':' would start a format specifier, so ternaries and `global::` names must be parenthesized.
-                var hole = DisplayValue(part, LogicalOrPrecedence);
+                var hole = Expr(part, LogicalOrPrecedence);
                 builder.Append('{').Append(hole.Contains("::") && !IsParenthesized(hole) ? $"({hole})" : hole).Append('}');
             }
         }
@@ -983,6 +1069,7 @@ public sealed class CSharpEmitter
         BoundConstructorPattern { Arguments.Length: 0 } constructor => ConstructorName(constructor.Constructor, constructor.Type),
         BoundConstructorPattern constructor =>
             $"{ConstructorName(constructor.Constructor, constructor.Type)}({string.Join(", ", constructor.Arguments.Select(Pattern))})",
+        BoundTuplePattern tuple => $"({string.Join(", ", tuple.Elements.Select(Pattern))})",
         BoundOrPattern alternatives => string.Join(" or ", alternatives.Alternatives.Select(a =>
             a is BoundRangePattern ? $"({Pattern(a)})" : Pattern(a))),
         _ => throw new InvalidOperationException($"Unexpected pattern {pattern.GetType().Name}"),
@@ -1051,13 +1138,32 @@ public sealed class CSharpEmitter
         return type switch
         {
             NamedTypeDefinition or TraitSymbol => Qualify(type),
+            TupleTypeSymbol tuple => $"({string.Join(", ", tuple.ElementTypes.Select((e, i) =>
+                tuple.ElementNames[i] is { } name ? $"{TypeName(e, shadowedNames)} {Escape(name)}" : TypeName(e, shadowedNames)))})",
             ConstructedTypeSymbol constructed => $"{Qualify(constructed.Definition)}<{Arguments(constructed.TypeArguments)}>",
             TypeParameterSymbol parameter => Escape(parameter.Name),
-            ClrTypeSymbol { Type.IsArray: true } array => $"{ClrTypeName(array.Type.GetElementType()!)}[]",
+            ClrTypeSymbol { IsArray: true } array => ArrayTypeName(array, null, shadowedNames),
             ClrTypeSymbol clr when clr.TypeArguments.IsEmpty => ClrTypeName(clr.Type),
             ClrTypeSymbol clr => $"{ClrTypeName(clr.Type)}<{Arguments(clr.TypeArguments)}>",
             _ => throw new InvalidOperationException($"Type '{type}' cannot be emitted."),
         };
+    }
+
+    /// <summary>
+    /// <c>int[]</c>, <c>int[,]</c>, or (with <paramref name="sizes"/>) the <c>int[5]</c> of <c>new int[5]</c>. C# writes the
+    /// innermost element type first, then the rank specifiers outermost first: an array of <c>int[,]</c> is <c>int[][,]</c>.
+    /// </summary>
+    private string ArrayTypeName(ClrTypeSymbol array, string? sizes, ISet<string>? shadowedNames = null)
+    {
+        var ranks = new StringBuilder(sizes is null ? "" : $"[{sizes}]");
+        TypeSymbol element = array;
+        for (bool outermost = true; element is ClrTypeSymbol { IsArray: true } current; outermost = false)
+        {
+            if (!(outermost && sizes is not null))
+                ranks.Append('[').Append(',', current.Rank - 1).Append(']');
+            element = current.TypeArguments[0];
+        }
+        return TypeName(element, shadowedNames) + ranks;
     }
 
     /// <summary><c>global::System.Text.StringBuilder</c>; for a generic definition the name without its arity.</summary>

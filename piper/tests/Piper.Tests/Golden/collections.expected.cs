@@ -17,6 +17,16 @@ public static class Collections
         return total;
     }
 
+    public static int sumX(Point[] points)
+    {
+        int total = 0;
+        foreach (Point p in points)
+        {
+            total += p.x;
+        }
+        return total;
+    }
+
     public static void main()
     {
         global::System.Collections.Generic.List<int> primes = new global::System.Collections.Generic.List<int> { 2, 3, 5, 7 };
@@ -24,10 +34,31 @@ public static class Collections
         global::System.Console.WriteLine(primes[2]);
         primes.Add(11);
         global::System.Console.WriteLine(primes.Count);
+        int[] squares = new int[] { 1, 4, 9 };
+        squares[0] = 100;
+        global::System.Console.WriteLine(squares[0] + squares[2]);
+        global::System.Console.WriteLine(squares.Length);
         string[] words = "one two three".Split(' ');
         words[0] = "uno";
         global::System.Console.WriteLine(string.Join("-", words));
         global::System.Console.WriteLine(words[2].Length);
+        int[] counts = new int[3];
+        counts[1] += 5;
+        global::System.Console.WriteLine(string.Join<int>(",", counts));
+        double[,] grid = new double[2, 3];
+        grid[1, 2] = 1.5;
+        global::System.Console.WriteLine($"{grid.Length} {grid[1, 2]}");
+        Option<string>[] slots = new Option<string>[2];
+        slots[1] = Option<string>.Some("full");
+        Option<string> temp = slots[0];
+        string temp_1 = temp.IsSome ? temp.Value : "empty";
+        Option<string> temp_2 = slots[1];
+        global::System.Console.WriteLine($"{temp_1} {(temp_2.IsSome ? temp_2.Value : "empty")}");
+        Point[] points = new Point[] { new Point(1, 2), new Point(3, 4) };
+        global::System.Console.WriteLine(sumX(points));
+        int[][] jagged = new int[][] { new int[] { 1 }, new int[] { 2, 3 } };
+        global::System.Console.WriteLine(jagged[1].Length);
+        global::System.Console.WriteLine(string.Join<int>(" ", global::System.Linq.Enumerable.ToArray<int>(primes)));
         global::System.Collections.Generic.List<long> mixed = new global::System.Collections.Generic.List<long> { 1, 2L, 3 };
         global::System.Console.WriteLine(mixed[1]);
         global::System.Collections.Generic.List<string> empty = new global::System.Collections.Generic.List<string>();
@@ -55,8 +86,8 @@ public static class Collections
         global::System.Collections.Generic.List<string> names = new global::System.Collections.Generic.List<string> { "Ada", "Grace" };
         global::System.Console.WriteLine(names[1].Length);
         global::System.Console.WriteLine(global::System.Linq.Enumerable.First<string>(names).Length);
-        Option<string> temp = global::PiperInterop.FromNullableReference(global::System.Linq.Enumerable.FirstOrDefault<string>(empty));
-        global::System.Console.WriteLine(temp.IsSome ? temp.Value : "none");
+        Option<string> temp_3 = global::PiperInterop.FromNullableReference(global::System.Linq.Enumerable.FirstOrDefault<string>(empty));
+        global::System.Console.WriteLine(temp_3.IsSome ? temp_3.Value : "none");
         string text = "Piper";
         global::System.Console.WriteLine(text[0]);
         global::System.Text.StringBuilder builder = new global::System.Text.StringBuilder("hello");

@@ -115,10 +115,19 @@ public sealed class BoundForStatement(
 /// <summary>Produced only by lowering: the impossible fall-through at the end of an exhaustive match.</summary>
 public sealed class BoundUnreachableStatement : BoundStatement;
 
-/// <summary><c>for x in collection</c> over anything enumerable (C# <c>foreach</c>).</summary>
-public sealed class BoundForEachStatement(VariableSymbol variable, BoundExpression collection, BoundStatement body) : BoundStatement
+/// <summary>
+/// <c>for x in collection</c> over anything enumerable (C# <c>foreach</c>); with <see cref="Deconstruction"/>,
+/// <c>for (k, v) in dictionary</c>, and then <see cref="Variable"/> is unused.
+/// </summary>
+public sealed class BoundForEachStatement(
+    VariableSymbol variable,
+    BoundExpression collection,
+    BoundStatement body,
+    BoundParenthesizedDesignation? deconstruction = null) : BoundStatement
 {
     public VariableSymbol Variable { get; } = variable;
+
+    public BoundParenthesizedDesignation? Deconstruction { get; } = deconstruction;
 
     public BoundExpression Collection { get; } = collection;
 
@@ -326,9 +335,13 @@ public sealed class BoundLambdaExpression(
 }
 
 /// <summary>A top-level function used as a value (a C# method group converted to <see cref="Type"/>).</summary>
-public sealed class BoundFunctionReferenceExpression(FunctionSymbol function, TypeSymbol type) : BoundExpression
+public sealed class BoundFunctionReferenceExpression(FunctionSymbol function, ImmutableArray<TypeSymbol> typeArguments, TypeSymbol type)
+    : BoundExpression
 {
     public FunctionSymbol Function { get; } = function;
+
+    /// <summary>A generic function's type arguments: <c>identity&lt;int&gt;</c>.</summary>
+    public ImmutableArray<TypeSymbol> TypeArguments { get; } = typeArguments;
 
     public override TypeSymbol Type { get; } = type;
 }
@@ -350,6 +363,76 @@ public sealed class BoundThrowExpression(BoundExpression exception) : BoundExpre
     public BoundExpression Exception { get; } = exception;
 
     public override TypeSymbol Type => TypeSymbol.Never;
+}
+
+/// <summary><c>(1, "a")</c>: a tuple literal.</summary>
+public sealed class BoundTupleExpression(ImmutableArray<BoundExpression> elements, TupleTypeSymbol type) : BoundExpression
+{
+    public ImmutableArray<BoundExpression> Elements { get; } = elements;
+
+    public override TypeSymbol Type { get; } = type;
+}
+
+/// <summary><c>t.Item1</c> or <c>t.x</c>: element <see cref="Index"/> of a tuple (always emitted as <c>ItemN</c>).</summary>
+public sealed class BoundTupleElementExpression(BoundExpression tuple, int index, TypeSymbol type) : BoundExpression
+{
+    public BoundExpression Tuple { get; } = tuple;
+
+    public int Index { get; } = index;
+
+    public override TypeSymbol Type { get; } = type;
+}
+
+/// <summary>
+/// <c>let (a, b) = value</c> (<see cref="Declares"/>) or <c>(a, b) = value</c>: C#'s deconstruction, over a tuple, a
+/// record or a .NET type with a <c>Deconstruct</c> method. Has type Unit.
+/// </summary>
+public sealed class BoundDeconstructionExpression(BoundParenthesizedDesignation designation, BoundExpression value, bool declares)
+    : BoundExpression
+{
+    public BoundParenthesizedDesignation Designation { get; } = designation;
+
+    public BoundExpression Value { get; } = value;
+
+    public bool Declares { get; } = declares;
+
+    public override TypeSymbol Type => TypeSymbol.Unit;
+}
+
+/// <summary>Where one part of a deconstructed value goes. <see cref="Type"/> is that part's type.</summary>
+public abstract class BoundDesignation(TypeSymbol type)
+{
+    public TypeSymbol Type { get; } = type;
+}
+
+/// <summary>A variable: declared by the deconstruction, or an existing (mutable) one assigned by it.</summary>
+public sealed class BoundVariableDesignation(VariableSymbol variable, TypeSymbol type) : BoundDesignation(type)
+{
+    public VariableSymbol Variable { get; } = variable;
+}
+
+/// <summary><c>_</c>: the part is not stored.</summary>
+public sealed class BoundDiscardDesignation(TypeSymbol type) : BoundDesignation(type);
+
+/// <summary><c>(a, (b, c))</c>: the part is deconstructed further.</summary>
+public sealed class BoundParenthesizedDesignation(ImmutableArray<BoundDesignation> elements, TypeSymbol type) : BoundDesignation(type)
+{
+    public ImmutableArray<BoundDesignation> Elements { get; } = elements;
+
+    public IEnumerable<VariableSymbol> Variables => Elements.SelectMany(e => e switch
+    {
+        BoundVariableDesignation variable => [variable.Variable],
+        BoundParenthesizedDesignation nested => nested.Variables,
+        _ => [],
+    });
+}
+
+/// <summary><c>Int[5]</c> or <c>Double[2, 3]</c>: a new array of default values (C#'s <c>new int[5]</c>).</summary>
+public sealed class BoundArrayCreationExpression(ImmutableArray<BoundExpression> sizes, TypeSymbol type) : BoundExpression
+{
+    public ImmutableArray<BoundExpression> Sizes { get; } = sizes;
+
+    public override TypeSymbol Type { get; } = type;
 }
 
 /// <summary><c>[a, b, c]</c> as a <c>List&lt;T&gt;</c> or a .NET array (<see cref="Type"/> says which).</summary>
@@ -385,6 +468,27 @@ public sealed class BoundClrInvocationExpression(
     public ImmutableArray<BoundExpression> Arguments { get; } = arguments;
 
     public ImmutableArray<TypeSymbol> TypeArguments { get; } = typeArguments.IsDefault ? [] : typeArguments;
+
+    public override TypeSymbol Type { get; } = type;
+}
+
+/// <summary>
+/// An argument for a .NET <c>out</c> parameter: <see cref="Variable"/> receives the value (null for <c>out _</c>).
+/// When <see cref="Declares"/>, the argument also declares it (lowering hoists the declaration before the call).
+/// A <see cref="Boundary"/> other than None means .NET may produce null, so the variable is an Option and the
+/// emitted code converts after the call.
+/// </summary>
+public sealed class BoundOutArgument(VariableSymbol? variable, bool declares, TypeSymbol clrType, ClrBoundary boundary, TypeSymbol type)
+    : BoundExpression
+{
+    public VariableSymbol? Variable { get; } = variable;
+
+    public bool Declares { get; } = declares;
+
+    /// <summary>The type .NET writes (the Option's value type when there is a boundary).</summary>
+    public TypeSymbol ClrType { get; } = clrType;
+
+    public ClrBoundary Boundary { get; } = boundary;
 
     public override TypeSymbol Type { get; } = type;
 }

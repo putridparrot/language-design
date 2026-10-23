@@ -100,6 +100,10 @@ public sealed partial class Binder
         BoundClrInvocationExpression call => (call.Receiver is { } r && ContainsStatements(r)) || call.Arguments.Any(ContainsStatements),
         BoundClrMemberExpression member => member.Receiver is { } receiver && ContainsStatements(receiver),
         BoundNullableBoundaryExpression boundary => ContainsStatements(boundary.Operand),
+        BoundTupleExpression tuple => tuple.Elements.Any(ContainsStatements),
+        // `out let n` is declared by a statement before the call.
+        BoundOutArgument output => output.Declares,
+        BoundTupleElementExpression element => ContainsStatements(element.Tuple),
         _ => false,
     };
 
@@ -154,6 +158,9 @@ public sealed partial class Binder
 
             case RangePatternSyntax range:
                 return BindRangePattern(range, expected);
+
+            case TuplePatternSyntax tuple:
+                return BindTuplePattern(tuple, expected, allowBindings);
 
             case OrPatternSyntax alternatives:
                 return new BoundOrPattern(

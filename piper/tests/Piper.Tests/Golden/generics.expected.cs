@@ -60,6 +60,10 @@ public static class Generics
         }
     }
 
+    public static T identity<T>(T @value) => @value;
+
+    public static List<T> empty<T>() => new List<T>.Nil();
+
     public static string describe(Option<int> found)
     {
         if (found is { IsSome: true, Value: var i })
@@ -102,6 +106,21 @@ public static class Generics
         global::System.Console.WriteLine(temp);
         Pair<long, double> widened = new Pair<long, double>(1, 2);
         global::System.Console.WriteLine($"{widened.first} {widened.second}");
+        List<string> nothing = empty<string>();
+        global::System.Console.WriteLine(length<string>(nothing));
+        long big = identity<long>(3) * 1000000000;
+        global::System.Console.WriteLine(big);
+        Pair<long, string> pair = new Pair<long, string>(1, "x");
+        global::System.Console.WriteLine(pair.first + 2147483647);
+        global::System.Console.WriteLine(unwrapOr<int>(Option<int>.None, 7));
+        global::System.Func<int, int> twice = identity<int>;
+        global::System.Console.WriteLine(twice(5));
+        global::System.Func<string, string> echo = identity<string>;
+        global::System.Console.WriteLine(echo("echo"));
+        int a = 1;
+        int b = 2;
+        int c = 3;
+        global::System.Console.WriteLine(a < b == b > c);
     }
 }
 

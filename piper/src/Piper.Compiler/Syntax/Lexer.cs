@@ -290,6 +290,8 @@ public sealed class Lexer
         bool parsed = TryParseInteger(digits, radix, out ulong value);
         if (isLong)
         {
+            if (parsed && value == (ulong)long.MaxValue + 1)
+                return new Token(TokenKind.IntegerLiteral, span, text, new NegatableLiteral(long.MinValue, "Long"));
             if (!parsed || value > long.MaxValue)
             {
                 _diagnostics.ReportIntegerTooLarge(span, text, "Long");
@@ -298,6 +300,8 @@ public sealed class Lexer
             return new Token(TokenKind.IntegerLiteral, span, text, (long)value);
         }
 
+        if (parsed && value == (ulong)int.MaxValue + 1)
+            return new Token(TokenKind.IntegerLiteral, span, text, new NegatableLiteral(int.MinValue, "Int"));
         if (!parsed || value > int.MaxValue)
         {
             _diagnostics.ReportIntegerTooLarge(span, text, "Int");

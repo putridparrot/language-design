@@ -83,10 +83,10 @@ public static class Null_safety
         {
             global::System.Console.WriteLine("has a value");
         }
-        global::System.Console.WriteLine(maybe == Option<int>.Some(5) ? "true" : "false");
+        global::System.Console.WriteLine(maybe == Option<int>.Some(5));
         Option<int> nothing = Option<int>.None;
-        global::System.Console.WriteLine(nothing == Option<int>.None ? "true" : "false");
-        global::System.Console.WriteLine(nothing.isNone() ? "true" : "false");
+        global::System.Console.WriteLine(nothing == Option<int>.None);
+        global::System.Console.WriteLine(nothing.isNone());
         global::System.Console.WriteLine($"{describe(maybe)}, {describe(nothing)}, {describe(Option<int>.Some(-2))}");
         Option<User> temp = find(1);
         if (temp.IsSome)

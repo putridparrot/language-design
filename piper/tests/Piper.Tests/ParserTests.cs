@@ -26,7 +26,9 @@ public class ParserTests
     private static string Show(ExpressionSyntax expression) => expression switch
     {
         LiteralExpressionSyntax e => e.Literal.Text,
+        NameExpressionSyntax { TypeArguments.IsEmpty: false } e => $"{e.Identifier.Text}<{e.TypeArguments.Length}>",
         NameExpressionSyntax e => e.Identifier.Text,
+        MemberAccessExpressionSyntax { TypeArguments.IsEmpty: false } e => $"{Show(e.Target)}.{e.Member.Text}<{e.TypeArguments.Length}>",
         UnaryExpressionSyntax e => $"({e.Operator.Text}{Show(e.Operand)})",
         BinaryExpressionSyntax e => $"({Show(e.Left)} {e.Operator.Text} {Show(e.Right)})",
         RangeExpressionSyntax e => $"({Show(e.Start)} {e.Operator.Text} {Show(e.End)})",
@@ -68,6 +70,14 @@ public class ParserTests
     [InlineData("x is Some(v) && v > 1", "((x is Constructor) && (v > 1))")]
     [InlineData("!x is None", "((!x) is Identifier)")]
     [InlineData("x == null", "(x == null)")]
+    // Type arguments, by C#'s rule: only if the token after '>' could follow a generic name.
+    [InlineData("f<A, B>(x)", "f<2>(x)")]
+    [InlineData("xs.Select<Int, String>(f).Count", "xs.Select<2>(f).Count")]
+    [InlineData("f<List<Int>, Int[]>()", "f<2>()")]
+    [InlineData("a < b > (c)", "a<1>(c)")]
+    [InlineData("f(a < b, c > d)", "f((a < b), (c > d))")]
+    [InlineData("a < b && c > d", "((a < b) && (c > d))")]
+    [InlineData("a < b > c", "((a < b) > c)")]
     public void Expressions_respect_precedence_and_associativity(string text, string expected)
     {
         var diagnostics = new DiagnosticBag();

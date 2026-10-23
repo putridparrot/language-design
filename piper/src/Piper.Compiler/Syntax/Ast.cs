@@ -101,6 +101,15 @@ public sealed record NamedTypeSyntax(TextSpan Span, ImmutableArray<Token> Qualif
 /// <summary><c>T?</c>, shorthand for <c>Option&lt;T&gt;</c>.</summary>
 public sealed record OptionalTypeSyntax(TextSpan Span, TypeSyntax Inner) : TypeSyntax(Span);
 
+/// <summary><c>Int[]</c>, or <c>Int[,]</c> with <see cref="Rank"/> 2: a .NET array.</summary>
+public sealed record ArrayTypeSyntax(TextSpan Span, TypeSyntax Element, int Rank) : TypeSyntax(Span);
+
+/// <summary><c>(Int, String)</c> or <c>(x: Int, y: Int)</c>: a tuple, i.e. a .NET <c>ValueTuple</c> as in C#.</summary>
+public sealed record TupleTypeSyntax(TextSpan Span, ImmutableArray<TupleElementTypeSyntax> Elements) : TypeSyntax(Span);
+
+/// <summary>One element of a tuple type; <see cref="Name"/> is optional.</summary>
+public sealed record TupleElementTypeSyntax(TextSpan Span, Token? Name, TypeSyntax Type) : SyntaxNode(Span);
+
 /// <summary><c>(Int, String) -> Bool</c>: a function type, i.e. the .NET delegate <c>Func</c> (or <c>Action</c> when it returns Unit).</summary>
 public sealed record FunctionTypeSyntax(TextSpan Span, ImmutableArray<TypeSyntax> Parameters, TypeSyntax ReturnType) : TypeSyntax(Span);
 
@@ -118,13 +127,37 @@ public sealed record VariableDeclarationSyntax(
     public bool IsMutable => Keyword.Kind == TokenKind.VarKeyword;
 }
 
+/// <summary><c>let (a, (b, _)) = value;</c>: declares a variable per name, as C#'s <c>var (a, (b, _)) = value;</c>.</summary>
+public sealed record DeconstructionDeclarationSyntax(
+    TextSpan Span,
+    Token Keyword,
+    ParenthesizedDesignationSyntax Designation,
+    ExpressionSyntax Initializer) : StatementSyntax(Span)
+{
+    public bool IsMutable => Keyword.Kind == TokenKind.VarKeyword;
+}
+
+/// <summary>What a deconstruction declares: a name (<c>_</c> discards), or a parenthesized list of designations.</summary>
+public abstract record DesignationSyntax(TextSpan Span) : SyntaxNode(Span);
+
+public sealed record SingleDesignationSyntax(TextSpan Span, Token Name) : DesignationSyntax(Span)
+{
+    public bool IsDiscard => Name.Text == "_";
+}
+
+public sealed record ParenthesizedDesignationSyntax(TextSpan Span, ImmutableArray<DesignationSyntax> Elements) : DesignationSyntax(Span);
+
 public sealed record ExpressionStatementSyntax(TextSpan Span, ExpressionSyntax Expression) : StatementSyntax(Span);
 
 public sealed record WhileStatementSyntax(TextSpan Span, ExpressionSyntax Condition, BlockExpressionSyntax Body)
     : StatementSyntax(Span);
 
+/// <summary><c>for x in xs</c>, or with <see cref="Deconstruction"/> <c>for (key, value) in dictionary</c> (then <see cref="Variable"/> is missing).</summary>
 public sealed record ForStatementSyntax(TextSpan Span, Token Variable, ExpressionSyntax Range, BlockExpressionSyntax Body)
-    : StatementSyntax(Span);
+    : StatementSyntax(Span)
+{
+    public ParenthesizedDesignationSyntax? Deconstruction { get; init; }
+}
 
 public sealed record ReturnStatementSyntax(TextSpan Span, Token Keyword, ExpressionSyntax? Value) : StatementSyntax(Span);
 
@@ -160,7 +193,11 @@ public sealed record InterpolatedTextSyntax(TextSpan Span, string Text) : Interp
 
 public sealed record InterpolationSyntax(TextSpan Span, ExpressionSyntax Expression) : InterpolatedStringPartSyntax(Span);
 
-public sealed record NameExpressionSyntax(TextSpan Span, Token Identifier) : ExpressionSyntax(Span);
+/// <summary><c>x</c>, or <c>identity&lt;Int&gt;</c> with explicit <see cref="TypeArguments"/>.</summary>
+public sealed record NameExpressionSyntax(TextSpan Span, Token Identifier) : ExpressionSyntax(Span)
+{
+    public ImmutableArray<TypeSyntax> TypeArguments { get; init; } = [];
+}
 
 public sealed record UnaryExpressionSyntax(TextSpan Span, Token Operator, ExpressionSyntax Operand) : ExpressionSyntax(Span);
 
@@ -179,7 +216,11 @@ public sealed record AssignmentExpressionSyntax(TextSpan Span, ExpressionSyntax 
 public sealed record CallExpressionSyntax(TextSpan Span, ExpressionSyntax Callee, ImmutableArray<ExpressionSyntax> Arguments)
     : ExpressionSyntax(Span);
 
-public sealed record MemberAccessExpressionSyntax(TextSpan Span, ExpressionSyntax Target, Token Member) : ExpressionSyntax(Span);
+/// <summary><c>target.member</c>, or <c>Enumerable.Empty&lt;Int&gt;</c> with explicit <see cref="TypeArguments"/>.</summary>
+public sealed record MemberAccessExpressionSyntax(TextSpan Span, ExpressionSyntax Target, Token Member) : ExpressionSyntax(Span)
+{
+    public ImmutableArray<TypeSyntax> TypeArguments { get; init; } = [];
+}
 
 public sealed record ParenthesizedExpressionSyntax(TextSpan Span, ExpressionSyntax Expression) : ExpressionSyntax(Span);
 
@@ -210,11 +251,29 @@ public sealed record LambdaParameterSyntax(TextSpan Span, Token Name, TypeSyntax
 public sealed record IndexExpressionSyntax(TextSpan Span, ExpressionSyntax Target, ImmutableArray<ExpressionSyntax> Arguments)
     : ExpressionSyntax(Span);
 
+/// <summary>
+/// <c>(1, "a")</c> or <c>(x: 1, y: 2)</c>: a tuple. As the target of an assignment, <c>(a, b) = (b, a)</c>, it
+/// deconstructs into existing variables.
+/// </summary>
+public sealed record TupleExpressionSyntax(TextSpan Span, ImmutableArray<TupleElementSyntax> Elements) : ExpressionSyntax(Span);
+
+/// <summary>One element of a tuple expression; <see cref="Name"/> is optional.</summary>
+public sealed record TupleElementSyntax(TextSpan Span, Token? Name, ExpressionSyntax Expression) : SyntaxNode(Span);
+
 /// <summary><c>[1, 2, 3]</c>: a <c>List&lt;T&gt;</c> (or another collection the context expects).</summary>
 public sealed record CollectionExpressionSyntax(TextSpan Span, ImmutableArray<ExpressionSyntax> Elements) : ExpressionSyntax(Span);
 
 /// <summary><c>throw ArgumentException("…")</c>; has type Never, so it also works as an expression (<c>x ?? throw …</c>).</summary>
 public sealed record ThrowExpressionSyntax(TextSpan Span, Token Keyword, ExpressionSyntax Exception) : ExpressionSyntax(Span);
+
+/// <summary>
+/// An argument for a .NET <c>out</c> parameter: <c>out let n</c> or <c>out var n</c> (declaring n, as C#'s <c>out var n</c>),
+/// <c>out n</c> (an existing mutable variable) or <c>out _</c>. Only valid in an argument list.
+/// </summary>
+public sealed record OutArgumentSyntax(TextSpan Span, Token Keyword, Token? Declaration, Token Name) : ExpressionSyntax(Span)
+{
+    public bool IsDiscard => Declaration is null && Name.Text == "_";
+}
 
 /// <summary><c>null</c>: the None of whatever optional type the context expects.</summary>
 public sealed record NullLiteralExpressionSyntax(TextSpan Span, Token Keyword) : ExpressionSyntax(Span);
@@ -268,6 +327,9 @@ public sealed record RangePatternSyntax(TextSpan Span, LiteralPatternSyntax Star
 }
 
 public sealed record OrPatternSyntax(TextSpan Span, ImmutableArray<PatternSyntax> Alternatives) : PatternSyntax(Span);
+
+/// <summary><c>(0, _)</c>: matches a tuple element by element (C#'s positional pattern).</summary>
+public sealed record TuplePatternSyntax(TextSpan Span, ImmutableArray<PatternSyntax> Elements) : PatternSyntax(Span);
 
 /// <summary><c>null</c> in a pattern: the same as <c>None</c>.</summary>
 public sealed record NullPatternSyntax(TextSpan Span) : PatternSyntax(Span);

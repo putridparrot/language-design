@@ -200,6 +200,61 @@ public sealed class ConstructedTypeSymbol(NamedTypeDefinition definition, Immuta
     public override ImmutableArray<TypeSymbol> TypeArguments { get; } = arguments;
 }
 
+/// <summary>
+/// <c>(Int, String)</c> or <c>(x: Int, y: Int)</c>: a .NET <c>ValueTuple</c>, as in C#. Element names are part of the
+/// type (so <c>t.x</c> works) but, as in C#, not of its identity for conversions: <c>(x: Int, y: Int)</c> and
+/// <c>(Int, Int)</c> convert to each other. Interned, so each combination of element types and names is one object.
+/// </summary>
+public sealed class TupleTypeSymbol : TypeSymbol
+{
+    private static readonly List<TupleTypeSymbol> Instances = [];
+
+    private TupleTypeSymbol(ImmutableArray<TypeSymbol> elements, ImmutableArray<string?> names)
+        : base($"({string.Join(", ", elements.Select((t, i) => names[i] is { } name ? $"{name}: {t}" : t.ToString()))})")
+    {
+        ElementTypes = elements;
+        ElementNames = names;
+    }
+
+    public ImmutableArray<TypeSymbol> ElementTypes { get; }
+
+    /// <summary>Null for an unnamed element.</summary>
+    public ImmutableArray<string?> ElementNames { get; }
+
+    public static TupleTypeSymbol Create(ImmutableArray<TypeSymbol> elements, ImmutableArray<string?> names = default)
+    {
+        names = names.IsDefault ? [.. elements.Select(_ => (string?)null)] : names;
+        lock (Instances)
+        {
+            var existing = Instances.FirstOrDefault(t =>
+                t.ElementTypes.Length == elements.Length &&
+                t.ElementTypes.Zip(elements).All(pair => ReferenceEquals(pair.First, pair.Second)) &&
+                t.ElementNames.SequenceEqual(names));
+            if (existing is not null)
+                return existing;
+
+            var created = new TupleTypeSymbol(elements, names);
+            Instances.Add(created);
+            return created;
+        }
+    }
+
+    /// <summary>The same element types without names, the identity C# conversions go by.</summary>
+    public TupleTypeSymbol Unnamed => Create(ElementTypes);
+
+    /// <summary>The element called <paramref name="name"/>, or <c>ItemN</c> for any element; -1 if none.</summary>
+    public int IndexOf(string name)
+    {
+        int named = ElementNames.IndexOf(name);
+        if (named >= 0)
+            return named;
+        return name.StartsWith("Item") && int.TryParse(name.AsSpan(4), out int position) && position >= 1 &&
+               position <= ElementTypes.Length && name == $"Item{position}"
+            ? position - 1
+            : -1;
+    }
+}
+
 /// <summary>An interface-like set of methods. A trait is also a type: a value of any type that implements it.</summary>
 public sealed class TraitSymbol : TypeSymbol
 {
@@ -224,6 +279,8 @@ public static class TypeSubstitution
         {
             TypeParameterSymbol parameter => map.TryGetValue(parameter, out var replacement) ? replacement : parameter,
             ConstructedTypeSymbol constructed => constructed.Definition.Construct([.. constructed.TypeArguments.Select(a => Substitute(a, map))]),
+            TupleTypeSymbol tuple => TupleTypeSymbol.Create([.. tuple.ElementTypes.Select(e => Substitute(e, map))], tuple.ElementNames),
+            ClrTypeSymbol { TypeArguments.IsEmpty: false } clr => clr.Definition.Construct([.. clr.TypeArguments.Select(a => Substitute(a, map))]),
             _ => type,
         };
     }
@@ -247,6 +304,8 @@ public static class TypeSubstitution
     {
         TypeParameterSymbol parameter => parameters.Contains(parameter),
         ConstructedTypeSymbol constructed => constructed.TypeArguments.Any(a => Mentions(a, parameters)),
+        TupleTypeSymbol tuple => tuple.ElementTypes.Any(e => Mentions(e, parameters)),
+        ClrTypeSymbol clr => clr.TypeArguments.Any(a => Mentions(a, parameters)),
         _ => false,
     };
 }

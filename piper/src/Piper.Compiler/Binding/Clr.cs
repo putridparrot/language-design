@@ -82,11 +82,27 @@ public static class ClrTypeIndex
 /// A .NET type: either non-generic (<c>StringBuilder</c>), a generic definition (<c>List</c>, only usable once
 /// instantiated), or an instantiation whose type arguments are Piper types (<c>List&lt;Point&gt;</c>). Piper's builtin
 /// types are never represented this way: <c>System.String</c> is <see cref="TypeSymbol.String"/>.
+/// Arrays are instantiations too: <c>Point[]</c> is the definition <c>T[]</c> (over <see cref="ElementParameter"/>)
+/// with <c>T = Point</c>, so arrays of Piper types work like <c>List&lt;Point&gt;</c> and reflection still finds
+/// <c>Length</c> and the <c>IEnumerable&lt;T&gt;</c> interfaces.
 /// </summary>
 public sealed class ClrTypeSymbol : TypeSymbol
 {
     private static readonly ConcurrentDictionary<Type, ClrTypeSymbol> Definitions = new();
     private readonly List<ClrTypeSymbol> _instantiations = [];
+
+    private sealed class ArrayElement<T>;
+
+    /// <summary>The <c>T</c> of the array definitions <c>T[]</c>, <c>T[,]</c>, ….</summary>
+    public static readonly Type ElementParameter = typeof(ArrayElement<>).GetGenericArguments()[0];
+
+    /// <summary><c>element[]</c>, or <c>element[,]</c> etc. for a multi-dimensional array.</summary>
+    public static TypeSymbol ArrayOf(TypeSymbol element, int rank = 1) =>
+        For(rank == 1 ? ElementParameter.MakeArrayType() : ElementParameter.MakeArrayType(rank)).Construct([element]);
+
+    public bool IsArray => Type.IsArray;
+
+    public int Rank => Type.IsArray ? Type.GetArrayRank() : 0;
 
     private ClrTypeSymbol(Type type, ClrTypeSymbol? definition, ImmutableArray<TypeSymbol> arguments)
         : base(DisplayName(type, arguments))
@@ -105,7 +121,7 @@ public sealed class ClrTypeSymbol : TypeSymbol
 
     public override ImmutableArray<TypeSymbol> TypeArguments { get; }
 
-    public bool IsGenericDefinition => Type.IsGenericTypeDefinition && TypeArguments.IsEmpty;
+    public bool IsGenericDefinition => (Type.IsGenericTypeDefinition || Type.IsArray) && TypeArguments.IsEmpty;
 
     public bool IsReferenceType => !Type.IsValueType;
 
@@ -130,12 +146,14 @@ public sealed class ClrTypeSymbol : TypeSymbol
 
     /// <summary>Maps the generic definition's type parameters (e.g. List's T) to this instantiation's arguments.</summary>
     public IReadOnlyDictionary<Type, TypeSymbol> GenericMap =>
-        Type.IsGenericTypeDefinition && !TypeArguments.IsEmpty
-            ? Type.GetGenericArguments().Zip(TypeArguments).ToDictionary(p => p.First, p => p.Second)
-            : new Dictionary<Type, TypeSymbol>();
+        TypeArguments.IsEmpty ? new Dictionary<Type, TypeSymbol>()
+        : Type.IsArray ? new Dictionary<Type, TypeSymbol> { [ElementParameter] = TypeArguments[0] }
+        : Type.GetGenericArguments().Zip(TypeArguments).ToDictionary(p => p.First, p => p.Second);
 
     private static string DisplayName(Type type, ImmutableArray<TypeSymbol> arguments)
     {
+        if (type.IsArray)
+            return $"{(arguments.IsEmpty ? "T" : arguments[0].Name)}[{new string(',', type.GetArrayRank() - 1)}]";
         var name = type.Name.Split('`')[0];
         return arguments.IsEmpty ? name : $"{name}<{string.Join(", ", arguments)}>";
     }
@@ -175,6 +193,13 @@ public static class ClrTypes
         [TypeSymbol.Char] = typeof(char),
     };
 
+    /// <summary><c>ValueTuple&lt;T1, T2&gt;</c> … <c>ValueTuple&lt;T1, …, T7&gt;</c>: the .NET types of Piper's tuples.</summary>
+    private static readonly Type[] ValueTupleTypes =
+    [
+        typeof(ValueTuple<,>), typeof(ValueTuple<,,>), typeof(ValueTuple<,,,>), typeof(ValueTuple<,,,,>),
+        typeof(ValueTuple<,,,,,>), typeof(ValueTuple<,,,,,,>),
+    ];
+
     /// <summary>
     /// The Piper type for a .NET type, or null if Piper can't represent it (pointers, by-refs, ref structs,
     /// unmapped generic parameters). <paramref name="genericMap"/> supplies the containing type's type arguments.
@@ -198,7 +223,11 @@ public static class ClrTypes
             return FromClr(underlying, genericMap, option) is { } inner ? option.Construct([inner]) : null;
 
         if (type.IsArray)
-            return type.ContainsGenericParameters ? null : ClrTypeSymbol.For(type);
+        {
+            return FromClr(type.GetElementType()!, genericMap, option) is { } element
+                ? ClrTypeSymbol.ArrayOf(element, type.IsSZArray ? 1 : type.GetArrayRank())
+                : null;
+        }
 
         if (type.IsGenericType)
         {
@@ -210,7 +239,10 @@ public static class ClrTypes
                     return null;
                 arguments.Add(piper);
             }
-            return ClrTypeSymbol.For(definition).Construct([.. arguments]);
+            // (int, string) is a Piper tuple. (Element names from [TupleElementNames] aren't read.)
+            return ValueTupleTypes.Contains(definition)
+                ? TupleTypeSymbol.Create([.. arguments])
+                : ClrTypeSymbol.For(definition).Construct([.. arguments]);
         }
 
         return ClrTypeSymbol.For(type);
@@ -221,10 +253,19 @@ public static class ClrTypes
     {
         if (BuiltinTypes.TryGetValue(type, out var builtin))
             return builtin;
+        if (type is TupleTypeSymbol tuple)
+        {
+            var elements = tuple.ElementTypes.Select(ToClr).ToArray();
+            return elements.Length < ValueTupleTypes.Length + 2 && elements.All(e => e is not null)
+                ? ValueTupleTypes[elements.Length - 2].MakeGenericType(elements!)
+                : null;
+        }
         if (type is not ClrTypeSymbol clr)
             return null;
         if (clr.TypeArguments.IsEmpty)
             return clr.Type;
+        if (clr.IsArray)
+            return ToClr(clr.TypeArguments[0]) is { } element ? (clr.Rank == 1 ? element.MakeArrayType() : element.MakeArrayType(clr.Rank)) : null;
 
         var arguments = clr.TypeArguments.Select(ToClr).ToArray();
         if (arguments.Any(a => a is null))

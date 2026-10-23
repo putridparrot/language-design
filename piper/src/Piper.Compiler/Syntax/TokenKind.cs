@@ -41,6 +41,7 @@ public enum TokenKind
     CatchKeyword,
     FinallyKeyword,
     ThrowKeyword,
+    OutKeyword,
     TrueKeyword,
     FalseKeyword,
 

@@ -17,7 +17,8 @@ namespace Piper.Binding;
 /// </summary>
 public sealed partial class Binder
 {
-    private sealed record ClrParameter(TypeSymbol Type, ClrBoundary Boundary);
+    /// <param name="IsOut">An <c>out</c> parameter: <see cref="Type"/> is what it produces.</param>
+    private sealed record ClrParameter(TypeSymbol Type, ClrBoundary Boundary, bool IsOut = false);
 
     /// <summary>A .NET method or constructor as Piper sees it. <see cref="ParamsElement"/> is set for a <c>params</c> array.</summary>
     private sealed record ClrCandidate(
@@ -30,10 +31,18 @@ public sealed partial class Binder
         ClrBoundary ReturnBoundary,
         ImmutableArray<TypeSymbol> TypeArguments);
 
-    /// <summary>An argument: bound, or (for lambdas) bound later against each candidate's parameter type.</summary>
+    /// <summary>
+    /// An argument: bound, or (for lambdas) bound later against each candidate's parameter type. An <c>out</c>
+    /// argument (<see cref="Out"/>) is bound once a candidate is chosen; <see cref="OutVariable"/> is the existing
+    /// variable it names, if any.
+    /// </summary>
     private sealed record ClrArgument(BoundExpression? Bound, LambdaExpressionSyntax? Lambda, TextSpan Span)
     {
-        public TypeSymbol? Type => Bound?.Type;
+        public OutArgumentSyntax? Out { get; init; }
+
+        public VariableSymbol? OutVariable { get; init; }
+
+        public TypeSymbol? Type => Bound?.Type ?? OutVariable?.Type;
     }
 
     private sealed record ResolvedClrCall(ClrCandidate Candidate, ImmutableArray<BoundExpression> Arguments);
@@ -53,12 +62,24 @@ public sealed partial class Binder
         _ => (ClrTypes.BuiltinTypes[type], new Dictionary<Type, TypeSymbol>()),
     };
 
-    private BoundExpression BindClrStaticMember(TypeSymbol type, Token member, ImmutableArray<ExpressionSyntax>? arguments, TextSpan span)
+    private BoundExpression BindClrStaticMember(
+        TypeSymbol type,
+        Token member,
+        ImmutableArray<ExpressionSyntax>? arguments,
+        TextSpan span,
+        ImmutableArray<TypeSymbol>? explicitTypeArguments)
     {
         var (clrType, map) = ClrContext(type);
         const BindingFlags flags = BindingFlags.Public | BindingFlags.Static;
         if (arguments is null)
+        {
+            if (explicitTypeArguments is not null)
+            {
+                _diagnostics.ReportNotAValue(member.Span, member.Text, "method");
+                return new BoundErrorExpression();
+            }
             return BindClrMemberRead(null, type, member, clrType.GetMember(member.Text, flags), map);
+        }
 
         var methods = WithoutHidden(clrType.GetMethods(flags | BindingFlags.FlattenHierarchy).Where(m => m.Name == member.Text)).ToList();
         if (methods.Count == 0)
@@ -67,20 +88,28 @@ public sealed partial class Binder
             _diagnostics.ReportUnknownMethod(member.Span, type, member.Text);
             return new BoundErrorExpression();
         }
-        return BindClrInvocation(null, type, methods, $"{type}.{member.Text}", arguments.Value, [], span, map);
+        return BindClrInvocation(null, type, methods, $"{type}.{member.Text}", arguments.Value, [], span, map, explicitTypeArguments);
     }
 
-    private BoundExpression BindClrInstanceCall(BoundExpression receiver, Token member, ImmutableArray<ExpressionSyntax> arguments, TextSpan span)
+    private BoundExpression BindClrInstanceCall(
+        BoundExpression receiver,
+        Token member,
+        ImmutableArray<ExpressionSyntax> arguments,
+        TextSpan span,
+        ImmutableArray<TypeSymbol>? explicitTypeArguments)
     {
         var (clrType, map) = ClrContext(receiver.Type);
         var methods = InstanceMethods(clrType).Where(m => m.Name == member.Text).ToList();
         if (methods.Count > 0)
-            return BindClrInvocation(receiver, receiver.Type, methods, member.Text, arguments, [], span, map);
+            return BindClrInvocation(receiver, receiver.Type, methods, member.Text, arguments, [], span, map, explicitTypeArguments);
 
         // Extension methods from the namespaces this file imports: `numbers.Where(n => n > 2)`.
         var extensions = ImportedExtensionMethods(member.Text);
         if (extensions.Count > 0)
-            return BindClrInvocation(null, receiver.Type, extensions, member.Text, arguments, [receiver], span, new Dictionary<Type, TypeSymbol>());
+        {
+            return BindClrInvocation(
+                null, receiver.Type, extensions, member.Text, arguments, [receiver], span, new Dictionary<Type, TypeSymbol>(), explicitTypeArguments);
+        }
 
         BindArgumentsForDiagnostics(arguments);
         _diagnostics.ReportUnknownMethod(member.Span, receiver.Type, member.Text);
@@ -138,7 +167,7 @@ public sealed partial class Binder
                 _ => null,
             };
             if (read is not { } value ||
-                MapValue(value.Type, GenericAware(value.Info.ReadState, value.Type, member.CustomAttributes, member, "MaybeNullAttribute"), map) is not { } mapped)
+                MapValue(value.Type, GenericAware(value.Info.ReadState, value.Type, member.CustomAttributes, member, "MaybeNull"), map) is not { } mapped)
             {
                 continue;
             }
@@ -194,9 +223,10 @@ public sealed partial class Binder
         ImmutableArray<ExpressionSyntax> argumentSyntax,
         ImmutableArray<BoundExpression> leadingArguments,
         TextSpan span,
-        IReadOnlyDictionary<Type, TypeSymbol> map)
+        IReadOnlyDictionary<Type, TypeSymbol> map,
+        ImmutableArray<TypeSymbol>? explicitTypeArguments = null)
     {
-        if (ResolveClrOverload(members, container, displayName, argumentSyntax, leadingArguments, span, map) is not { } resolved)
+        if (ResolveClrOverload(members, container, displayName, argumentSyntax, leadingArguments, span, map, explicitTypeArguments) is not { } resolved)
             return new BoundErrorExpression();
 
         var chosen = resolved.Candidate;
@@ -214,23 +244,40 @@ public sealed partial class Binder
         ImmutableArray<ExpressionSyntax> argumentSyntax,
         ImmutableArray<BoundExpression> leadingArguments,
         TextSpan span,
-        IReadOnlyDictionary<Type, TypeSymbol> map)
+        IReadOnlyDictionary<Type, TypeSymbol> map,
+        ImmutableArray<TypeSymbol>? explicitTypeArguments = null)
     {
+        if (explicitTypeArguments?.Contains(TypeSymbol.Error) == true)
+        {
+            BindArgumentsForDiagnostics(argumentSyntax);
+            return null;
+        }
+
         var arguments = leadingArguments.Select(a => new ClrArgument(a, null, span))
-            .Concat(argumentSyntax.Select(a => a is LambdaExpressionSyntax lambda
-                ? new ClrArgument(null, lambda, a.Span)
-                : new ClrArgument(RequireValue(BindExpression(a), a.Span), null, a.Span)))
+            .Concat(argumentSyntax.Select(a => a switch
+            {
+                LambdaExpressionSyntax lambda => new ClrArgument(null, lambda, a.Span),
+                OutArgumentSyntax output => new ClrArgument(null, null, a.Span) { Out = output, OutVariable = OutTarget(output) },
+                _ => new ClrArgument(RequireValue(BindExpression(a), a.Span), null, a.Span),
+            }))
             .ToList();
-        if (arguments.Any(a => a.Type == TypeSymbol.Error))
+        if (arguments.Any(a => a.Type == TypeSymbol.Error || (a.Out is { Declaration: null, IsDiscard: false } && a.OutVariable is null)))
             return null;
 
         var applicable = new List<(ClrCandidate Candidate, int[] Scores, bool Expanded)>();
         foreach (var member in members)
         {
             var memberMap = map;
-            if (member is MethodInfo { IsGenericMethodDefinition: true } generic)
+            if (explicitTypeArguments is { } written)
             {
-                if (InferMethodTypeArguments(generic, arguments, map) is not { } inferred)
+                // `Enumerable.Empty<Int>()`: only generic methods with that many type parameters, and nothing to infer.
+                if (member is not MethodInfo { IsGenericMethodDefinition: true } generic || generic.GetGenericArguments().Length != written.Length)
+                    continue;
+                memberMap = new Dictionary<Type, TypeSymbol>(map.Concat(generic.GetGenericArguments().Zip(written, KeyValuePair.Create)));
+            }
+            else if (member is MethodInfo { IsGenericMethodDefinition: true } inferable)
+            {
+                if (InferMethodTypeArguments(inferable, arguments, map) is not { } inferred)
                     continue;
                 memberMap = inferred;
             }
@@ -264,11 +311,52 @@ public sealed partial class Binder
         var converted = arguments.Select((argument, i) =>
         {
             var parameter = ParameterFor(chosen, i, isExpanded);
+            if (argument.Out is { } output)
+                return BindOutArgument(output, argument.OutVariable, parameter);
             return argument.Lambda is { } lambda
                 ? BindLambda(lambda, parameter.Type)
                 : ConvertClrArgument(argument.Bound!, parameter);
         }).ToImmutableArray();
         return new ResolvedClrCall(chosen, converted);
+    }
+
+    /// <summary>The existing variable named by <c>out n</c>, or null (after reporting, unless it's <c>out _</c> or <c>out let n</c>).</summary>
+    private VariableSymbol? OutTarget(OutArgumentSyntax syntax)
+    {
+        if (syntax.Declaration is not null || syntax.IsDiscard || syntax.Name.IsMissing)
+            return null;
+        if (_scope.Lookup(syntax.Name.Text) is VariableSymbol variable)
+            return variable;
+        if (!ReportIfPrivateElsewhere(syntax.Name))
+            _diagnostics.ReportUndefinedName(syntax.Name.Span, syntax.Name.Text);
+        return null;
+    }
+
+    /// <summary>The Piper type of what an <c>out</c> parameter produces: an Option where .NET may produce null.</summary>
+    private TypeSymbol OutType(ClrParameter parameter) =>
+        parameter.Boundary == ClrBoundary.NullableReference ? _option.Construct([parameter.Type]) : parameter.Type;
+
+    /// <summary>
+    /// <c>out let n</c> declares n, typed by the parameter, in the enclosing statement's scope (for an if condition, the
+    /// scope around the if, so a guard like <c>if !Int.TryParse(s, out let n) { return; }</c> leaves n usable), as in C#.
+    /// </summary>
+    private BoundExpression BindOutArgument(OutArgumentSyntax syntax, VariableSymbol? existing, ClrParameter parameter)
+    {
+        var type = OutType(parameter);
+        if (syntax.IsDiscard)
+            return new BoundOutArgument(null, declares: false, parameter.Type, ClrBoundary.None, type);
+
+        if (syntax.Declaration is { } keyword)
+        {
+            var variable = new VariableSymbol(syntax.Name.Text, type, keyword.Kind == TokenKind.VarKeyword, VariableKind.Local);
+            if (!syntax.Name.IsMissing && !(_outScope ?? _scope).TryDeclare(variable))
+                _diagnostics.ReportDuplicateDeclaration(syntax.Name.Span, variable.Name);
+            return new BoundOutArgument(variable, declares: true, parameter.Type, parameter.Boundary, type);
+        }
+
+        if (!existing!.IsMutable)
+            _diagnostics.ReportCannotAssignImmutable(syntax.Name.Span, existing);
+        return new BoundOutArgument(existing, declares: false, parameter.Type, parameter.Boundary, type);
     }
 
     private static bool Beats((ClrCandidate Candidate, int[] Scores, bool Expanded) a, (ClrCandidate Candidate, int[] Scores, bool Expanded) b)
@@ -297,9 +385,16 @@ public sealed partial class Binder
         for (int i = 0; i < arguments.Count; i++)
         {
             var parameter = ParameterFor(candidate, i, expanded);
-            int? score = arguments[i].Lambda is { } lambda
-                ? LambdaScore(lambda, parameter.Type)
-                : ConversionScore(arguments[i].Type!, parameter);
+            // An out argument goes only to an out parameter (an existing variable must have exactly its type), and vice versa.
+            if (parameter.IsOut != arguments[i].Out is not null)
+                return null;
+            int? score = arguments[i] switch
+            {
+                { Out: not null, OutVariable: { } variable } => variable.Type == OutType(parameter) ? 0 : null,
+                { Out: not null } => 0,
+                { Lambda: { } lambda } => LambdaScore(lambda, parameter.Type),
+                var argument => ConversionScore(argument.Type!, parameter),
+            };
             if (score is not { } value)
                 return null;
             scores[i] = value;
@@ -432,11 +527,8 @@ public sealed partial class Binder
 
         if (parameter.IsArray)
         {
-            if (argument is ClrTypeSymbol { Type.IsArray: true } array &&
-                ClrTypes.FromClr(array.Type.GetElementType()!, new Dictionary<Type, TypeSymbol>(), _option) is { } element)
-            {
-                InferClr(parameter.GetElementType()!, element, result, generics);
-            }
+            if (argument is ClrTypeSymbol { IsArray: true } array && array.Rank == parameter.GetArrayRank())
+                InferClr(parameter.GetElementType()!, array.TypeArguments[0], result, generics);
             return;
         }
 
@@ -491,15 +583,30 @@ public sealed partial class Binder
         for (int i = 0; i < infos.Length; i++)
         {
             var info = infos[i];
-            if (info.ParameterType.IsByRef || info.IsOut)
+            bool isOut = info.ParameterType.IsByRef && info.IsOut;
+            // `ref` parameters aren't supported; an `in` parameter takes its argument like a value parameter.
+            if (info.ParameterType.IsByRef && !isOut && !info.IsIn)
                 return null;
-            var accepts = GenericAware(nullability.Create(info).WriteState, info.ParameterType, info.CustomAttributes, member, "AllowNullAttribute");
-            if (MapValue(info.ParameterType, accepts, map) is not { } mapped)
+            var parameterType = info.ParameterType.IsByRef ? info.ParameterType.GetElementType()! : info.ParameterType;
+
+            NullabilityState state;
+            if (isOut)
+            {
+                // What an out parameter produces may be null: `out string? s`, or `[MaybeNullWhen(false)] out TValue value`.
+                state = GenericAware(nullability.Create(info).ReadState, parameterType, info.CustomAttributes, member, "MaybeNull");
+                if (info.CustomAttributes.Any(a => a.AttributeType.Name == "MaybeNullWhenAttribute"))
+                    state = NullabilityState.Nullable;
+            }
+            else
+            {
+                state = GenericAware(nullability.Create(info).WriteState, parameterType, info.CustomAttributes, member, "AllowNull");
+            }
+            if (MapValue(parameterType, state, map) is not { } mapped)
                 return null;
 
             var (type, boundary) = mapped;
-            // A parameter that accepts null takes the plain type; an Option argument is converted at the call.
-            parameters.Add(new ClrParameter(boundary == ClrBoundary.NullableReference ? type.TypeArguments[0] : type, boundary));
+            // A parameter that accepts (or produces) null takes the plain type; the Option is converted at the call.
+            parameters.Add(new ClrParameter(boundary == ClrBoundary.NullableReference ? type.TypeArguments[0] : type, boundary, isOut));
             if (!info.IsOptional)
                 required = i + 1;
 
@@ -517,7 +624,7 @@ public sealed partial class Binder
             ConstructorInfo => (container, ClrBoundary.None),
             MethodInfo method => MapValue(
                 method.ReturnType,
-                GenericAware(nullability.Create(method.ReturnParameter).ReadState, method.ReturnType, method.ReturnParameter.CustomAttributes, method, "MaybeNullAttribute"),
+                GenericAware(nullability.Create(method.ReturnParameter).ReadState, method.ReturnType, method.ReturnParameter.CustomAttributes, method, "MaybeNull"),
                 map),
             _ => null,
         };
@@ -541,7 +648,7 @@ public sealed partial class Binder
     {
         if (state != NullabilityState.Nullable || !declared.IsGenericParameter)
             return state;
-        if (attributes.Any(a => a.AttributeType.Name == nullAttribute))
+        if (attributes.Any(a => a.AttributeType.Name == nullAttribute + "Attribute"))
             return state;
 
         var flag = NullableFlag(attributes, "NullableAttribute");
