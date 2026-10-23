@@ -5,10 +5,10 @@ using System;
 using System.Text;
 using System.Collections.Generic;
 
-record Point(x: Int, y: Int);
+record Point(x: int, y: int);
 
-fn describe(path: String) -> String {
-    // Path.GetExtension is annotated as possibly returning null, so it comes back as String?.
+fn describe(path: string) => string {
+    // Path.GetExtension is annotated as possibly returning null, so it comes back as string?.
     let extension = System.IO.Path.GetExtension(path);
     "{path}: {extension ?? "no extension"}"
 }
@@ -20,9 +20,9 @@ fn main() {
     print(Math.Max(2.5, 1.0));
     print(Math.Abs(-5L));
     print(Math.PI > 3.14);
-    print(Int.MaxValue);
-    print(Int.Parse("42") + 1);
-    print(Char.IsDigit('7'));
+    print(int.MaxValue);
+    print(int.Parse("42") + 1);
+    print(char.IsDigit('7'));
 
     // Members of Piper's builtin types are the .NET members.
     let name = "Piper";
@@ -50,13 +50,13 @@ fn main() {
     print(points.Contains(Point(3, 4)));
 
     // ...or from type arguments written out, as in C#.
-    let scores = Dictionary<String, Long>();
+    let scores = Dictionary<string, long>();
     scores.Add("Ada", 1);
     print(scores.Count);
-    print(System.Linq.Enumerable.Count(System.Linq.Enumerable.Empty<Int>()));
-    print(String.Join(",", System.Linq.Enumerable.Repeat<Long>(7, 3)));
+    print(System.Linq.Enumerable.Count(System.Linq.Enumerable.Empty<int>()));
+    print(string.Join(",", System.Linq.Enumerable.Repeat<long>(7, 3)));
 
-    let ages: Dictionary<String, Int> = Dictionary();
+    let ages: Dictionary<string, int> = Dictionary();
     ages.Add("Ada", 36);
     print(ages.ContainsKey("Ada"));
 
@@ -65,8 +65,8 @@ fn main() {
     print(Environment.GetEnvironmentVariable("PIPER_SURELY_UNSET_VARIABLE") ?? "unset");
 
     // ...and None becomes null where .NET accepts it.
-    let missing: String? = null;
-    let present: String? = "here";
-    print("{String.IsNullOrEmpty(missing)} {String.IsNullOrEmpty(present)}");
-    print(String.Join(", ", "a", "b", "c"));
+    let missing: string? = null;
+    let present: string? = "here";
+    print("{string.IsNullOrEmpty(missing)} {string.IsNullOrEmpty(present)}");
+    print(string.Join(", ", "a", "b", "c"));
 }

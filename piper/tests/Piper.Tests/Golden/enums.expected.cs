@@ -13,7 +13,7 @@ public abstract record Shape
 
     public sealed record Rect(double width, double height) : Shape;
 
-    public sealed record Empty() : Shape;
+    public sealed record Empty() : Shape { public override string ToString() => "Empty"; }
 }
 
 public static class Enums

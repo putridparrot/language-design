@@ -95,7 +95,7 @@ public sealed class Parser
         if (literal.Value is not NegatableLiteral min)
             return literal.Value;
         _diagnostics.ReportIntegerTooLarge(literal.Span, literal.Text, min.TypeName);
-        return min.TypeName == "Int" ? 0 : 0L;
+        return min.TypeName == "int" ? 0 : 0L;
     }
 
     /// <summary>Tokens that continue a postfix expression, which binds tighter than unary minus.</summary>
@@ -188,7 +188,7 @@ public sealed class Parser
 
     /// <summary>
     /// function = [ "static" ] "fn" IDENT [ typeParameters ] "(" [ parameter { "," parameter } [ "," ] ] ")"
-    ///            [ "->" type ] ( block | "=" expression ";" | ";" ) ;
+    ///            [ "=>" type ] ( block | "=" expression ";" | ";" ) ;
     /// The bodiless form declares a required trait method, and 'static' only makes sense on methods;
     /// the binder reports either one elsewhere.
     /// </summary>
@@ -205,9 +205,12 @@ public sealed class Parser
         Expect(TokenKind.CloseParen);
 
         TypeSyntax? returnType = null;
-        if (Current.Kind == TokenKind.Arrow)
+        if (Current.Kind is TokenKind.FatArrow or TokenKind.Arrow)
         {
-            NextToken();
+            // `->` (from older Piper) is reported but read as `=>`.
+            Expect(TokenKind.FatArrow);
+            if (Previous.Kind != TokenKind.FatArrow)
+                NextToken();
             returnType = ParseType();
         }
 
@@ -411,6 +414,13 @@ public sealed class Parser
     /// <summary>namedType = IDENT [ "&lt;" type { "," type } [ "," ] "&gt;" ] ;</summary>
     private NamedTypeSyntax ParseNamedType()
     {
+        // `int`, `string`, …: a builtin type's keyword.
+        if (Current.Kind == TokenKind.PredefinedTypeKeyword)
+        {
+            var keyword = NextToken();
+            return new NamedTypeSyntax(keyword.Span, [], keyword, []);
+        }
+
         if (Current.Kind == TokenKind.Identifier)
         {
             var first = Current;
@@ -440,7 +450,7 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// functionType = "(" [ type { "," type } [ "," ] ] ")" "->" type ;
+    /// functionType = "(" [ type { "," type } [ "," ] ] ")" "=>" type ;
     /// tupleType    = "(" tupleElement "," tupleElement { "," tupleElement } ")" ;
     /// tupleElement = [ IDENT ":" ] type ;
     /// </summary>
@@ -461,9 +471,11 @@ public sealed class Parser
         }, TokenKind.CloseParen);
         Expect(TokenKind.CloseParen);
 
-        if (Current.Kind == TokenKind.Arrow)
+        if (Current.Kind is TokenKind.FatArrow or TokenKind.Arrow)
         {
-            NextToken();
+            Expect(TokenKind.FatArrow);
+            if (Previous.Kind != TokenKind.FatArrow)
+                NextToken();
             var returnType = ParseType();
             return new FunctionTypeSyntax(Span(open, returnType), [.. elements.Select(e => e.Type)], returnType);
         }
@@ -529,8 +541,9 @@ public sealed class Parser
 
         while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
         {
-            // A declaration keyword inside a block almost always means a missing '}'.
-            if (IsDeclarationStart(Current.Kind))
+            // A declaration keyword inside a block almost always means a missing '}' (but `using let`/`using (` is a statement).
+            if (IsDeclarationStart(Current.Kind) &&
+                !(Current.Kind == TokenKind.UsingKeyword && Peek(1).Kind is TokenKind.LetKeyword or TokenKind.VarKeyword or TokenKind.OpenParen))
                 break;
 
             int start = _position;
@@ -553,6 +566,9 @@ public sealed class Parser
                     break;
                 case TokenKind.TryKeyword:
                     statements.Add(ParseTry());
+                    break;
+                case TokenKind.UsingKeyword:
+                    statements.Add(ParseUsing());
                     break;
                 case TokenKind.BreakKeyword:
                 {
@@ -646,6 +662,42 @@ public sealed class Parser
         var initializer = ParseExpression();
         Expect(TokenKind.Semicolon);
         return new VariableDeclarationSyntax(SpanFrom(keyword), keyword, name, type, initializer);
+    }
+
+    /// <summary>
+    /// using = "using" ( "let" | "var" ) IDENT [ ":" type ] "=" expression ";"
+    ///       | "using" "(" [ ( "let" | "var" ) IDENT [ ":" type ] "=" ] expression ")" block ;
+    /// </summary>
+    private StatementSyntax ParseUsing()
+    {
+        var keyword = NextToken();
+        if (Current.Kind is TokenKind.LetKeyword or TokenKind.VarKeyword)
+        {
+            var statement = ParseVariableDeclaration();
+            if (statement is VariableDeclarationSyntax declaration)
+                return declaration with { Span = SpanFrom(keyword), Using = keyword };
+            ReportOnce(statement.Span, () => _diagnostics.ReportUsingDeconstruction(statement.Span));
+            return statement;
+        }
+
+        Expect(TokenKind.OpenParen);
+        Token? name = null;
+        TypeSyntax? type = null;
+        if (Current.Kind is TokenKind.LetKeyword or TokenKind.VarKeyword)
+        {
+            NextToken();
+            name = Expect(TokenKind.Identifier);
+            if (Current.Kind == TokenKind.Colon)
+            {
+                NextToken();
+                type = ParseType();
+            }
+            Expect(TokenKind.Equals);
+        }
+        var resource = ParseExpression();
+        Expect(TokenKind.CloseParen);
+        var body = ParseBlock();
+        return new UsingStatementSyntax(Span(keyword, body), keyword, name, type, resource, body);
     }
 
     /// <summary>while = "while" expression block ;</summary>
@@ -747,6 +799,15 @@ public sealed class Parser
             var minus = NextToken();
             var number = NextToken();
             left = new LiteralExpressionSyntax(SpanFrom(minus), number, min.Negated);
+        }
+        else if (Current.Kind == TokenKind.OpenParen && CastPrecedence >= parentPrecedence && IsCast())
+        {
+            // `(Int)x`: binds like a unary operator, so `(Int)x.y` casts `x.y`.
+            var open = NextToken();
+            var type = ParseType();
+            Expect(TokenKind.CloseParen);
+            var operand = ParseBinary(CastPrecedence);
+            left = new CastExpressionSyntax(Span(open, operand), type, operand);
         }
         else if (unaryPrecedence != 0 && unaryPrecedence >= parentPrecedence)
         {
@@ -866,7 +927,8 @@ public sealed class Parser
             }
             case TokenKind.Identifier when Peek(1).Kind == TokenKind.FatArrow && !_inGuard:
                 return ParseLambda();
-            case TokenKind.Identifier or TokenKind.ThisKeyword:
+            // A builtin type's keyword is used like its name: `int.Parse(s)`, `string.Join(…)`, `int[5]`.
+            case TokenKind.Identifier or TokenKind.ThisKeyword or TokenKind.PredefinedTypeKeyword:
             {
                 var identifier = NextToken();
                 var typeArguments = identifier.Kind == TokenKind.Identifier ? ParseTypeArgumentsIfGeneric() : [];
@@ -957,9 +1019,12 @@ public sealed class Parser
                         or TokenKind.QuestionDot or TokenKind.Question or TokenKind.EqualsEquals or TokenKind.BangEquals
                         or TokenKind.Pipe or TokenKind.AmpersandAmpersand or TokenKind.PipePipe or TokenKind.OpenBracket
                         or TokenKind.EndOfFile;
-                case TokenKind.Greater or TokenKind.Identifier or TokenKind.Dot or TokenKind.Comma or TokenKind.Question
+                case TokenKind.Greater or TokenKind.Identifier or TokenKind.PredefinedTypeKeyword or TokenKind.Dot or TokenKind.Comma or TokenKind.Question
                     or TokenKind.QuestionQuestion or TokenKind.OpenBracket or TokenKind.CloseBracket or TokenKind.OpenParen
-                    or TokenKind.CloseParen or TokenKind.Arrow or TokenKind.Colon:
+                    or TokenKind.CloseParen or TokenKind.Colon:
+                    break;
+                // A function type's `=>` follows its parameter list's `)`, unlike a lambda's or a match arm's.
+                case TokenKind.FatArrow when Peek(offset - 1).Kind == TokenKind.CloseParen:
                     break;
                 default:
                     return false;
@@ -990,6 +1055,45 @@ public sealed class Parser
         }
         var expression = ParseExpression();
         return new TupleElementSyntax(TextSpan.FromBounds(start.Span.Start, expression.Span.End), name, expression);
+    }
+
+    private static readonly int CastPrecedence = SyntaxFacts.GetUnaryPrecedence(TokenKind.Minus);
+
+    /// <summary>
+    /// C#'s rule for <c>(T)x</c> versus a parenthesized expression: the tokens inside the parentheses must be able to
+    /// form a type, and the token after them must be one that can start an operand: an identifier, a literal,
+    /// <c>(</c>, <c>!</c>, <c>this</c>, <c>true</c>, <c>false</c> or <c>null</c>. So <c>(Int)x</c> and
+    /// <c>(Byte)(a + b)</c> are casts, but <c>(a) - b</c> is a subtraction.
+    /// </summary>
+    private bool IsCast()
+    {
+        // As in C#, a builtin type keyword alone in parentheses is always a cast: `(int)-x`.
+        if (Peek(1).Kind == TokenKind.PredefinedTypeKeyword && Peek(2).Kind == TokenKind.CloseParen)
+            return true;
+        if (Peek(1).Kind is not (TokenKind.Identifier or TokenKind.OpenParen or TokenKind.PredefinedTypeKeyword))
+            return false;
+        int depth = 0;
+        for (int offset = 0; ; offset++)
+        {
+            switch (Peek(offset).Kind)
+            {
+                case TokenKind.OpenParen:
+                    depth++;
+                    break;
+                case TokenKind.CloseParen when --depth == 0:
+                    return Peek(offset + 1).Kind is TokenKind.Identifier or TokenKind.PredefinedTypeKeyword or TokenKind.IntegerLiteral or TokenKind.DoubleLiteral
+                        or TokenKind.CharLiteral or TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral or TokenKind.OpenParen
+                        or TokenKind.Bang or TokenKind.ThisKeyword or TokenKind.TrueKeyword or TokenKind.FalseKeyword or TokenKind.NullKeyword;
+                case TokenKind.CloseParen or TokenKind.Identifier or TokenKind.PredefinedTypeKeyword or TokenKind.Dot or TokenKind.Less or TokenKind.Greater
+                    or TokenKind.Comma or TokenKind.Question or TokenKind.QuestionQuestion or TokenKind.OpenBracket
+                    or TokenKind.CloseBracket or TokenKind.Colon:
+                    break;
+                case TokenKind.FatArrow when Peek(offset - 1).Kind == TokenKind.CloseParen:
+                    break;
+                default:
+                    return false;
+            }
+        }
     }
 
     /// <summary>True at a '(' that starts a lambda: the matching ')' is followed by '=>'.</summary>

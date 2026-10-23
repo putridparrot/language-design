@@ -38,7 +38,7 @@ public abstract record DeclarationSyntax(TextSpan Span, Token Name) : SyntaxNode
 
 /// <summary>
 /// A function or method. At most one of <see cref="BlockBody"/> and <see cref="ExpressionBody"/> is set;
-/// neither is for a required trait method (<c>fn area() -> Double;</c>).
+/// neither is for a required trait method (<c>fn area() => double;</c>).
 /// <see cref="Static"/> is the <c>static</c> modifier; methods without it are instance methods with an implicit <c>this</c>.
 /// </summary>
 public sealed record FunctionDeclarationSyntax(
@@ -110,7 +110,7 @@ public sealed record TupleTypeSyntax(TextSpan Span, ImmutableArray<TupleElementT
 /// <summary>One element of a tuple type; <see cref="Name"/> is optional.</summary>
 public sealed record TupleElementTypeSyntax(TextSpan Span, Token? Name, TypeSyntax Type) : SyntaxNode(Span);
 
-/// <summary><c>(Int, String) -> Bool</c>: a function type, i.e. the .NET delegate <c>Func</c> (or <c>Action</c> when it returns Unit).</summary>
+/// <summary><c>(int, string) => bool</c>: a function type, i.e. the .NET delegate <c>Func</c> (or <c>Action</c> when it returns unit).</summary>
 public sealed record FunctionTypeSyntax(TextSpan Span, ImmutableArray<TypeSyntax> Parameters, TypeSyntax ReturnType) : TypeSyntax(Span);
 
 // Statements
@@ -124,8 +124,23 @@ public sealed record VariableDeclarationSyntax(
     TypeSyntax? Type,
     ExpressionSyntax Initializer) : StatementSyntax(Span)
 {
-    public bool IsMutable => Keyword.Kind == TokenKind.VarKeyword;
+    /// <summary><c>using let r = …;</c>: the value is disposed at the end of the enclosing block, and can't be reassigned.</summary>
+    public Token? Using { get; init; }
+
+    public bool IsMutable => Keyword.Kind == TokenKind.VarKeyword && Using is null;
 }
+
+/// <summary>
+/// <c>using (let r = open()) { … }</c> or <c>using (expression) { … }</c>: the resource is disposed after the body.
+/// <see cref="Name"/> is null in the second form.
+/// </summary>
+public sealed record UsingStatementSyntax(
+    TextSpan Span,
+    Token Keyword,
+    Token? Name,
+    TypeSyntax? Type,
+    ExpressionSyntax Resource,
+    BlockExpressionSyntax Body) : StatementSyntax(Span);
 
 /// <summary><c>let (a, (b, _)) = value;</c>: declares a variable per name, as C#'s <c>var (a, (b, _)) = value;</c>.</summary>
 public sealed record DeconstructionDeclarationSyntax(
@@ -200,6 +215,9 @@ public sealed record NameExpressionSyntax(TextSpan Span, Token Identifier) : Exp
 }
 
 public sealed record UnaryExpressionSyntax(TextSpan Span, Token Operator, ExpressionSyntax Operand) : ExpressionSyntax(Span);
+
+/// <summary><c>(Int)x</c>: an explicit conversion, as in C#.</summary>
+public sealed record CastExpressionSyntax(TextSpan Span, TypeSyntax Type, ExpressionSyntax Operand) : ExpressionSyntax(Span);
 
 public sealed record BinaryExpressionSyntax(TextSpan Span, ExpressionSyntax Left, Token Operator, ExpressionSyntax Right)
     : ExpressionSyntax(Span);

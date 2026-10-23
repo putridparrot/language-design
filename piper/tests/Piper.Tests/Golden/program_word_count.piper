@@ -1,0 +1,82 @@
+// A larger program: count the words in a text and report the most common ones.
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+
+record WordCount(word: string, count: int);
+
+fn normalize(word: string) => string {
+    let builder = StringBuilder();
+    for c in word {
+        if char.IsLetter(c) || c == '\'' {
+            builder.Append(char.ToLowerInvariant(c));
+        }
+    }
+    builder.ToString()
+}
+
+fn countWords(text: string) => Dictionary<string, int> {
+    let counts: Dictionary<string, int> = Dictionary();
+    let separators = [' ', '\n', '\t', ',', '.', ';', '!', '?'];
+    for raw in text.Split(separators.ToArray(), StringSplitOptions.RemoveEmptyEntries) {
+        let word = normalize(raw);
+        if word.Length == 0 {
+            continue;
+        }
+        if counts.TryGetValue(word, out let seen) {
+            counts[word] = seen + 1;
+        } else {
+            counts[word] = 1;
+        }
+    }
+    counts
+}
+
+fn top(counts: Dictionary<string, int>, n: int) => List<WordCount> =
+    counts
+        .Select(pair => WordCount(pair.Key, pair.Value))
+        .OrderByDescending(w => w.count)
+        .ThenBy(w => w.word)
+        .Take(n)
+        .ToList();
+
+fn bar(count: int, scale: int) => string = string('#', count * scale);
+
+fn longest(words: IEnumerable<string>) => Option<string> {
+    var best: string? = null;
+    for word in words {
+        if best is Some(current) && current.Length >= word.Length {
+            continue;
+        }
+        best = word;
+    }
+    best
+}
+
+fn main() {
+    let text = """
+        The quick brown fox jumps over the lazy dog. The dog sleeps;
+        the fox doesn't. Quick, quick! The fox is quick and the dog is lazy.
+        """;
+
+    let counts = countWords(text);
+    print("{counts.Count} distinct words, {counts.Values.Sum()} in total");
+
+    for (index, entry) in top(counts, 5).Select((w, i) => (i + 1, w)) {
+        print("{index}. {entry.word.PadRight(6)} {entry.count} {bar(entry.count, 2)}");
+    }
+
+    let (shortWords, longWords) = counts.Keys.Aggregate((0, 0), (acc, word) =>
+        if word.Length <= 3 { (acc.Item1 + 1, acc.Item2) } else { (acc.Item1, acc.Item2 + 1) });
+    print("short: {shortWords}, long: {longWords}");
+
+    match longest(counts.Keys) {
+        Some(word) => print("longest: {word} ({word.Length} letters)"),
+        None => print("no words"),
+    }
+
+    let once = counts.Where(pair => pair.Value == 1).Select(pair => pair.Key).Order().ToArray();
+    print("seen once: {string.Join(", ", once)}");
+}

@@ -53,6 +53,9 @@ public sealed partial class Binder
     /// </summary>
     private Scope? _outScope;
 
+    /// <summary>For each loop being bound, innermost last: whether a `break` leaves it.</summary>
+    private readonly Stack<bool> _loopBreaks = new();
+
     /// <summary>
     /// <paramref name="Inferred"/> is set while binding a lambda whose return type isn't known yet: returned values
     /// are collected (not converted) so their common type can become the return type.
@@ -101,6 +104,8 @@ public sealed partial class Binder
         _builtins = new Scope(parent: null);
         foreach (var type in TypeSymbol.Builtins)
             _builtins.TryDeclare(type);
+        // `object` is a keyword for System.Object, as in C#.
+        _builtins.TryDeclare("object", ClrTypeSymbol.For(typeof(object)));
         foreach (var function in BuiltinFunctions.All)
             _builtins.TryDeclare(function);
 
@@ -680,7 +685,7 @@ public sealed partial class Binder
     private static string Signature(MethodSymbol method)
     {
         var parameters = string.Join(", ", method.Parameters.Select(p => $"{p.Name}: {p.Type}"));
-        var result = method.ReturnType == TypeSymbol.Unit ? "" : $" -> {method.ReturnType}";
+        var result = method.ReturnType == TypeSymbol.Unit ? "" : $" => {method.ReturnType}";
         return $"fn {method.Name}({parameters}){result}";
     }
 
@@ -888,7 +893,7 @@ public sealed partial class Binder
             return element == TypeSymbol.Error ? TypeSymbol.Error : ClrTypeSymbol.ArrayOf(element, array.Rank);
         }
 
-        // (Int, String) -> Bool is Func<Int, String, Bool>; a function returning Unit is an Action.
+        // (int, string) => bool is Func<int, string, bool>; a function returning unit is an Action.
         if (syntax is FunctionTypeSyntax function)
         {
             var parameters = function.Parameters.Select(p => BindValueType(p, "parameter")).ToList();
@@ -1068,11 +1073,20 @@ public sealed partial class Binder
     {
         BoundReturnStatement or BoundBreakStatement or BoundContinueStatement or BoundThrowStatement => true,
         BoundTryCatchStatement t => (Diverges(t.Body) && t.Catches.All(c => Diverges(c.Body))) || (t.Finally is { } f && Diverges(f)),
+        BoundUsingStatement u => Diverges(u.Body),
+        BoundWhileStatement { IsInfinite: true } => true,
         BoundExpressionStatement e => e.Expression.Type == TypeSymbol.Never,
         _ => false,
     };
 
-    private BoundStatement BindStatement(StatementSyntax syntax) => syntax switch
+    private BoundStatement BindStatement(StatementSyntax syntax)
+    {
+        var bound = BindStatementCore(syntax);
+        bound.SourceSpan ??= syntax.Span;
+        return bound;
+    }
+
+    private BoundStatement BindStatementCore(StatementSyntax syntax) => syntax switch
     {
         VariableDeclarationSyntax s => BindVariableDeclaration(s),
         DeconstructionDeclarationSyntax s => BindDeconstructionDeclaration(s),
@@ -1081,6 +1095,7 @@ public sealed partial class Binder
         ForStatementSyntax s => BindFor(s),
         ReturnStatementSyntax s => BindReturn(s),
         TryStatementSyntax s => BindTryCatch(s),
+        UsingStatementSyntax s => BindUsing(s),
         BreakStatementSyntax s => BindLoopJump(s.Keyword, new BoundBreakStatement()),
         ContinueStatementSyntax s => BindLoopJump(s.Keyword, new BoundContinueStatement()),
         _ => throw new InvalidOperationException($"Unexpected statement {syntax.GetType().Name}"),
@@ -1101,12 +1116,44 @@ public sealed partial class Binder
             type = initializer.Type;
         }
 
+        if (syntax.Using is not null)
+            CheckDisposable(type, syntax.Initializer.Span);
+
         // Declared after binding the initializer, so `let x = x + 1;` refers to the outer x.
         var variable = new VariableSymbol(syntax.Name.Text, type, syntax.IsMutable, VariableKind.Local);
         if (!syntax.Name.IsMissing && !_scope.TryDeclare(variable))
             _diagnostics.ReportDuplicateDeclaration(syntax.Name.Span, variable.Name);
 
-        return new BoundVariableDeclaration(variable, initializer);
+        return new BoundVariableDeclaration(variable, initializer, isUsing: syntax.Using is not null);
+    }
+
+    /// <summary><c>using (let r = open()) { … }</c>: r is in scope (and read-only) in the body only.</summary>
+    private BoundStatement BindUsing(UsingStatementSyntax syntax)
+    {
+        var type = syntax.Type is null ? null : BindValueType(syntax.Type, "variable");
+        var resource = RequireValue(BindExpression(syntax.Resource, type), syntax.Resource.Span);
+        if (type is not null)
+            resource = Convert(resource, type, syntax.Resource.Span);
+        CheckDisposable(resource.Type, syntax.Resource.Span);
+
+        var outer = _scope;
+        _scope = new Scope(outer);
+        VariableSymbol? variable = null;
+        if (syntax.Name is { } name)
+        {
+            variable = new VariableSymbol(name.Text, type ?? resource.Type, isMutable: false, VariableKind.Local);
+            if (!name.IsMissing)
+                _scope.TryDeclare(variable);
+        }
+        var body = BindBlock(syntax.Body);
+        _scope = outer;
+        return new BoundUsingStatement(variable, resource, new BoundExpressionStatement(body));
+    }
+
+    private void CheckDisposable(TypeSymbol type, TextSpan span)
+    {
+        if (type != TypeSymbol.Error && !(ClrTypes.ToClr(type) is { } clr && typeof(IDisposable).IsAssignableFrom(clr)))
+            _diagnostics.ReportNotDisposable(span, type);
     }
 
     private BoundStatement BindWhile(WhileStatementSyntax syntax)
@@ -1115,11 +1162,22 @@ public sealed partial class Binder
         var outer = _scope;
         _scope = new Scope(outer);
         var condition = BindCondition(syntax.Condition, allowPatternBindings: true);
-        _loopDepth++;
-        var body = BindBlock(syntax.Body);
-        _loopDepth--;
+        var body = BindLoopBody(syntax.Body, out bool breaks);
         _scope = outer;
-        return new BoundWhileStatement(condition, new BoundExpressionStatement(body));
+        // `while true` with no `break` never finishes, so code after it is unreachable, as in C#.
+        bool infinite = condition is BoundLiteralExpression { Value: true } && !breaks;
+        return new BoundWhileStatement(condition, new BoundExpressionStatement(body)) { IsInfinite = infinite };
+    }
+
+    /// <summary>Binds a loop's body, noting whether a `break` leaves this loop (rather than an inner one).</summary>
+    private BoundBlockExpression BindLoopBody(BlockExpressionSyntax body, out bool breaks)
+    {
+        _loopDepth++;
+        _loopBreaks.Push(false);
+        var bound = BindBlock(body);
+        breaks = _loopBreaks.Pop();
+        _loopDepth--;
+        return bound;
     }
 
     private BoundStatement BindFor(ForStatementSyntax syntax)
@@ -1147,9 +1205,7 @@ public sealed partial class Binder
         if (!syntax.Variable.IsMissing)
             _scope.TryDeclare(variable);
 
-        _loopDepth++;
-        var body = BindBlock(syntax.Body);
-        _loopDepth--;
+        var body = BindLoopBody(syntax.Body, out bool breaks);
         _scope = outer;
 
         return new BoundForStatement(variable, lower, upper, inclusive, new BoundExpressionStatement(body));
@@ -1201,6 +1257,11 @@ public sealed partial class Binder
 
     private BoundStatement BindLoopJump(Token keyword, BoundStatement statement)
     {
+        if (statement is BoundBreakStatement && _loopDepth > 0 && _loopBreaks.Count > 0)
+        {
+            _loopBreaks.Pop();
+            _loopBreaks.Push(true);
+        }
         if (_loopDepth == 0)
             _diagnostics.ReportOutsideLoop(keyword.Span, keyword.Text);
         else if (_finallyLoopDepth >= 0 && _loopDepth <= _finallyLoopDepth)

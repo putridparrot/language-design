@@ -23,11 +23,18 @@ public sealed record CompilationResult(ImmutableArray<SourceText> Sources, Immut
         : Files.Length == 1 ? Files[0].Text : string.Concat(Files.Select(f => $"// ==== {f.Name} ====\n{f.Text}"));
 }
 
+/// <param name="LineDirectives">
+/// Write `#line` directives into the C#, so C# compiler errors, stack traces and debuggers point at the `.piper`
+/// source. Off by default to keep the generated code easy to read.
+/// </param>
+public sealed record CompilationOptions(bool LineDirectives = false);
+
 /// <summary>Runs the whole pipeline over a program's files: lex → parse → bind → lower → emit C#.</summary>
 public static class Compilation
 {
-    public static CompilationResult Compile(IEnumerable<SourceText> sources)
+    public static CompilationResult Compile(IEnumerable<SourceText> sources, CompilationOptions? options = null)
     {
+        options ??= new CompilationOptions();
         var files = sources.ToImmutableArray();
         var diagnostics = new DiagnosticBag();
         var units = files.Select(source => Parser.ParseCompilationUnit(source, diagnostics)).ToImmutableArray();
@@ -44,11 +51,11 @@ public static class Compilation
             return new CompilationResult(files, sorted, []);
 
         var lowered = Lowerer.Lower(program);
-        return new CompilationResult(files, sorted, CSharpEmitter.Emit(lowered));
+        return new CompilationResult(files, sorted, CSharpEmitter.Emit(lowered, options.LineDirectives));
     }
 
-    public static CompilationResult Compile(SourceText source) => Compile([source]);
+    public static CompilationResult Compile(SourceText source, CompilationOptions? options = null) => Compile([source], options);
 
-    public static CompilationResult Compile(string text, string fileName = "<input>") =>
-        Compile(new SourceText(text, fileName));
+    public static CompilationResult Compile(string text, string fileName = "<input>", CompilationOptions? options = null) =>
+        Compile(new SourceText(text, fileName), options);
 }

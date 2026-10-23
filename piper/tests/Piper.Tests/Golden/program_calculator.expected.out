@@ -1,0 +1,10 @@
+1 + 2 * 3              → (1 + (2 * 3)) = 7
+(1 + 2) * 3            → ((1 + 2) * 3) = 9
+2 ^ 3 ^ 2              → (2 ^ (3 ^ 2)) = 512
+-x * 2 + 10            → (((-x) * 2) + 10) = 4
+sqrt(16) + abs(-2.5)   → (sqrt(16) + abs((-2.5))) = 6.5
+8 / (x - 3)            ✗ division by zero
+2 * (3 + 4             ✗ expected ')' but found end of input
+1 + y                  ✗ unknown variable 'y'
+4 $ 2                  ✗ unexpected '$' at 2
+1 2                    ✗ unexpected number 2 after the expression

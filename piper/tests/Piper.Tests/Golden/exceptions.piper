@@ -2,23 +2,23 @@
 
 using System;
 
-fn divide(a: Int, b: Int) -> Int {
+fn divide(a: int, b: int) => int {
     if b == 0 {
         throw ArgumentException("b must not be zero");
     }
     a / b
 }
 
-fn parse(text: String) -> Int {
+fn parse(text: string) => int {
     try {
-        return Int.Parse(text);
+        return int.Parse(text);
     } catch (e: FormatException) {
         print("not a number: {text}");
     }
     -1
 }
 
-fn check(value: Int) -> Int = if value >= 0 { value } else { throw InvalidOperationException("negative") };
+fn check(value: int) => int = if value >= 0 { value } else { throw InvalidOperationException("negative") };
 
 fn main() {
     print(divide(10, 2));

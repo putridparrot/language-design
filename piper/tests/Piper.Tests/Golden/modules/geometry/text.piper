@@ -3,12 +3,12 @@ namespace Geometry;
 using System.Text;
 
 trait Describe {
-    fn describe() -> String;
+    fn describe() => string;
 }
 
 // Extending types declared in another file of the namespace.
 extend Shape: Describe {
-    fn describe() -> String {
+    fn describe() => string {
         let text = StringBuilder();
         match this {
             Circle(center, r) => {
@@ -27,5 +27,5 @@ extend Shape: Describe {
 }
 
 extend Point {
-    fn label() -> String = "({this.x}, {this.y})";
+    fn label() => string = "({this.x}, {this.y})";
 }

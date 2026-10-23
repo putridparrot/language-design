@@ -7,7 +7,7 @@ namespace Piper.Binding;
 
 /// <summary>
 /// Lambdas and function values, collections (for, indexing, literals) and exceptions. Function types are
-/// .NET delegates: <c>(Int) -> Bool</c> is <c>Func&lt;Int, Bool&gt;</c> and a function returning Unit is an <c>Action</c>.
+/// .NET delegates: <c>(int) =&gt; bool</c> is <c>Func&lt;int, bool&gt;</c> and a function returning unit is an <c>Action</c>.
 /// </summary>
 public sealed partial class Binder
 {
@@ -207,7 +207,7 @@ public sealed partial class Binder
             return new BoundErrorExpression();
         if (!function.TypeParameters.IsEmpty && explicitArguments is null)
         {
-            // `let f: (Int) -> Int = identity;`
+            // `let f: (int) => int = identity;`
             var unresolved = function.TypeParameters.ToHashSet();
             if (signature is { } wanted && wanted.Parameters.Length == function.Parameters.Length)
             {
@@ -272,6 +272,8 @@ public sealed partial class Binder
 
     /// <summary>T for anything that implements <c>IEnumerable&lt;T&gt;</c> (lists, arrays, strings, LINQ results).</summary>
     private TypeSymbol? ElementTypeOf(TypeSymbol type) =>
+        // A multi-dimensional array is only a non-generic IEnumerable, but C#'s foreach still knows its element type.
+        type is ClrTypeSymbol { IsArray: true } array ? array.TypeArguments[0] :
         SelfAndBaseTypes(type)
             .OfType<ClrTypeSymbol>()
             .FirstOrDefault(t => t.Definition.Type == typeof(IEnumerable<>) && t.TypeArguments.Length == 1)
@@ -340,9 +342,7 @@ public sealed partial class Binder
             _scope.TryDeclare(variable);
         }
 
-        _loopDepth++;
-        var body = BindBlock(syntax.Body);
-        _loopDepth--;
+        var body = BindLoopBody(syntax.Body, out bool breaks);
         _scope = outer;
 
         return new BoundForEachStatement(variable, collection, new BoundExpressionStatement(body), deconstruction);
@@ -492,7 +492,7 @@ public sealed partial class Binder
 
         var kind = Operators.GetBinaryKind(compound)!.Value;
         var resolution = value.Type == TypeSymbol.Error ? null : Operators.ResolveBinary(kind, target.Type, value.Type);
-        if (resolution is null || resolution.ResultType != target.Type)
+        if (resolution is null || !CompoundResultFits(resolution.ResultType, target.Type, value))
         {
             if (value.Type != TypeSymbol.Error)
                 _diagnostics.ReportUndefinedBinaryOperator(syntax.Operator.Span, syntax.Operator.Text, target.Type, value.Type);

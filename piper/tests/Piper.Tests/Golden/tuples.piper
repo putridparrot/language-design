@@ -1,22 +1,22 @@
-// Tuples and deconstruction, as in C#: (Int, String) is a ValueTuple.
+// Tuples and deconstruction, as in C#: (int, string) is a ValueTuple.
 
 using System;
 using System.Collections.Generic;
 
-record Point(x: Int, y: Int);
+record Point(x: int, y: int);
 
 // Several results at once.
-fn divide(a: Int, b: Int) -> (quotient: Int, remainder: Int) = (a / b, a % b);
+fn divide(a: int, b: int) => (quotient: int, remainder: int) = (a / b, a % b);
 
-fn swap<A, B>(pair: (A, B)) -> (B, A) = (pair.Item2, pair.Item1);
+fn swap<A, B>(pair: (A, B)) => (B, A) = (pair.Item2, pair.Item1);
 
-fn describe(cell: (Bool, Bool)) -> String = match cell {
+fn describe(cell: (bool, bool)) => string = match cell {
     (true, true) => "both",
     (true, false) | (false, true) => "one",
     (false, false) => "neither",
 };
 
-fn classify(point: (Int, Int)) -> String = match point {
+fn classify(point: (int, int)) => string = match point {
     (0, 0) => "origin",
     (0, _) | (_, 0) => "axis",
     (x, y) if x == y => "diagonal",
@@ -51,7 +51,7 @@ fn main() {
     (a, b) = (b, a);
     print("{a} {b}");
 
-    let ages: Dictionary<String, Int> = Dictionary();
+    let ages: Dictionary<string, int> = Dictionary();
     ages["Ada"] = 36;
     ages["Grace"] = 45;
     for (who, age) in ages {
@@ -63,7 +63,7 @@ fn main() {
 
     // Generic functions, conversions and equality.
     print(swap((1, "x")));
-    let widened: (Long, Int?) = (1, 2);
+    let widened: (long, int?) = (1, 2);
     print(widened.Item1 + 3_000_000_000L);
     print((1, 2) == (1, 2));
     print(result == (3, 2));
@@ -80,6 +80,6 @@ fn main() {
     let (quotient, remainder) = Math.DivRem(20, 6);
     print("{quotient} {remainder}");
 
-    let pairs: List<(String, Int)> = [("x", 1), ("y", 2)];
-    print(String.Join(";", System.Linq.Enumerable.Select(pairs, entry => "{entry.Item1}={entry.Item2 * 10}")));
+    let pairs: List<(string, int)> = [("x", 1), ("y", 2)];
+    print(string.Join(";", System.Linq.Enumerable.Select(pairs, entry => "{entry.Item1}={entry.Item2 * 10}")));
 }

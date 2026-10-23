@@ -1,14 +1,14 @@
-record Point(x: Int, y: Int);
+record Point(x: int, y: int);
 record Line(start: Point, end: Point);
-record Person(name: String, age: Int, active: Bool);
+record Person(name: string, age: int, active: bool);
 
-fn lengthSquared(line: Line) -> Int {
+fn lengthSquared(line: Line) => int {
     let dx = line.end.x - line.start.x;
     let dy = line.end.y - line.start.y;
     dx * dx + dy * dy
 }
 
-fn origin() -> Point = Point(0, 0);
+fn origin() => Point = Point(0, 0);
 
 fn main() {
     let line = Line(origin(), Point(3, 4));

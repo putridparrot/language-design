@@ -3,10 +3,18 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AssemblyName>piper</AssemblyName>
+
+    <!-- `dotnet tool install -g Piper` gives a `piper` command. -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>piper</ToolCommandName>
+    <PackageId>Piper</PackageId>
+    <Description>The Piper compiler: a small, expression-oriented language that transpiles to C#. `piper run hello.piper` compiles and runs a program; `piper build` writes the C#.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Piper.Compiler\Piper.Compiler.csproj" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>

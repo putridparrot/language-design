@@ -4,35 +4,35 @@ using System;
 using System.Linq;
 using System.Collections.Generic;
 
-fn double(x: Int) -> Int = x * 2;
+fn doubled(x: int) => int = x * 2;
 
-fn apply(f: (Int) -> Int, value: Int) -> Int = f(value);
+fn apply(f: (int) => int, value: int) => int = f(value);
 
-fn twice(f: (Int) -> Int) -> (Int) -> Int = x => f(f(x));
+fn twice(f: (int) => int) => (int) => int = x => f(f(x));
 
 fn main() {
     // Parameter types come from the expected function type...
-    let increment: (Int) -> Int = x => x + 1;
+    let increment: (int) => int = x => x + 1;
     print(increment(41));
     print(apply(x => x * x, 7));
 
     // ...or from annotations, giving the lambda its natural type.
-    let add = (a: Int, b: Int) => a + b;
+    let add = (a: int, b: int) => a + b;
     print(add(2, 3));
 
     // Top-level functions are values too.
-    print(apply(double, 21));
-    let quadruple = twice(double);
+    print(apply(doubled, 21));
+    let quadruple = twice(doubled);
     print(quadruple(5));
 
-    // Block bodies, captured variables, and lambdas returning Unit.
+    // Block bodies, captured variables, and lambdas returning unit.
     var total = 0;
-    let accumulate: (Int) -> Unit = n => { total += n; };
+    let accumulate: (int) => unit = n => { total += n; };
     accumulate(10);
     accumulate(5);
     print(total);
 
-    let classify = (n: Int) => {
+    let classify = (n: int) => {
         if n < 0 {
             return "negative";
         }
@@ -45,14 +45,14 @@ fn main() {
     // LINQ, with type arguments inferred from the lambdas.
     let numbers = [5, 3, 8, 1, 9, 2];
     let evens = numbers.Where(n => n % 2 == 0).Select(n => n * 10).ToList();
-    print(String.Join(", ", evens));
+    print(string.Join(", ", evens));
     print(numbers.Any(n => n > 8));
     print(numbers.Sum());
-    print(String.Join(" ", numbers.OrderBy(n => n).Select(n => "<{n}>")));
+    print(string.Join(" ", numbers.OrderBy(n => n).Select(n => "<{n}>")));
 
     // .NET delegate types other than Func/Action.
-    let names: List<String> = ["Grace", "Ada", "Linus"];
+    let names: List<string> = ["Grace", "Ada", "Linus"];
     names.Sort((a, b) => a.Length - b.Length);
-    print(String.Join(", ", names));
+    print(string.Join(", ", names));
     print(names.Exists(name => name.StartsWith("L")));
 }

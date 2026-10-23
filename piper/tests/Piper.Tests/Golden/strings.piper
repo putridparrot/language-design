@@ -6,10 +6,10 @@ fn main() {
     print("Nested: {"inner {name}"}");
     print("Math: {1 + 2 * 3}, conditional: {if version > 1.0 { "new" } else { "old" }}");
     let c = 'P';
-    print("Char: {c}, newline escape: [\n]");
+    print("char: {c}, newline escape: [\n]");
     print("Unicode: \u{1F99C}");
     print(true);
-    print("Bool in string: {1 < 2}");
+    print("bool in string: {1 < 2}");
     print("con" + "cat" + "enation");
     print(0.1 + 0.2);
     print(10 / 4);

@@ -9,7 +9,7 @@ public abstract record MathError
     {
     }
 
-    public sealed record DivideByZero() : MathError;
+    public sealed record DivideByZero() : MathError { public override string ToString() => "DivideByZero"; }
 
     public sealed record Negative(int @value) : MathError;
 }

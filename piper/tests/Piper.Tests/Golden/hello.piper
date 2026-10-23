@@ -1,10 +1,10 @@
 // A tour of Piper's milestone-1 features.
 
-record Point(x: Int, y: Int);
+record Point(x: int, y: int);
 
-fn add(a: Int, b: Int) -> Int = a + b;      // expression-bodied
+fn add(a: int, b: int) => int = a + b;      // expression-bodied
 
-fn classify(n: Int) -> String {
+fn classify(n: int) => string {
     let kind = if n < 0 { "negative" } else if n == 0 { "zero" } else { "positive" };
     return kind;
 }

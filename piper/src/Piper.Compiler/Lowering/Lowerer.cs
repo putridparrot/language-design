@@ -45,17 +45,72 @@ public sealed class Lowerer
         }
         else
         {
-            LowerInto(body, value => new BoundReturnStatement(value), output);
+            // The body's statements are the method's own, so a `using let` in them lasts until the method ends.
+            foreach (var statement in body.Statements)
+                LowerStatement(statement, output);
+            if (body.Trailing is not null)
+                LowerInto(body.Trailing, value => new BoundReturnStatement(value), output);
         }
         return new BoundBlockStatement([.. output]);
     }
 
     // Statements
 
+    // Each entry point gives the statements it adds the span of the node they came from, for `#line` directives.
+
     private void LowerStatement(BoundStatement statement, List<BoundStatement> output)
+    {
+        int start = output.Count;
+        LowerStatementCore(statement, output);
+        Stamp(output, start, statement);
+    }
+
+    private void LowerForEffect(BoundExpression expression, List<BoundStatement> output)
+    {
+        int start = output.Count;
+        LowerForEffectCore(expression, output);
+        Stamp(output, start, expression);
+    }
+
+    private void LowerInto(BoundExpression expression, Func<BoundExpression, BoundStatement> sink, List<BoundStatement> output)
+    {
+        int start = output.Count;
+        LowerIntoCore(expression, sink, output);
+        Stamp(output, start, expression);
+    }
+
+    private BoundExpression LowerForValue(BoundExpression expression, List<BoundStatement> prelude)
+    {
+        int start = prelude.Count;
+        var lowered = LowerForValueCore(expression, prelude);
+        Stamp(prelude, start, expression);
+        return lowered;
+    }
+
+    private static void Stamp(List<BoundStatement> statements, int start, BoundNode source)
+    {
+        if (source.SourceSpan is not { } span)
+            return;
+        for (int i = start; i < statements.Count; i++)
+            statements[i].SourceSpan ??= span;
+    }
+
+    private void LowerStatementCore(BoundStatement statement, List<BoundStatement> output)
     {
         switch (statement)
         {
+            // `using let r = …;`: C# needs the initializer in the declaration itself.
+            case BoundVariableDeclaration { IsUsing: true, Initializer: { } resource } declaration:
+                output.Add(new BoundVariableDeclaration(declaration.Variable, LowerForValue(resource, output), isUsing: true));
+                break;
+
+            case BoundUsingStatement usingStatement:
+            {
+                var resource = LowerForValue(usingStatement.Resource, output);
+                output.Add(new BoundUsingStatement(usingStatement.Variable, resource, LowerToStatement(usingStatement.Body)));
+                break;
+            }
+
             case BoundVariableDeclaration { Initializer: { } initializer } declaration:
                 if (initializer is BoundIfExpression or BoundBlockExpression or BoundMatchExpression && !TryLowerPure(initializer, out _))
                 {
@@ -164,7 +219,7 @@ public sealed class Lowerer
 
     // Expressions evaluated only for their side effects
 
-    private void LowerForEffect(BoundExpression expression, List<BoundStatement> output)
+    private void LowerForEffectCore(BoundExpression expression, List<BoundStatement> output)
     {
         switch (expression)
         {
@@ -232,13 +287,35 @@ public sealed class Lowerer
 
     // Expressions whose value is consumed by a statement (assignment to a variable, or return)
 
-    private void LowerInto(BoundExpression expression, Func<BoundExpression, BoundStatement> sink, List<BoundStatement> output)
+    private void LowerIntoCore(BoundExpression expression, Func<BoundExpression, BoundStatement> sink, List<BoundStatement> output)
     {
         switch (expression)
         {
             case BoundIfExpression { Else: not null } @if when !TryLowerPure(@if, out _):
                 output.Add(IfInto(LowerForValue(@if.Condition, output), @if, sink));
                 break;
+
+            // A block whose `using let` must be disposed when it ends stays a block: `T result; { …; result = value; }`.
+            case BoundBlockExpression block when block.Statements.Any(s => s is BoundVariableDeclaration { IsUsing: true }):
+            {
+                VariableSymbol? result = block.Trailing is { Type.IsValueType: true } trailing ? NewTemp(trailing.Type) : null;
+                if (result is not null)
+                    output.Add(new BoundVariableDeclaration(result, null));
+                var inner = new List<BoundStatement>();
+                foreach (var statement in block.Statements)
+                    LowerStatement(statement, inner);
+                if (block.Trailing is not null)
+                {
+                    if (result is null)
+                        LowerForEffect(block.Trailing, inner);
+                    else
+                        LowerInto(block.Trailing, value => Assign(result, value), inner);
+                }
+                output.Add(new BoundBlockStatement([.. inner]));
+                if (result is not null)
+                    output.Add(sink(new BoundVariableExpression(result)));
+                break;
+            }
 
             case BoundBlockExpression block:
                 foreach (var statement in block.Statements)
@@ -272,7 +349,7 @@ public sealed class Lowerer
     /// <summary>
     /// Returns an expression with no blocks or ifs in it; statements that must run first are appended to <paramref name="prelude"/>.
     /// </summary>
-    private BoundExpression LowerForValue(BoundExpression expression, List<BoundStatement> prelude)
+    private BoundExpression LowerForValueCore(BoundExpression expression, List<BoundStatement> prelude)
     {
         switch (expression)
         {
@@ -365,6 +442,9 @@ public sealed class Lowerer
 
             case BoundArrayCreationExpression creation:
                 return new BoundArrayCreationExpression(LowerOperands(creation.Sizes, prelude), creation.Type);
+
+            case BoundCastExpression cast:
+                return new BoundCastExpression(cast.Type, LowerForValue(cast.Operand, prelude));
 
             case BoundTupleExpression tuple:
                 return new BoundTupleExpression(LowerOperands(tuple.Elements, prelude), (TupleTypeSymbol)tuple.Type);
@@ -477,6 +557,32 @@ public sealed class Lowerer
     /// exhaustive, so a final arm without guard or bindings needs no test; otherwise the chain ends in
     /// an unreachable throw, which also satisfies C#'s definite-assignment rules.
     /// </summary>
+    /// <summary>
+    /// A pattern as the alternatives C# can express: `|` alternatives that bind variables (anywhere inside it) are
+    /// lifted out, so `Some(A(x) | B(x))` gives `Some(A(x))` and `Some(B(x))`. Other patterns are returned as they are.
+    /// </summary>
+    private static IEnumerable<BoundPattern> Alternatives(BoundPattern pattern) => pattern switch
+    {
+        BoundOrPattern { HasBindings: true } or => or.Alternatives.SelectMany(Alternatives),
+        BoundConstructorPattern { HasBindings: true } constructor =>
+            Combinations(constructor.Arguments).Select(arguments => new BoundConstructorPattern(constructor.Constructor, arguments, constructor.Type)),
+        BoundTuplePattern { HasBindings: true } tuple =>
+            Combinations(tuple.Elements).Select(elements => new BoundTuplePattern(elements, (TupleTypeSymbol)tuple.Type)),
+        _ => [pattern],
+    };
+
+    /// <summary>Every combination of the parts' alternatives (in order).</summary>
+    private static IEnumerable<ImmutableArray<BoundPattern>> Combinations(ImmutableArray<BoundPattern> parts)
+    {
+        IEnumerable<ImmutableArray<BoundPattern>> combinations = [[]];
+        foreach (var part in parts)
+        {
+            var choices = Alternatives(part).ToList();
+            combinations = combinations.SelectMany(prefix => choices.Select(choice => prefix.Add(choice)));
+        }
+        return combinations;
+    }
+
     private void LowerMatch(BoundMatchExpression match, Func<BoundExpression, BoundStatement>? sink, List<BoundStatement> output)
     {
         // The scrutinee is tested once per arm, so evaluate it only once.
@@ -485,9 +591,11 @@ public sealed class Lowerer
             scrutinee = Spill(scrutinee, output);
 
         BoundStatement? chain = null;
-        for (int i = match.Arms.Length - 1; i >= 0; i--)
+        // C# can't declare variables inside an `or` pattern: `A(x) | B(x) => body` becomes an arm per alternative.
+        var arms = match.Arms.SelectMany(arm => Alternatives(arm.Pattern).Select(p => new BoundMatchArm(p, arm.Guard, arm.Body))).ToList();
+        for (int i = arms.Count - 1; i >= 0; i--)
         {
-            var arm = match.Arms[i];
+            var arm = arms[i];
             var body = new List<BoundStatement>();
             bool isLast = chain is null;
 

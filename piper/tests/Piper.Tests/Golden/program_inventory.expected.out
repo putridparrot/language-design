@@ -1,0 +1,14 @@
+4 items worth 5964p at one of each
+a hammer costs £12.99
+ordered 5 x F-1 for 225p
+order T-1 x 3 failed: only 2 of T-1 left, 3 wanted
+order X-9 x 1 failed: no item X-9
+order F-2 x 0 failed: can't order 0
+ordered 1 x B-1 for 4500p
+ordered 2 x T-1 for 2598p
+spent 7323p
+Food: 2 items, 19 units
+Tools: 1 items, 0 units
+Books: 1 items, 0 units
+low stock: SICP (0), Hammer (0)
+rejected: duplicate SKU A

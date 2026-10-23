@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The Piper.Build package: a project that references it compiles its .piper files as part of its build. It holds
+    MSBuild logic (build/Piper.Build.targets) and the compiler itself (tools/), but no library: it's a build tool only.
+  -->
+  <PropertyGroup>
+    <PackageId>Piper.Build</PackageId>
+    <Description>Compiles a project's .piper files with its C#, so a .NET project can be written partly or wholly in Piper.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <!-- No lib/ folder, on purpose. -->
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);IncludePiperCompiler</TargetsForTfmSpecificContentInPackage>
+    <PiperCompilerPublishDir>$(MSBuildThisFileDirectory)obj\compiler\$(Configuration)\</PiperCompilerPublishDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="build\Piper.Build.targets" Pack="true" PackagePath="build\" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <Target Name="IncludePiperCompiler">
+    <MSBuild Projects="..\Piper.Cli\Piper.Cli.csproj" Targets="Publish" Properties="Configuration=$(Configuration);PublishDir=$(PiperCompilerPublishDir)" />
+    <ItemGroup>
+      <TfmSpecificPackageFile Include="$(PiperCompilerPublishDir)**\*" PackagePath="tools\%(RecursiveDir)%(Filename)%(Extension)" />
+    </ItemGroup>
+  </Target>
+
+</Project>

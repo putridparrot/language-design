@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Piper.Build/Piper.Build.csproj" />
     <Project Path="src/Piper.Cli/Piper.Cli.csproj" />
     <Project Path="src/Piper.Compiler/Piper.Compiler.csproj" />
   </Folder>

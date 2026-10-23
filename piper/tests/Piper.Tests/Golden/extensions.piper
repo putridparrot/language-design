@@ -1,39 +1,39 @@
 // extend adds methods to existing types: builtins (as C# 14 extension members)
 // and user records and enums (as members of the generated C# type).
 
-extend Int {
-    fn squared() -> Int = this * this;
-    fn isEven() -> Bool = this % 2 == 0;
-    fn clamp(low: Int, high: Int) -> Int = if this < low { low } else if this > high { high } else { this };
-    static fn zero() -> Int = 0;
+extend int {
+    fn squared() => int = this * this;
+    fn isEven() => bool = this % 2 == 0;
+    fn clamp(low: int, high: int) => int = if this < low { low } else if this > high { high } else { this };
+    static fn zero() => int = 0;
 }
 
-extend String {
-    fn shout() -> String = this + "!";
+extend string {
+    fn shout() => string = this + "!";
 
-    fn repeat(times: Int) -> String {
+    fn repeat(times: int) => string {
         var result = "";
         for i in 0..times { result = result + this; }
         result
     }
 }
 
-extend Double {
-    fn half() -> Double = this / 2.0;
+extend double {
+    fn half() => double = this / 2.0;
 }
 
-record Point(x: Int, y: Int);
+record Point(x: int, y: int);
 
 extend Point {
-    static fn origin() -> Point = Point(0, 0);
-    fn plus(other: Point) -> Point = Point(this.x + other.x, this.y + other.y);
-    fn lengthSquared() -> Int = this.x.squared() + this.y.squared();
+    static fn origin() => Point = Point(0, 0);
+    fn plus(other: Point) => Point = Point(this.x + other.x, this.y + other.y);
+    fn lengthSquared() => int = this.x.squared() + this.y.squared();
 }
 
 extend Option {
-    fn isSome() -> Bool = match this { Some(_) => true, None => false };
-    fn getOr(fallback: T) -> T = match this { Some(v) => v, None => fallback };
-    static fn none() -> Option<T> = Option.None;
+    fn isSome() => bool = match this { Some(_) => true, None => false };
+    fn getOr(fallback: T) => T = match this { Some(v) => v, None => fallback };
+    static fn none() => Option<T> = Option.None;
 }
 
 fn main() {
@@ -41,7 +41,7 @@ fn main() {
     print((-3).squared());
     print(4.isEven());
     print(15.clamp(0, 10));
-    print(Int.zero());
+    print(int.zero());
     print("hey".shout());
     print("ab".repeat(3));
     print(3.0.half());
@@ -49,7 +49,7 @@ fn main() {
     let p = Point.origin().plus(Point(2, 3)).plus(Point(1, 1));
     print("{p.x},{p.y} -> {p.lengthSquared()}");
 
-    let o: Option<String> = Option.none();
+    let o: Option<string> = Option.none();
     print(o.isSome());
     print(o.getOr("default"));
     print(Option.Some(5).getOr(0));

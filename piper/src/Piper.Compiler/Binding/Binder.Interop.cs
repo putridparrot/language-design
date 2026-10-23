@@ -393,7 +393,7 @@ public sealed partial class Binder
                 { Out: not null, OutVariable: { } variable } => variable.Type == OutType(parameter) ? 0 : null,
                 { Out: not null } => 0,
                 { Lambda: { } lambda } => LambdaScore(lambda, parameter.Type),
-                var argument => ConversionScore(argument.Type!, parameter),
+                var argument => ConversionScore(argument.Bound!, parameter),
             };
             if (score is not { } value)
                 return null;
@@ -422,8 +422,9 @@ public sealed partial class Binder
         return 3;
     }
 
-    private int? ConversionScore(TypeSymbol argument, ClrParameter parameter)
+    private int? ConversionScore(BoundExpression bound, ClrParameter parameter)
     {
+        var argument = bound.Type;
         var target = parameter.Type;
         if (argument == target)
             return 0;
@@ -432,16 +433,20 @@ public sealed partial class Binder
             return 0;
         if (parameter.Boundary == ClrBoundary.NullableValue && argument == target.TypeArguments[0])
             return 1;
-        if (argument.IsNumeric && target.IsNumeric && Operators.IsImplicitlyConvertible(argument, target))
-            return target == TypeSymbol.Long ? 1 : 2;
+        // Numeric widening, preferring the narrowest target as C# does (Int → Long beats Int → Double).
+        if (Operators.IsArithmetic(argument) && target.IsNumeric && Operators.IsImplicitlyConvertible(argument, target))
+            return 1 + Operators.NumericRank(target);
+        // A constant that fits: `stream.WriteByte(7)`.
+        if (ConstantFolding.FitsImplicitly(bound, target))
+            return 1 + Operators.NumericRank(target);
 
         var targetClr = ClrTypes.ToClr(target);
         if (targetClr == typeof(object))
             return argument.IsValueType ? 20 : null;
         if (target is ClrTypeSymbol && SelfAndBaseTypes(argument).Contains(target))
-            return 10;
+            return 12;
         if (targetClr is not null && ClrTypes.ToClr(argument) is { } argumentClr && targetClr.IsAssignableFrom(argumentClr))
-            return 10;
+            return 12;
         return null;
     }
 

@@ -3,9 +3,9 @@
 using System;
 using System.Collections.Generic;
 
-record Point(x: Int, y: Int);
+record Point(x: int, y: int);
 
-fn sum(values: List<Int>) -> Int {
+fn sum(values: List<int>) => int {
     var total = 0;
     for value in values {
         total += value;
@@ -13,7 +13,7 @@ fn sum(values: List<Int>) -> Int {
     total
 }
 
-fn sumX(points: Point[]) -> Int {
+fn sumX(points: Point[]) => int {
     var total = 0;
     for p in points {
         total += p.x;
@@ -30,39 +30,39 @@ fn main() {
     print(primes.Count);
 
     // Arrays: from literals where an array is expected, from .NET, or created with a size like C#'s `new int[5]`.
-    let squares: Int[] = [1, 4, 9];
+    let squares: int[] = [1, 4, 9];
     squares[0] = 100;
     print(squares[0] + squares[2]);
     print(squares.Length);
 
     let words = "one two three".Split(' ');
     words[0] = "uno";
-    print(String.Join("-", words));
+    print(string.Join("-", words));
     print(words[2].Length);
 
-    let counts = Int[3];
+    let counts = int[3];
     counts[1] += 5;
-    print(String.Join(",", counts));
+    print(string.Join(",", counts));
 
-    let grid = Double[2, 3];
+    let grid = double[2, 3];
     grid[1, 2] = 1.5;
     print("{grid.Length} {grid[1, 2]}");
 
-    let slots = String?[2];
+    let slots = string?[2];
     slots[1] = "full";
     print("{slots[0] ?? "empty"} {slots[1] ?? "empty"}");
 
     let points: Point[] = [Point(1, 2), Point(3, 4)];
     print(sumX(points));
-    let jagged: Int[][] = [[1], [2, 3]];
+    let jagged: int[][] = [[1], [2, 3]];
     print(jagged[1].Length);
-    print(String.Join(" ", System.Linq.Enumerable.ToArray(primes)));
+    print(string.Join(" ", System.Linq.Enumerable.ToArray(primes)));
 
     // The element type is the common type of the elements.
     let mixed = [1, 2L, 3];
     print(mixed[1]);
 
-    let empty: List<String> = [];
+    let empty: List<string> = [];
     print(empty.Count);
 
     // Anything enumerable can be looped over: lists, arrays, strings, records in a list.
@@ -77,7 +77,7 @@ fn main() {
     }
 
     // Indexers, and assigning through them and through properties.
-    let ages: Dictionary<String, Int> = Dictionary();
+    let ages: Dictionary<string, int> = Dictionary();
     ages["Ada"] = 36;
     ages["Ada"] += 1;
     print(ages["Ada"]);

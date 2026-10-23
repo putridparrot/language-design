@@ -191,6 +191,14 @@ public static class ClrTypes
         [TypeSymbol.Bool] = typeof(bool),
         [TypeSymbol.String] = typeof(string),
         [TypeSymbol.Char] = typeof(char),
+        [TypeSymbol.Byte] = typeof(byte),
+        [TypeSymbol.SByte] = typeof(sbyte),
+        [TypeSymbol.Short] = typeof(short),
+        [TypeSymbol.UShort] = typeof(ushort),
+        [TypeSymbol.UInt] = typeof(uint),
+        [TypeSymbol.ULong] = typeof(ulong),
+        [TypeSymbol.Float] = typeof(float),
+        [TypeSymbol.Decimal] = typeof(decimal),
     };
 
     /// <summary><c>ValueTuple&lt;T1, T2&gt;</c> … <c>ValueTuple&lt;T1, …, T7&gt;</c>: the .NET types of Piper's tuples.</summary>

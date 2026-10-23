@@ -5,7 +5,7 @@
 
 public static class Lambdas
 {
-    public static int @double(int x) => x * 2;
+    public static int doubled(int x) => x * 2;
 
     public static int apply(global::System.Func<int, int> f, int @value) => f(@value);
 
@@ -18,8 +18,8 @@ public static class Lambdas
         global::System.Console.WriteLine(apply((int x_1) => x_1 * x_1, 7));
         global::System.Func<int, int, int> add = (int a, int b) => a + b;
         global::System.Console.WriteLine(add(2, 3));
-        global::System.Console.WriteLine(apply(@double, 21));
-        global::System.Func<int, int> quadruple = twice(@double);
+        global::System.Console.WriteLine(apply(doubled, 21));
+        global::System.Func<int, int> quadruple = twice(doubled);
         global::System.Console.WriteLine(quadruple(5));
         int total = 0;
         global::System.Action<int> accumulate = (int n) => {

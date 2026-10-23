@@ -1,8 +1,8 @@
-fn fizzbuzz(n: Int) -> String {
+fn fizzbuzz(n: int) => string {
     if n % 15 == 0 { "FizzBuzz" } else if n % 3 == 0 { "Fizz" } else if n % 5 == 0 { "Buzz" } else { "{n}" }
 }
 
-fn isPrime(n: Int) -> Bool {
+fn isPrime(n: int) => bool {
     if n < 2 { return false; }
     var d = 2;
     while d * d <= n {
@@ -29,7 +29,7 @@ fn main() {
     }
     print("stopped after {steps} steps");
 
-    let big: Long = 3_000_000_000L;
+    let big: long = 3_000_000_000L;
     var total = 0L;
     for k in 0L..3L { total += big; }
     print(total);

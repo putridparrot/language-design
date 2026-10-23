@@ -1,0 +1,90 @@
+// C#'s numeric types, literals, conversions and casts.
+
+using System;
+using System.IO;
+
+trait Shape {
+    fn area() => double;
+}
+
+record Square(side: double);
+
+extend Square: Shape {
+    fn area() => double = this.side * this.side;
+}
+
+fn describe(b: byte) => string = match b {
+    0 => "zero",
+    1..=9 => "small",
+    255 => "max",
+    _ => "other",
+};
+
+fn main() {
+    // Literal suffixes: F float, D double, M decimal, U uint, UL ulong (and L long).
+    let f = 1.5f;
+    let d = 2.5d;
+    let m = 19.99m;
+    let u = 4_000_000_000u;
+    let ul = 10UL;
+    print("{f} {d} {m} {u} {ul}");
+
+    // decimal is exact, double isn't.
+    print(0.1 + 0.2 == 0.3);
+    print(0.1m + 0.2m == 0.3m);
+    print(m * 3);
+
+    // Constants convert implicitly where they fit, as in C#.
+    let b: byte = 200;
+    var small: short = -5;
+    small += 10;
+    print("{b} {small}");
+
+    // Arithmetic on small types is done as int: byte + byte is an int.
+    let sum = b + b;
+    print(sum);
+    var counter: byte = 250;
+    counter += 10;
+    print(counter);
+
+    // byte arrays and streams.
+    let stream = MemoryStream();
+    stream.WriteByte(7);
+    stream.WriteByte(255);
+    let bytes = stream.ToArray();
+    print("{bytes.Length} bytes, last {bytes[1]}, {describe(bytes[1])}, {describe(bytes[0])}");
+    let buffer = byte[4];
+    buffer[0] = 1;
+    print(string.Join(",", buffer));
+
+    // Casts, as in C#: truncating, wrapping when not constant, and char codes.
+    print((int)2.7);
+    print((int)(-2.7));
+    let wide = 300;
+    print((byte)wide);
+    print((char)65);
+    print((int)'A' + 1);
+    print('a' + 1);
+    print((char)('a' + 1));
+    let a = 100_000;
+    print((long)a * a);
+    print(Math.Max(b, (byte)3));
+
+    // Downcasts, which throw if the value is something else.
+    let anything: object = "text";
+    let text = (string)anything;
+    print(text.Length);
+    let shape: Shape = Square(3.0);
+    print(((Square)shape).side);
+    try {
+        print((string)(object)42);
+    } catch (e: InvalidCastException) {
+        print("not a string");
+    }
+
+    // Unsigned and float arithmetic follow C#'s promotions.
+    let count: uint = 3;
+    print(count * u);
+    print(f * 2);
+    print(f * 2.0);
+}

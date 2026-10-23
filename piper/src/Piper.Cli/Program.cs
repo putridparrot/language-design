@@ -1,4 +1,4 @@
-﻿using Piper;
+using Piper;
 using Piper.Text;
 
 const string Usage = """
@@ -6,10 +6,21 @@ const string Usage = """
       piper build <inputs...> [-o <dir>]   Transpile to C#: one .cs per .piper (default: next to each source file)
       piper emit  <inputs...>              Print the generated C# to stdout
       piper run   <inputs...>              Transpile, compile and run
+      piper --version                      Show the compiler's version
 
     Inputs are .piper files or directories (searched recursively for .piper files);
     all of them are compiled together as one program.
     """;
+
+if (args is ["--version" or "-v"])
+{
+    var version = typeof(Compilation).Assembly
+        .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+        .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+        .FirstOrDefault()?.InformationalVersion;
+    Console.WriteLine($"piper {version?.Split('+')[0] ?? "?"}");
+    return 0;
+}
 
 if (args.Length < 2 || args[0] is not ("build" or "emit" or "run"))
 {
@@ -55,7 +66,8 @@ if (files.Count == 0)
 }
 
 var sources = files.Select(path => new SourceText(File.ReadAllText(path), path)).ToList();
-var result = Compilation.Compile(sources);
+// `emit` is for reading the C#; `build` and `run` map it back to the Piper source for errors and debugging.
+var result = Compilation.Compile(sources, new CompilationOptions(LineDirectives: command != "emit"));
 foreach (var diagnostic in result.FormattedDiagnostics)
     Console.Error.WriteLine(diagnostic);
 

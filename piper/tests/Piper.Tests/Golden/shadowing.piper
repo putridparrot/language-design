@@ -1,7 +1,7 @@
 // Piper allows shadowing in nested scopes; C# does not, so the emitter renames.
 // Names that are C# keywords are escaped with '@'.
 
-fn value(x: Int) -> Int = x * 2;
+fn value(x: int) => int = x * 2;
 
 fn main() {
     let x = 1;
@@ -16,9 +16,9 @@ fn main() {
         print("loop x={x}");
     }
 
-    let string = "a C# keyword as a name";
+    let event = "a C# keyword as a name";
     let class = 42;
-    print("{string} / {class}");
+    print("{event} / {class}");
 
     let temp = 7;   // the lowerer also introduces temporaries named `temp`
     let r = if temp > 5 { let z = temp; z + 1 } else { 0 };

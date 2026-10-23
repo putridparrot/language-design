@@ -38,6 +38,9 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportUnterminatedString(TextSpan span) =>
         Error("PIP0002", span, "Unterminated string literal.");
 
+    public void ReportRawStringLayout(TextSpan span, string message) =>
+        Error("PIP0010", span, message);
+
     public void ReportInvalidCharacterLiteral(TextSpan span) =>
         Error("PIP0003", span, "A character literal must contain exactly one character, e.g. 'a' or '\\n'.");
 
@@ -51,8 +54,8 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0006", span, "Unterminated block comment.");
 
     public void ReportIntegerTooLarge(TextSpan span, string text, string typeName) =>
-        Error("PIP0007", span, typeName == "Int"
-            ? $"Integer literal '{text}' is too large for Int; add an 'L' suffix to make it a Long."
+        Error("PIP0007", span, typeName == "int"
+            ? $"Integer literal '{text}' is too large for int; add an 'L' suffix to make it a long."
             : $"Integer literal '{text}' is too large for {typeName}.");
 
     public void ReportUnterminatedInterpolation(TextSpan span) =>
@@ -86,8 +89,11 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportExpectedPattern(TextSpan span, Token actual) =>
         Error("PIP0105", span, $"Expected a pattern but found {Describe(actual)}.");
 
+    public void ReportUsingDeconstruction(TextSpan span) =>
+        Error("PIP0108", span, "A 'using' declaration declares a single variable; it can't deconstruct.");
+
     public void ReportTupleTooShort(TextSpan span) =>
-        Error("PIP0107", span, "A tuple needs at least two elements; for a function type, add a return type, e.g. '(Int) -> Bool'.");
+        Error("PIP0107", span, "A tuple needs at least two elements; for a function type, add a return type, e.g. '(int) => bool'.");
 
     private static string Describe(Token token) => token.Kind switch
     {
@@ -141,7 +147,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0209", span, $"Not all code paths in '{function}' return a value.");
 
     public void ReportConditionNotBool(TextSpan span, TypeSymbol actual) =>
-        Error("PIP0210", span, $"A condition must be of type 'Bool' but is '{actual}'.");
+        Error("PIP0210", span, $"A condition must be of type 'bool' but is '{actual}'.");
 
     public void ReportUndefinedType(TextSpan span, string name) =>
         Error("PIP0211", span, $"The type '{name}' does not exist.");
@@ -158,10 +164,10 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0214", span, "This expression does not produce a value.");
 
     public void ReportInvalidUnitUsage(TextSpan span, string what) =>
-        Error("PIP0214", span, $"A {what} cannot be of type 'Unit'.");
+        Error("PIP0214", span, $"A {what} cannot be of type 'unit'.");
 
     public void ReportUnexpectedReturnValue(TextSpan span, string function) =>
-        Error("PIP0215", span, $"'{function}' returns Unit, so 'return' cannot have a value.");
+        Error("PIP0215", span, $"'{function}' returns unit, so 'return' cannot have a value.");
 
     public void ReportMissingReturnValue(TextSpan span, string function, TypeSymbol type) =>
         Error("PIP0215", span, $"'{function}' must return a value of type '{type}'.");
@@ -176,7 +182,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0217", span, $"'{name}' is a {kind}, not a value.");
 
     public void ReportInvalidMain(TextSpan span) =>
-        Error("PIP0219", span, "'main' must take no parameters and return Unit.");
+        Error("PIP0219", span, "'main' must take no parameters and return unit.");
 
     public void ReportFieldNamedAsRecord(TextSpan span, string name) =>
         Error("PIP0220", span, $"A field cannot have the same name as its record '{name}'.");
@@ -220,7 +226,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0236", span, $"'{name}' has {expected} field{(expected == 1 ? "" : "s")} but the pattern has {actual}.");
 
     public void ReportBindingInOrPattern(TextSpan span) =>
-        Error("PIP0237", span, "Variables cannot (yet) be bound inside '|' patterns.");
+        Error("PIP0237", span, "Variables can only be bound inside '|' patterns in a match arm, not in an 'is' test.");
 
     public void ReportEmptyEnum(TextSpan span, string name) =>
         Error("PIP0238", span, $"Enum '{name}' must have at least one variant.");
@@ -229,12 +235,12 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0238", span, $"A variant cannot have the same name as its enum '{name}'.");
 
     public void ReportInvalidRangePattern(TextSpan span, TypeSymbol type) =>
-        Error("PIP0239", span, $"Range patterns need Int, Long or Char bounds, not '{type}'.");
+        Error("PIP0239", span, $"Range patterns need integer or char bounds, not '{type}'.");
 
     // Generics, traits and methods
 
     public void ReportCannotInferTypeArgument(TextSpan span, string parameter, string callee) =>
-        Error("PIP0240", span, $"Cannot infer type argument '{parameter}' for '{callee}'; write the type arguments, e.g. '{callee}<Int>', or add a type annotation, e.g. 'let x: Option<Int> = ...'.");
+        Error("PIP0240", span, $"Cannot infer type argument '{parameter}' for '{callee}'; write the type arguments, e.g. '{callee}<int>', or add a type annotation, e.g. 'let x: Option<int> = ...'.");
 
     public void ReportNotGeneric(TextSpan span, string name) =>
         Error("PIP0241", span, $"'{name}' is not generic and takes no type arguments.");
@@ -286,7 +292,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     // Null safety
 
     public void ReportNullWithoutOptionalType(TextSpan span) =>
-        Error("PIP0260", span, "'null' needs an optional type here, e.g. 'let x: Int? = null;'. Piper has no null references; 'null' means None.");
+        Error("PIP0260", span, "'null' needs an optional type here, e.g. 'let x: int? = null;'. Piper has no null references; 'null' means None.");
 
     public void ReportRequiresOptional(TextSpan span, string op, TypeSymbol type) =>
         Error("PIP0261", span, op == "?."
@@ -345,7 +351,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     // Lambdas, collections and exceptions
 
     public void ReportCannotInferLambda(TextSpan span) =>
-        Error("PIP0280", span, "Can't infer this lambda's parameter types; annotate them, e.g. '(x: Int) => …', or use it where a function type is expected.");
+        Error("PIP0280", span, "Can't infer this lambda's parameter types; annotate them, e.g. '(x: int) => …', or use it where a function type is expected.");
 
     public void ReportLambdaParameterCount(TextSpan span, TypeSymbol delegateType, int expected, int actual) =>
         Error("PIP0281", span, $"A '{delegateType}' takes {expected} parameter{(expected == 1 ? "" : "s")} but the lambda has {actual}.");
@@ -372,7 +378,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0287", span, "This catch clause is unreachable: an earlier clause already catches its exceptions.");
 
     public void ReportCannotInferCollection(TextSpan span) =>
-        Error("PIP0286", span, "Can't infer the element type of an empty collection; add a type annotation, e.g. 'let xs: List<Int> = [];'.");
+        Error("PIP0286", span, "Can't infer the element type of an empty collection; add a type annotation, e.g. 'let xs: List<int> = [];'.");
 
     public void ReportArrayOfNullDefaults(TextSpan span, TypeSymbol element) =>
         Error("PIP0288", span, $"An array of '{element}' can't be created empty, as its elements would be null; use a collection literal ([…]), Enumerable.Repeat(value, n).ToArray(), or an array of '{element}?'.");
@@ -388,6 +394,21 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportMisplacedOut(TextSpan span) =>
         Error("PIP0291", span, "'out' can only pass a variable to a .NET method's out parameter; Piper functions return several values as a tuple instead.");
+
+    public void ReportConstantOverflow(TextSpan span) =>
+        Error("PIP0292", span, "This constant expression overflows. Constant arithmetic is checked, as in C#; use a long or a variable if wrapping around is intended.");
+
+    public void ReportConstantDivisionByZero(TextSpan span) =>
+        Error("PIP0293", span, "Division by constant zero.");
+
+    public void ReportNotDisposable(TextSpan span, TypeSymbol type) =>
+        Error("PIP0294", span, $"'{type}' can't be used with 'using': it doesn't implement System.IDisposable.");
+
+    public void ReportCannotCast(TextSpan span, TypeSymbol from, TypeSymbol to) =>
+        Error("PIP0295", span, $"Cannot cast '{from}' to '{to}'.");
+
+    public void ReportOrPatternBinding(TextSpan span, string name, string problem) =>
+        Error("PIP0296", span, $"'{name}' {problem}: each alternative of a '|' pattern must bind the same variables, with the same types.");
 
     public void ReportEmptyRangePattern(TextSpan span) =>
         Error("PIP0239", span, "This range pattern is empty: its lower bound is not below its upper bound.");

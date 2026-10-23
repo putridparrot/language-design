@@ -2,11 +2,11 @@ Hello, Piper! Version 1.5.
 Braces: { and }, quote: ", backslash: \, tab:[	]
 Nested: inner Piper
 Math: 7, conditional: new
-Char: P, newline escape: [
+char: P, newline escape: [
 ]
 Unicode: 🦜
 True
-Bool in string: True
+bool in string: True
 concatenation
 0.30000000000000004
 2

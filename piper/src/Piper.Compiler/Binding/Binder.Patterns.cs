@@ -18,7 +18,9 @@ public sealed partial class Binder
             _scope = new Scope(outer);
 
             int errorsBefore = _diagnostics.Count;
+            _inMatchArmPattern = true;
             var pattern = BindPattern(arm.Pattern, scrutineeType, allowBindings: true);
+            _inMatchArmPattern = false;
             patternErrors |= _diagnostics.Count != errorsBefore;
 
             BoundExpression? guard = null;
@@ -101,6 +103,7 @@ public sealed partial class Binder
         BoundClrMemberExpression member => member.Receiver is { } receiver && ContainsStatements(receiver),
         BoundNullableBoundaryExpression boundary => ContainsStatements(boundary.Operand),
         BoundTupleExpression tuple => tuple.Elements.Any(ContainsStatements),
+        BoundCastExpression cast => ContainsStatements(cast.Operand),
         // `out let n` is declared by a statement before the call.
         BoundOutArgument output => output.Declares,
         BoundTupleElementExpression element => ContainsStatements(element.Tuple),
@@ -142,6 +145,20 @@ public sealed partial class Binder
                     return new BoundWildcardPattern(expected);
                 }
 
+                // A later alternative of `A(x) | B(x)` binds the same x as the first.
+                if (_orBindings is { } shared)
+                {
+                    if (!shared.TryGetValue(name.Text, out var existing))
+                    {
+                        _diagnostics.ReportOrPatternBinding(name.Span, name.Text, "isn't bound by the first alternative");
+                        return new BoundWildcardPattern(expected);
+                    }
+                    if (existing.Type != expected && expected != TypeSymbol.Error && existing.Type != TypeSymbol.Error)
+                        _diagnostics.ReportOrPatternBinding(name.Span, name.Text, $"is a '{expected}' here but a '{existing.Type}' in the first alternative");
+                    _orBindingsUsed.Add(name.Text);
+                    return new BoundBindingPattern(existing);
+                }
+
                 var variable = new VariableSymbol(name.Text, expected, isMutable: false, VariableKind.PatternVariable);
                 if (!_scope.TryDeclare(variable))
                     _diagnostics.ReportDuplicateDeclaration(name.Span, name.Text);
@@ -162,6 +179,9 @@ public sealed partial class Binder
             case TuplePatternSyntax tuple:
                 return BindTuplePattern(tuple, expected, allowBindings);
 
+            case OrPatternSyntax alternatives when _inMatchArmPattern && allowBindings:
+                return BindOrPatternWithBindings(alternatives, expected);
+
             case OrPatternSyntax alternatives:
                 return new BoundOrPattern(
                     [.. alternatives.Alternatives.Select(a => BindPattern(a, expected, allowBindings: false))],
@@ -171,6 +191,46 @@ public sealed partial class Binder
                 throw new InvalidOperationException($"Unexpected pattern {syntax.GetType().Name}");
         }
     }
+
+    /// <summary>True while binding a match arm's pattern, the only place `|` alternatives may bind variables.</summary>
+    private bool _inMatchArmPattern;
+
+    /// <summary>While binding a later alternative of `A(x) | B(x)`: the first alternative's variables, and those used.</summary>
+    private Dictionary<string, VariableSymbol>? _orBindings;
+    private HashSet<string> _orBindingsUsed = [];
+
+    /// <summary>
+    /// `A(x) | B(x) => …` in a match arm: every alternative must bind the same names with the same types (the first
+    /// one declares them; the others reuse them). Lowering splits such an arm into one per alternative, since C#
+    /// can't declare variables inside an `or` pattern.
+    /// </summary>
+    private BoundPattern BindOrPatternWithBindings(OrPatternSyntax syntax, TypeSymbol expected)
+    {
+        var first = BindPattern(syntax.Alternatives[0], expected, allowBindings: true);
+        var names = Bindings(first).ToDictionary(v => v.Name);
+        var alternatives = new List<BoundPattern> { first };
+
+        var (outerShared, outerUsed) = (_orBindings, _orBindingsUsed);
+        foreach (var alternative in syntax.Alternatives.Skip(1))
+        {
+            (_orBindings, _orBindingsUsed) = (names, []);
+            alternatives.Add(BindPattern(alternative, expected, allowBindings: true));
+            foreach (var missing in names.Keys.Except(_orBindingsUsed))
+                _diagnostics.ReportOrPatternBinding(alternative.Span, missing, "must be bound by every alternative");
+            outerUsed.UnionWith(_orBindingsUsed);
+        }
+        (_orBindings, _orBindingsUsed) = (outerShared, outerUsed);
+        return new BoundOrPattern([.. alternatives], expected);
+    }
+
+    private static IEnumerable<VariableSymbol> Bindings(BoundPattern pattern) => pattern switch
+    {
+        BoundBindingPattern binding => [binding.Variable],
+        BoundConstructorPattern constructor => constructor.Arguments.SelectMany(Bindings),
+        BoundTuplePattern tuple => tuple.Elements.SelectMany(Bindings),
+        BoundOrPattern or => or.Alternatives.Take(1).SelectMany(Bindings),
+        _ => [],
+    };
 
     private BoundPattern BindConstructorPattern(ConstructorPatternSyntax syntax, TypeSymbol expected, bool allowBindings)
     {
@@ -244,7 +304,7 @@ public sealed partial class Binder
         if (expected == TypeSymbol.Error)
             return new BoundWildcardPattern(expected);
 
-        if (expected != TypeSymbol.Int && expected != TypeSymbol.Long && expected != TypeSymbol.Char)
+        if (!expected.IsIntegral && expected != TypeSymbol.Char)
         {
             _diagnostics.ReportInvalidRangePattern(syntax.Span, expected);
             return new BoundWildcardPattern(expected);
@@ -266,24 +326,30 @@ public sealed partial class Binder
         return new BoundRangePattern(lower, upper, syntax.IsInclusive, expected);
     }
 
-    /// <summary>Converts a literal pattern's value to the matched type (widening Int to Long/Double), or reports a mismatch.</summary>
+    /// <summary>
+    /// Converts a literal pattern's value to the matched type, as C# converts a constant (widening, or an Int that fits
+    /// a Byte), or reports a mismatch.
+    /// </summary>
     private object? ConvertPatternLiteral(LiteralPatternSyntax syntax, TypeSymbol expected)
     {
         object? converted = (syntax.Value, expected.Name) switch
         {
             (null, _) => null,
             (_, "?") => null,
-            (int i, "Int") => i,
-            (int i, "Long") => (long)i,
-            (int i, "Double") => (double)i,
-            (long l, "Long") => l,
-            (long l, "Double") => (double)l,
-            (double d, "Double") => d,
-            (char c, "Char") => c,
-            (string s, "String") => s,
-            (bool b, "Bool") => b,
+            (char c, "char") => c,
+            (string s, "string") => s,
+            (bool b, "bool") => b,
             _ => null,
         };
+        if (syntax.Value is not (null or char or string or bool) && expected.IsNumeric)
+        {
+            var literal = BindLiteral(new LiteralExpressionSyntax(syntax.Span, syntax.Literal, syntax.Value));
+            if ((Operators.IsImplicitlyConvertible(literal.Type, expected) || ConstantFolding.FitsImplicitly(literal, expected)) &&
+                ConstantFolding.Cast(syntax.Value, expected, out var value) == ConstantFolding.Failure.None)
+            {
+                converted = value;
+            }
+        }
 
         // Only builtin types have literals, so compare by identity rather than trusting the name (records could shadow it).
         bool builtinTarget = TypeSymbol.Builtins.Contains(expected);

@@ -1,20 +1,20 @@
 // A recursive enum with an evaluator, a printer and a simplifier that uses nested patterns.
 
 enum Expr {
-    Num(value: Int),
+    Num(value: int),
     Add(left: Expr, right: Expr),
     Mul(left: Expr, right: Expr),
     Neg(operand: Expr),
 }
 
-fn eval(e: Expr) -> Int = match e {
+fn eval(e: Expr) => int = match e {
     Num(n) => n,
     Add(l, r) => eval(l) + eval(r),
     Mul(l, r) => eval(l) * eval(r),
     Neg(x) => -eval(x),
 };
 
-fn show(e: Expr) -> String = match e {
+fn show(e: Expr) => string = match e {
     Num(n) if n < 0 => "({n})",
     Num(n) => "{n}",
     Add(l, r) => "({show(l)} + {show(r)})",
@@ -22,7 +22,7 @@ fn show(e: Expr) -> String = match e {
     Neg(x) => "-{show(x)}",
 };
 
-fn simplify(e: Expr) -> Expr = match e {
+fn simplify(e: Expr) => Expr = match e {
     Add(Num(0), x) => simplify(x),
     Add(x, Num(0)) => simplify(x),
     Mul(Num(0), _) | Mul(_, Num(0)) => Expr.Num(0),

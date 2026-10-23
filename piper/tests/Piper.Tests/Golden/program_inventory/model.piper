@@ -1,0 +1,46 @@
+// The inventory's data model.
+namespace Shop.Model;
+
+using System.Collections.Generic;
+
+record Money(pence: long);
+
+enum Category {
+    Food,
+    Tools,
+    Books,
+}
+
+record Item(sku: string, name: string, category: Category, price: Money, stock: int);
+
+trait Priced {
+    fn unitPrice() => Money;
+
+    // A default method: implementers get it for free.
+    fn priceText() => string {
+        let pounds = this.unitPrice().pence / 100;
+        let pence = this.unitPrice().pence % 100;
+        "£{pounds}.{pence.ToString().PadLeft(2, '0')}"
+    }
+}
+
+extend Item: Priced {
+    fn unitPrice() => Money = this.price;
+}
+
+extend Money {
+    fn plus(other: Money) => Money = Money(this.pence + other.pence);
+
+    fn times(count: int) => Money = Money(this.pence * count);
+
+    static fn zero() => Money = Money(0);
+}
+
+/// The total value of anything priced.
+fn total<T: Priced>(items: List<T>) => Money {
+    var sum = Money.zero();
+    for item in items {
+        sum = sum.plus(item.unitPrice());
+    }
+    sum
+}

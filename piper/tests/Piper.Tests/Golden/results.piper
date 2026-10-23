@@ -2,13 +2,13 @@
 
 enum MathError {
     DivideByZero,
-    Negative(value: Int),
+    Negative(value: int),
 }
 
-fn divide(a: Int, b: Int) -> Result<Int, MathError> =
+fn divide(a: int, b: int) => Result<int, MathError> =
     if b == 0 { Err(MathError.DivideByZero) } else { Ok(a / b) };
 
-fn root(n: Int) -> Result<Int, MathError> {
+fn root(n: int) => Result<int, MathError> {
     if n < 0 { return Err(MathError.Negative(n)); }
     var r = 0;
     while (r + 1) * (r + 1) <= n { r += 1; }
@@ -16,13 +16,13 @@ fn root(n: Int) -> Result<Int, MathError> {
 }
 
 // Each `?` either unwraps the Ok value or returns the Err immediately.
-fn compute(a: Int, b: Int) -> Result<Int, MathError> {
+fn compute(a: int, b: int) => Result<int, MathError> {
     let quotient = divide(a, b)?;
     let r = root(quotient)?;
     Ok(r * 10)
 }
 
-fn show(result: Result<Int, MathError>) -> String = match result {
+fn show(result: Result<int, MathError>) => string = match result {
     Ok(v) => "ok: {v}",
     Err(MathError.DivideByZero) => "error: divide by zero",
     Err(Negative(n)) => "error: {n} is negative",

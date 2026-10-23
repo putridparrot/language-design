@@ -33,6 +33,9 @@ public sealed class Scope
 
     public bool TryDeclare(Symbol symbol) => _symbols.TryAdd(symbol.Name, symbol);
 
+    /// <summary>Declares <paramref name="symbol"/> under another name, e.g. the keyword `object` for System.Object.</summary>
+    public bool TryDeclare(string name, Symbol symbol) => _symbols.TryAdd(name, symbol);
+
     /// <summary>Looks only in this scope (and its fallback), not in enclosing scopes.</summary>
     public Symbol? LookupLocal(string name) =>
         _symbols.TryGetValue(name, out var symbol) ? symbol : _fallback?.Invoke(name);

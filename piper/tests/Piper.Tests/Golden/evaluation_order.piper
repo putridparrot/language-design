@@ -1,12 +1,12 @@
 // Lowering hoists statements out of expressions; these checks make sure
 // Piper's left-to-right evaluation order survives that.
 
-fn log(label: String, value: Int) -> Int {
+fn log(label: string, value: int) => int {
     print("eval {label}");
     value
 }
 
-fn sum3(a: Int, b: Int, c: Int) -> Int = a + b + c;
+fn sum3(a: int, b: int, c: int) => int = a + b + c;
 
 fn main() {
     // Arguments are evaluated left to right even when one of them is a block.

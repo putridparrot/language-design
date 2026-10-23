@@ -2,7 +2,7 @@ using Geometry;
 using System.Collections.Generic;
 
 // A private type, only visible in this file.
-private record Totals(count: Int, area: Double);
+private record Totals(count: int, area: double);
 
 fn main() {
     let circle = Shape.Circle(Point(0.0, 0.0), 1.0);

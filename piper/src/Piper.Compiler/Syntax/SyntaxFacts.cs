@@ -34,8 +34,17 @@ public static class SyntaxFacts
         "out" => TokenKind.OutKeyword,
         "true" => TokenKind.TrueKeyword,
         "false" => TokenKind.FalseKeyword,
+        _ when IsPredefinedType(text) => TokenKind.PredefinedTypeKeyword,
         _ => null,
     };
+
+    /// <summary>
+    /// The builtin type names, which are keywords as in C#: `int`, `string`, …, plus Piper's `unit`. They're
+    /// names of types (`let x: int`) and, like C#'s, can be used where a type's members are (`int.Parse(s)`).
+    /// </summary>
+    public static bool IsPredefinedType(string text) => text is
+        "int" or "long" or "double" or "bool" or "string" or "char" or "unit" or "object" or
+        "byte" or "sbyte" or "short" or "ushort" or "uint" or "ulong" or "float" or "decimal";
 
     /// <summary>
     /// Binary operator precedence table used by the Pratt parser; higher binds tighter, 0 means "not a binary operator".

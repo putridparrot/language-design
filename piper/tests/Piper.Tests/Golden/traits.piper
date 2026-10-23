@@ -2,23 +2,23 @@
 // Traits work both as generic constraints (static dispatch) and as types (dynamic dispatch).
 
 trait Shape {
-    fn area() -> Double;
-    fn name() -> String;
-    fn describe() -> String = "{this.name()} with area {this.area()}";
+    fn area() => double;
+    fn name() => string;
+    fn describe() => string = "{this.name()} with area {this.area()}";
 }
 
-record Circle(radius: Double);
-record Rect(width: Double, height: Double);
+record Circle(radius: double);
+record Rect(width: double, height: double);
 
 extend Circle: Shape {
-    fn area() -> Double = 3.0 * this.radius * this.radius;
-    fn name() -> String = "circle";
+    fn area() => double = 3.0 * this.radius * this.radius;
+    fn name() => string = "circle";
 }
 
 extend Rect: Shape {
-    fn area() -> Double = this.width * this.height;
-    fn name() -> String = if this.width == this.height { "square" } else { "rectangle" };
-    fn describe() -> String = "a {this.width}x{this.height} {this.name()}";
+    fn area() => double = this.width * this.height;
+    fn name() => string = if this.width == this.height { "square" } else { "rectangle" };
+    fn describe() => string = "a {this.width}x{this.height} {this.name()}";
 }
 
 enum List<T> {
@@ -26,32 +26,32 @@ enum List<T> {
     Nil,
 }
 
-fn largest<T: Shape>(a: T, b: T) -> T = if a.area() >= b.area() { a } else { b };
+fn largest<T: Shape>(a: T, b: T) => T = if a.area() >= b.area() { a } else { b };
 
-fn summary<T: Shape>(shape: T) -> String = shape.describe();
+fn summary<T: Shape>(shape: T) => string = shape.describe();
 
-fn totalArea(shapes: List<Shape>) -> Double = match shapes {
+fn totalArea(shapes: List<Shape>) => double = match shapes {
     Cons(s, rest) => s.area() + totalArea(rest),
     Nil => 0.0,
 };
 
 trait Speak {
-    fn sound() -> String;
-    fn speak() -> String = "says {this.sound()}";
+    fn sound() => string;
+    fn speak() => string = "says {this.sound()}";
 }
 
 enum Animal {
-    Dog(name: String),
-    Cat(name: String, lives: Int),
+    Dog(name: string),
+    Cat(name: string, lives: int),
 }
 
 extend Animal: Speak {
-    fn sound() -> String = match this {
+    fn sound() => string = match this {
         Dog(_) => "woof",
         Cat(_, _) => "meow",
     };
 
-    fn nickname() -> String = match this {
+    fn nickname() => string = match this {
         Dog(n) => n,
         Cat(n, _) => n,
     };

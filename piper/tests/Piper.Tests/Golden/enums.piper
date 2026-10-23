@@ -1,18 +1,18 @@
 // Enums are sum types: a Shape is exactly one of its variants.
 
 enum Shape {
-    Circle(radius: Double),
-    Rect(width: Double, height: Double),
+    Circle(radius: double),
+    Rect(width: double, height: double),
     Empty,
 }
 
-fn area(shape: Shape) -> Double = match shape {
+fn area(shape: Shape) => double = match shape {
     Circle(r) => 3.0 * r * r,
     Rect(w, h) => w * h,
     Empty => 0.0,
 };
 
-fn describe(shape: Shape) -> String {
+fn describe(shape: Shape) => string {
     match shape {
         Shape.Circle(r) if r > 10.0 => "a big circle",
         Circle(_) => "a circle",
@@ -22,7 +22,7 @@ fn describe(shape: Shape) -> String {
     }
 }
 
-fn initial(shape: Shape) -> Char {
+fn initial(shape: Shape) => char {
     let letter = match shape {
         Circle(_) => 'C',
         Rect(_, _) => 'R',

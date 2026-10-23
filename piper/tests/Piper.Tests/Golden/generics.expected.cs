@@ -13,7 +13,7 @@ public abstract record List<T>
 
     public sealed record Cons(T head, List<T> tail) : List<T>;
 
-    public sealed record Nil() : List<T>;
+    public sealed record Nil() : List<T> { public override string ToString() => "Nil"; }
 }
 
 public static class Generics

@@ -11,15 +11,25 @@ namespace Piper.Binding;
 /// </summary>
 public class TypeSymbol : Symbol
 {
-    public static readonly TypeSymbol Int = new("Int");
-    public static readonly TypeSymbol Long = new("Long");
-    public static readonly TypeSymbol Double = new("Double");
-    public static readonly TypeSymbol Bool = new("Bool");
-    public static readonly TypeSymbol String = new("String");
-    public static readonly TypeSymbol Char = new("Char");
+    public static readonly TypeSymbol Int = new("int");
+    public static readonly TypeSymbol Long = new("long");
+    public static readonly TypeSymbol Double = new("double");
+    public static readonly TypeSymbol Bool = new("bool");
+    public static readonly TypeSymbol String = new("string");
+    public static readonly TypeSymbol Char = new("char");
+
+    // The other C# numeric types: byte, sbyte, short, ushort, uint, ulong, float and decimal.
+    public static readonly TypeSymbol Byte = new("byte");
+    public static readonly TypeSymbol SByte = new("sbyte");
+    public static readonly TypeSymbol Short = new("short");
+    public static readonly TypeSymbol UShort = new("ushort");
+    public static readonly TypeSymbol UInt = new("uint");
+    public static readonly TypeSymbol ULong = new("ulong");
+    public static readonly TypeSymbol Float = new("float");
+    public static readonly TypeSymbol Decimal = new("decimal");
 
     /// <summary>The type of expressions evaluated only for their effect; emitted as C# <c>void</c>.</summary>
-    public static readonly TypeSymbol Unit = new("Unit");
+    public static readonly TypeSymbol Unit = new("unit");
 
     /// <summary>
     /// The type of a block that never completes normally (it always returns, breaks or continues).
@@ -30,15 +40,17 @@ public class TypeSymbol : Symbol
     /// <summary>Produced after an error has been reported; converts to anything so errors don't cascade.</summary>
     public static readonly TypeSymbol Error = new("?");
 
-    public static readonly ImmutableArray<TypeSymbol> Builtins = [Int, Long, Double, Bool, String, Char, Unit];
+    public static readonly ImmutableArray<TypeSymbol> Builtins =
+        [Int, Long, Double, Bool, String, Char, Unit, Byte, SByte, Short, UShort, UInt, ULong, Float, Decimal];
 
     protected TypeSymbol(string name) : base(name)
     {
     }
 
-    public bool IsNumeric => this == Int || this == Long || this == Double;
+    public bool IsNumeric => IsIntegral || this == Double || this == Float || this == Decimal;
 
-    public bool IsIntegral => this == Int || this == Long;
+    public bool IsIntegral =>
+        this == Int || this == Long || this == Byte || this == SByte || this == Short || this == UShort || this == UInt || this == ULong;
 
     /// <summary>False for types that cannot be stored in a variable, field or parameter.</summary>
     public bool IsValueType => this != Unit && this != Never;
@@ -57,7 +69,7 @@ public class TypeSymbol : Symbol
     public override string ToString() => Name;
 }
 
-/// <summary>A type parameter such as <c>T</c> in <c>fn id&lt;T&gt;(x: T) -> T</c>.</summary>
+/// <summary>A type parameter such as <c>T</c> in <c>fn id&lt;T&gt;(x: T) =&gt; T</c>.</summary>
 public sealed class TypeParameterSymbol(string name) : TypeSymbol(name)
 {
     public ImmutableArray<TraitSymbol> Constraints { get; internal set; } = [];
@@ -299,6 +311,18 @@ public static class TypeSubstitution
 
     /// <summary>The type of <paramref name="field"/> when its record or enum is instantiated as <paramref name="owner"/>.</summary>
     public static TypeSymbol FieldType(FieldSymbol field, TypeSymbol owner) => Substitute(field.Type, MapFor(owner));
+
+    /// <summary>
+    /// The type with every tuple's element names removed, at any depth: C# treats types that differ only in tuple
+    /// names (<c>List&lt;(int a, int b)&gt;</c> and <c>List&lt;(int, int)&gt;</c>) as identical for conversions.
+    /// </summary>
+    public static TypeSymbol WithoutTupleNames(TypeSymbol type) => type switch
+    {
+        TupleTypeSymbol tuple => TupleTypeSymbol.Create([.. tuple.ElementTypes.Select(WithoutTupleNames)]),
+        ConstructedTypeSymbol constructed => constructed.Definition.Construct([.. constructed.TypeArguments.Select(WithoutTupleNames)]),
+        ClrTypeSymbol { TypeArguments.IsEmpty: false } clr => clr.Definition.Construct([.. clr.TypeArguments.Select(WithoutTupleNames)]),
+        _ => type,
+    };
 
     public static bool Mentions(TypeSymbol type, IReadOnlySet<TypeParameterSymbol> parameters) => type switch
     {

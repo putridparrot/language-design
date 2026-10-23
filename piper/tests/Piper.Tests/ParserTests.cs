@@ -30,6 +30,7 @@ public class ParserTests
         NameExpressionSyntax e => e.Identifier.Text,
         MemberAccessExpressionSyntax { TypeArguments.IsEmpty: false } e => $"{Show(e.Target)}.{e.Member.Text}<{e.TypeArguments.Length}>",
         UnaryExpressionSyntax e => $"({e.Operator.Text}{Show(e.Operand)})",
+        CastExpressionSyntax e => $"(cast {Show(e.Operand)})",
         BinaryExpressionSyntax e => $"({Show(e.Left)} {e.Operator.Text} {Show(e.Right)})",
         RangeExpressionSyntax e => $"({Show(e.Start)} {e.Operator.Text} {Show(e.End)})",
         AssignmentExpressionSyntax e => $"({Show(e.Target)} {e.Operator.Text} {Show(e.Value)})",
@@ -72,12 +73,21 @@ public class ParserTests
     [InlineData("x == null", "(x == null)")]
     // Type arguments, by C#'s rule: only if the token after '>' could follow a generic name.
     [InlineData("f<A, B>(x)", "f<2>(x)")]
-    [InlineData("xs.Select<Int, String>(f).Count", "xs.Select<2>(f).Count")]
-    [InlineData("f<List<Int>, Int[]>()", "f<2>()")]
+    [InlineData("xs.Select<int, string>(f).Count", "xs.Select<2>(f).Count")]
+    [InlineData("f<List<int>, int[]>()", "f<2>()")]
     [InlineData("a < b > (c)", "a<1>(c)")]
     [InlineData("f(a < b, c > d)", "f((a < b), (c > d))")]
     [InlineData("a < b && c > d", "((a < b) && (c > d))")]
     [InlineData("a < b > c", "((a < b) > c)")]
+    // Casts, by C#'s rule: only if what follows the parentheses can start an operand.
+    [InlineData("(int)x.y + 1", "((cast x.y) + 1)")]
+    [InlineData("(byte)(a + b)", "(cast (a + b))")]
+    [InlineData("(a) - b", "(a - b)")]
+    [InlineData("(List<int>)x", "(cast x)")]
+    [InlineData("-(int)x", "(-(cast x))")]
+    [InlineData("(int)-x", "(cast (-x))")]
+    [InlineData("(x) => x", "LambdaExpressionSyntax")]
+    [InlineData("f<(int) => int>(g)", "f<1>(g)")]
     public void Expressions_respect_precedence_and_associativity(string text, string expected)
     {
         var diagnostics = new DiagnosticBag();
@@ -89,11 +99,11 @@ public class ParserTests
     [Fact]
     public void Function_with_parameters_return_type_and_trailing_expression()
     {
-        var unit = ParseClean("fn add(a: Int, b: Int) -> Int { let c = a; c + b }");
+        var unit = ParseClean("fn add(a: int, b: int) => int { let c = a; c + b }");
         var function = Assert.IsType<FunctionDeclarationSyntax>(Assert.Single(unit.Declarations));
         Assert.Equal("add", function.Name.Text);
         Assert.Equal(["a", "b"], function.Parameters.Select(p => p.Name.Text));
-        Assert.Equal("Int", ((NamedTypeSyntax)function.ReturnType!).Name.Text);
+        Assert.Equal("int", ((NamedTypeSyntax)function.ReturnType!).Name.Text);
         Assert.IsType<VariableDeclarationSyntax>(Assert.Single(function.BlockBody!.Statements));
         Assert.Equal("(c + b)", Show(function.BlockBody.Trailing!));
     }
@@ -101,7 +111,7 @@ public class ParserTests
     [Fact]
     public void Expression_bodied_function()
     {
-        var function = (FunctionDeclarationSyntax)ParseClean("fn twice(x: Int) -> Int = x * 2;").Declarations[0];
+        var function = (FunctionDeclarationSyntax)ParseClean("fn twice(x: int) => int = x * 2;").Declarations[0];
         Assert.Null(function.BlockBody);
         Assert.Equal("(x * 2)", Show(function.ExpressionBody!));
     }
@@ -109,7 +119,7 @@ public class ParserTests
     [Fact]
     public void Record_declaration()
     {
-        var record = Assert.IsType<RecordDeclarationSyntax>(Assert.Single(ParseClean("record Point(x: Int, y: Int,);").Declarations));
+        var record = Assert.IsType<RecordDeclarationSyntax>(Assert.Single(ParseClean("record Point(x: int, y: int,);").Declarations));
         Assert.Equal(["x", "y"], record.Fields.Select(f => f.Name.Text));
     }
 
@@ -124,7 +134,7 @@ public class ParserTests
     [Fact]
     public void Final_if_is_the_trailing_expression()
     {
-        var body = Body(ParseClean("fn f() -> Int { if a { 1 } else if b { 2 } else { 3 } }"));
+        var body = Body(ParseClean("fn f() => int { if a { 1 } else if b { 2 } else { 3 } }"));
         var @if = Assert.IsType<IfExpressionSyntax>(body.Trailing);
         Assert.IsType<IfExpressionSyntax>(@if.Else);
     }
@@ -144,7 +154,7 @@ public class ParserTests
     public void Enum_declaration()
     {
         var @enum = Assert.IsType<EnumDeclarationSyntax>(Assert.Single(
-            ParseClean("enum Shape { Circle(radius: Double), Rect(w: Double, h: Double), Empty, }").Declarations));
+            ParseClean("enum Shape { Circle(radius: double), Rect(w: double, h: double), Empty, }").Declarations));
         Assert.Equal(["Circle", "Rect", "Empty"], @enum.Variants.Select(v => v.Name.Text));
         Assert.Equal([1, 2, 0], @enum.Variants.Select(v => v.Fields.Length));
     }
@@ -153,7 +163,7 @@ public class ParserTests
     public void Match_arms_with_guards_and_block_bodies()
     {
         var body = Body(ParseClean("""
-            fn f(s: Shape) -> Int {
+            fn f(s: Shape) => int {
                 match s {
                     Circle(r) if r > 1.0 => 1,
                     Rect(_, _) => { 2 }
@@ -201,7 +211,7 @@ public class ParserTests
     public void Trait_with_required_and_default_methods()
     {
         var trait = Assert.IsType<TraitDeclarationSyntax>(Assert.Single(
-            ParseClean("trait Shape { fn area() -> Double; fn describe(prefix: String) -> String = prefix; }").Declarations));
+            ParseClean("trait Shape { fn area() => double; fn describe(prefix: string) => string = prefix; }").Declarations));
         Assert.Equal(2, trait.Methods.Length);
         Assert.False(trait.Methods[0].HasBody);
         Assert.Null(trait.Methods[1].Static);
@@ -212,7 +222,7 @@ public class ParserTests
     public void Extend_block_with_traits()
     {
         var extend = Assert.IsType<ExtendDeclarationSyntax>(Assert.Single(
-            ParseClean("extend Circle: Shape, Show { fn area() -> Double = 1.0; static fn unit() -> Circle = Circle(1.0); }").Declarations));
+            ParseClean("extend Circle: Shape, Show { fn area() => double = 1.0; static fn one() => Circle = Circle(1.0); }").Declarations));
         Assert.Equal("Circle", extend.Name.Text);
         Assert.Equal(2, extend.Traits.Length);
         Assert.NotNull(extend.Methods[1].Static);
@@ -221,7 +231,7 @@ public class ParserTests
     [Fact]
     public void Generic_function_with_this_used_in_body()
     {
-        var function = (FunctionDeclarationSyntax)ParseClean("fn first<T>(p: Pair<T, T>) -> T = this.x;").Declarations[0];
+        var function = (FunctionDeclarationSyntax)ParseClean("fn first<T>(p: Pair<T, T>) => T = this.x;").Declarations[0];
         Assert.Equal("T", Assert.Single(function.TypeParameters).Name.Text);
         Assert.Equal("this.x", Show(function.ExpressionBody!));
     }
@@ -229,7 +239,7 @@ public class ParserTests
     [Fact]
     public void Optional_types_nest()
     {
-        var function = (FunctionDeclarationSyntax)ParseClean("fn f(a: Int?, b: Option<String>??) {}").Declarations[0];
+        var function = (FunctionDeclarationSyntax)ParseClean("fn f(a: int?, b: Option<string>??) {}").Declarations[0];
         Assert.IsType<NamedTypeSyntax>(Assert.IsType<OptionalTypeSyntax>(function.Parameters[0].Type).Inner);
         var twice = Assert.IsType<OptionalTypeSyntax>(function.Parameters[1].Type);
         Assert.IsType<NamedTypeSyntax>(Assert.IsType<OptionalTypeSyntax>(twice.Inner).Inner);
@@ -274,6 +284,36 @@ public class ParserTests
         var unit = Parse("fn a() { let x = 1;\nfn b() {}", out var diagnostics);
         Assert.Equal("PIP0100", Assert.Single(diagnostics).Code);
         Assert.Equal(["a", "b"], unit.Declarations.Select(d => d.Name.Text));
+    }
+
+    [Fact]
+    public void Function_types_use_fat_arrows_and_nest_to_the_right()
+    {
+        var unit = ParseClean("fn twice(f: (int) => int) => (int) => int = x => f(f(x));");
+        var function = Assert.IsType<FunctionDeclarationSyntax>(Assert.Single(unit.Declarations));
+        var returned = Assert.IsType<FunctionTypeSyntax>(function.ReturnType);
+        Assert.IsType<NamedTypeSyntax>(returned.ReturnType);
+        Assert.IsType<FunctionTypeSyntax>(function.Parameters[0].Type);
+        Assert.IsType<LambdaExpressionSyntax>(function.ExpressionBody);
+    }
+
+    [Fact]
+    public void An_old_style_arrow_is_reported_but_understood()
+    {
+        var unit = Parse("fn f(x: int) -> int = x;", out var diagnostics);
+        var diagnostic = Assert.Single(diagnostics);
+        Assert.Contains("'=>'", diagnostic.Message);
+        Assert.NotNull(Assert.IsType<FunctionDeclarationSyntax>(Assert.Single(unit.Declarations)).ReturnType);
+    }
+
+    [Theory]
+    [InlineData("fn f() { let int = 1; }")]
+    [InlineData("fn string() {}")]
+    [InlineData("record R(object: int);")]
+    public void Builtin_type_names_are_keywords(string text)
+    {
+        Parse(text, out var diagnostics);
+        Assert.Contains(diagnostics, d => d.Code == "PIP0100");
     }
 
     [Fact]

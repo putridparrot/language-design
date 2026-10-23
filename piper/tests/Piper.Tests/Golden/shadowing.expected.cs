@@ -19,9 +19,9 @@ public static class Shadowing
             int x_2 = i * 100;
             global::System.Console.WriteLine($"loop x={x_2}");
         }
-        string @string = "a C# keyword as a name";
+        string @event = "a C# keyword as a name";
         int @class = 42;
-        global::System.Console.WriteLine($"{@string} / {@class}");
+        global::System.Console.WriteLine($"{@event} / {@class}");
         int temp = 7;
         int r;
         if (temp > 5)

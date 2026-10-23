@@ -1,0 +1,221 @@
+// A larger program: a calculator with a tokenizer, a recursive-descent parser and an evaluator.
+// Errors are values (Result), not exceptions.
+
+using System;
+using System.Collections.Generic;
+
+enum Token {
+    Number(value: double),
+    Name(text: string),
+    Op(symbol: char),
+    Open,
+    Close,
+}
+
+enum Expr {
+    Num(value: double),
+    Var(name: string),
+    Neg(operand: Expr),
+    Bin(op: char, left: Expr, right: Expr),
+    Call(function: string, argument: Expr),
+}
+
+trait Describe {
+    fn describe() => string;
+}
+
+extend Token: Describe {
+    fn describe() => string = match this {
+        Number(v) => "number {v}",
+        Name(t) => "name '{t}'",
+        Op(c) => "'{c}'",
+        Open => "'('",
+        Close => "')'",
+    };
+}
+
+fn tokenize(source: string) => Result<List<Token>, string> {
+    let tokens: List<Token> = [];
+    var i = 0;
+    while i < source.Length {
+        let c = source[i];
+        if char.IsWhiteSpace(c) {
+            i += 1;
+        } else if char.IsDigit(c) || c == '.' {
+            let start = i;
+            while i < source.Length && (char.IsDigit(source[i]) || source[i] == '.') {
+                i += 1;
+            }
+            let text = source.Substring(start, i - start);
+            if !double.TryParse(text, out let value) {
+                return Err("bad number '{text}' at {start}");
+            }
+            tokens.Add(Token.Number(value));
+        } else if char.IsLetter(c) {
+            let start = i;
+            while i < source.Length && char.IsLetterOrDigit(source[i]) {
+                i += 1;
+            }
+            tokens.Add(Token.Name(source.Substring(start, i - start)));
+        } else if "+-*/^".Contains(c) {
+            tokens.Add(Token.Op(c));
+            i += 1;
+        } else if c == '(' {
+            tokens.Add(Token.Open);
+            i += 1;
+        } else if c == ')' {
+            tokens.Add(Token.Close);
+            i += 1;
+        } else {
+            return Err("unexpected '{c}' at {i}");
+        }
+    }
+    Ok(tokens)
+}
+
+// Precedence climbing over the token list; `position` is the parser's cursor.
+record Parser(tokens: List<Token>, position: int[]);
+
+fn peek(p: Parser) => Token? = if p.position[0] < p.tokens.Count { p.tokens[p.position[0]] } else { null };
+
+fn advance(p: Parser) {
+    p.position[0] += 1;
+}
+
+fn precedence(op: char) => int = match op {
+    '+' | '-' => 1,
+    '*' | '/' => 2,
+    '^' => 3,
+    _ => 0,
+};
+
+fn parseExpression(p: Parser, minPrecedence: int) => Result<Expr, string> {
+    var left = parseUnary(p)?;
+    while true {
+        let next = peek(p);
+        let (op, level) = match next {
+            Some(Token.Op(c)) => (c, precedence(c)),
+            _ => ('\0', 0),
+        };
+        if level == 0 || level < minPrecedence {
+            break;
+        }
+        advance(p);
+        // '^' is right-associative; the others are left-associative.
+        let right = parseExpression(p, if op == '^' { level } else { level + 1 })?;
+        left = Expr.Bin(op, left, right);
+    }
+    Ok(left)
+}
+
+fn parseUnary(p: Parser) => Result<Expr, string> {
+    match peek(p) {
+        Some(Token.Op('-')) => {
+            advance(p);
+            Ok(Expr.Neg(parseUnary(p)?))
+        }
+        _ => parsePrimary(p),
+    }
+}
+
+fn parsePrimary(p: Parser) => Result<Expr, string> {
+    let token = peek(p);
+    advance(p);
+    match token {
+        Some(Token.Number(v)) => Ok(Expr.Num(v)),
+        Some(Token.Name(name)) => {
+            if peek(p) is Some(Token.Open) {
+                advance(p);
+                let argument = parseExpression(p, 1)?;
+                expect(p, Token.Close)?;
+                Ok(Expr.Call(name, argument))
+            } else {
+                Ok(Expr.Var(name))
+            }
+        }
+        Some(Token.Open) => {
+            let inner = parseExpression(p, 1)?;
+            expect(p, Token.Close)?;
+            Ok(inner)
+        }
+        Some(other) => Err("unexpected {other.describe()}"),
+        None => Err("unexpected end of input"),
+    }
+}
+
+fn expect(p: Parser, wanted: Token) => Result<int, string> {
+    let found = peek(p);
+    if found == wanted {
+        advance(p);
+        return Ok(0);
+    }
+    Err("expected {wanted.describe()} but found {found?.describe() ?? "end of input"}")
+}
+
+fn evaluate(e: Expr, variables: Dictionary<string, double>) => Result<double, string> = match e {
+    Num(v) => Ok(v),
+    Var(name) => if variables.TryGetValue(name, out let value) { Ok(value) } else { Err("unknown variable '{name}'") },
+    Neg(operand) => Ok(-evaluate(operand, variables)?),
+    Bin(op, left, right) => {
+        let (a, b) = (evaluate(left, variables)?, evaluate(right, variables)?);
+        match op {
+            '+' => Ok(a + b),
+            '-' => Ok(a - b),
+            '*' => Ok(a * b),
+            '/' => if b == 0.0 { Err("division by zero") } else { Ok(a / b) },
+            _ => Ok(Math.Pow(a, b)),
+        }
+    }
+    Call(function, argument) => {
+        let x = evaluate(argument, variables)?;
+        match function {
+            "sqrt" => Ok(Math.Sqrt(x)),
+            "abs" => Ok(Math.Abs(x)),
+            _ => Err("unknown function '{function}'"),
+        }
+    }
+};
+
+fn show(e: Expr) => string = match e {
+    Num(v) => "{v}",
+    Var(name) => name,
+    Neg(operand) => "(-{show(operand)})",
+    Bin(op, left, right) => "({show(left)} {op} {show(right)})",
+    Call(function, argument) => "{function}({show(argument)})",
+};
+
+fn calculate(source: string, variables: Dictionary<string, double>) => Result<string, string> {
+    let tokens = tokenize(source)?;
+    let parser = Parser(tokens, int[1]);
+    let tree = parseExpression(parser, 1)?;
+    if peek(parser) is Some(extra) {
+        return Err("unexpected {extra.describe()} after the expression");
+    }
+    let value = evaluate(tree, variables)?;
+    Ok("{show(tree)} = {value}")
+}
+
+fn main() {
+    let variables: Dictionary<string, double> = Dictionary();
+    variables["x"] = 3;
+    variables["pi"] = Math.PI;
+
+    let inputs = [
+        "1 + 2 * 3",
+        "(1 + 2) * 3",
+        "2 ^ 3 ^ 2",
+        "-x * 2 + 10",
+        "sqrt(16) + abs(-2.5)",
+        "8 / (x - 3)",
+        "2 * (3 + 4",
+        "1 + y",
+        "4 $ 2",
+        "1 2",
+    ];
+    for input in inputs {
+        match calculate(input, variables) {
+            Ok(result) => print("{input.PadRight(22)} → {result}"),
+            Err(message) => print("{input.PadRight(22)} ✗ {message}"),
+        }
+    }
+}

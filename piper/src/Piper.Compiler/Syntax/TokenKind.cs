@@ -42,6 +42,8 @@ public enum TokenKind
     FinallyKeyword,
     ThrowKeyword,
     OutKeyword,
+    /// <summary>A builtin type name: int, string, … (the token's text says which).</summary>
+    PredefinedTypeKeyword,
     TrueKeyword,
     FalseKeyword,
 

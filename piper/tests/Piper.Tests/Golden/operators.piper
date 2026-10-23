@@ -21,9 +21,14 @@ fn main() {
 
     // The minimum values can be written as literals, as in C#; arithmetic wraps on overflow (unchecked).
     let min = -2147483648;
-    print(min == Int.MinValue);
-    print(-9223372036854775808L == Long.MinValue);
-    let max = Int.MaxValue;
+    print(min == int.MinValue);
+    print(-9223372036854775808L == long.MinValue);
+    let max = int.MaxValue;
     print(max + 1 == min);
     print(match min { -2147483648 => "min", _ => "other" });
+
+    // Constant arithmetic is checked, as in C#, so only these overflow-free forms compile.
+    print(int.MaxValue + 1L);
+    print(int.MaxValue - 1);
+    print(1.0 / 0);
 }

@@ -5,5 +5,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- Package metadata shared by the Piper tool and the Piper.Build MSBuild package. -->
+    <Version>1.0.0-preview.1</Version>
+    <Authors>Mark Timmings</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>piper;language;compiler;transpiler;csharp</PackageTags>
   </PropertyGroup>
 </Project>

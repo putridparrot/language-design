@@ -14,10 +14,10 @@ public static class Strings
         global::System.Console.WriteLine($"Nested: {$"inner {name}"}");
         global::System.Console.WriteLine($"Math: {1 + 2 * 3}, conditional: {(version > 1.0 ? "new" : "old")}");
         char c = 'P';
-        global::System.Console.WriteLine($"Char: {c}, newline escape: [\n]");
+        global::System.Console.WriteLine($"char: {c}, newline escape: [\n]");
         global::System.Console.WriteLine("Unicode: 🦜");
         global::System.Console.WriteLine(true);
-        global::System.Console.WriteLine($"Bool in string: {1 < 2}");
+        global::System.Console.WriteLine($"bool in string: {1 < 2}");
         global::System.Console.WriteLine("con" + "cat" + "enation");
         global::System.Console.WriteLine(0.1 + 0.2);
         global::System.Console.WriteLine(10 / 4);

@@ -41,6 +41,9 @@ public static class Operators
             temp = "other";
         }
         global::System.Console.WriteLine(temp);
+        global::System.Console.WriteLine(int.MaxValue + 1L);
+        global::System.Console.WriteLine(int.MaxValue - 1);
+        global::System.Console.WriteLine(1.0 / 0);
     }
 }
 

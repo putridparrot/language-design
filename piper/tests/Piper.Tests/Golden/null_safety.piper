@@ -1,39 +1,39 @@
 // Piper has no null references. Absence is Option<T> (written T?); `null` is just None,
 // plain values become Some implicitly, and ?. ?? ? and `is` work with optional values.
 
-record User(name: String, email: String?, age: Int);
+record User(name: string, email: string?, age: int);
 
 extend User {
     fn greet() { print("Hello, {this.name}!"); }
 }
 
-fn find(id: Int) -> User? {
+fn find(id: int) => User? {
     if id == 1 { return User("Ada", "ada@example.com", 36); }
     if id == 2 { return User("Bob", null, 41); }
     null
 }
 
-fn contact(id: Int) -> String {
+fn contact(id: int) => string {
     let user = find(id);
     let name = user?.name ?? "nobody";
-    let email = user?.email ?? "no email";   // ?. flattens: user?.email is String?, not String??
+    let email = user?.email ?? "no email";   // ?. flattens: user?.email is string?, not string??
     "{name} <{email}>"
 }
 
 // `?` returns None from the function as soon as a value is missing.
-fn ageNextYear(id: Int) -> Int? {
+fn ageNextYear(id: int) => int? {
     let user = find(id)?;
     user.age + 1
 }
 
-fn describe(value: Int?) -> String = match value {
+fn describe(value: int?) => string = match value {
     null => "nothing",
     Some(n) if n < 0 => "negative {n}",
     Some(n) => "{n}",
 };
 
 extend Option {
-    fn isNone() -> Bool = this is None;
+    fn isNone() => bool = this is None;
 }
 
 fn main() {
@@ -44,14 +44,14 @@ fn main() {
     print(ageNextYear(1));
     print(ageNextYear(3));
 
-    let maybe: Int? = 5;
+    let maybe: int? = 5;
     if maybe is Some(n) && n > 3 {
         print("big: {n}");
     }
     if maybe != null { print("has a value"); }
     print(maybe == 5);
 
-    let nothing: Int? = null;
+    let nothing: int? = null;
     print(nothing == null);
     print(nothing.isNone());
     print("{describe(maybe)}, {describe(nothing)}, {describe(-2)}");
@@ -61,12 +61,12 @@ fn main() {
     find(9)?.greet();
 
     // ?? chains right to left; the last fallback makes the result non-optional.
-    let first: String? = null;
-    let second: String? = "second";
+    let first: string? = null;
+    let second: string? = "second";
     print(first ?? second ?? "default");
 
     // while + is: loop as long as there is a next value.
-    var current: Int? = 3;
+    var current: int? = 3;
     while current is Some(c) {
         print("countdown {c}");
         current = if c > 1 { c - 1 } else { null };

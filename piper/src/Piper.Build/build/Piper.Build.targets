@@ -1,0 +1,54 @@
+<Project>
+  <!--
+    Compiles a project's .piper files with the rest of its code. Every .piper file in the project directory is
+    included (as C# files are) unless EnableDefaultPiperItems is false; add others with <PiperCompile Include="…" />.
+    All of them are one Piper program, transpiled to C# in obj/ (with #line directives, so errors, stack traces and
+    the debugger point at the .piper files) and compiled with the project's own C#, which can call it.
+  -->
+
+  <PropertyGroup>
+    <PiperCompilerPath Condition="'$(PiperCompilerPath)' == ''">$(MSBuildThisFileDirectory)..\tools\piper.dll</PiperCompilerPath>
+    <PiperOutputPath Condition="'$(PiperOutputPath)' == ''">$(IntermediateOutputPath)piper\</PiperOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(EnableDefaultPiperItems)' != 'false'">
+    <PiperCompile Include="**\*.piper" Exclude="$(DefaultItemExcludes);$(DefaultExcludesInProjectFolder)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shown in IDEs, and rebuilds when they change. -->
+    <None Remove="@(PiperCompile)" />
+    <AvailableItemName Include="PiperCompile" />
+    <UpToDateCheckInput Include="@(PiperCompile)" />
+  </ItemGroup>
+
+  <Target Name="PiperCompile"
+          BeforeTargets="CoreCompile"
+          Condition="'@(PiperCompile)' != ''"
+          Inputs="@(PiperCompile);$(PiperCompilerPath)"
+          Outputs="$(PiperOutputPath)piper.stamp">
+    <!-- Start clean so C# from deleted or renamed .piper files doesn't linger. Full paths make #line point at the real files. -->
+    <RemoveDir Directories="$(PiperOutputPath)" />
+    <!--
+      Piper's errors are in MSBuild's format (file(line,col): error PIP0000: …), so Exec reports them against the .piper
+      files, which fails the build. Exit code 1 means exactly that; any other failure (a crash) gets an error of its own.
+    -->
+    <Exec Command="dotnet &quot;$(PiperCompilerPath)&quot; build @(PiperCompile->'&quot;%(FullPath)&quot;', ' ') -o &quot;$(PiperOutputPath.TrimEnd('\'))&quot;"
+          IgnoreExitCode="true">
+      <Output TaskParameter="ExitCode" PropertyName="_PiperExitCode" />
+    </Exec>
+    <Error Condition="'$(_PiperExitCode)' != '0' and '$(_PiperExitCode)' != '1'" Text="The Piper compiler failed (exit code $(_PiperExitCode))." />
+    <!-- Stop here, rather than let the C# compiler add errors about the Piper code that's missing. -->
+    <Error Condition="'$(_PiperExitCode)' == '1'" Code="PIP0000" Text="The C# wasn't compiled because the Piper code has errors (listed above)." />
+    <!-- Only a successful compile counts as up to date, so a failed one is retried by the next build. -->
+    <Touch Condition="'$(_PiperExitCode)' == '0'" Files="$(PiperOutputPath)piper.stamp" AlwaysCreate="true" />
+  </Target>
+
+  <!-- Runs even when PiperCompile was skipped as up to date, since items added in a skipped target are lost. -->
+  <Target Name="PiperIncludeGeneratedCode" BeforeTargets="CoreCompile" AfterTargets="PiperCompile" Condition="'@(PiperCompile)' != ''">
+    <ItemGroup>
+      <Compile Include="$(PiperOutputPath)*.cs" />
+      <FileWrites Include="$(PiperOutputPath)**" />
+    </ItemGroup>
+  </Target>
+</Project>

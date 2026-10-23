@@ -8,7 +8,14 @@ namespace Piper.Binding;
 // every expression has a type. The binder produces it; the lowerer rewrites it into a subset the
 // C# emitter can translate directly (no block or if expressions in value positions).
 
-public abstract class BoundNode;
+public abstract class BoundNode
+{
+    /// <summary>
+    /// Where in its Piper file the node came from, if known. Set by the binder on statements and expressions it binds
+    /// from syntax, and copied by the lowerer onto what it produces, so the emitted C# can carry <c>#line</c> directives.
+    /// </summary>
+    public TextSpan? SourceSpan { get; internal set; }
+}
 
 public sealed class BoundProgram(
     ImmutableArray<SourceText> files,
@@ -59,12 +66,27 @@ public sealed class BoundBlockStatement(ImmutableArray<BoundStatement> statement
     public ImmutableArray<BoundStatement> Statements { get; } = statements;
 }
 
-/// <summary><see cref="Initializer"/> is null only for declarations introduced by lowering (assigned on every path afterwards).</summary>
-public sealed class BoundVariableDeclaration(VariableSymbol variable, BoundExpression? initializer) : BoundStatement
+/// <summary>
+/// <see cref="Initializer"/> is null only for declarations introduced by lowering (assigned on every path afterwards).
+/// <see cref="IsUsing"/>: <c>using let r = …;</c>, disposed at the end of the enclosing block (C#'s using declaration).
+/// </summary>
+public sealed class BoundVariableDeclaration(VariableSymbol variable, BoundExpression? initializer, bool isUsing = false) : BoundStatement
 {
     public VariableSymbol Variable { get; } = variable;
 
     public BoundExpression? Initializer { get; } = initializer;
+
+    public bool IsUsing { get; } = isUsing;
+}
+
+/// <summary><c>using (let r = …) { … }</c> or <c>using (expression) { … }</c>: disposes the resource after the body.</summary>
+public sealed class BoundUsingStatement(VariableSymbol? variable, BoundExpression resource, BoundStatement body) : BoundStatement
+{
+    public VariableSymbol? Variable { get; } = variable;
+
+    public BoundExpression Resource { get; } = resource;
+
+    public BoundStatement Body { get; } = body;
 }
 
 public sealed class BoundExpressionStatement(BoundExpression expression) : BoundStatement
@@ -91,6 +113,9 @@ public sealed class BoundWhileStatement(BoundExpression condition, BoundStatemen
     public BoundExpression Condition { get; } = condition;
 
     public BoundStatement Body { get; } = body;
+
+    /// <summary>`while true` with no `break` out of it: control never continues past the loop.</summary>
+    public bool IsInfinite { get; init; }
 }
 
 /// <summary>A counted loop over <c>Lower..Upper</c> (or <c>..=</c> when <see cref="IsInclusive"/>).</summary>
@@ -363,6 +388,17 @@ public sealed class BoundThrowExpression(BoundExpression exception) : BoundExpre
     public BoundExpression Exception { get; } = exception;
 
     public override TypeSymbol Type => TypeSymbol.Never;
+}
+
+/// <summary>
+/// <c>(Int)x</c>: an explicit conversion, written as a C# cast. (Implicit conversions are
+/// <see cref="BoundConversionExpression"/>s, which C# performs without a cast.)
+/// </summary>
+public sealed class BoundCastExpression(TypeSymbol type, BoundExpression operand) : BoundExpression
+{
+    public BoundExpression Operand { get; } = operand;
+
+    public override TypeSymbol Type { get; } = type;
 }
 
 /// <summary><c>(1, "a")</c>: a tuple literal.</summary>

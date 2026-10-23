@@ -11,7 +11,14 @@ public sealed partial class Binder
     /// It is only a hint, used to infer type arguments such as the T in <c>let x: Option&lt;Int&gt; = Option.None;</c>;
     /// callers still convert the result.
     /// </param>
-    private BoundExpression BindExpression(ExpressionSyntax syntax, TypeSymbol? expected = null) => syntax switch
+    private BoundExpression BindExpression(ExpressionSyntax syntax, TypeSymbol? expected = null)
+    {
+        var bound = BindExpressionCore(syntax, expected);
+        bound.SourceSpan ??= syntax.Span;
+        return bound;
+    }
+
+    private BoundExpression BindExpressionCore(ExpressionSyntax syntax, TypeSymbol? expected) => syntax switch
     {
         LiteralExpressionSyntax s => BindLiteral(s),
         InterpolatedStringExpressionSyntax s => BindInterpolatedString(s),
@@ -28,6 +35,7 @@ public sealed partial class Binder
         ThrowExpressionSyntax s => BindThrow(s),
         OutArgumentSyntax s => ReportMisplacedOut(s),
         UnaryExpressionSyntax s => BindUnary(s),
+        CastExpressionSyntax s => BindCast(s),
         BinaryExpressionSyntax s => BindBinary(s),
         RangeExpressionSyntax s => BindRange(s),
         AssignmentExpressionSyntax s => BindAssignment(s),
@@ -45,6 +53,10 @@ public sealed partial class Binder
     {
         int value => new BoundLiteralExpression(value, TypeSymbol.Int),
         long value => new BoundLiteralExpression(value, TypeSymbol.Long),
+        uint value => new BoundLiteralExpression(value, TypeSymbol.UInt),
+        ulong value => new BoundLiteralExpression(value, TypeSymbol.ULong),
+        float value => new BoundLiteralExpression(value, TypeSymbol.Float),
+        decimal value => new BoundLiteralExpression(value, TypeSymbol.Decimal),
         double value => new BoundLiteralExpression(value, TypeSymbol.Double),
         char value => new BoundLiteralExpression(value, TypeSymbol.Char),
         string value => new BoundLiteralExpression(value, TypeSymbol.String),
@@ -164,7 +176,13 @@ public sealed partial class Binder
             _diagnostics.ReportUndefinedUnaryOperator(syntax.Operator.Span, syntax.Operator.Text, operand.Type);
             return new BoundErrorExpression();
         }
-        return new BoundUnaryExpression(kind, operand, type);
+        if (kind == BoundUnaryOperatorKind.Negate && ConstantFolding.Value(operand) is { } constant &&
+            ConstantFolding.Negate(constant, out _) == ConstantFolding.Failure.Overflow)
+        {
+            _diagnostics.ReportConstantOverflow(syntax.Span);
+        }
+        // `-b` on a Byte is an Int, as in C#.
+        return new BoundUnaryExpression(kind, Widen(operand, type), type);
     }
 
     private BoundExpression BindBinary(BinaryExpressionSyntax syntax)
@@ -197,6 +215,11 @@ public sealed partial class Binder
                 right = Convert(right, left.Type, syntax.Right.Span);
             else if (right.Type.IsOption && IsConvertible(left.Type, right.Type))
                 left = Convert(left, right.Type, syntax.Left.Span);
+            // `shape == circle`: a value compares with a trait it implements, as that trait.
+            else if (left.Type is TraitSymbol && right.Type is not TraitSymbol && IsConvertible(right.Type, left.Type))
+                right = Convert(right, left.Type, syntax.Right.Span);
+            else if (right.Type is TraitSymbol && left.Type is not TraitSymbol && IsConvertible(left.Type, right.Type))
+                left = Convert(left, right.Type, syntax.Left.Span);
             // `(1, 2) == pair`: tuples whose names or element types differ compare at their common type.
             else if (left.Type is TupleTypeSymbol && right.Type is TupleTypeSymbol &&
                      CommonType([left.Type, right.Type], null, out _) is TupleTypeSymbol common)
@@ -213,8 +236,26 @@ public sealed partial class Binder
             return new BoundErrorExpression();
         }
 
-        return new BoundBinaryExpression(
+        var binary = new BoundBinaryExpression(
             Widen(left, resolution.OperandType), kind, Widen(right, resolution.OperandType), resolution.ResultType);
+        CheckConstantArithmetic(binary, syntax.Span);
+        return binary;
+    }
+
+    /// <summary>As C# would at compile time: arithmetic on constants mustn't overflow or divide by zero.</summary>
+    private void CheckConstantArithmetic(BoundBinaryExpression binary, TextSpan span)
+    {
+        if (ConstantFolding.Value(binary.Left) is not { } left || ConstantFolding.Value(binary.Right) is not { } right)
+            return;
+        switch (ConstantFolding.Binary(binary.Operator, left, right, out _))
+        {
+            case ConstantFolding.Failure.Overflow:
+                _diagnostics.ReportConstantOverflow(span);
+                break;
+            case ConstantFolding.Failure.DivideByZero:
+                _diagnostics.ReportConstantDivisionByZero(span);
+                break;
+        }
     }
 
     private BoundExpression BindRange(RangeExpressionSyntax syntax)
@@ -271,7 +312,7 @@ public sealed partial class Binder
         var resolution = Operators.ResolveBinary(kind, variable.Type, value.Type);
         if (resolution is null)
             _diagnostics.ReportUndefinedBinaryOperator(syntax.Operator.Span, syntax.Operator.Text, variable.Type, value.Type);
-        else if (resolution.ResultType != variable.Type)
+        else if (!CompoundResultFits(resolution.ResultType, variable.Type, value))
             _diagnostics.ReportCannotConvert(syntax.Value.Span, resolution.ResultType, variable.Type);
         else
             value = Widen(value, resolution.OperandType);
@@ -461,6 +502,11 @@ public sealed partial class Binder
             // StringBuilder(), Random(42), List() (type arguments from the expected type)
             case ClrTypeSymbol clr:
                 return BindClrConstruction(clr, syntax.Arguments, syntax.Span, expected);
+
+            // `String('#', 3)`: a builtin type's .NET constructors (C#'s `new string('#', 3)`).
+            case TypeSymbol builtin when ClrTypes.BuiltinTypes.TryGetValue(builtin, out var clrType) && clrType.GetConstructors().Length > 0:
+                return BindClrInvocation(
+                    null, builtin, clrType.GetConstructors(), builtin.Name, syntax.Arguments, [], syntax.Span, new Dictionary<Type, TypeSymbol>());
 
             case ClrTypeGroupSymbol group:
             {
@@ -1135,7 +1181,61 @@ public sealed partial class Binder
         (to.IsOption && from.IsValueType && IsConvertible(from, to.TypeArguments[0])) ||
         // .NET reference conversions: List<Int> to IEnumerable<Int>, String to IEnumerable<Char>, anything to object.
         (to is ClrTypeSymbol && from.IsValueType && (ClrTypes.ToClr(to) == typeof(object) || SelfAndBaseTypes(from).Contains(to))) ||
-        (from is TupleTypeSymbol fromTuple && to is TupleTypeSymbol toTuple && IsTupleConvertible(fromTuple, toTuple));
+        (from is TupleTypeSymbol fromTuple && to is TupleTypeSymbol toTuple && IsTupleConvertible(fromTuple, toTuple)) ||
+        // List<(Int, Int)> to List<(a: Int, b: Int)>: tuple names don't matter, at any depth.
+        (from.IsValueType && TypeSubstitution.WithoutTupleNames(from) == TypeSubstitution.WithoutTupleNames(to));
+
+    /// <summary>
+    /// Whether `x op= y` can store its result in x (of type <paramref name="target"/>), as in C#: when the result converts
+    /// implicitly, or when it's numeric and y itself converts implicitly to x's type, so `b += 1` works on a Byte.
+    /// </summary>
+    private bool CompoundResultFits(TypeSymbol result, TypeSymbol target, BoundExpression value) =>
+        result == target || IsConvertible(result, target) ||
+        (target.IsNumeric && result.IsNumeric && (IsConvertible(value.Type, target) || ConstantFolding.FitsImplicitly(value, target)));
+
+    /// <summary>
+    /// <c>(T)x</c>, as in C#: any implicit conversion; between numeric types (and Char), truncating or wrapping as C#'s
+    /// unchecked casts do, though a constant that doesn't fit is an error; and from a trait, a .NET base type or object
+    /// to something more specific, which throws InvalidCastException if the value isn't one.
+    /// </summary>
+    private BoundExpression BindCast(CastExpressionSyntax syntax)
+    {
+        var type = BindValueType(syntax.Type, "cast");
+        var operand = RequireValue(BindExpression(syntax.Operand, type), syntax.Operand.Span);
+        if (type == TypeSymbol.Error || operand.Type == TypeSymbol.Error)
+            return new BoundErrorExpression();
+        if (operand.Type == type)
+            return operand;
+
+        if (Operators.IsArithmetic(operand.Type) && Operators.IsArithmetic(type))
+        {
+            if (ConstantFolding.Value(operand) is { } constant && ConstantFolding.Cast(constant, type, out _) == ConstantFolding.Failure.Overflow)
+                _diagnostics.ReportConstantOverflow(syntax.Span);
+            return new BoundCastExpression(type, operand);
+        }
+
+        // Implicit conversions are allowed too; an implicit Some needs no cast in C#.
+        if (IsConvertible(operand.Type, type))
+            return type.IsOption ? Widen(operand, type) : new BoundCastExpression(type, operand);
+
+        if (IsDowncast(operand.Type, type))
+            return new BoundCastExpression(type, operand);
+
+        _diagnostics.ReportCannotCast(syntax.Span, operand.Type, type);
+        return new BoundErrorExpression();
+    }
+
+    /// <summary>A cast C# allows that may fail at run time: from a trait, object or .NET base type to a more specific type.</summary>
+    private bool IsDowncast(TypeSymbol from, TypeSymbol to)
+    {
+        if (from is TraitSymbol trait && Implements(to, trait))
+            return true;
+        if (ClrTypes.ToClr(from) is not { } source)
+            return false;
+        if (source == typeof(object))
+            return to.IsValueType;
+        return ClrTypes.ToClr(to) is { } target && (source.IsAssignableFrom(target) || (source.IsInterface && !target.IsSealed));
+    }
 
     /// <summary>Converts to <paramref name="type"/> implicitly, or reports an error.</summary>
     private BoundExpression Convert(BoundExpression expression, TypeSymbol type, TextSpan span)
@@ -1146,6 +1246,10 @@ public sealed partial class Binder
 
         if (IsConvertible(expression.Type, type))
             return Widen(expression, type);
+
+        // `let b: Byte = 7;`: a constant that fits converts implicitly, as in C#.
+        if (ConstantFolding.FitsImplicitly(expression, type))
+            return new BoundConversionExpression(type, expression);
 
         _diagnostics.ReportCannotConvert(span, expression.Type, type);
         return new BoundErrorExpression();

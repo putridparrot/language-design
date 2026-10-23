@@ -209,8 +209,9 @@ public sealed class Lexer
     }
 
     /// <summary>
-    /// number = digits [ "." digits ] [ exponent ] [ "L" ] | "0x" hexDigits [ "L" ] | "0b" binaryDigits [ "L" ] ;
-    /// Underscores may separate digits. Integers are Int unless suffixed with L (Long).
+    /// number = digits [ "." digits ] [ exponent ] [ suffix ] | "0x" hexDigits [ "L" | "U" | "UL" ] | "0b" binaryDigits [ … ] ;
+    /// Underscores may separate digits. Integers are Int unless suffixed (L Long, U UInt, UL ULong); F, D and M
+    /// make Float, Double and Decimal numbers, as in C#.
     /// </summary>
     private Token ScanNumber()
     {
@@ -255,12 +256,25 @@ public sealed class Lexer
             digits = builder.ToString();
         }
 
-        bool isLong = false;
-        if (!isDouble && Current == 'L')
+        // Suffixes, as in C#: L (Long), U (UInt, or ULong if it doesn't fit), UL (ULong); and on decimal numbers
+        // F (Float), D (Double), M (Decimal).
+        string suffix = "";
+        if (radix == 10 && Current is 'f' or 'F' or 'd' or 'D' or 'm' or 'M')
         {
-            isLong = true;
+            suffix = char.ToUpperInvariant(Current).ToString();
             _position++;
         }
+        else if (!isDouble && Current is 'u' or 'U' or 'l' or 'L')
+        {
+            suffix = char.ToUpperInvariant(Current).ToString();
+            _position++;
+            if (Current is 'u' or 'U' or 'l' or 'L' && char.ToUpperInvariant(Current).ToString() != suffix)
+            {
+                suffix = "UL";
+                _position++;
+            }
+        }
+        bool isLong = suffix == "L";
 
         while (IsIdentifierPart(Current))
         {
@@ -277,7 +291,25 @@ public sealed class Lexer
             return new Token(TokenKind.IntegerLiteral, span, text, 0);
         }
 
-        if (isDouble)
+        switch (suffix)
+        {
+            case "F":
+                if (!float.TryParse(digits, NumberStyles.Float, CultureInfo.InvariantCulture, out var f) || !float.IsFinite(f))
+                {
+                    _diagnostics.ReportInvalidNumber(span, text);
+                    f = 0;
+                }
+                return new Token(TokenKind.DoubleLiteral, span, text, f);
+            case "M":
+                if (!decimal.TryParse(digits, NumberStyles.Float, CultureInfo.InvariantCulture, out var m))
+                {
+                    _diagnostics.ReportInvalidNumber(span, text);
+                    m = 0;
+                }
+                return new Token(TokenKind.DoubleLiteral, span, text, m);
+        }
+
+        if (isDouble || suffix == "D")
         {
             if (!double.TryParse(digits, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) || !double.IsFinite(d))
             {
@@ -288,23 +320,34 @@ public sealed class Lexer
         }
 
         bool parsed = TryParseInteger(digits, radix, out ulong value);
+        if (suffix is "U" or "UL")
+        {
+            if (!parsed)
+            {
+                _diagnostics.ReportIntegerTooLarge(span, text, "ulong");
+                value = 0;
+            }
+            return suffix == "U" && value <= uint.MaxValue
+                ? new Token(TokenKind.IntegerLiteral, span, text, (uint)value)
+                : new Token(TokenKind.IntegerLiteral, span, text, value);
+        }
         if (isLong)
         {
             if (parsed && value == (ulong)long.MaxValue + 1)
-                return new Token(TokenKind.IntegerLiteral, span, text, new NegatableLiteral(long.MinValue, "Long"));
+                return new Token(TokenKind.IntegerLiteral, span, text, new NegatableLiteral(long.MinValue, "long"));
             if (!parsed || value > long.MaxValue)
             {
-                _diagnostics.ReportIntegerTooLarge(span, text, "Long");
+                _diagnostics.ReportIntegerTooLarge(span, text, "long");
                 value = 0;
             }
             return new Token(TokenKind.IntegerLiteral, span, text, (long)value);
         }
 
         if (parsed && value == (ulong)int.MaxValue + 1)
-            return new Token(TokenKind.IntegerLiteral, span, text, new NegatableLiteral(int.MinValue, "Int"));
+            return new Token(TokenKind.IntegerLiteral, span, text, new NegatableLiteral(int.MinValue, "int"));
         if (!parsed || value > int.MaxValue)
         {
-            _diagnostics.ReportIntegerTooLarge(span, text, "Int");
+            _diagnostics.ReportIntegerTooLarge(span, text, "int");
             value = 0;
         }
         return new Token(TokenKind.IntegerLiteral, span, text, (int)value);
@@ -351,6 +394,9 @@ public sealed class Lexer
     /// </summary>
     private Token ScanString()
     {
+        if (Peek(1) == '"' && Peek(2) == '"')
+            return ScanRawString();
+
         int start = _position;
         _position++;
 
@@ -424,6 +470,80 @@ public sealed class Lexer
         }
 
         return new Token(TokenKind.InterpolatedStringLiteral, span, tokenText) { Parts = parts.ToImmutable() };
+    }
+
+    /// <summary>
+    /// A raw string literal, as in C# 11: three or more quotes, no escapes and no interpolation. Single-line,
+    /// <c>"""say "hi" {here}"""</c>, or multi-line, where the content starts on the line after the opening quotes and
+    /// ends on the line before the closing ones, whose indentation is removed from every line. Line breaks are
+    /// always <c>\n</c>, whatever the source file uses.
+    /// </summary>
+    private Token ScanRawString()
+    {
+        int start = _position;
+        int quotes = 0;
+        while (Current == '"')
+        {
+            quotes++;
+            _position++;
+        }
+
+        int contentStart = _position;
+        int close = -1;
+        for (int i = contentStart; i < _end; i++)
+        {
+            if (_source[i] != '"')
+                continue;
+            int run = 0;
+            while (i + run < _end && _source[i + run] == '"')
+                run++;
+            if (run >= quotes)
+            {
+                close = i;
+                break;
+            }
+            i += run - 1;
+        }
+
+        if (close < 0)
+        {
+            _position = _end;
+            _diagnostics.ReportUnterminatedString(new TextSpan(start, quotes));
+            return new Token(TokenKind.StringLiteral, TextSpan.FromBounds(start, _position), _source.ToString(TextSpan.FromBounds(start, _position)), "");
+        }
+
+        _position = close + quotes;
+        var span = TextSpan.FromBounds(start, _position);
+        var content = _source.ToString(TextSpan.FromBounds(contentStart, close));
+        var lines = content.ReplaceLineEndings("\n").Split('\n');
+        if (lines.Length == 1)
+            return new Token(TokenKind.StringLiteral, span, _source.ToString(span), content);
+
+        // Multi-line: nothing but whitespace may follow the opening quotes or precede the closing ones.
+        if (!string.IsNullOrWhiteSpace(lines[0]))
+        {
+            _diagnostics.ReportRawStringLayout(new TextSpan(start, quotes), "The opening quotes of a multi-line raw string must end their line.");
+            return new Token(TokenKind.StringLiteral, span, _source.ToString(span), content);
+        }
+        var indentation = lines[^1];
+        if (!string.IsNullOrWhiteSpace(indentation))
+        {
+            _diagnostics.ReportRawStringLayout(new TextSpan(close, quotes), "The closing quotes of a multi-line raw string must start their line.");
+            return new Token(TokenKind.StringLiteral, span, _source.ToString(span), content);
+        }
+
+        var value = new StringBuilder();
+        for (int i = 1; i < lines.Length - 1; i++)
+        {
+            if (i > 1)
+                value.Append('\n');
+            var line = lines[i];
+            if (line.StartsWith(indentation, StringComparison.Ordinal))
+                value.Append(line, indentation.Length, line.Length - indentation.Length);
+            else if (!string.IsNullOrWhiteSpace(line))
+                _diagnostics.ReportRawStringLayout(new TextSpan(start, quotes), "Every line of a raw string must start with the closing quotes' indentation.");
+        }
+        return new Token(TokenKind.StringLiteral, span, _source.ToString(span), value.ToString());
     }
 
     private static void FlushText(ImmutableArray<InterpolationPart>.Builder parts, StringBuilder text, int start, int end)

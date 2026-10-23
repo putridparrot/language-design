@@ -1,0 +1,64 @@
+// Stock keeping: lookups, orders and reports.
+namespace Shop.Store;
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using Shop.Model;
+
+enum OrderError {
+    UnknownItem(sku: string),
+    OutOfStock(sku: string, wanted: int, available: int),
+    InvalidQuantity(quantity: int),
+}
+
+record Inventory(items: Dictionary<string, Item>);
+
+fn create(items: List<Item>) => Inventory {
+    let bySku: Dictionary<string, Item> = Dictionary();
+    for item in items {
+        if bySku.ContainsKey(item.sku) {
+            throw ArgumentException("duplicate SKU {item.sku}");
+        }
+        bySku[item.sku] = item;
+    }
+    Inventory(bySku)
+}
+
+fn find(inventory: Inventory, sku: string) => Item? =
+    if inventory.items.TryGetValue(sku, out let item) { item } else { null };
+
+/// Takes stock for an order, returning what it costs, or why it can't be filled.
+fn order(inventory: Inventory, sku: string, quantity: int) => Result<Money, OrderError> {
+    if quantity <= 0 {
+        return Err(OrderError.InvalidQuantity(quantity));
+    }
+    let item = match find(inventory, sku) {
+        Some(found) => found,
+        None => return Err(OrderError.UnknownItem(sku)),
+    };
+    if item.stock < quantity {
+        return Err(OrderError.OutOfStock(sku, quantity, item.stock));
+    }
+    inventory.items[sku] = Item(item.sku, item.name, item.category, item.price, item.stock - quantity);
+    Ok(item.price.times(quantity))
+}
+
+fn explain(error: OrderError) => string = match error {
+    UnknownItem(sku) => "no item {sku}",
+    OutOfStock(sku, wanted, available) => "only {available} of {sku} left, {wanted} wanted",
+    InvalidQuantity(quantity) => "can't order {quantity}",
+};
+
+/// (category, number of items, units in stock) per category, largest stock first.
+fn stockByCategory(inventory: Inventory) => List<(category: Category, items: int, units: int)> =
+    inventory.items.Values
+        .GroupBy(item => item.category)
+        .Select(group => (group.Key, group.Count(), group.Sum(item => item.stock)))
+        .OrderByDescending(entry => entry.Item3)
+        .ToList();
+
+private fn lowStockThreshold() => int = 3;
+
+fn lowStock(inventory: Inventory) => List<Item> =
+    inventory.items.Values.Where(item => item.stock <= lowStockThreshold()).OrderBy(item => item.sku).ToList();

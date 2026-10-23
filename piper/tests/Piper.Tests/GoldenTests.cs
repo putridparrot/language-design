@@ -32,14 +32,7 @@ public class GoldenTests
     public void Compiles_and_runs_as_expected(string name)
     {
         var directory = GoldenDirectory();
-        var programDirectory = Path.Combine(directory, name);
-        var sources = Directory.Exists(programDirectory)
-            ? Directory.GetFiles(programDirectory, "*.piper", SearchOption.AllDirectories).Order()
-                .Select(path => new SourceText(File.ReadAllText(path), Path.GetRelativePath(directory, path).Replace('\\', '/')))
-                .ToList()
-            : [new SourceText(File.ReadAllText(Path.Combine(directory, name + ".piper")), name + ".piper")];
-
-        var result = Compilation.Compile(sources);
+        var result = Compilation.Compile(LoadSources(directory, name));
         Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
 
         var run = Runner.Run(result.Files);
@@ -47,6 +40,31 @@ public class GoldenTests
 
         Check(Path.Combine(directory, name + ".expected.cs"), result.CSharp!);
         Check(Path.Combine(directory, name + ".expected.out"), run.Output);
+    }
+
+    /// <summary><c>#line</c> directives (used by <c>piper run</c> and <c>build</c>) must not change what compiles or what it prints.</summary>
+    [Theory]
+    [MemberData(nameof(Cases))]
+    public void Runs_the_same_with_line_directives(string name)
+    {
+        var directory = GoldenDirectory();
+        var result = Compilation.Compile(LoadSources(directory, name), new CompilationOptions(LineDirectives: true));
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Contains("#line ", result.CSharp);
+
+        var run = Runner.Run(result.Files);
+        Assert.True(run.Success, string.Join("\n", run.Errors) + "\n\n" + result.CSharp);
+        Assert.Equal(Normalize(File.ReadAllText(Path.Combine(directory, name + ".expected.out"))), Normalize(run.Output));
+    }
+
+    private static List<SourceText> LoadSources(string directory, string name)
+    {
+        var programDirectory = Path.Combine(directory, name);
+        return Directory.Exists(programDirectory)
+            ? Directory.GetFiles(programDirectory, "*.piper", SearchOption.AllDirectories).Order()
+                .Select(path => new SourceText(File.ReadAllText(path), Path.GetRelativePath(directory, path).Replace('\\', '/')))
+                .ToList()
+            : [new SourceText(File.ReadAllText(Path.Combine(directory, name + ".piper")), name + ".piper")];
     }
 
     private static void Check(string expectedPath, string actual)

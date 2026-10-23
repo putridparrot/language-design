@@ -1,8 +1,8 @@
-// Literal, range, alternative, record, Bool and String patterns, guards, and match in loops.
+// Literal, range, alternative, record, bool and string patterns, guards, and match in loops.
 
-record Point(x: Int, y: Int);
+record Point(x: int, y: int);
 
-fn classify(n: Int) -> String = match n {
+fn classify(n: int) => string = match n {
     0 => "zero",
     1 | 2 | 3 => "small",
     4..=9 => "digit",
@@ -11,7 +11,7 @@ fn classify(n: Int) -> String = match n {
     _ => "large",
 };
 
-fn quadrant(p: Point) -> String = match p {
+fn quadrant(p: Point) => string = match p {
     Point(0, 0) => "origin",
     Point(0, _) | Point(_, 0) => "on an axis",
     Point(x, y) if x > 0 && y > 0 => "first quadrant",
@@ -19,27 +19,27 @@ fn quadrant(p: Point) -> String = match p {
     Point(_, _) => "lower half",
 };
 
-fn kind(c: Char) -> String = match c {
+fn kind(c: char) => string = match c {
     'a'..='z' => "lower",
     'A'..='Z' => "upper",
     '0'..='9' => "digit",
     _ => "other",
 };
 
-fn bits(a: Bool, b: Bool) -> String {
-    // Bool matches are exhaustive without a wildcard.
+fn bits(a: bool, b: bool) => string {
+    // bool matches are exhaustive without a wildcard.
     let first = match a { true => "1", false => "0" };
     first + match b { true => "1", false => "0" }
 }
 
-fn greet(language: String) -> String = match language {
+fn greet(language: string) => string = match language {
     "en" => "Hello",
     "fr" => "Bonjour",
     "es" | "pt" => "Hola",
     other => "? ({other})",
 };
 
-fn size(n: Long) -> String = match n {
+fn size(n: long) => string = match n {
     0 => "none",
     1..=999 => "some",
     _ => "lots",
