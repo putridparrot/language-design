@@ -60,7 +60,13 @@ public sealed partial class Binder
     /// <paramref name="Inferred"/> is set while binding a lambda whose return type isn't known yet: returned values
     /// are collected (not converted) so their common type can become the return type.
     /// </summary>
-    private sealed record ReturnContext(TypeSymbol Type, string Name, List<TypeSymbol>? Inferred = null, bool IsAsync = false);
+    /// <param name="IteratorElement">In an iterator, the type it yields; `return` isn't allowed there.</param>
+    private sealed record ReturnContext(
+        TypeSymbol Type,
+        string Name,
+        List<TypeSymbol>? Inferred = null,
+        bool IsAsync = false,
+        TypeSymbol? IteratorElement = null);
     private int _loopDepth;
 
     /// <summary>Everything about the file being bound: its namespace, private declarations and the scope chain its code sees.</summary>
@@ -208,7 +214,8 @@ public sealed partial class Binder
         }
         var main = mains.FirstOrDefault();
         // `fn main()`, or `async fn main()` (returning a plain Task).
-        if (main is not null && (main.Parameters.Length != 0 || main.BodyReturnType != TypeSymbol.Unit || main.TypeParameters.Length != 0))
+        if (main is not null && (main.Parameters.Length != 0 || main.BodyReturnType != TypeSymbol.Unit || main.TypeParameters.Length != 0 ||
+                                 main.IteratorElementType is not null))
         {
             InFile(FileOf(main));
             _diagnostics.ReportInvalidMain(main.Declaration!.Name.Span);
@@ -795,7 +802,17 @@ public sealed partial class Binder
         _scope = outerScope;
 
         var bodyReturnType = returnType;
-        if (declaration.Async is { } @async)
+        TypeSymbol? iteratorElement = null;
+        if (declaration.IsIterator)
+        {
+            // An iterator's body yields its values rather than producing one.
+            iteratorElement = IteratorElementType(returnType, declaration.Async is not null);
+            if (iteratorElement is null && returnType != TypeSymbol.Error)
+                _diagnostics.ReportInvalidIteratorType(declaration.ReturnType?.Span ?? declaration.Name.Span, returnType, declaration.Async is not null);
+            iteratorElement ??= TypeSymbol.Error;
+            bodyReturnType = TypeSymbol.Unit;
+        }
+        else if (declaration.Async is { } @async)
         {
             if (!declaration.HasBody)
                 _diagnostics.ReportAsyncWithoutBody(@async.Span);
@@ -815,6 +832,7 @@ public sealed partial class Binder
             {
                 IsAsync = isAsync,
                 BodyReturnType = bodyReturnType,
+                IteratorElementType = iteratorElement,
             };
             return new FunctionInfo(function, declaration, file, scope);
         }
@@ -831,6 +849,7 @@ public sealed partial class Binder
             IsPrivate = declaration.Private is not null,
             IsAsync = isAsync,
             BodyReturnType = bodyReturnType,
+            IteratorElementType = iteratorElement,
         };
         return new FunctionInfo(method, declaration, file, scope);
     }
@@ -842,7 +861,8 @@ public sealed partial class Binder
             return null;
 
         InFile(file);
-        _return = new ReturnContext(function.BodyReturnType, function.Name, IsAsync: function.IsAsync);
+        _return = new ReturnContext(function.BodyReturnType, function.Name, IsAsync: function.IsAsync, IteratorElement: function.IteratorElementType);
+        (_yieldReturnForbidden, _yieldBreakForbidden) = (null, null);
         _sawAwait = false;
         _finallyLoopDepth = -1;
         _loopDepth = 0;
@@ -1099,6 +1119,7 @@ public sealed partial class Binder
         BoundTryCatchStatement t => (Diverges(t.Body) && t.Catches.All(c => Diverges(c.Body))) || (t.Finally is { } f && Diverges(f)),
         BoundUsingStatement u => Diverges(u.Body),
         BoundWhileStatement { IsInfinite: true } => true,
+        BoundYieldStatement { Value: null } => true,
         BoundExpressionStatement e => e.Expression.Type == TypeSymbol.Never,
         _ => false,
     };
@@ -1119,6 +1140,7 @@ public sealed partial class Binder
         ForStatementSyntax s => BindFor(s),
         ReturnStatementSyntax s => BindReturn(s),
         TryStatementSyntax s => BindTryCatch(s),
+        YieldStatementSyntax s => BindYield(s),
         UsingStatementSyntax s => BindUsing(s),
         BreakStatementSyntax s => BindLoopJump(s.Keyword, new BoundBreakStatement()),
         ContinueStatementSyntax s => BindLoopJump(s.Keyword, new BoundContinueStatement()),
@@ -1250,6 +1272,8 @@ public sealed partial class Binder
     private BoundStatement BindReturn(ReturnStatementSyntax syntax)
     {
         var function = _return!;
+        if (function.IteratorElement is not null)
+            _diagnostics.ReportReturnInIterator(syntax.Keyword.Span);
         if (_finallyLoopDepth >= 0)
             _diagnostics.ReportJumpOutOfFinally(syntax.Keyword.Span, "return");
 

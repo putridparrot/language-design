@@ -22,6 +22,9 @@ public sealed class Parser
     /// <summary>Inside an async function or lambda, where (as in C#) `await (x)` is the operator rather than a call.</summary>
     private bool _inAsync;
 
+    /// <summary>Set when a `yield` is parsed, so the enclosing function can be marked an iterator.</summary>
+    private bool _sawYield;
+
     private Parser(SourceText source, DiagnosticBag diagnostics, ImmutableArray<Token> tokens)
     {
         _source = source;
@@ -232,8 +235,9 @@ public sealed class Parser
             returnType = ParseType();
         }
 
-        var outerAsync = _inAsync;
+        var (outerAsync, outerYield) = (_inAsync, _sawYield);
         _inAsync = @async is not null;
+        _sawYield = false;
         BlockExpressionSyntax? block = null;
         ExpressionSyntax? expression = null;
         if (Current.Kind == TokenKind.Equals)
@@ -251,10 +255,12 @@ public sealed class Parser
             block = ParseBlock();
         }
 
-        _inAsync = outerAsync;
+        bool isIterator = _sawYield;
+        (_inAsync, _sawYield) = (outerAsync, outerYield);
         return new FunctionDeclarationSyntax(SpanFrom(first), name, typeParameters, @static, parameters, returnType, block, expression)
         {
             Async = @async,
+            IsIterator = isIterator,
         };
     }
 
@@ -604,6 +610,18 @@ public sealed class Parser
                 case TokenKind.UsingKeyword:
                     statements.Add(ParseUsing());
                     break;
+                // `yield return x;`, `yield break;`: `yield` is a keyword only there, as in C#.
+                case TokenKind.Identifier when Current.Text == "yield" && Peek(1).Kind is TokenKind.ReturnKeyword or TokenKind.BreakKeyword:
+                {
+                    var yieldKeyword = NextToken();
+                    ExpressionSyntax? value = null;
+                    if (NextToken().Kind == TokenKind.ReturnKeyword)
+                        value = ParseExpression();
+                    Expect(TokenKind.Semicolon);
+                    _sawYield = true;
+                    statements.Add(new YieldStatementSyntax(SpanFrom(yieldKeyword), yieldKeyword, value));
+                    break;
+                }
                 // `await for x in stream { … }`, `await using …`: the asynchronous forms, as C#'s `await foreach`/`await using`.
                 case TokenKind.Identifier when Current.Text == "await" && Peek(1).Kind is TokenKind.ForKeyword or TokenKind.UsingKeyword:
                 {
@@ -1220,7 +1238,10 @@ public sealed class Parser
         }
 
         Expect(TokenKind.FatArrow);
+        // A lambda's `yield` doesn't make the enclosing function an iterator (it's reported: lambdas can't be iterators).
+        var outerYield = _sawYield;
         ExpressionSyntax body = Current.Kind == TokenKind.OpenBrace ? ParseBlock() : ParseExpression();
+        _sawYield = outerYield;
         return new LambdaExpressionSyntax(TextSpan.FromBounds(first.Span.Start, body.Span.End), parameters, body);
     }
 

@@ -543,7 +543,12 @@ public sealed partial class Binder
 
     private BoundStatement BindTryCatch(TryStatementSyntax syntax)
     {
+        // As in C#: no `yield return` in a try that has a catch, and no `yield` in a catch or finally.
+        var (outerReturnForbidden, outerBreakForbidden) = (_yieldReturnForbidden, _yieldBreakForbidden);
+        if (syntax.Catches.Length > 0)
+            _yieldReturnForbidden ??= "inside a try block that has a catch";
         var body = BindBlock(syntax.Body);
+        _yieldReturnForbidden = outerReturnForbidden ?? (syntax.Catches.Length > 0 ? "in a catch block" : null);
 
         var catches = ImmutableArray.CreateBuilder<BoundCatchClause>();
         var caught = new List<TypeSymbol?>();
@@ -588,9 +593,12 @@ public sealed partial class Binder
         {
             var outerFinally = _finallyLoopDepth;
             _finallyLoopDepth = _loopDepth;
+            _yieldReturnForbidden = outerReturnForbidden ?? "in a finally block";
+            _yieldBreakForbidden = outerBreakForbidden ?? "in a finally block";
             @finally = new BoundExpressionStatement(BindBlock(syntax.Finally));
             _finallyLoopDepth = outerFinally;
         }
+        (_yieldReturnForbidden, _yieldBreakForbidden) = (outerReturnForbidden, outerBreakForbidden);
 
         return new BoundTryCatchStatement(new BoundExpressionStatement(body), catches.ToImmutable(), @finally);
     }

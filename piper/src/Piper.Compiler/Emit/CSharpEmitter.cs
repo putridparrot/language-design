@@ -653,6 +653,14 @@ public sealed class CSharpEmitter
                 EmitTryCatch(attempt);
                 break;
 
+            case BoundYieldStatement { Value: { } value }:
+                _writer.WriteLine($"yield return {Expr(value, AssignmentPrecedence)};");
+                break;
+
+            case BoundYieldStatement:
+                _writer.WriteLine("yield break;");
+                break;
+
             case BoundThrowStatement thrown:
                 _writer.WriteLine($"throw {Expr(thrown.Exception, AssignmentPrecedence)};");
                 break;

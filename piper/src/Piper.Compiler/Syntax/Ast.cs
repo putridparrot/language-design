@@ -55,6 +55,9 @@ public sealed record FunctionDeclarationSyntax(
 
     /// <summary>The `async` modifier: the function returns a Task, and its body can `await`.</summary>
     public Token? Async { get; init; }
+
+    /// <summary>The body contains `yield`, so (as in C#) the function is an iterator.</summary>
+    public bool IsIterator { get; init; }
 }
 
 public sealed record RecordDeclarationSyntax(
@@ -203,6 +206,9 @@ public sealed record CatchClauseSyntax(TextSpan Span, Token Keyword, Token? Name
     : SyntaxNode(Span);
 
 public sealed record BreakStatementSyntax(TextSpan Span, Token Keyword) : StatementSyntax(Span);
+
+/// <summary>`yield return value;` or (with no <see cref="Value"/>) `yield break;`, in an iterator.</summary>
+public sealed record YieldStatementSyntax(TextSpan Span, Token Keyword, ExpressionSyntax? Value) : StatementSyntax(Span);
 
 public sealed record ContinueStatementSyntax(TextSpan Span, Token Keyword) : StatementSyntax(Span);
 

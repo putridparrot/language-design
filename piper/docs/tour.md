@@ -175,7 +175,19 @@ async fn main() {
 ```
 
 Async lambdas (`async x => await f(x)`), `await for` over an `IAsyncEnumerable` and `await using` work as their C#
-counterparts do.
+counterparts do. So do iterators: a function that `yield return`s values returns them lazily as an `IEnumerable<T>`:
+
+```piper
+fn evens() => IEnumerable<int> {
+    var n = 0;
+    while true {
+        yield return n;
+        n += 2;
+    }
+}
+
+print(string.Join(", ", evens().Take(5)));   // 0, 2, 4, 6, 8
+```
 
 ## Tuples
 

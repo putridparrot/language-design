@@ -76,6 +76,12 @@ public class FunctionSymbol(
     /// </summary>
     public TypeSymbol BodyReturnType { get => field ?? ReturnType; init; }
 
+    /// <summary>
+    /// For an iterator (a function that `yield`s), the type of what it yields: `int` for `IEnumerable<int>`. Its body
+    /// produces nothing itself (<see cref="BodyReturnType"/> is unit). Null for other functions.
+    /// </summary>
+    public TypeSymbol? IteratorElementType { get; init; }
+
     /// <summary>Null for builtins.</summary>
     public FunctionDeclarationSyntax? Declaration { get; } = declaration;
 }

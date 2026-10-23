@@ -55,7 +55,7 @@ tupleElement    = [ IDENT ":" ] type ;                        (* (x: int, y: int
 namedType       = qualifiedName [ "<" type { "," type } [ "," ] ">" ] ;   (* e.g. System.Text.StringBuilder, List<int> *)
 
 block           = "{" { statement } [ expression ] "}" ;      (* final expression = block's value *)
-statement       = variableDecl | while | for | return | try | using | "break" ";" | "continue" ";"
+statement       = variableDecl | while | for | return | try | using | yield | "break" ";" | "continue" ";"
                 | blockLike [ ";" ] | expression ";" | ";" ;
 blockLike       = if | match | block ;                        (* ends at its '}', no ';' needed *)
 variableDecl    = ( "let" | "var" ) ( IDENT [ ":" type ] | designation ) "=" expression ";" ;
@@ -65,6 +65,7 @@ for             = [ "await" ] "for" ( IDENT | designation ) "in" expression bloc
 try             = "try" block { catch } [ "finally" block ] ;   (* at least one catch or a finally *)
 catch           = "catch" [ "(" IDENT [ ":" type ] ")" ] block ;   (* no type: any exception *)
 return          = "return" [ expression ] ";" ;
+yield           = "yield" ( "return" expression | "break" ) ";" ;   (* makes the function an iterator *)
 using           = [ "await" ] "using" ( "let" | "var" ) IDENT [ ":" type ] "=" expression ";"   (* disposed at the end of the block *)
                 | "using" "(" [ ( "let" | "var" ) IDENT [ ":" type ] "=" ] expression ")" block ;
 
@@ -126,7 +127,7 @@ generic call `a<b, c>(d)`, as in C#.
 ### Lexical structure
 
 - **Identifiers:** ASCII letters, digits and `_`, not starting with a digit.
-- **Keywords:** `fn let var if else while for in return break continue record enum match trait extend static this null is namespace using private try catch finally throw out true false`; `async` and `await`, which are contextual as in C# (still usable as names); and the builtin type names `int long double bool string char object byte sbyte short ushort uint ulong float decimal unit`.
+- **Keywords:** `fn let var if else while for in return break continue record enum match trait extend static this null is namespace using private try catch finally throw out true false`; `async`, `await` and `yield`, which are contextual as in C# (still usable as names); and the builtin type names `int long double bool string char object byte sbyte short ushort uint ulong float decimal unit`.
 - **Comments:** `// line` and `/* block */`. Block comments nest.
 - **Integers:** `42`, `1_000_000`, `0xFF`, `0b1010`. Suffixes as in C#: `L` long (`3_000_000_000L`), `U` uint (or ulong if it doesn't fit), `UL` ulong. An unsuffixed literal must fit in int (C# would make a larger one a uint or long; Piper asks for the suffix); as in C#, `-2147483648` and `-9223372036854775808L` are allowed too.
 - **Doubles:** `1.5`, `2e3`, `2.5E-1`. A digit is required after the `.`, so `0..10` is a range. Suffixes `F` (float), `D` (double) and `M` (decimal) work on any decimal number: `1.5f`, `19.99m`, `2m`.
@@ -460,6 +461,37 @@ async fn main() {                              // no return type: a plain Task
 - `await` only works in an async function or lambda. An async function with no `await` gets a warning, as in C#, since it runs synchronously. `async` and `await` are contextual keywords, as in C#, so they can still be names.
 - A trait's required methods can't be `async` (it's part of a body, not a signature), but an implementation can be.
 
+### Iterators: `yield`
+
+As in C#, a function whose body contains `yield` is an iterator: it returns `IEnumerable<T>` (or `IEnumerator<T>`, or with
+`async` `IAsyncEnumerable<T>`), produces values with `yield return` and stops with `yield break` or at its end. It runs
+lazily, a step at a time as the caller iterates.
+
+```piper
+fn fibonacci() => IEnumerable<long> {
+    var (a, b) = (0L, 1L);
+    while true {                              // endless: callers take what they need
+        yield return a;
+        (a, b) = (b, a + b);
+    }
+}
+
+print(string.Join(", ", fibonacci().Take(10)));
+
+async fn ticks(count: int) => IAsyncEnumerable<int> {
+    for i in 1..=count {
+        await Task.Delay(100);
+        yield return i;
+    }
+}
+
+await for tick in ticks(3) { print(tick); }
+```
+
+- An iterator can't `return`; `yield break` ends it early.
+- As in C#, `yield return` can't be inside a `try` that has a `catch`, and `yield` can't be in a `catch` or `finally`; a `try`/`finally` around `yield return` is fine (the `finally` runs when the caller stops iterating).
+- Lambdas can't be iterators.
+
 ### Exceptions
 
 Exceptions are .NET exceptions, for code that crosses into .NET; within Piper, prefer `Result`.
@@ -558,6 +590,7 @@ is locale-independent. `main()` takes no parameters and returns unit; it is the 
 | `async fn f() => Task<int>`, `await t` | `async Task<int> f()`, `await t` |
 | `async fn main()` | an `async Task main()`, run by `main().GetAwaiter().GetResult()` |
 | `await for x in s`, `await using let r = …;` | `await foreach (T x in s)`, `await using T r = …;` |
+| `yield return x;`, `yield break;` | the same, in an iterator method returning `IEnumerable<T>` (or `IAsyncEnumerable<T>`) |
 | `extend Option { … }` | C# 14 `extension<T>(Option<T> self) { … }`, since Option lives in Piper.Runtime |
 | `namespace Geometry;` | `namespace Geometry { … }`; names from other namespaces are written `global::Geometry.Point` |
 | `private record R(…)` / `private trait T` | `file sealed record R(…)` / `file interface T` (C# 11 file-local types) |
@@ -605,7 +638,6 @@ The match is known to be exhaustive, so a final arm without a guard or bindings 
 - A match guard, or the rest of an if/while condition after an `is` that binds variables, can't contain `?`, or `?.`/`??` on anything but a variable.
 - .NET interop: no `ref` parameters or events yet. Element names of tuples returned by .NET (`Math.DivRem`'s `Quotient`) aren't read; use `Item1` or deconstruct.
 - An `out` parameter marked `[MaybeNullWhen(false)]` gives an optional variable even when the call returned true.
-- No `async` iterators (`yield`), though `await for` consumes IAsyncEnumerables from .NET.
 
 ## Roadmap
 
@@ -616,6 +648,6 @@ The match is known to be exhaustive, so a final arm without a guard or bindings 
 5. ~~**Collections and lambdas**~~, done in milestone 6: lambdas and function types, LINQ, collection literals, `for x in collection`, indexing, property setters, and `try`/`catch`/`throw`.
 6. ~~**Language freeze**~~, done in milestone 7: C#-compatible printing and minimum-value literals, arrays (`int[]`, `int[5]`), explicit type arguments, generic functions as values, tuples and deconstruction, and `out` parameters.
 7. ~~**Robustness and tooling**~~, done in milestone 8: `#line` mapping to `.piper` sources, constant checking and C# errors reported as internal compiler errors, larger sample programs, raw strings, C#'s numeric types and casts, `using`, equality on type parameters, `|` patterns that bind, the `piper` dotnet tool and the Piper.Build MSBuild package.
-8. ~~**Async**~~, done after milestone 8: `async`/`await`, async lambdas and `main`, `await for` and `await using`; and the shared `Piper.Runtime` assembly.
-9. **Smaller features:** `defer`, a pipe operator `|>`, async iterators.
+8. ~~**Async and iterators**~~, done after milestone 8: `async`/`await`, async lambdas and `main`, `await for`, `await using`, `yield` iterators (sync and async), and the shared `Piper.Runtime` assembly.
+9. **Smaller features:** `defer` and a pipe operator `|>`.
 10. **A language server** that reuses the fault-tolerant parser and binder.

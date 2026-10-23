@@ -196,6 +196,12 @@ public sealed class BoundThrowStatement(BoundExpression exception) : BoundStatem
 
 public sealed class BoundBreakStatement : BoundStatement;
 
+/// <summary>`yield return value;`, or `yield break;` when <see cref="Value"/> is null.</summary>
+public sealed class BoundYieldStatement(BoundExpression? value) : BoundStatement
+{
+    public BoundExpression? Value { get; } = value;
+}
+
 public sealed class BoundContinueStatement : BoundStatement;
 
 // Expressions

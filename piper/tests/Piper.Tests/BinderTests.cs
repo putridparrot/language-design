@@ -21,6 +21,14 @@ public class BinderTests
     [InlineData("PIP0299", "using System.Threading.Tasks; fn f() => int { await Task.Yield(); 1 }")]
     [InlineData("PIP0299", "using System.Threading.Tasks; async fn f() { let g = () => await Task.Yield(); await Task.Yield(); }")]
     [InlineData("PIP0300", "async fn f() { await 5; }")]
+    [InlineData("PIP0303", "fn f() => int { yield return 1; }")]
+    [InlineData("PIP0303", "using System.Collections.Generic; async fn f() => IEnumerable<int> { await System.Threading.Tasks.Task.Yield(); yield return 1; }")]
+    [InlineData("PIP0304", "fn f() { let g = () => { yield return 1; }; }")]
+    [InlineData("PIP0305", "using System.Collections.Generic; fn f() => IEnumerable<int> { yield return 1; return; }")]
+    [InlineData("PIP0306", "using System.Collections.Generic; fn f() => IEnumerable<int> { try { yield return 1; } catch (e) { } }")]
+    [InlineData("PIP0306", "using System.Collections.Generic; fn f() => IEnumerable<int> { try { } finally { yield break; } }")]
+    [InlineData("PIP0202", "using System.Collections.Generic; fn f() => IEnumerable<int> { yield return \"x\"; }")]
+    [InlineData("PIP0219", "using System.Collections.Generic; fn main() => IEnumerable<int> { yield return 1; }")]
     [InlineData("PIP0302", "async fn f() { await for x in [1, 2] { } }")]
     [InlineData("PIP0299", "fn f(s: System.Collections.Generic.IAsyncEnumerable<int>) { await for x in s { } }")]
     [InlineData("PIP0294", "async fn f() { await using let s = System.Text.StringBuilder(); }")]
@@ -35,6 +43,7 @@ public class BinderTests
     [Theory]
     // `async` and `await` are contextual, as in C#: still usable as names.
     [InlineData("fn f() { let async = 1; let await = async + 1; print(await); }")]
+    [InlineData("fn f() { let yield = 1; print(yield); }")]
     [InlineData("fn await(x: int) => int = x; fn f() => int = await(2) + 1;")]
     // An async main.
     [InlineData("using System.Threading.Tasks; async fn main() { await Task.Delay(1); }")]

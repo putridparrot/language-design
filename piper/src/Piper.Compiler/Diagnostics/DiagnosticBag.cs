@@ -427,6 +427,19 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportAsyncWithoutBody(TextSpan span) =>
         Error("PIP0301", span, "A required trait method can't be 'async'; mark the implementations async instead.");
+    public void ReportInvalidIteratorType(TextSpan span, TypeSymbol type, bool isAsync) =>
+        Error("PIP0303", span, isAsync
+            ? $"An async function that yields must return IAsyncEnumerable<T> or IAsyncEnumerator<T>, not '{type}'."
+            : $"A function that yields must return IEnumerable<T> or IEnumerator<T> (or IAsyncEnumerable<T> if async), not '{type}'.");
+
+    public void ReportYieldOutsideIterator(TextSpan span) =>
+        Error("PIP0304", span, "'yield' can only be used in a function's body (a lambda can't be an iterator), as in C#.");
+
+    public void ReportReturnInIterator(TextSpan span) =>
+        Error("PIP0305", span, "An iterator can't 'return'; use 'yield return value;' to produce a value or 'yield break;' to stop.");
+
+    public void ReportYieldInTry(TextSpan span, string where) =>
+        Error("PIP0306", span, $"'yield' can't be used {where}, as in C#.");
     public void ReportEmptyRangePattern(TextSpan span) =>
         Error("PIP0239", span, "This range pattern is empty: its lower bound is not below its upper bound.");
 }

@@ -107,6 +107,14 @@ public sealed class Lowerer
                 });
                 break;
 
+            case BoundYieldStatement { Value: { } value }:
+                output.Add(new BoundYieldStatement(LowerForValue(value, output)));
+                break;
+
+            case BoundYieldStatement:
+                output.Add(statement);
+                break;
+
             case BoundUsingStatement usingStatement:
             {
                 var resource = LowerForValue(usingStatement.Resource, output);
