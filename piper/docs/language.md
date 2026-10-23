@@ -1,4 +1,4 @@
-# The Piper language (milestone 5)
+# The Piper language (milestone 6)
 
 Piper is a small, C-style, expression-oriented language that transpiles to C#. It borrows
 immutable-by-default bindings, block expressions, enums (sum types), exhaustive `match` and traits
@@ -48,27 +48,33 @@ typeParameters  = "<" typeParameter { "," typeParameter } [ "," ] ">" ;
 typeParameter   = IDENT [ ":" type { "+" type } ] ;           (* bounds must be traits *)
 parameters      = parameter { "," parameter } [ "," ] ;
 parameter       = IDENT ":" type ;
-type            = namedType { "?" } ;                         (* T? is Option<T> *)
+type            = ( namedType | functionType ) { "?" } ;      (* T? is Option<T> *)
+functionType    = "(" [ type { "," type } [ "," ] ] ")" "->" type ;   (* (Int) -> Bool is Func<int, bool> *)
 namedType       = qualifiedName [ "<" type { "," type } [ "," ] ">" ] ;   (* e.g. System.Text.StringBuilder, List<Int> *)
 
 block           = "{" { statement } [ expression ] "}" ;      (* final expression = block's value *)
-statement       = variableDecl | while | for | return | "break" ";" | "continue" ";"
+statement       = variableDecl | while | for | return | try | "break" ";" | "continue" ";"
                 | blockLike [ ";" ] | expression ";" | ";" ;
 blockLike       = if | match | block ;                        (* ends at its '}', no ';' needed *)
 variableDecl    = ( "let" | "var" ) IDENT [ ":" type ] "=" expression ";" ;
 while           = "while" expression block ;
-for             = "for" IDENT "in" expression block ;         (* expression must be a range *)
+for             = "for" IDENT "in" expression block ;         (* a range, or anything enumerable *)
+try             = "try" block { catch } [ "finally" block ] ;   (* at least one catch or a finally *)
+catch           = "catch" [ "(" IDENT [ ":" type ] ")" ] block ;   (* no type: any exception *)
 return          = "return" [ expression ] ";" ;
 
 expression      = assignment ;
 assignment      = binary [ ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" ) assignment ] ;
 binary          = unary { binaryOp unary | "is" pattern } ;   (* precedence table below *)
 unary           = ( "-" | "!" ) unary | postfix ;
-postfix         = primary { "(" [ arguments ] ")" | "." IDENT | "?" | "?." IDENT postfix } ;
+postfix         = primary { "(" [ arguments ] ")" | "[" arguments "]" | "." IDENT | "?" | "?." IDENT postfix } ;
                                                               (* after "?." the rest of the chain is skipped on None *)
 arguments       = expression { "," expression } [ "," ] ;
 primary         = INT | DOUBLE | CHAR | STRING | "true" | "false" | "null" | IDENT | "this"
-                | "(" expression ")" | block | if | match ;
+                | "(" expression ")" | block | if | match | lambda | collection | "throw" expression ;
+lambda          = ( IDENT | "(" [ lambdaParam { "," lambdaParam } [ "," ] ] ")" ) "=>" ( block | expression ) ;
+lambdaParam     = IDENT [ ":" type ] ;                        (* types may come from the expected function type *)
+collection      = "[" [ arguments ] "]" ;
 if              = "if" expression block [ "else" ( block | if ) ] ;
 
 match           = "match" expression "{" { arm ( "," | (* optional after a blockLike body *) ) } "}" ;
@@ -88,7 +94,7 @@ literalPattern  = [ "-" ] ( INT | DOUBLE ) | CHAR | STRING | "true" | "false" ;
 
 | Level | Operators | Associativity |
 |---|---|---|
-| 10 | postfix `()` `.` `?.` `?` | left |
+| 10 | postfix `()` `[]` `.` `?.` `?` | left |
 | 9 | unary `-` `!` | prefix |
 | 8 | `*` `/` `%` | left |
 | 7 | `+` `-` | left |
@@ -106,7 +112,7 @@ number there is all it takes to change precedence.
 ### Lexical structure
 
 - **Identifiers:** ASCII letters, digits and `_`, not starting with a digit.
-- **Keywords:** `fn let var if else while for in return break continue record enum match trait extend static this null is namespace using private true false`.
+- **Keywords:** `fn let var if else while for in return break continue record enum match trait extend static this null is namespace using private try catch finally throw true false`.
 - **Comments:** `// line` and `/* block */`. Block comments nest.
 - **Integers:** `42`, `1_000_000`, `0xFF`, `0b1010`. Add an `L` suffix for Long: `3_000_000_000L`. An unsuffixed literal must fit in Int.
 - **Doubles:** `1.5`, `2e3`, `2.5E-1`. A digit is required after the `.`, so `0..10` is a range.
@@ -343,7 +349,51 @@ points.Add(Point(1, 2));                   // and can hold Piper values
   - .NET members whose results are annotated as possibly null, and `Nullable<T>` values, come back as `T?`, with `null` becoming `None`. For example, `Environment.GetEnvironmentVariable(name) ?? "unset"`.
   - Where .NET accepts null, you can pass a `T?`, and `None` becomes `null`.
 - **`extend` on .NET types:** a non-generic .NET type can be extended like a builtin, e.g. `extend StringBuilder { fn line(s: String) { this.AppendLine(s); } }`, but not with a member name it already has.
-- **Not yet supported:** generic methods (most of LINQ), extension methods, delegates, `out`/`ref` parameters, indexers, property setters and events. Exceptions propagate (there is no `try` yet).
+- **Generic and extension methods:** type arguments are inferred from the arguments, including lambdas, and extension methods from imported namespaces apply, so LINQ works: `numbers.Where(n => n > 2).Select(n => n * 10).ToList()`.
+- **Indexers and setters:** `list[0]`, `ages["Ada"] = 36`, `ages["Ada"] += 1` and `builder.Length = 0` use .NET indexers, arrays and property setters.
+- **Not yet supported:** `out`/`ref` parameters and events.
+
+### Lambdas and function values
+
+A function type `(Int, Int) -> Bool` is the .NET delegate `Func<int, int, bool>`, and one returning Unit is an
+`Action`. They pass straight to .NET APIs, and other delegate types (`Comparison<T>`, `Predicate<T>`) are accepted where expected.
+
+```piper
+let increment: (Int) -> Int = x => x + 1;     // parameter types come from the expected type
+let add = (a: Int, b: Int) => a + b;          // or from annotations: add is (Int, Int) -> Int
+let total = apply(double, 21);                // a top-level (non-generic) function is a value too
+names.Sort((a, b) => a.Length - b.Length);    // a .NET delegate type
+```
+
+- A lambda's return type is the expected one, or else the common type of its body's value and its `return`s.
+- Lambdas capture variables by reference, as in C#, so `n => { total += n; }` updates `total`.
+- A lambda without annotations needs an expected function type; a lambda with too few or many parameters for it is an error.
+
+### Collections
+
+- **Literals:** `[1, 2, 3]` is a `List<Int>`. The element type comes from the expected type (`List<T>`, `IEnumerable<T>`, `IReadOnlyList<T>`, … or a .NET array) or else the elements' common type. `[]` needs an expected type.
+- **`for x in collection`** works on anything implementing `IEnumerable<T>`: lists, arrays, strings (as `Char`s), dictionaries and LINQ results.
+- **Indexing:** `xs[i]` on arrays and on any .NET type with an indexer.
+
+### Exceptions
+
+Exceptions are .NET exceptions, for code that crosses into .NET; within Piper, prefer `Result`.
+
+```piper
+try {
+    print(divide(1, 0));
+} catch (e: ArgumentException) {
+    print("caught: {e.Message}");
+} catch (_) {                                 // no type: any exception; `_` binds nothing
+    print("something else");
+} finally {
+    print("always");
+}
+```
+
+- `throw e` throws any value deriving from `System.Exception`. It is an expression of type Never, so it fits anywhere a value is expected: `if ok { v } else { throw InvalidOperationException("…") }`.
+- `catch (e)` without a type catches `System.Exception`. A clause made unreachable by an earlier one is an error, as in C#.
+- `break`, `continue` and `return` can't leave a `finally` block.
 
 ### Bindings
 
@@ -405,6 +455,12 @@ locale-independent. `main()` takes no parameters and returns Unit; it is the pro
 | `if` expression, simple branches | `c ? a : b` |
 | `if` expression, branches with statements | a variable assigned in each branch, or `return` in each branch |
 | `for i in a..b` / `a..=b` | `for (int i = a; i < b; i++)` / `<=` (non-constant bounds hoisted) |
+| `for x in xs` | `foreach (int x in xs)` |
+| `[1, 2]` | `new List<int> { 1, 2 }` (or `new T[] { … }` for an expected array), which needs no target type, unlike C#'s `[1, 2]` |
+| `(Int) -> Bool`, `x => x > 0` | `Func<int, bool>`, `(int x) => x > 0`: parameter types are always written |
+| `f` used as a value | the method group `f` |
+| `xs.Where(n => n > 2)` (extension method) | `Enumerable.Where<int>(xs, (int n) => n > 2)`: called statically, type arguments explicit |
+| `try`/`catch (e: E)`/`finally`, `throw e` | `try`/`catch (E e)`/`finally`, `throw e;` (or a C# throw expression in `?:`) |
 | `"…{e}…"` | `$"…{e}…"` |
 | `print(x)` | `global::System.Console.WriteLine(x)` |
 
@@ -431,9 +487,9 @@ The match is known to be exhaustive, so a final arm without a guard or bindings 
 - A function ending in `while true { … }` is still reported as "not all code paths return a value".
 - `?` followed by member access needs parentheses, `(f()?).name`, because `?.` is conditional access.
 - A match guard, or the rest of an if/while condition after an `is` that binds variables, can't contain `?`, or `?.`/`??` on anything but a variable.
-- .NET interop: no generic methods (most of LINQ), extension methods, delegates/lambdas, `out`/`ref` parameters, indexers (`list[0]`), property setters or events yet, and no `try`/`catch`: .NET exceptions propagate.
-- There is no `for` over collections yet, so .NET collections can be filled and queried (`Count`, `Contains`) but not iterated.
-- There are no lambdas or Piper collections yet. See the roadmap.
+- .NET interop: no `out`/`ref` parameters or events yet.
+- There is no array type syntax (`Int[]`): arrays come from .NET (`"a b".Split(' ')`), and `[…]` makes an array only where .NET expects one.
+- Generic functions can't be used as values (`let f = identity;`), since their type arguments can't be inferred.
 
 ## Roadmap
 
@@ -441,6 +497,6 @@ The match is known to be exhaustive, so a final arm without a guard or bindings 
 2. ~~**Null safety and errors**~~, done in milestone 4: `Option`/`T?`, `Result`, `null`, `?.`, `??`, `?` and `is` patterns.
 3. ~~**Traits, generics and extensions**~~, done in milestone 3.
 4. ~~**Modules, imports and .NET interop**~~, done in milestone 5: `namespace`, `using`, `private`, multi-file programs, and calling .NET.
-5. **Collections and lambdas:** `for x in collection`, indexing (`list[0]`), lambdas (which also unlock LINQ and other delegate-taking .NET APIs), and `try`/`catch` for .NET exceptions.
+5. ~~**Collections and lambdas**~~, done in milestone 6: lambdas and function types, LINQ, collection literals, `for x in collection`, indexing, property setters, and `try`/`catch`/`throw`.
 6. **Smaller features:** tuples and destructuring, `defer`, `use`, async/await, and a pipe operator `|>`.
 7. **A language server** that reuses the fault-tolerant parser and binder.

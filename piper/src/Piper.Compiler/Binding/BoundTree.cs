@@ -115,6 +115,42 @@ public sealed class BoundForStatement(
 /// <summary>Produced only by lowering: the impossible fall-through at the end of an exhaustive match.</summary>
 public sealed class BoundUnreachableStatement : BoundStatement;
 
+/// <summary><c>for x in collection</c> over anything enumerable (C# <c>foreach</c>).</summary>
+public sealed class BoundForEachStatement(VariableSymbol variable, BoundExpression collection, BoundStatement body) : BoundStatement
+{
+    public VariableSymbol Variable { get; } = variable;
+
+    public BoundExpression Collection { get; } = collection;
+
+    public BoundStatement Body { get; } = body;
+}
+
+public sealed class BoundTryCatchStatement(BoundStatement body, ImmutableArray<BoundCatchClause> catches, BoundStatement? @finally)
+    : BoundStatement
+{
+    public BoundStatement Body { get; } = body;
+
+    public ImmutableArray<BoundCatchClause> Catches { get; } = catches;
+
+    public BoundStatement? Finally { get; } = @finally;
+}
+
+/// <summary><see cref="ExceptionType"/> is null for a bare <c>catch</c>; <see cref="Variable"/> is null when nothing is bound.</summary>
+public sealed class BoundCatchClause(TypeSymbol? exceptionType, VariableSymbol? variable, BoundStatement body)
+{
+    public TypeSymbol? ExceptionType { get; } = exceptionType;
+
+    public VariableSymbol? Variable { get; } = variable;
+
+    public BoundStatement Body { get; } = body;
+}
+
+/// <summary>Produced only by lowering: <c>throw e;</c>.</summary>
+public sealed class BoundThrowStatement(BoundExpression exception) : BoundStatement
+{
+    public BoundExpression Exception { get; } = exception;
+}
+
 public sealed class BoundBreakStatement : BoundStatement;
 
 public sealed class BoundContinueStatement : BoundStatement;
@@ -261,18 +297,84 @@ public sealed class BoundMatchArm(BoundPattern pattern, BoundExpression? guard, 
     public BoundExpression Body { get; } = body;
 }
 
+// Lambdas and function values
+
+/// <summary>
+/// A lambda; <see cref="Type"/> is its delegate type. Before lowering <see cref="Body"/> is a
+/// <see cref="BoundBlockExpression"/>, after it a <see cref="BoundBlockStatement"/>. <see cref="BodyType"/> is the
+/// type of the body's own value (before conversion to <see cref="ReturnType"/>), used to rank overloads.
+/// </summary>
+public sealed class BoundLambdaExpression(
+    ImmutableArray<VariableSymbol> parameters,
+    BoundNode body,
+    TypeSymbol returnType,
+    TypeSymbol bodyType,
+    bool isExpressionBodied,
+    TypeSymbol type) : BoundExpression
+{
+    public ImmutableArray<VariableSymbol> Parameters { get; } = parameters;
+
+    public BoundNode Body { get; } = body;
+
+    public TypeSymbol ReturnType { get; } = returnType;
+
+    public TypeSymbol BodyType { get; } = bodyType;
+
+    public bool IsExpressionBodied { get; } = isExpressionBodied;
+
+    public override TypeSymbol Type { get; } = type;
+}
+
+/// <summary>A top-level function used as a value (a C# method group converted to <see cref="Type"/>).</summary>
+public sealed class BoundFunctionReferenceExpression(FunctionSymbol function, TypeSymbol type) : BoundExpression
+{
+    public FunctionSymbol Function { get; } = function;
+
+    public override TypeSymbol Type { get; } = type;
+}
+
+/// <summary>Calling a function value: <c>f(1)</c> where f has a delegate type.</summary>
+public sealed class BoundDelegateInvocationExpression(BoundExpression target, ImmutableArray<BoundExpression> arguments, TypeSymbol type)
+    : BoundExpression
+{
+    public BoundExpression Target { get; } = target;
+
+    public ImmutableArray<BoundExpression> Arguments { get; } = arguments;
+
+    public override TypeSymbol Type { get; } = type;
+}
+
+/// <summary><c>throw e</c>: never completes, so its type is Never.</summary>
+public sealed class BoundThrowExpression(BoundExpression exception) : BoundExpression
+{
+    public BoundExpression Exception { get; } = exception;
+
+    public override TypeSymbol Type => TypeSymbol.Never;
+}
+
+/// <summary><c>[a, b, c]</c> as a <c>List&lt;T&gt;</c> or a .NET array (<see cref="Type"/> says which).</summary>
+public sealed class BoundCollectionExpression(ImmutableArray<BoundExpression> elements, TypeSymbol type) : BoundExpression
+{
+    public ImmutableArray<BoundExpression> Elements { get; } = elements;
+
+    public override TypeSymbol Type { get; } = type;
+}
+
 // .NET interop
 
 /// <summary>
 /// A call to a .NET method or constructor (<see cref="Member"/> is a MethodInfo or ConstructorInfo).
-/// <see cref="Receiver"/> is null for static methods and constructors; <see cref="ContainerType"/> is the type they belong to.
+/// <see cref="Receiver"/> is null for static methods (including extension methods, whose receiver is the
+/// first argument) and constructors; <see cref="ContainerType"/> is the type they belong to.
+/// <see cref="TypeArguments"/> are a generic method's inferred type arguments.
 /// </summary>
 public sealed class BoundClrInvocationExpression(
     BoundExpression? receiver,
     TypeSymbol containerType,
     MethodBase member,
     ImmutableArray<BoundExpression> arguments,
-    TypeSymbol type) : BoundExpression
+    TypeSymbol type,
+    ImmutableArray<TypeSymbol> typeArguments = default) : BoundExpression
 {
     public BoundExpression? Receiver { get; } = receiver;
 
@@ -282,7 +384,36 @@ public sealed class BoundClrInvocationExpression(
 
     public ImmutableArray<BoundExpression> Arguments { get; } = arguments;
 
+    public ImmutableArray<TypeSymbol> TypeArguments { get; } = typeArguments.IsDefault ? [] : typeArguments;
+
     public override TypeSymbol Type { get; } = type;
+}
+
+/// <summary><c>target[arguments]</c>: an array element or a .NET indexer (<see cref="Indexer"/> is null for arrays).</summary>
+public sealed class BoundIndexExpression(BoundExpression target, PropertyInfo? indexer, ImmutableArray<BoundExpression> arguments, TypeSymbol type)
+    : BoundExpression
+{
+    public BoundExpression Target { get; } = target;
+
+    public PropertyInfo? Indexer { get; } = indexer;
+
+    public ImmutableArray<BoundExpression> Arguments { get; } = arguments;
+
+    public override TypeSymbol Type { get; } = type;
+}
+
+/// <summary>Assigning a .NET property or indexer: <c>sb.Length = 0</c>, <c>ages["Ada"] += 1</c>.</summary>
+public sealed class BoundClrAssignmentExpression(BoundExpression target, BoundBinaryOperatorKind? compoundOperator, BoundExpression value)
+    : BoundExpression
+{
+    /// <summary>A <see cref="BoundIndexExpression"/> or <see cref="BoundClrMemberExpression"/>.</summary>
+    public BoundExpression Target { get; } = target;
+
+    public BoundBinaryOperatorKind? CompoundOperator { get; } = compoundOperator;
+
+    public BoundExpression Value { get; } = value;
+
+    public override TypeSymbol Type => TypeSymbol.Unit;
 }
 
 /// <summary>Reading a .NET property or field (<see cref="Receiver"/> is null for static ones).</summary>

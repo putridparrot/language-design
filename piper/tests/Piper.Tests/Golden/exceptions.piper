@@ -1,0 +1,50 @@
+// Throwing and catching .NET exceptions.
+
+using System;
+
+fn divide(a: Int, b: Int) -> Int {
+    if b == 0 {
+        throw ArgumentException("b must not be zero");
+    }
+    a / b
+}
+
+fn parse(text: String) -> Int {
+    try {
+        return Int.Parse(text);
+    } catch (e: FormatException) {
+        print("not a number: {text}");
+    }
+    -1
+}
+
+fn check(value: Int) -> Int = if value >= 0 { value } else { throw InvalidOperationException("negative") };
+
+fn main() {
+    print(divide(10, 2));
+
+    try {
+        print(divide(1, 0));
+    } catch (e: ArgumentException) {
+        print("caught: {e.Message}");
+    } finally {
+        print("finally runs");
+    }
+
+    print(parse("12"));
+    print(parse("twelve"));
+
+    // A catch without a type catches everything; `_` ignores the exception.
+    try {
+        print(check(-1));
+    } catch (_) {
+        print("check failed");
+    }
+
+    try {
+        let items = [1, 2];
+        print(items[5]);
+    } catch (e) {
+        print(e.GetType().Name);
+    }
+}

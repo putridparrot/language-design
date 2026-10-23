@@ -543,25 +543,28 @@ public sealed class CSharpEmitter
         var signature = Signature(symbol, modifiers);
         var body = (BoundBlockStatement)function.Body;
 
-        if (function.IsExpressionBodied && body.Statements is [var only])
+        if (function.IsExpressionBodied && ExpressionBody(body) is { } expression)
         {
-            var expression = only switch
-            {
-                BoundReturnStatement { Value: { } value } => value,
-                BoundExpressionStatement { Expression: BoundCallExpression or BoundMethodCallExpression or BoundClrInvocationExpression or BoundAssignmentExpression } statement =>
-                    statement.Expression,
-                _ => null,
-            };
-            if (expression is not null)
-            {
-                _writer.WriteLine($"{signature} => {Expr(expression, AssignmentPrecedence)};");
-                return;
-            }
+            _writer.WriteLine($"{signature} => {Expr(expression, AssignmentPrecedence)};");
+            return;
         }
 
         _writer.WriteLine(signature);
         EmitBlock(body);
     }
+
+    /// <summary>The expression a lowered body consists of, if it can be written as <c>=&gt; expression</c>.</summary>
+    private static BoundExpression? ExpressionBody(BoundBlockStatement body) => body.Statements switch
+    {
+        [BoundReturnStatement { Value: { } value }] => value,
+        [BoundExpressionStatement { Expression: var expression }] when IsStatementExpression(expression) => expression,
+        _ => null,
+    };
+
+    /// <summary>C# only allows calls and assignments as expression statements.</summary>
+    private static bool IsStatementExpression(BoundExpression expression) =>
+        expression is BoundCallExpression or BoundMethodCallExpression or BoundClrInvocationExpression or BoundAssignmentExpression
+            or BoundDelegateInvocationExpression or BoundClrAssignmentExpression;
 
     // Statements
 
@@ -598,7 +601,7 @@ public sealed class CSharpEmitter
                 break;
             }
 
-            case BoundExpressionStatement { Expression: BoundCallExpression or BoundMethodCallExpression or BoundClrInvocationExpression or BoundAssignmentExpression } expressionStatement:
+            case BoundExpressionStatement expressionStatement when IsStatementExpression(expressionStatement.Expression):
                 _writer.WriteLine($"{Expr(expressionStatement.Expression, AssignmentPrecedence)};");
                 break;
 
@@ -636,6 +639,22 @@ public sealed class CSharpEmitter
                 break;
             }
 
+            case BoundForEachStatement loop:
+            {
+                var collection = Expr(loop.Collection, AssignmentPrecedence);
+                _writer.WriteLine($"foreach ({TypeName(loop.Variable.Type)} {Escape(_names.Declare(loop.Variable))} in {collection})");
+                EmitBlock(loop.Body);
+                break;
+            }
+
+            case BoundTryCatchStatement attempt:
+                EmitTryCatch(attempt);
+                break;
+
+            case BoundThrowStatement thrown:
+                _writer.WriteLine($"throw {Expr(thrown.Exception, AssignmentPrecedence)};");
+                break;
+
             case BoundUnreachableStatement:
                 _writer.WriteLine("throw new global::System.Diagnostics.UnreachableException();");
                 break;
@@ -650,6 +669,27 @@ public sealed class CSharpEmitter
 
             default:
                 throw new InvalidOperationException($"Unexpected statement {statement.GetType().Name}");
+        }
+    }
+
+    private void EmitTryCatch(BoundTryCatchStatement attempt)
+    {
+        _writer.WriteLine("try");
+        EmitBlock(attempt.Body);
+        foreach (var clause in attempt.Catches)
+        {
+            _writer.WriteLine((clause.ExceptionType, clause.Variable) switch
+            {
+                (_, { } variable) => $"catch ({TypeName(variable.Type)} {Escape(_names.Declare(variable))})",
+                ({ } type, null) => $"catch ({TypeName(type)})",
+                _ => "catch",
+            });
+            EmitBlock(clause.Body);
+        }
+        if (attempt.Finally is { } @finally)
+        {
+            _writer.WriteLine("finally");
+            EmitBlock(@finally);
         }
     }
 
@@ -700,7 +740,18 @@ public sealed class CSharpEmitter
             BoundClrInvocationExpression { Member: ConstructorInfo } construction =>
                 ($"new {TypeName(construction.ContainerType)}({Arguments(construction.Arguments)})", PrimaryPrecedence),
             BoundClrInvocationExpression invocation =>
-                ($"{ClrReceiver(invocation.Receiver, invocation.ContainerType)}.{Escape(invocation.Member.Name)}({Arguments(invocation.Arguments)})", PrimaryPrecedence),
+                ($"{ClrReceiver(invocation.Receiver, invocation.ContainerType)}.{Escape(invocation.Member.Name)}{TypeArgumentList(invocation.TypeArguments)}({Arguments(invocation.Arguments)})", PrimaryPrecedence),
+            BoundClrAssignmentExpression assignment => (ClrAssignment(assignment), AssignmentPrecedence),
+            BoundIndexExpression index =>
+                ($"{Expr(index.Target, PrimaryPrecedence)}[{Arguments(index.Arguments)}]", PrimaryPrecedence),
+            BoundCollectionExpression collection => (Collection(collection), PrimaryPrecedence),
+            BoundLambdaExpression lambda => (Lambda(lambda), AssignmentPrecedence),
+            // A method group; it converts to the delegate type the context gives it.
+            BoundFunctionReferenceExpression reference =>
+                ($"{(reference.Function.DeclaringFile == _moduleFile ? "" : FunctionContainer(reference.Function) + ".")}{Escape(reference.Function.Name)}", PrimaryPrecedence),
+            BoundDelegateInvocationExpression invocation => (DelegateInvocation(invocation), PrimaryPrecedence),
+            // Lowering leaves throw expressions only where C# allows them (a ?: branch, the right of ??), which can't be parenthesized.
+            BoundThrowExpression thrown => ($"throw {Expr(thrown.Exception, LogicalOrPrecedence)}", PrimaryPrecedence),
             BoundClrMemberExpression member =>
                 ($"{ClrReceiver(member.Receiver, member.ContainerType)}.{Escape(member.Member.Name)}", PrimaryPrecedence),
             BoundNullableBoundaryExpression boundary => (NullableBoundary(boundary), PrimaryPrecedence),
@@ -754,6 +805,54 @@ public sealed class CSharpEmitter
         return $"{Escape(_names.Get(assignment.Variable))} {op} {Expr(assignment.Value, AssignmentPrecedence)}";
     }
 
+    private string ClrAssignment(BoundClrAssignmentExpression assignment)
+    {
+        var op = assignment.CompoundOperator is { } compound ? Operators.GetText(compound) + "=" : "=";
+        return $"{Expr(assignment.Target, PrimaryPrecedence)} {op} {Expr(assignment.Value, AssignmentPrecedence)}";
+    }
+
+    /// <summary><c>new List&lt;int&gt; { 1, 2 }</c> or <c>new int[] { 1, 2 }</c>; works whatever the target type (unlike <c>[1, 2]</c>).</summary>
+    private string Collection(BoundCollectionExpression collection)
+    {
+        var type = TypeName(collection.Type);
+        if (collection.Elements.IsEmpty)
+            return collection.Type is ClrTypeSymbol { Type.IsArray: true } ? $"new {type} {{ }}" : $"new {type}()";
+        return $"new {type} {{ {Arguments(collection.Elements)} }}";
+    }
+
+    /// <summary>
+    /// <c>(int x) =&gt; x + 1</c>. Parameter types are always written, which gives the lambda a natural type in C#
+    /// too. A block body is written with a nested writer at the current indentation so it lines up with the code around it.
+    /// </summary>
+    private string Lambda(BoundLambdaExpression lambda)
+    {
+        var parameters = string.Join(", ", lambda.Parameters.Select(p => $"{TypeName(p.Type)} {Escape(_names.Declare(p))}"));
+        var body = (BoundBlockStatement)lambda.Body;
+        if (lambda.IsExpressionBodied && ExpressionBody(body) is { } expression)
+            return $"({parameters}) => {Expr(expression, AssignmentPrecedence)}";
+
+        var outer = _writer;
+        _writer = new CodeWriter(outer.Indent);
+        try
+        {
+            EmitBlock(body);
+            return $"({parameters}) => {_writer.ToString().Trim()}";
+        }
+        finally
+        {
+            _writer = outer;
+        }
+    }
+
+    /// <summary><c>f(1)</c>; a lambda called directly is cast to its delegate type first, as C# can't invoke a lambda.</summary>
+    private string DelegateInvocation(BoundDelegateInvocationExpression invocation)
+    {
+        var target = Unwrap(invocation.Target) is BoundLambdaExpression lambda
+            ? $"(({TypeName(lambda.Type)})({Lambda(lambda)}))"
+            : Expr(invocation.Target, PrimaryPrecedence);
+        return $"{target}({Arguments(invocation.Arguments)})";
+    }
+
     /// <summary>
     /// A ternary needs its branches to share a type, which two records implementing the same trait
     /// don't; casting a branch converted to a trait gives the expression that type.
@@ -805,7 +904,8 @@ public sealed class CSharpEmitter
     private string Arguments(IEnumerable<BoundExpression> arguments) =>
         string.Join(", ", arguments.Select(argument =>
         {
-            var text = Expr(argument, ConditionalPrecedence);
+            // A lambda needs no parentheses in an argument list.
+            var text = Expr(argument, Unwrap(argument) is BoundLambdaExpression ? AssignmentPrecedence : ConditionalPrecedence);
             // `f(a < b, c > d)` could be misread by C# as a generic instantiation; parenthesize to be safe.
             return Unwrap(argument) is BoundBinaryExpression { Operator: BoundBinaryOperatorKind.Less or BoundBinaryOperatorKind.Greater }
                 ? $"({text})"
@@ -832,10 +932,40 @@ public sealed class CSharpEmitter
             if (part is BoundLiteralExpression { Value: string text })
                 builder.Append(EscapeString(text, interpolated: true));
             else
-                // A top-level ':' would start a format specifier, so ternaries must be parenthesized.
-                builder.Append('{').Append(DisplayValue(part, LogicalOrPrecedence)).Append('}');
+            {
+                // A top-level ':' would start a format specifier, so ternaries and `global::` names must be parenthesized.
+                var hole = DisplayValue(part, LogicalOrPrecedence);
+                builder.Append('{').Append(hole.Contains("::") && !IsParenthesized(hole) ? $"({hole})" : hole).Append('}');
+            }
         }
         return builder.Append('"').ToString();
+    }
+
+    /// <summary>True if <paramref name="text"/> is wholly enclosed by one pair of parentheses (skipping string and char literals).</summary>
+    private static bool IsParenthesized(string text)
+    {
+        if (!text.StartsWith('(') || !text.EndsWith(')'))
+            return false;
+        int depth = 0;
+        char? quote = null;
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (quote is not null)
+            {
+                if (c == '\\')
+                    i++;
+                else if (c == quote)
+                    quote = null;
+            }
+            else if (c is '"' or '\'')
+                quote = c;
+            else if (c == '(')
+                depth++;
+            else if (c == ')' && --depth == 0)
+                return i == text.Length - 1;
+        }
+        return false;
     }
 
     /// <summary>

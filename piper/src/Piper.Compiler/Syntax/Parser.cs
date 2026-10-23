@@ -17,6 +17,7 @@ public sealed class Parser
     private readonly ImmutableArray<Token> _tokens;
     private int _position;
     private int _lastErrorPosition = -1;
+    private bool _inGuard;
 
     private Parser(SourceText source, DiagnosticBag diagnostics, ImmutableArray<Token> tokens)
     {
@@ -358,7 +359,7 @@ public sealed class Parser
     /// <summary>type = namedType { "?" } ;   (* T? is Option&lt;T&gt;; the lexer's "??" counts as two *)</summary>
     private TypeSyntax ParseType()
     {
-        TypeSyntax type = ParseNamedType();
+        TypeSyntax type = Current.Kind == TokenKind.OpenParen ? ParseFunctionType() : ParseNamedType();
         while (Current.Kind is TokenKind.Question or TokenKind.QuestionQuestion)
         {
             int levels = Current.Kind == TokenKind.QuestionQuestion ? 2 : 1;
@@ -398,6 +399,17 @@ public sealed class Parser
         ReportOnce(Current.Span, () => _diagnostics.ReportExpectedType(Current.Span, Current));
         var missing = Missing(TokenKind.Identifier);
         return new NamedTypeSyntax(missing.Span, [], missing, []);
+    }
+
+    /// <summary>functionType = "(" [ type { "," type } [ "," ] ] ")" "->" type ;</summary>
+    private FunctionTypeSyntax ParseFunctionType()
+    {
+        var open = NextToken();
+        var parameters = ParseSeparatedList(ParseType, TokenKind.CloseParen);
+        Expect(TokenKind.CloseParen);
+        Expect(TokenKind.Arrow);
+        var returnType = ParseType();
+        return new FunctionTypeSyntax(Span(open, returnType), parameters, returnType);
     }
 
     /// <summary>qualifiedName = IDENT { "." IDENT } ;</summary>
@@ -476,6 +488,9 @@ public sealed class Parser
                     break;
                 case TokenKind.ReturnKeyword:
                     statements.Add(ParseReturn());
+                    break;
+                case TokenKind.TryKeyword:
+                    statements.Add(ParseTry());
                     break;
                 case TokenKind.BreakKeyword:
                 {
@@ -679,11 +694,24 @@ public sealed class Parser
                     expression = new TryExpressionSyntax(TextSpan.FromBounds(expression.Span.Start, Previous.Span.End), expression);
                     break;
                 case TokenKind.OpenParen:
+                {
                     NextToken();
+                    // Lambdas are fine inside an argument list, even within a match guard.
+                    var inGuard = _inGuard;
+                    _inGuard = false;
                     var arguments = ParseSeparatedList(ParseExpression, TokenKind.CloseParen);
+                    _inGuard = inGuard;
                     Expect(TokenKind.CloseParen);
                     expression = new CallExpressionSyntax(
                         TextSpan.FromBounds(expression.Span.Start, Previous.Span.End), expression, arguments);
+                    break;
+                }
+                case TokenKind.OpenBracket:
+                    NextToken();
+                    var indices = ParseSeparatedList(ParseExpression, TokenKind.CloseBracket);
+                    Expect(TokenKind.CloseBracket);
+                    expression = new IndexExpressionSyntax(
+                        TextSpan.FromBounds(expression.Span.Start, Previous.Span.End), expression, indices);
                     break;
                 case TokenKind.Dot:
                     NextToken();
@@ -722,17 +750,34 @@ public sealed class Parser
                 var keyword = NextToken();
                 return new NullLiteralExpressionSyntax(keyword.Span, keyword);
             }
+            case TokenKind.Identifier when Peek(1).Kind == TokenKind.FatArrow && !_inGuard:
+                return ParseLambda();
             case TokenKind.Identifier or TokenKind.ThisKeyword:
             {
                 var identifier = NextToken();
                 return new NameExpressionSyntax(identifier.Span, identifier);
             }
+            case TokenKind.OpenParen when IsParenthesizedLambda():
+                return ParseLambda();
             case TokenKind.OpenParen:
             {
                 var open = NextToken();
                 var expression = ParseExpression();
                 Expect(TokenKind.CloseParen);
                 return new ParenthesizedExpressionSyntax(SpanFrom(open), expression);
+            }
+            case TokenKind.OpenBracket:
+            {
+                var open = NextToken();
+                var elements = ParseSeparatedList(ParseExpression, TokenKind.CloseBracket);
+                Expect(TokenKind.CloseBracket);
+                return new CollectionExpressionSyntax(SpanFrom(open), elements);
+            }
+            case TokenKind.ThrowKeyword:
+            {
+                var keyword = NextToken();
+                var exception = ParseExpression();
+                return new ThrowExpressionSyntax(Span(keyword, exception), keyword, exception);
             }
             case TokenKind.OpenBrace:
                 return ParseBlock();
@@ -744,6 +789,100 @@ public sealed class Parser
                 ReportOnce(Current.Span, () => _diagnostics.ReportExpectedExpression(Current.Span, Current));
                 return new ErrorExpressionSyntax(new TextSpan(Current.Span.Start, 0));
         }
+    }
+
+    /// <summary>True at a '(' that starts a lambda: the matching ')' is followed by '=>'.</summary>
+    private bool IsParenthesizedLambda()
+    {
+        if (_inGuard)
+            return false;
+        int depth = 0;
+        for (int offset = 0; ; offset++)
+        {
+            var kind = Peek(offset).Kind;
+            if (kind == TokenKind.EndOfFile)
+                return false;
+            if (kind == TokenKind.OpenParen)
+                depth++;
+            else if (kind == TokenKind.CloseParen && --depth == 0)
+                return Peek(offset + 1).Kind == TokenKind.FatArrow;
+        }
+    }
+
+    /// <summary>
+    /// lambda          = ( IDENT | "(" [ lambdaParameter { "," lambdaParameter } [ "," ] ] ")" ) "=>" ( block | expression ) ;
+    /// lambdaParameter = IDENT [ ":" type ] ;
+    /// </summary>
+    private LambdaExpressionSyntax ParseLambda()
+    {
+        var first = Current;
+        ImmutableArray<LambdaParameterSyntax> parameters;
+        if (Current.Kind == TokenKind.Identifier)
+        {
+            var name = NextToken();
+            parameters = [new LambdaParameterSyntax(name.Span, name, null)];
+        }
+        else
+        {
+            Expect(TokenKind.OpenParen);
+            parameters = ParseSeparatedList(() =>
+            {
+                var name = Expect(TokenKind.Identifier);
+                TypeSyntax? type = null;
+                if (Current.Kind == TokenKind.Colon)
+                {
+                    NextToken();
+                    type = ParseType();
+                }
+                return new LambdaParameterSyntax(SpanFrom(name), name, type);
+            }, TokenKind.CloseParen);
+            Expect(TokenKind.CloseParen);
+        }
+
+        Expect(TokenKind.FatArrow);
+        ExpressionSyntax body = Current.Kind == TokenKind.OpenBrace ? ParseBlock() : ParseExpression();
+        return new LambdaExpressionSyntax(TextSpan.FromBounds(first.Span.Start, body.Span.End), parameters, body);
+    }
+
+    /// <summary>
+    /// try   = "try" block { catch } [ "finally" block ] ;
+    /// catch = "catch" [ "(" IDENT [ ":" type ] ")" ] block ;
+    /// </summary>
+    private TryStatementSyntax ParseTry()
+    {
+        var keyword = NextToken();
+        var body = ParseBlock();
+        var catches = ImmutableArray.CreateBuilder<CatchClauseSyntax>();
+        while (Current.Kind == TokenKind.CatchKeyword)
+        {
+            var catchKeyword = NextToken();
+            Token? name = null;
+            TypeSyntax? type = null;
+            if (Current.Kind == TokenKind.OpenParen)
+            {
+                NextToken();
+                name = Expect(TokenKind.Identifier);
+                if (Current.Kind == TokenKind.Colon)
+                {
+                    NextToken();
+                    type = ParseType();
+                }
+                Expect(TokenKind.CloseParen);
+            }
+            var catchBody = ParseBlock();
+            catches.Add(new CatchClauseSyntax(SpanFrom(catchKeyword), catchKeyword, name, type, catchBody));
+        }
+
+        BlockExpressionSyntax? @finally = null;
+        if (Current.Kind == TokenKind.FinallyKeyword)
+        {
+            NextToken();
+            @finally = ParseBlock();
+        }
+
+        if (catches.Count == 0 && @finally is null)
+            Expect(TokenKind.CatchKeyword);
+        return new TryStatementSyntax(SpanFrom(keyword), body, catches.ToImmutable(), @finally);
     }
 
     /// <summary>if = "if" expression block [ "else" ( block | if ) ] ;</summary>
@@ -781,7 +920,10 @@ public sealed class Parser
             if (Current.Kind == TokenKind.IfKeyword)
             {
                 NextToken();
+                // `x if ok => …`: the guard's `ok =>` must not be read as the start of a lambda.
+                _inGuard = true;
                 guard = ParseExpression();
+                _inGuard = false;
             }
             Expect(TokenKind.FatArrow);
             var body = ParseArmBody();

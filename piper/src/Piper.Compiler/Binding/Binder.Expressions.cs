@@ -21,6 +21,10 @@ public sealed partial class Binder
         ConditionalAccessExpressionSyntax s => BindConditionalAccess(s),
         ImplicitReceiverSyntax => new BoundVariableExpression(_implicitReceivers.Peek()),
         TryExpressionSyntax s => BindTry(s),
+        LambdaExpressionSyntax s => BindLambda(s, expected),
+        IndexExpressionSyntax s => BindIndex(s),
+        CollectionExpressionSyntax s => BindCollection(s, expected),
+        ThrowExpressionSyntax s => BindThrow(s),
         UnaryExpressionSyntax s => BindUnary(s),
         BinaryExpressionSyntax s => BindBinary(s),
         RangeExpressionSyntax s => BindRange(s),
@@ -76,6 +80,8 @@ public sealed partial class Binder
             case VariantSymbol variant:
                 // A built-in variant used bare: `None`.
                 return BindVariantCreation(variant.Enum, variant, null, span, expected);
+            case FunctionSymbol function when BindFunctionReference(function, expected) is { } reference:
+                return reference;
             case FunctionSymbol:
                 _diagnostics.ReportNotAValue(name.Span, name.Text, "function");
                 return new BoundErrorExpression();
@@ -168,6 +174,10 @@ public sealed partial class Binder
 
     private BoundExpression BindAssignment(AssignmentExpressionSyntax syntax)
     {
+        // .NET properties and indexers can be assigned: `sb.Length = 0`, `ages["Ada"] = 37`.
+        if (syntax.Target is IndexExpressionSyntax or MemberAccessExpressionSyntax && BindClrAssignment(syntax) is { } clrAssignment)
+            return clrAssignment;
+
         if (syntax.Target is not NameExpressionSyntax name)
         {
             BindExpression(syntax.Value);
@@ -243,9 +253,15 @@ public sealed partial class Binder
                     : BindCallTo(_scope.Lookup(name.Identifier.Text), name.Identifier, syntax, expected);
 
             default:
-                if (BindExpression(syntax.Callee).Type != TypeSymbol.Error)
+            {
+                // `makeAdder(1)(2)`: calling the function value an expression produces.
+                var callee = BindExpression(syntax.Callee);
+                if (DelegateSignature(callee.Type) is not null)
+                    return BindDelegateInvocation(callee, syntax, "function");
+                if (callee.Type != TypeSymbol.Error)
                     _diagnostics.ReportNotCallable(syntax.Callee.Span, "This expression");
                 return BindArgumentsForDiagnostics(syntax.Arguments);
+            }
         }
     }
 
@@ -318,6 +334,10 @@ public sealed partial class Binder
                 var argument = RequireValue(BindExpression(syntax.Arguments[0]), syntax.Arguments[0].Span);
                 return new BoundCallExpression(function, [], [argument], TypeSymbol.Unit);
             }
+
+            // A variable holding a function: `f(1)`.
+            case VariableSymbol variable when DelegateSignature(variable.Type) is not null:
+                return BindDelegateInvocation(new BoundVariableExpression(variable), syntax, calleeName);
 
             case FunctionSymbol function:
             {
@@ -450,6 +470,15 @@ public sealed partial class Binder
             return BindArgumentsForDiagnostics(syntax.Arguments);
 
         var method = FindMethod(receiver.Type, member.Text);
+
+        // A record field holding a function: `handler.onClick(event)`.
+        if (method is null && FindField(receiver.Type, member.Text) is { } delegateField &&
+            DelegateSignature(TypeSubstitution.FieldType(delegateField, receiver.Type)) is not null)
+        {
+            var field = new BoundFieldAccessExpression(receiver, delegateField, TypeSubstitution.FieldType(delegateField, receiver.Type));
+            return BindDelegateInvocation(field, syntax, member.Text);
+        }
+
         if (method is null && IsClrBacked(receiver.Type))
             return BindClrInstanceCall(receiver, member, syntax.Arguments, syntax.Span);
 
@@ -565,17 +594,38 @@ public sealed partial class Binder
             return null;
         }
 
-        var bound = new List<BoundExpression>();
-        for (int i = 0; i < declared.Count; i++)
+        // Lambdas are bound after the other arguments: those usually fix the lambda's parameter types
+        // (map(xs, x => x * 2) learns T from xs), and the lambda's body then tells us the rest (U).
+        var bound = new BoundExpression[declared.Count];
+        foreach (bool lambdas in new[] { false, true })
         {
-            var unresolved = inferred.Where(p => !map.ContainsKey(p)).ToHashSet();
-            var parameterType = TypeSubstitution.Substitute(declared[i], map);
-            bool known = !TypeSubstitution.Mentions(parameterType, unresolved);
+            for (int i = 0; i < declared.Count; i++)
+            {
+                if (arguments[i] is LambdaExpressionSyntax != lambdas)
+                    continue;
 
-            var argument = RequireValue(BindExpression(arguments[i], known ? parameterType : null), arguments[i].Span);
-            if (!known)
-                Infer(declared[i], argument.Type, map, unresolved);
-            bound.Add(argument);
+                var unresolved = inferred.Where(p => !map.ContainsKey(p)).ToHashSet();
+                var parameterType = TypeSubstitution.Substitute(declared[i], map);
+                bool known = !TypeSubstitution.Mentions(parameterType, unresolved);
+
+                BoundExpression argument;
+                if (!known && arguments[i] is LambdaExpressionSyntax lambda &&
+                    DelegateSignature(parameterType) is { } signature &&
+                    !signature.Parameters.Any(p => TypeSubstitution.Mentions(p, unresolved)))
+                {
+                    // Parameter types known, result type not: infer it from the body.
+                    argument = BindLambdaWith(lambda, signature.Parameters, returnType: null, delegateType: null);
+                }
+                else
+                {
+                    argument = BindExpression(arguments[i], known ? parameterType : null);
+                }
+
+                argument = RequireValue(argument, arguments[i].Span);
+                if (!known)
+                    Infer(declared[i], argument.Type, map, unresolved);
+                bound[i] = argument;
+            }
         }
 
         foreach (var parameter in inferred)
@@ -833,7 +883,11 @@ public sealed partial class Binder
         }
 
         var valueType = left.Type.TypeArguments[0];
-        var right = RequireValue(BindExpression(syntax.Right, valueType), syntax.Right.Span);
+        // `x ?? throw …`: a right side that never completes is fine.
+        var right = BindExpression(syntax.Right, valueType);
+        if (right.Type == TypeSymbol.Never)
+            return new BoundNullCoalescingExpression(left, right, valueType);
+        right = RequireValue(right, syntax.Right.Span);
 
         // `a ?? b ?? c` where b is optional too keeps the result optional.
         if (right.Type == left.Type)
@@ -878,7 +932,7 @@ public sealed partial class Binder
         if (operand.Type == TypeSymbol.Error)
             return new BoundErrorExpression();
 
-        var returnType = _function!.ReturnType;
+        var returnType = _return!.Type;
         if (operand.Type.IsOption)
         {
             if (returnType.IsOption)
@@ -917,10 +971,12 @@ public sealed partial class Binder
     /// Numeric widening; a value of a type that implements a trait used as that trait; or a plain value
     /// used as an optional one (implicit Some, like C#'s <c>int</c> to <c>int?</c>).
     /// </summary>
-    private static bool IsConvertible(TypeSymbol from, TypeSymbol to) =>
+    private bool IsConvertible(TypeSymbol from, TypeSymbol to) =>
         Operators.IsImplicitlyConvertible(from, to) ||
         (to is TraitSymbol trait && from.IsValueType && Implements(from, trait)) ||
-        (to.IsOption && from.IsValueType && IsConvertible(from, to.TypeArguments[0]));
+        (to.IsOption && from.IsValueType && IsConvertible(from, to.TypeArguments[0])) ||
+        // .NET reference conversions: List<Int> to IEnumerable<Int>, String to IEnumerable<Char>, anything to object.
+        (to is ClrTypeSymbol && from.IsValueType && (ClrTypes.ToClr(to) == typeof(object) || SelfAndBaseTypes(from).Contains(to)));
 
     /// <summary>Converts to <paramref name="type"/> implicitly, or reports an error.</summary>
     private BoundExpression Convert(BoundExpression expression, TypeSymbol type, TextSpan span)

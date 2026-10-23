@@ -11,7 +11,9 @@ namespace Piper.Binding;
 /// </summary>
 public static class ClrTypeIndex
 {
-    private sealed record Index(Dictionary<string, List<Type>> Types, HashSet<string> Namespaces);
+    private sealed record Index(Dictionary<string, List<Type>> Types, HashSet<string> Namespaces, Dictionary<string, List<Type>> TypesByNamespace);
+
+    private static readonly ConcurrentDictionary<(string Namespace, string Name), MethodInfo[]> ExtensionMethodCache = new();
 
     private static readonly Lazy<Index> Instance = new(Build);
 
@@ -22,9 +24,20 @@ public static class ClrTypeIndex
     public static IReadOnlyList<Type> FindTypes(string @namespace, string name) =>
         Instance.Value.Types.TryGetValue($"{@namespace}.{name}", out var types) ? types : [];
 
+    /// <summary>Extension methods called <paramref name="name"/> declared by static classes in <paramref name="namespace"/> (e.g. LINQ's Where in System.Linq).</summary>
+    public static IReadOnlyList<MethodInfo> ExtensionMethods(string @namespace, string name) =>
+        ExtensionMethodCache.GetOrAdd((@namespace, name), key =>
+            Instance.Value.TypesByNamespace.TryGetValue(key.Namespace, out var types)
+                ? [.. types
+                    .Where(t => t.IsAbstract && t.IsSealed && t.IsDefined(typeof(System.Runtime.CompilerServices.ExtensionAttribute), false))
+                    .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                    .Where(m => m.Name == key.Name && m.IsDefined(typeof(System.Runtime.CompilerServices.ExtensionAttribute), false))]
+                : []);
+
     private static Index Build()
     {
         var types = new Dictionary<string, List<Type>>();
+        var byNamespace = new Dictionary<string, List<Type>>();
         var namespaces = new HashSet<string>();
         var seen = new HashSet<Type>();
         var paths = ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") ?? "")
@@ -53,12 +66,15 @@ public static class ClrTypeIndex
                 if (!types.TryGetValue(key, out var list))
                     types[key] = list = [];
                 list.Add(type);
+                if (!byNamespace.TryGetValue(type.Namespace, out var inNamespace))
+                    byNamespace[type.Namespace] = inNamespace = [];
+                inNamespace.Add(type);
 
                 for (var ns = type.Namespace; ns.Length > 0; ns = ns.Contains('.') ? ns[..ns.LastIndexOf('.')] : "")
                     namespaces.Add(ns);
             }
         }
-        return new Index(types, namespaces);
+        return new Index(types, namespaces, byNamespace);
     }
 }
 

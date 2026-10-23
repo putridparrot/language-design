@@ -1,0 +1,58 @@
+// Lambdas and function values: function types are .NET delegates, so they pass straight to .NET APIs.
+
+using System;
+using System.Linq;
+using System.Collections.Generic;
+
+fn double(x: Int) -> Int = x * 2;
+
+fn apply(f: (Int) -> Int, value: Int) -> Int = f(value);
+
+fn twice(f: (Int) -> Int) -> (Int) -> Int = x => f(f(x));
+
+fn main() {
+    // Parameter types come from the expected function type...
+    let increment: (Int) -> Int = x => x + 1;
+    print(increment(41));
+    print(apply(x => x * x, 7));
+
+    // ...or from annotations, giving the lambda its natural type.
+    let add = (a: Int, b: Int) => a + b;
+    print(add(2, 3));
+
+    // Top-level functions are values too.
+    print(apply(double, 21));
+    let quadruple = twice(double);
+    print(quadruple(5));
+
+    // Block bodies, captured variables, and lambdas returning Unit.
+    var total = 0;
+    let accumulate: (Int) -> Unit = n => { total += n; };
+    accumulate(10);
+    accumulate(5);
+    print(total);
+
+    let classify = (n: Int) => {
+        if n < 0 {
+            return "negative";
+        }
+        if n == 0 { "zero" } else { "positive" }
+    };
+    print(classify(-3));
+    print(classify(0));
+    print(classify(8));
+
+    // LINQ, with type arguments inferred from the lambdas.
+    let numbers = [5, 3, 8, 1, 9, 2];
+    let evens = numbers.Where(n => n % 2 == 0).Select(n => n * 10).ToList();
+    print(String.Join(", ", evens));
+    print(numbers.Any(n => n > 8));
+    print(numbers.Sum());
+    print(String.Join(" ", numbers.OrderBy(n => n).Select(n => "<{n}>")));
+
+    // .NET delegate types other than Func/Action.
+    let names: List<String> = ["Grace", "Ada", "Linus"];
+    names.Sort((a, b) => a.Length - b.Length);
+    print(String.Join(", ", names));
+    print(names.Exists(name => name.StartsWith("L")));
+}

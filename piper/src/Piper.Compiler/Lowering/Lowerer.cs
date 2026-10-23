@@ -29,11 +29,14 @@ public sealed class Lowerer
         return new BoundProgram(program.Files, program.FileNamespaces, program.Types, program.BuiltinTypes, LowerAll(program.Functions), LowerAll(program.Methods), program.Main);
     }
 
-    private BoundBlockStatement LowerFunction(BoundFunction function)
+    private BoundBlockStatement LowerFunction(BoundFunction function) =>
+        LowerBody((BoundBlockExpression)function.Body, function.Symbol.ReturnType);
+
+    /// <summary>A function or lambda body: Unit ones run for effect, others return their value.</summary>
+    private BoundBlockStatement LowerBody(BoundBlockExpression body, TypeSymbol returnType)
     {
-        var body = (BoundBlockExpression)function.Body;
         var output = new List<BoundStatement>();
-        if (function.Symbol.ReturnType == TypeSymbol.Unit)
+        if (returnType == TypeSymbol.Unit)
         {
             foreach (var statement in body.Statements)
                 LowerStatement(statement, output);
@@ -76,6 +79,20 @@ public sealed class Lowerer
 
             case BoundWhileStatement loop:
                 LowerWhile(loop, output);
+                break;
+
+            case BoundForEachStatement loop:
+            {
+                var collection = LowerForValue(loop.Collection, output);
+                output.Add(new BoundForEachStatement(loop.Variable, collection, LowerToStatement(loop.Body)));
+                break;
+            }
+
+            case BoundTryCatchStatement attempt:
+                output.Add(new BoundTryCatchStatement(
+                    LowerToStatement(attempt.Body),
+                    [.. attempt.Catches.Select(c => new BoundCatchClause(c.ExceptionType, c.Variable, LowerToStatement(c.Body)))],
+                    attempt.Finally is null ? null : LowerToStatement(attempt.Finally)));
                 break;
 
             case BoundForStatement loop:
@@ -176,6 +193,10 @@ public sealed class Lowerer
                 LowerMatch(match, sink: null, output);
                 break;
 
+            case BoundThrowExpression thrown:
+                output.Add(new BoundThrowStatement(LowerForValue(thrown.Exception, output)));
+                break;
+
             case BoundConditionalAccessExpression { Type: var type } access when type == TypeSymbol.Unit:
             {
                 // `user?.greet();` → `if (user.IsSome) { user.Value.greet(); }`
@@ -229,6 +250,11 @@ public sealed class Lowerer
 
             case BoundMatchExpression match:
                 LowerMatch(match, sink, output);
+                break;
+
+            // A throw never produces the value the sink wants.
+            case BoundThrowExpression @throw:
+                output.Add(new BoundThrowStatement(LowerForValue(@throw.Exception, output)));
                 break;
 
             case BoundConversionExpression { Expression: BoundIfExpression or BoundBlockExpression or BoundMatchExpression } conversion:
@@ -301,12 +327,62 @@ public sealed class Lowerer
             case BoundClrInvocationExpression { Receiver: { } receiver } invocation:
             {
                 var operands = LowerOperands([receiver, .. invocation.Arguments], prelude);
-                return new BoundClrInvocationExpression(operands[0], invocation.ContainerType, invocation.Member, operands[1..], invocation.Type);
+                return new BoundClrInvocationExpression(
+                    operands[0], invocation.ContainerType, invocation.Member, operands[1..], invocation.Type, invocation.TypeArguments);
             }
 
             case BoundClrInvocationExpression invocation:
                 return new BoundClrInvocationExpression(
-                    null, invocation.ContainerType, invocation.Member, LowerOperands(invocation.Arguments, prelude), invocation.Type);
+                    null, invocation.ContainerType, invocation.Member, LowerOperands(invocation.Arguments, prelude), invocation.Type,
+                    invocation.TypeArguments);
+
+            case BoundLambdaExpression lambda:
+                return new BoundLambdaExpression(
+                    lambda.Parameters, LowerBody((BoundBlockExpression)lambda.Body, lambda.ReturnType), lambda.ReturnType,
+                    lambda.BodyType, lambda.IsExpressionBodied, lambda.Type);
+
+            case BoundFunctionReferenceExpression:
+                return expression;
+
+            // Only reached where C# allows a throw expression: a ?: branch or the right of ??.
+            case BoundThrowExpression @throw:
+                return new BoundThrowExpression(LowerForValue(@throw.Exception, prelude));
+
+            case BoundDelegateInvocationExpression invocation:
+            {
+                var operands = LowerOperands([invocation.Target, .. invocation.Arguments], prelude);
+                return new BoundDelegateInvocationExpression(operands[0], operands[1..], invocation.Type);
+            }
+
+            case BoundIndexExpression index:
+            {
+                var operands = LowerOperands([index.Target, .. index.Arguments], prelude);
+                return new BoundIndexExpression(operands[0], index.Indexer, operands[1..], index.Type);
+            }
+
+            case BoundCollectionExpression collection:
+                return new BoundCollectionExpression(LowerOperands(collection.Elements, prelude), collection.Type);
+
+            case BoundClrAssignmentExpression assignment:
+            {
+                // The target's receiver and indices are evaluated before the value.
+                var target = assignment.Target;
+                ImmutableArray<BoundExpression> targetOperands = target switch
+                {
+                    BoundIndexExpression index => [index.Target, .. index.Arguments],
+                    BoundClrMemberExpression { Receiver: { } receiver } => [receiver],
+                    _ => [],
+                };
+                var operands = LowerOperands([.. targetOperands, assignment.Value], prelude);
+                BoundExpression loweredTarget = target switch
+                {
+                    BoundIndexExpression index => new BoundIndexExpression(operands[0], index.Indexer, operands[1..^1], index.Type),
+                    BoundClrMemberExpression { Receiver: not null } member =>
+                        new BoundClrMemberExpression(operands[0], member.ContainerType, member.Member, member.Type),
+                    _ => target,
+                };
+                return new BoundClrAssignmentExpression(loweredTarget, assignment.CompoundOperator, operands[^1]);
+            }
 
             case BoundClrMemberExpression member:
                 return new BoundClrMemberExpression(
@@ -636,6 +712,8 @@ public sealed class Lowerer
     {
         BoundVariableExpression variable => !variable.Variable.IsMutable,
         BoundConversionExpression conversion => IsInvariant(conversion.Expression),
+        // Creating a lambda or function value has no effects worth ordering (captures are by reference anyway).
+        BoundLambdaExpression or BoundFunctionReferenceExpression => true,
         _ => IsConstant(expression),
     };
 

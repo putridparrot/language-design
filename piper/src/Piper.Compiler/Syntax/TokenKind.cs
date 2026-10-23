@@ -37,6 +37,10 @@ public enum TokenKind
     NamespaceKeyword,
     UsingKeyword,
     PrivateKeyword,
+    TryKeyword,
+    CatchKeyword,
+    FinallyKeyword,
+    ThrowKeyword,
     TrueKeyword,
     FalseKeyword,
 

@@ -339,6 +339,38 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportCannotConstruct(TextSpan span, TypeSymbol type) =>
         Error("PIP0278", span, $"'{type}' has no public constructors.");
 
+    // Lambdas, collections and exceptions
+
+    public void ReportCannotInferLambda(TextSpan span) =>
+        Error("PIP0280", span, "Can't infer this lambda's parameter types; annotate them, e.g. '(x: Int) => …', or use it where a function type is expected.");
+
+    public void ReportLambdaParameterCount(TextSpan span, TypeSymbol delegateType, int expected, int actual) =>
+        Error("PIP0281", span, $"A '{delegateType}' takes {expected} parameter{(expected == 1 ? "" : "s")} but the lambda has {actual}.");
+
+    public void ReportLambdaParameterType(TextSpan span, string name, TypeSymbol expected, TypeSymbol actual) =>
+        Error("PIP0281", span, $"Lambda parameter '{name}' is declared as '{actual}' but must be '{expected}' here.");
+
+    public void ReportNotIterable(TextSpan span, TypeSymbol type) =>
+        Error("PIP0282", span, $"A 'for' loop needs a range (0..10) or a collection, but '{type}' is neither.");
+
+    public void ReportNotAnException(TextSpan span, TypeSymbol type) =>
+        Error("PIP0283", span, $"'{type}' is not an exception type (it doesn't derive from System.Exception).");
+
+    public void ReportJumpOutOfFinally(TextSpan span, string keyword) =>
+        Error("PIP0284", span, $"'{keyword}' cannot leave a finally block.");
+
+    public void ReportNotIndexable(TextSpan span, TypeSymbol type) =>
+        Error("PIP0285", span, $"'{type}' cannot be indexed.");
+
+    public void ReportReadOnlyMember(TextSpan span, string member) =>
+        Error("PIP0285", span, $"'{member}' cannot be assigned; it has no public setter.");
+
+    public void ReportUnreachableCatch(TextSpan span) =>
+        Error("PIP0287", span, "This catch clause is unreachable: an earlier clause already catches its exceptions.");
+
+    public void ReportCannotInferCollection(TextSpan span) =>
+        Error("PIP0286", span, "Can't infer the element type of an empty collection; add a type annotation, e.g. 'let xs: List<Int> = [];'.");
+
     public void ReportEmptyRangePattern(TextSpan span) =>
         Error("PIP0239", span, "This range pattern is empty: its lower bound is not below its upper bound.");
 }

@@ -24,7 +24,7 @@ public sealed partial class Binder
         "MemberwiseClone", "Finalize", "ReferenceEquals",
     ];
 
-    private readonly DiagnosticBag _diagnostics;
+    private DiagnosticBag _diagnostics;
     private readonly Scope _builtins;
     private readonly NamespaceSymbol _globalNamespace;
     private readonly List<FileContext> _files = [];
@@ -41,7 +41,17 @@ public sealed partial class Binder
 
     private FileContext _file = null!;
     private Scope _scope = null!;
-    private FunctionSymbol? _function;
+    /// <summary>What `return` returns from: the current function or lambda.</summary>
+    private ReturnContext? _return;
+
+    /// <summary>Inside a finally block, control can't jump out (C# forbids it); loops opened inside are fine.</summary>
+    private int _finallyLoopDepth = -1;
+
+    /// <summary>
+    /// <paramref name="Inferred"/> is set while binding a lambda whose return type isn't known yet: returned values
+    /// are collected (not converted) so their common type can become the return type.
+    /// </summary>
+    private sealed record ReturnContext(TypeSymbol Type, string Name, List<TypeSymbol>? Inferred = null);
     private int _loopDepth;
 
     /// <summary>Everything about the file being bound: its namespace, private declarations and the scope chain its code sees.</summary>
@@ -799,7 +809,8 @@ public sealed partial class Binder
             return null;
 
         InFile(file);
-        _function = function;
+        _return = new ReturnContext(function.ReturnType, function.Name);
+        _finallyLoopDepth = -1;
         _loopDepth = 0;
         _scope = new Scope(signatureScope);
         if (function is MethodSymbol { This: { } @this })
@@ -825,7 +836,7 @@ public sealed partial class Binder
         body = CheckFunctionResult(function, declaration, body, trailingSyntax);
 
         _scope = file.Scope;
-        _function = null;
+        _return = null;
         return new BoundFunction(function, body, declaration.ExpressionBody is not null);
     }
 
@@ -859,6 +870,13 @@ public sealed partial class Binder
         {
             var inner = BindValueType(optional.Inner, "type argument");
             return inner == TypeSymbol.Error ? TypeSymbol.Error : _option.Construct([inner]);
+        }
+
+        // (Int, String) -> Bool is Func<Int, String, Bool>; a function returning Unit is an Action.
+        if (syntax is FunctionTypeSyntax function)
+        {
+            var parameters = function.Parameters.Select(p => BindValueType(p, "parameter")).ToList();
+            return FunctionType(parameters, BindType(function.ReturnType));
         }
 
         var named = (NamedTypeSyntax)syntax;
@@ -1017,7 +1035,8 @@ public sealed partial class Binder
     /// <summary>True if control never flows past <paramref name="statement"/>.</summary>
     private static bool Diverges(BoundStatement statement) => statement switch
     {
-        BoundReturnStatement or BoundBreakStatement or BoundContinueStatement => true,
+        BoundReturnStatement or BoundBreakStatement or BoundContinueStatement or BoundThrowStatement => true,
+        BoundTryCatchStatement t => (Diverges(t.Body) && t.Catches.All(c => Diverges(c.Body))) || (t.Finally is { } f && Diverges(f)),
         BoundExpressionStatement e => e.Expression.Type == TypeSymbol.Never,
         _ => false,
     };
@@ -1029,6 +1048,7 @@ public sealed partial class Binder
         WhileStatementSyntax s => BindWhile(s),
         ForStatementSyntax s => BindFor(s),
         ReturnStatementSyntax s => BindReturn(s),
+        TryStatementSyntax s => BindTryCatch(s),
         BreakStatementSyntax s => BindLoopJump(s.Keyword, new BoundBreakStatement()),
         ContinueStatementSyntax s => BindLoopJump(s.Keyword, new BoundContinueStatement()),
         _ => throw new InvalidOperationException($"Unexpected statement {syntax.GetType().Name}"),
@@ -1086,10 +1106,7 @@ public sealed partial class Binder
         }
         else
         {
-            BindExpression(syntax.Range);
-            _diagnostics.ReportForRequiresRange(syntax.Range.Span);
-            lower = upper = new BoundErrorExpression();
-            type = TypeSymbol.Error;
+            return BindForEach(syntax);
         }
 
         var outer = _scope;
@@ -1116,23 +1133,37 @@ public sealed partial class Binder
 
     private BoundStatement BindReturn(ReturnStatementSyntax syntax)
     {
-        var function = _function!;
+        var function = _return!;
+        if (_finallyLoopDepth >= 0)
+            _diagnostics.ReportJumpOutOfFinally(syntax.Keyword.Span, "return");
+
+        if (function.Inferred is { } inferred)
+        {
+            if (syntax.Value is null)
+            {
+                inferred.Add(TypeSymbol.Unit);
+                return new BoundReturnStatement(null);
+            }
+            var returned = RequireValue(BindExpression(syntax.Value), syntax.Value.Span);
+            inferred.Add(returned.Type);
+            return new BoundReturnStatement(returned);
+        }
         if (syntax.Value is null)
         {
-            if (function.ReturnType != TypeSymbol.Unit && function.ReturnType != TypeSymbol.Error)
-                _diagnostics.ReportMissingReturnValue(syntax.Keyword.Span, function.Name, function.ReturnType);
+            if (function.Type != TypeSymbol.Unit && function.Type != TypeSymbol.Error)
+                _diagnostics.ReportMissingReturnValue(syntax.Keyword.Span, function.Name, function.Type);
             return new BoundReturnStatement(null);
         }
 
-        if (function.ReturnType == TypeSymbol.Unit)
+        if (function.Type == TypeSymbol.Unit)
         {
             if (BindExpression(syntax.Value).Type != TypeSymbol.Error)
                 _diagnostics.ReportUnexpectedReturnValue(syntax.Value.Span, function.Name);
             return new BoundReturnStatement(null);
         }
 
-        var value = BindExpression(syntax.Value, function.ReturnType);
-        value = Convert(RequireValue(value, syntax.Value.Span), function.ReturnType, syntax.Value.Span);
+        var value = BindExpression(syntax.Value, function.Type);
+        value = Convert(RequireValue(value, syntax.Value.Span), function.Type, syntax.Value.Span);
         return new BoundReturnStatement(value);
     }
 
@@ -1140,6 +1171,8 @@ public sealed partial class Binder
     {
         if (_loopDepth == 0)
             _diagnostics.ReportOutsideLoop(keyword.Span, keyword.Text);
+        else if (_finallyLoopDepth >= 0 && _loopDepth <= _finallyLoopDepth)
+            _diagnostics.ReportJumpOutOfFinally(keyword.Span, keyword.Text);
         return statement;
     }
 }

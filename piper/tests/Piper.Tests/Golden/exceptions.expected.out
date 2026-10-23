@@ -1,0 +1,8 @@
+5
+caught: b must not be zero
+finally runs
+12
+not a number: twelve
+-1
+check failed
+ArgumentOutOfRangeException

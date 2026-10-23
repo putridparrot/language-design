@@ -101,6 +101,9 @@ public sealed record NamedTypeSyntax(TextSpan Span, ImmutableArray<Token> Qualif
 /// <summary><c>T?</c>, shorthand for <c>Option&lt;T&gt;</c>.</summary>
 public sealed record OptionalTypeSyntax(TextSpan Span, TypeSyntax Inner) : TypeSyntax(Span);
 
+/// <summary><c>(Int, String) -> Bool</c>: a function type, i.e. the .NET delegate <c>Func</c> (or <c>Action</c> when it returns Unit).</summary>
+public sealed record FunctionTypeSyntax(TextSpan Span, ImmutableArray<TypeSyntax> Parameters, TypeSyntax ReturnType) : TypeSyntax(Span);
+
 // Statements
 
 public abstract record StatementSyntax(TextSpan Span) : SyntaxNode(Span);
@@ -124,6 +127,19 @@ public sealed record ForStatementSyntax(TextSpan Span, Token Variable, Expressio
     : StatementSyntax(Span);
 
 public sealed record ReturnStatementSyntax(TextSpan Span, Token Keyword, ExpressionSyntax? Value) : StatementSyntax(Span);
+
+/// <summary><c>try { … } catch (e: FormatException) { … } catch { … } finally { … }</c>.</summary>
+public sealed record TryStatementSyntax(
+    TextSpan Span,
+    BlockExpressionSyntax Body,
+    ImmutableArray<CatchClauseSyntax> Catches,
+    BlockExpressionSyntax? Finally) : StatementSyntax(Span);
+
+/// <summary>
+/// <c>catch (e: FormatException)</c>, <c>catch (e)</c> (any exception, bound to <c>e</c>) or a bare <c>catch</c>.
+/// </summary>
+public sealed record CatchClauseSyntax(TextSpan Span, Token Keyword, Token? Name, TypeSyntax? Type, BlockExpressionSyntax Body)
+    : SyntaxNode(Span);
 
 public sealed record BreakStatementSyntax(TextSpan Span, Token Keyword) : StatementSyntax(Span);
 
@@ -180,6 +196,25 @@ public sealed record MatchExpressionSyntax(TextSpan Span, Token Keyword, Express
 
 public sealed record MatchArmSyntax(TextSpan Span, PatternSyntax Pattern, ExpressionSyntax? Guard, ExpressionSyntax Body)
     : SyntaxNode(Span);
+
+/// <summary>
+/// <c>x =&gt; x * 2</c>, <c>(a, b) =&gt; a + b</c>, <c>(x: Int) =&gt; { … }</c>, <c>() =&gt; 42</c>. Parameter types come
+/// from the delegate type the context expects, or from annotations.
+/// </summary>
+public sealed record LambdaExpressionSyntax(TextSpan Span, ImmutableArray<LambdaParameterSyntax> Parameters, ExpressionSyntax Body)
+    : ExpressionSyntax(Span);
+
+public sealed record LambdaParameterSyntax(TextSpan Span, Token Name, TypeSyntax? Type) : SyntaxNode(Span);
+
+/// <summary><c>target[index]</c>: an array element, a string's character or a .NET indexer.</summary>
+public sealed record IndexExpressionSyntax(TextSpan Span, ExpressionSyntax Target, ImmutableArray<ExpressionSyntax> Arguments)
+    : ExpressionSyntax(Span);
+
+/// <summary><c>[1, 2, 3]</c>: a <c>List&lt;T&gt;</c> (or another collection the context expects).</summary>
+public sealed record CollectionExpressionSyntax(TextSpan Span, ImmutableArray<ExpressionSyntax> Elements) : ExpressionSyntax(Span);
+
+/// <summary><c>throw ArgumentException("…")</c>; has type Never, so it also works as an expression (<c>x ?? throw …</c>).</summary>
+public sealed record ThrowExpressionSyntax(TextSpan Span, Token Keyword, ExpressionSyntax Exception) : ExpressionSyntax(Span);
 
 /// <summary><c>null</c>: the None of whatever optional type the context expects.</summary>
 public sealed record NullLiteralExpressionSyntax(TextSpan Span, Token Keyword) : ExpressionSyntax(Span);

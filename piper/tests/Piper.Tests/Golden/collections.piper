@@ -1,0 +1,70 @@
+// Collection literals, for loops over collections, and indexing.
+
+using System;
+using System.Collections.Generic;
+
+record Point(x: Int, y: Int);
+
+fn sum(values: List<Int>) -> Int {
+    var total = 0;
+    for value in values {
+        total += value;
+    }
+    total
+}
+
+fn main() {
+    // A collection literal is a List<T> unless an array is expected.
+    let primes = [2, 3, 5, 7];
+    print(sum(primes));
+    print(primes[2]);
+    primes.Add(11);
+    print(primes.Count);
+
+    // Arrays come from .NET; their elements can be read and assigned.
+    let words = "one two three".Split(' ');
+    words[0] = "uno";
+    print(String.Join("-", words));
+    print(words[2].Length);
+
+    // The element type is the common type of the elements.
+    let mixed = [1, 2L, 3];
+    print(mixed[1]);
+
+    let empty: List<String> = [];
+    print(empty.Count);
+
+    // Anything enumerable can be looped over: lists, arrays, strings, records in a list.
+    for c in "abc" {
+        print(c);
+    }
+    for point in [Point(1, 2), Point(3, 4)] {
+        print(point.x + point.y);
+    }
+    for row in [[1, 2], [3]] {
+        print(row.Count);
+    }
+
+    // Indexers, and assigning through them and through properties.
+    let ages: Dictionary<String, Int> = Dictionary();
+    ages["Ada"] = 36;
+    ages["Ada"] += 1;
+    print(ages["Ada"]);
+
+    for pair in ages {
+        print("{pair.Key} is {pair.Value}, at most {Math.Max(pair.Value, 40)}");
+    }
+
+    // A generic .NET member returning T gives the element type itself; one returning T? gives an Option.
+    let names = ["Ada", "Grace"];
+    print(names[1].Length);
+    print(System.Linq.Enumerable.First(names).Length);
+    print(System.Linq.Enumerable.FirstOrDefault(empty) ?? "none");
+
+    let text = "Piper";
+    print(text[0]);
+
+    let builder = System.Text.StringBuilder("hello");
+    builder.Length = 4;
+    print(builder.ToString());
+}
