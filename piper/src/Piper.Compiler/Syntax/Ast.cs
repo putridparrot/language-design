@@ -52,6 +52,9 @@ public sealed record FunctionDeclarationSyntax(
     ExpressionSyntax? ExpressionBody) : DeclarationSyntax(Span, Name)
 {
     public bool HasBody => BlockBody is not null || ExpressionBody is not null;
+
+    /// <summary>The `async` modifier: the function returns a Task, and its body can `await`.</summary>
+    public Token? Async { get; init; }
 }
 
 public sealed record RecordDeclarationSyntax(
@@ -127,6 +130,9 @@ public sealed record VariableDeclarationSyntax(
     /// <summary><c>using let r = …;</c>: the value is disposed at the end of the enclosing block, and can't be reassigned.</summary>
     public Token? Using { get; init; }
 
+    /// <summary>`await using let r = …;`: disposed with DisposeAsync (an IAsyncDisposable).</summary>
+    public Token? Await { get; init; }
+
     public bool IsMutable => Keyword.Kind == TokenKind.VarKeyword && Using is null;
 }
 
@@ -140,7 +146,11 @@ public sealed record UsingStatementSyntax(
     Token? Name,
     TypeSyntax? Type,
     ExpressionSyntax Resource,
-    BlockExpressionSyntax Body) : StatementSyntax(Span);
+    BlockExpressionSyntax Body) : StatementSyntax(Span)
+{
+    /// <summary>`await using (…) { … }`: disposed with DisposeAsync.</summary>
+    public Token? Await { get; init; }
+}
 
 /// <summary><c>let (a, (b, _)) = value;</c>: declares a variable per name, as C#'s <c>var (a, (b, _)) = value;</c>.</summary>
 public sealed record DeconstructionDeclarationSyntax(
@@ -172,6 +182,9 @@ public sealed record ForStatementSyntax(TextSpan Span, Token Variable, Expressio
     : StatementSyntax(Span)
 {
     public ParenthesizedDesignationSyntax? Deconstruction { get; init; }
+
+    /// <summary>`await for x in stream`: iterates an IAsyncEnumerable (C#'s `await foreach`).</summary>
+    public Token? Await { get; init; }
 }
 
 public sealed record ReturnStatementSyntax(TextSpan Span, Token Keyword, ExpressionSyntax? Value) : StatementSyntax(Span);
@@ -261,7 +274,14 @@ public sealed record MatchArmSyntax(TextSpan Span, PatternSyntax Pattern, Expres
 /// from the delegate type the context expects, or from annotations.
 /// </summary>
 public sealed record LambdaExpressionSyntax(TextSpan Span, ImmutableArray<LambdaParameterSyntax> Parameters, ExpressionSyntax Body)
-    : ExpressionSyntax(Span);
+    : ExpressionSyntax(Span)
+{
+    /// <summary>`async x => …`: the lambda produces a Task, and its body can `await`.</summary>
+    public Token? Async { get; init; }
+}
+
+/// <summary>`await task`: waits for an awaitable value (a Task, ValueTask, or anything with C#'s `GetAwaiter` pattern).</summary>
+public sealed record AwaitExpressionSyntax(TextSpan Span, Token Keyword, ExpressionSyntax Operand) : ExpressionSyntax(Span);
 
 public sealed record LambdaParameterSyntax(TextSpan Span, Token Name, TypeSyntax? Type) : SyntaxNode(Span);
 

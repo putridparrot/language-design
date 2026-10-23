@@ -33,6 +33,7 @@ public sealed partial class Binder
         CollectionExpressionSyntax s => BindCollection(s, expected),
         TupleExpressionSyntax s => BindTuple(s, expected),
         ThrowExpressionSyntax s => BindThrow(s),
+        AwaitExpressionSyntax s => BindAwait(s),
         OutArgumentSyntax s => ReportMisplacedOut(s),
         UnaryExpressionSyntax s => BindUnary(s),
         CastExpressionSyntax s => BindCast(s),

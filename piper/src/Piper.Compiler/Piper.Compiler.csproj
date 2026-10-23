@@ -2,6 +2,8 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
+    <!-- Not used by the compiler itself: programs it compiles and runs in memory (Runner) reference it. -->
+    <ProjectReference Include="..\Piper.Runtime\Piper.Runtime.csproj" />
   </ItemGroup>
 
 </Project>

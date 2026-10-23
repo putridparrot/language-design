@@ -67,6 +67,15 @@ public class FunctionSymbol(
 
     public TypeSymbol ReturnType { get; } = returnType;
 
+    /// <summary>`async fn`: <see cref="ReturnType"/> is a Task (or ValueTask), and the body awaits.</summary>
+    public bool IsAsync { get; init; }
+
+    /// <summary>
+    /// What the body produces: <see cref="ReturnType"/>, except in an async function, where it's the Task's result
+    /// (`int` for `Task<int>`, unit for `Task`).
+    /// </summary>
+    public TypeSymbol BodyReturnType { get => field ?? ReturnType; init; }
+
     /// <summary>Null for builtins.</summary>
     public FunctionDeclarationSyntax? Declaration { get; } = declaration;
 }

@@ -30,7 +30,7 @@ public sealed class Lowerer
     }
 
     private BoundBlockStatement LowerFunction(BoundFunction function) =>
-        LowerBody((BoundBlockExpression)function.Body, function.Symbol.ReturnType);
+        LowerBody((BoundBlockExpression)function.Body, function.Symbol.BodyReturnType);
 
     /// <summary>A function or lambda body: Unit ones run for effect, others return their value.</summary>
     private BoundBlockStatement LowerBody(BoundBlockExpression body, TypeSymbol returnType)
@@ -101,13 +101,19 @@ public sealed class Lowerer
         {
             // `using let r = …;`: C# needs the initializer in the declaration itself.
             case BoundVariableDeclaration { IsUsing: true, Initializer: { } resource } declaration:
-                output.Add(new BoundVariableDeclaration(declaration.Variable, LowerForValue(resource, output), isUsing: true));
+                output.Add(new BoundVariableDeclaration(declaration.Variable, LowerForValue(resource, output), isUsing: true)
+                {
+                    IsAwait = declaration.IsAwait,
+                });
                 break;
 
             case BoundUsingStatement usingStatement:
             {
                 var resource = LowerForValue(usingStatement.Resource, output);
-                output.Add(new BoundUsingStatement(usingStatement.Variable, resource, LowerToStatement(usingStatement.Body)));
+                output.Add(new BoundUsingStatement(usingStatement.Variable, resource, LowerToStatement(usingStatement.Body))
+                {
+                    IsAwait = usingStatement.IsAwait,
+                });
                 break;
             }
 
@@ -139,7 +145,10 @@ public sealed class Lowerer
             case BoundForEachStatement loop:
             {
                 var collection = LowerForValue(loop.Collection, output);
-                output.Add(new BoundForEachStatement(loop.Variable, collection, LowerToStatement(loop.Body), loop.Deconstruction));
+                output.Add(new BoundForEachStatement(loop.Variable, collection, LowerToStatement(loop.Body), loop.Deconstruction)
+                {
+                    IsAwait = loop.IsAwait,
+                });
                 break;
             }
 
@@ -416,7 +425,13 @@ public sealed class Lowerer
             case BoundLambdaExpression lambda:
                 return new BoundLambdaExpression(
                     lambda.Parameters, LowerBody((BoundBlockExpression)lambda.Body, lambda.ReturnType), lambda.ReturnType,
-                    lambda.BodyType, lambda.IsExpressionBodied, lambda.Type);
+                    lambda.BodyType, lambda.IsExpressionBodied, lambda.Type)
+                {
+                    IsAsync = lambda.IsAsync,
+                };
+
+            case BoundAwaitExpression await:
+                return new BoundAwaitExpression(LowerForValue(await.Operand, prelude), await.Type);
 
             case BoundFunctionReferenceExpression or BoundOutArgument:
                 return expression;

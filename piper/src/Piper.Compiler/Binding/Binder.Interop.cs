@@ -367,8 +367,35 @@ public sealed partial class Binder
         bool someBetter = a.Scores.Zip(b.Scores).Any(p => p.First < p.Second) ||
                           (!a.Expanded && b.Expanded) ||
                           (a.Expanded == b.Expanded && a.Candidate.Parameters.Length < b.Candidate.Parameters.Length) ||
-                          (a.Candidate.TypeArguments.IsEmpty && !b.Candidate.TypeArguments.IsEmpty);
+                          (a.Candidate.TypeArguments.IsEmpty && !b.Candidate.TypeArguments.IsEmpty) ||
+                          IsMoreSpecific(a.Candidate, b.Candidate);
         return allAtLeastAsGood && someBetter;
+    }
+
+    /// <summary>
+    /// C#'s last tie-break: when two candidates take the same parameter types once their type arguments are filled in,
+    /// the one whose declared parameter types are less generic wins. So <c>Task.Run(async () =&gt; 1)</c> picks
+    /// <c>Run&lt;T&gt;(Func&lt;Task&lt;T&gt;&gt;)</c> over <c>Run&lt;T&gt;(Func&lt;T&gt;)</c>.
+    /// </summary>
+    private static bool IsMoreSpecific(ClrCandidate a, ClrCandidate b)
+    {
+        if (!a.Parameters.Select(p => p.Type).SequenceEqual(b.Parameters.Select(p => p.Type)))
+            return false;
+        var comparisons = a.Member.GetParameters().Zip(b.Member.GetParameters(), (x, y) => Specificity(x.ParameterType, y.ParameterType)).ToList();
+        return comparisons.All(c => c >= 0) && comparisons.Any(c => c > 0);
+    }
+
+    /// <summary>1 if <paramref name="a"/> is more specific than <paramref name="b"/> (a type parameter is the least specific), -1 if less, 0 if neither.</summary>
+    private static int Specificity(Type a, Type b)
+    {
+        if (a.IsGenericParameter || b.IsGenericParameter)
+            return a.IsGenericParameter == b.IsGenericParameter ? 0 : a.IsGenericParameter ? -1 : 1;
+        if (a.HasElementType && b.HasElementType)
+            return Specificity(a.GetElementType()!, b.GetElementType()!);
+        if (!a.IsGenericType || !b.IsGenericType || a.GetGenericTypeDefinition() != b.GetGenericTypeDefinition())
+            return 0;
+        var parts = a.GetGenericArguments().Zip(b.GetGenericArguments(), Specificity).ToList();
+        return parts.All(p => p >= 0) && parts.Any(p => p > 0) ? 1 : parts.All(p => p <= 0) && parts.Any(p => p < 0) ? -1 : 0;
     }
 
     private static ClrParameter ParameterFor(ClrCandidate candidate, int index, bool expanded) =>
@@ -475,9 +502,15 @@ public sealed partial class Binder
         var parameters = method.GetParameters();
         int count = Math.Min(parameters.Length, arguments.Count);
 
-        for (int i = 0; i < count; i++)
+        // `params T[] items`: arguments past the fixed ones infer from the element type (`WhenAll(task1, task2)`).
+        bool hasParams = parameters.Length > 0 && parameters[^1].IsDefined(typeof(ParamArrayAttribute)) && parameters[^1].ParameterType.IsArray;
+        for (int i = 0; i < arguments.Count; i++)
         {
-            if (arguments[i].Bound is { } bound)
+            if (arguments[i].Bound is not { } bound)
+                continue;
+            if (hasParams && i >= parameters.Length - 1 && !(bound.Type is ClrTypeSymbol { IsArray: true } && arguments.Count == parameters.Length))
+                InferClr(parameters[^1].ParameterType.GetElementType()!, bound.Type, result, generics);
+            else if (i < parameters.Length)
                 InferClr(parameters[i].ParameterType, bound.Type, result, generics);
         }
 
@@ -500,7 +533,8 @@ public sealed partial class Binder
                 var bound = Trial(() => BindLambdaWith(lambda, lambdaParameters!, returnType: null, delegateType: null), out bool failed);
                 if (failed || bound is not BoundLambdaExpression typed)
                     continue;
-                InferClr(invoke.ReturnType, typed.ReturnType, result, generics);
+                // The delegate's return type: for an async lambda, the Task rather than its result.
+                InferClr(invoke.ReturnType, DelegateSignature(typed.Type)?.Return ?? typed.ReturnType, result, generics);
                 progress = !Unresolved(invoke.ReturnType, generics, result);
             }
         }

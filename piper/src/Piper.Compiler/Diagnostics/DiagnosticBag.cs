@@ -401,8 +401,11 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportConstantDivisionByZero(TextSpan span) =>
         Error("PIP0293", span, "Division by constant zero.");
 
-    public void ReportNotDisposable(TextSpan span, TypeSymbol type) =>
-        Error("PIP0294", span, $"'{type}' can't be used with 'using': it doesn't implement System.IDisposable.");
+    public void ReportNotDisposable(TextSpan span, TypeSymbol type, string requiredInterface) =>
+        Error("PIP0294", span, $"'{type}' can't be used with 'using': it doesn't implement System.{requiredInterface}.");
+
+    public void ReportNotAsyncIterable(TextSpan span, TypeSymbol type) =>
+        Error("PIP0302", span, $"'await for' needs an IAsyncEnumerable<T>, but '{type}' isn't one.");
 
     public void ReportCannotCast(TextSpan span, TypeSymbol from, TypeSymbol to) =>
         Error("PIP0295", span, $"Cannot cast '{from}' to '{to}'.");
@@ -410,6 +413,20 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportOrPatternBinding(TextSpan span, string name, string problem) =>
         Error("PIP0296", span, $"'{name}' {problem}: each alternative of a '|' pattern must bind the same variables, with the same types.");
 
+    public void ReportInvalidAsyncReturnType(TextSpan span, string what, TypeSymbol type) =>
+        Error("PIP0297", span, $"An async {what} must return Task, Task<T>, ValueTask or ValueTask<T>, not '{type}'.");
+
+    public void ReportAsyncWithoutAwait(TextSpan span, string what) =>
+        Warning("PIP0298", span, $"This async {what} has no 'await', so it runs synchronously.");
+
+    public void ReportAwaitOutsideAsync(TextSpan span) =>
+        Error("PIP0299", span, "'await' can only be used in an async function or lambda; mark it 'async' and return a Task.");
+
+    public void ReportNotAwaitable(TextSpan span, TypeSymbol type) =>
+        Error("PIP0300", span, $"A '{type}' can't be awaited; await a Task, a ValueTask, or anything with a GetAwaiter() method.");
+
+    public void ReportAsyncWithoutBody(TextSpan span) =>
+        Error("PIP0301", span, "A required trait method can't be 'async'; mark the implementations async instead.");
     public void ReportEmptyRangePattern(TextSpan span) =>
         Error("PIP0239", span, "This range pattern is empty: its lower bound is not below its upper bound.");
 }

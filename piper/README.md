@@ -14,7 +14,7 @@ Piper needs the .NET 10 SDK.
 ```
 dotnet tool install -g Piper --prerelease
 piper run hello.piper         # transpile, compile and run
-piper build src/ -o out/      # write the C# (one .cs per .piper file)
+piper build src/ -o out/      # write the C# (one .cs per .piper file; it references the Piper.Runtime package)
 piper emit hello.piper        # print the C#
 ```
 
@@ -26,7 +26,8 @@ To compile `.piper` files as part of a .NET project, alongside its C#, reference
 </ItemGroup>
 ```
 
-Every `.piper` file in the project becomes part of one Piper program, which the project's C# can call. Errors are
+Every `.piper` file in the project becomes part of one Piper program, which the project's C# can call. It also brings in
+`Piper.Runtime`, the small library defining `Option` and `Result` that all compiled Piper code shares. Errors are
 reported against `.piper` lines, and stack traces and the debugger show Piper source.
 
 ## Compatibility
@@ -46,6 +47,7 @@ dotnet run --project src/Piper.Cli -- emit samples/hello.piper    # print the ge
 dotnet run --project src/Piper.Cli -- build samples/hello.piper   # write samples/hello.cs
 dotnet run --project src/Piper.Cli -- run src/                    # a multi-file program: every .piper under src/
 dotnet test
+dotnet pack src/Piper.Runtime -c Release -o packages # the runtime library compiled Piper code uses
 dotnet pack src/Piper.Cli -c Release -o packages     # the Piper tool
 dotnet pack src/Piper.Build -c Release -o packages   # the Piper.Build MSBuild package
 ```
@@ -63,6 +65,7 @@ producing one `.cs` file per `.piper` file. The generated code needs C# 14 (.NET
 | [src/Piper.Compiler/Emit](src/Piper.Compiler/Emit) | Bound tree → C# source text |
 | [src/Piper.Compiler/Runner.cs](src/Piper.Compiler/Runner.cs) | In-memory Roslyn compile and run |
 | [src/Piper.Cli](src/Piper.Cli) | `piper build / emit / run`, packed as the `Piper` dotnet tool |
+| [src/Piper.Runtime](src/Piper.Runtime) | The `Piper.Runtime` package: `Option`, `Result` and the interop helpers, shared by all compiled Piper code |
 | [src/Piper.Build](src/Piper.Build) | The `Piper.Build` package: MSBuild targets that compile a project's `.piper` files |
 | [tests/Piper.Tests](tests/Piper.Tests) | Lexer, parser and binder unit tests, plus golden tests |
 

@@ -89,6 +89,9 @@ public abstract class NamedTypeDefinition : TypeSymbol
 
     public bool IsGeneric => TypeParameters.Length > 0;
 
+    /// <summary>Option and Result: defined by the Piper.Runtime assembly rather than emitted with the program.</summary>
+    public bool IsRuntimeType => this is EnumSymbol { BuiltinKind: not BuiltinEnumKind.None };
+
     /// <summary>Traits this type implements, declared with <c>extend Type: Trait { … }</c>.</summary>
     public ImmutableArray<TraitSymbol> Traits => [.. Conformances.Select(c => c.Trait)];
 

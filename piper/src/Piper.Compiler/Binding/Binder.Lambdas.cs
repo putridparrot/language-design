@@ -95,7 +95,7 @@ public sealed partial class Binder
     }
 
     /// <param name="parameterTypes">Null to use the parameters' annotations.</param>
-    /// <param name="returnType">Null to infer it from the body.</param>
+    /// <param name="returnType">The delegate's return type (a Task for an async lambda), or null to infer it from the body.</param>
     /// <param name="delegateType">Null for the lambda's natural type (Func/Action).</param>
     private BoundExpression BindLambdaWith(
         LambdaExpressionSyntax syntax,
@@ -117,11 +117,21 @@ public sealed partial class Binder
             parameters.Add(new VariableSymbol(parameter.Name.Text, type, isMutable: false, VariableKind.Parameter));
         }
 
+        // An async lambda's body produces the Task's result: `async x => 1` is a (T) => Task<int>.
+        bool isAsync = syntax.Async is not null;
+        if (isAsync && returnType is not null)
+        {
+            var awaited = AsyncBodyType(returnType);
+            if (awaited is null && returnType != TypeSymbol.Error)
+                _diagnostics.ReportInvalidAsyncReturnType(syntax.Span, "lambda", returnType);
+            returnType = awaited ?? TypeSymbol.Error;
+        }
+
         if (returnType is null)
         {
             // Probe the body to see what it returns, then bind it for real with that return type.
             var returned = new List<TypeSymbol>();
-            var probe = Trial(() => BindLambdaBody(syntax, parameters, new ReturnContext(TypeSymbol.Error, "lambda", returned), null), out _);
+            var probe = Trial(() => BindLambdaBody(syntax, parameters, new ReturnContext(TypeSymbol.Error, "lambda", returned, isAsync), null), out _);
             if (probe.Body.Trailing is { } trailing)
                 returned.Add(trailing.Type);
             var values = returned.Where(t => t != TypeSymbol.Never).ToList();
@@ -130,9 +140,12 @@ public sealed partial class Binder
                 returnType = TypeSymbol.Unit;
         }
 
-        var (body, bodyType) = BindLambdaBody(syntax, parameters, new ReturnContext(returnType, "lambda"), returnType);
-        delegateType ??= FunctionType([.. parameters.Select(p => p.Type)], returnType);
-        return new BoundLambdaExpression([.. parameters], body, returnType, bodyType, syntax.Body is not BlockExpressionSyntax, delegateType);
+        var (body, bodyType) = BindLambdaBody(syntax, parameters, new ReturnContext(returnType, "lambda", IsAsync: isAsync), returnType);
+        delegateType ??= FunctionType([.. parameters.Select(p => p.Type)], isAsync ? AsyncReturnType(returnType) : returnType);
+        return new BoundLambdaExpression([.. parameters], body, returnType, bodyType, syntax.Body is not BlockExpressionSyntax, delegateType)
+        {
+            IsAsync = isAsync,
+        };
     }
 
     /// <summary>Binds the body; <c>NaturalType</c> is the type of its value before conversion to the return type.</summary>
@@ -142,8 +155,9 @@ public sealed partial class Binder
         ReturnContext context,
         TypeSymbol? returnType)
     {
-        var (outerScope, outerReturn, outerLoopDepth, outerFinally, outerOutScope) = (_scope, _return, _loopDepth, _finallyLoopDepth, _outScope);
+        var (outerScope, outerReturn, outerLoopDepth, outerFinally, outerOutScope, outerSawAwait) = (_scope, _return, _loopDepth, _finallyLoopDepth, _outScope, _sawAwait);
         _outScope = null;
+        _sawAwait = false;
         _scope = new Scope(_scope);
         foreach (var (parameter, syntaxParameter) in parameters.Zip(syntax.Parameters))
         {
@@ -168,6 +182,9 @@ public sealed partial class Binder
                 body = new BoundBlockExpression([], expression, expression.Type);
             }
 
+            if (context.IsAsync && !_sawAwait && returnType is not null)
+                _diagnostics.ReportAsyncWithoutAwait(syntax.Span, "lambda");
+
             var naturalType = body.Trailing?.Type ?? body.Type;
             if (returnType is null || returnType == TypeSymbol.Unit || returnType == TypeSymbol.Error)
                 return (body, naturalType);
@@ -183,7 +200,7 @@ public sealed partial class Binder
         }
         finally
         {
-            (_scope, _return, _loopDepth, _finallyLoopDepth, _outScope) = (outerScope, outerReturn, outerLoopDepth, outerFinally, outerOutScope);
+            (_scope, _return, _loopDepth, _finallyLoopDepth, _outScope, _sawAwait) = (outerScope, outerReturn, outerLoopDepth, outerFinally, outerOutScope, outerSawAwait);
         }
     }
 
@@ -319,12 +336,22 @@ public sealed partial class Binder
     private BoundStatement BindForEach(ForStatementSyntax syntax)
     {
         var collection = RequireValue(BindExpression(syntax.Range), syntax.Range.Span);
-        var elementType = collection.Type == TypeSymbol.Error ? TypeSymbol.Error : ElementTypeOf(collection.Type);
-        if (elementType is null)
+        TypeSymbol? elementType;
+        if (syntax.Await is { } await)
         {
-            _diagnostics.ReportNotIterable(syntax.Range.Span, collection.Type);
-            elementType = TypeSymbol.Error;
+            // `await for x in stream`: C#'s `await foreach`, over an IAsyncEnumerable<T>.
+            CheckAwaitAllowed(await);
+            elementType = collection.Type == TypeSymbol.Error ? TypeSymbol.Error : AsyncElementTypeOf(collection.Type);
+            if (elementType is null)
+                _diagnostics.ReportNotAsyncIterable(syntax.Range.Span, collection.Type);
         }
+        else
+        {
+            elementType = collection.Type == TypeSymbol.Error ? TypeSymbol.Error : ElementTypeOf(collection.Type);
+            if (elementType is null)
+                _diagnostics.ReportNotIterable(syntax.Range.Span, collection.Type);
+        }
+        elementType ??= TypeSymbol.Error;
 
         var outer = _scope;
         _scope = new Scope(outer);
@@ -345,7 +372,7 @@ public sealed partial class Binder
         var body = BindLoopBody(syntax.Body, out bool breaks);
         _scope = outer;
 
-        return new BoundForEachStatement(variable, collection, new BoundExpressionStatement(body), deconstruction);
+        return new BoundForEachStatement(variable, collection, new BoundExpressionStatement(body), deconstruction) { IsAwait = syntax.Await is not null };
     }
 
     /// <summary><c>array[i]</c>, <c>text[i]</c>, <c>list[i]</c>, <c>dictionary[key]</c>.</summary>

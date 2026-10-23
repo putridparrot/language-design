@@ -60,7 +60,7 @@ public sealed partial class Binder
     /// <paramref name="Inferred"/> is set while binding a lambda whose return type isn't known yet: returned values
     /// are collected (not converted) so their common type can become the return type.
     /// </summary>
-    private sealed record ReturnContext(TypeSymbol Type, string Name, List<TypeSymbol>? Inferred = null);
+    private sealed record ReturnContext(TypeSymbol Type, string Name, List<TypeSymbol>? Inferred = null, bool IsAsync = false);
     private int _loopDepth;
 
     /// <summary>Everything about the file being bound: its namespace, private declarations and the scope chain its code sees.</summary>
@@ -207,7 +207,8 @@ public sealed partial class Binder
             _diagnostics.ReportDuplicateMain(extra.Declaration!.Name.Span);
         }
         var main = mains.FirstOrDefault();
-        if (main is not null && (main.Parameters.Length != 0 || main.ReturnType != TypeSymbol.Unit || main.TypeParameters.Length != 0))
+        // `fn main()`, or `async fn main()` (returning a plain Task).
+        if (main is not null && (main.Parameters.Length != 0 || main.BodyReturnType != TypeSymbol.Unit || main.TypeParameters.Length != 0))
         {
             InFile(FileOf(main));
             _diagnostics.ReportInvalidMain(main.Declaration!.Name.Span);
@@ -515,10 +516,10 @@ public sealed partial class Binder
                     continue;
                 }
 
-                if (target is not NamedTypeDefinition)
+                if (target is not NamedTypeDefinition || target is NamedTypeDefinition { IsRuntimeType: true })
                 {
                     _diagnostics.ReportInvalidExtendTarget(traitSyntax.Span,
-                        $"Only records and enums can implement traits; '{target}' is a builtin or .NET type.");
+                        $"Only your own records and enums can implement traits; '{target.Name}' is a builtin, runtime or .NET type.");
                     continue;
                 }
 
@@ -787,8 +788,22 @@ public sealed partial class Binder
             parameters.Add(new VariableSymbol(parameter.Name.Text, type, isMutable: false, VariableKind.Parameter));
         }
 
-        var returnType = declaration.ReturnType is null ? TypeSymbol.Unit : BindType(declaration.ReturnType);
+        // An async function with no return type returns a Task, as a plain one returns unit.
+        var returnType = declaration.ReturnType is null
+            ? declaration.Async is null ? TypeSymbol.Unit : TaskType
+            : BindType(declaration.ReturnType);
         _scope = outerScope;
+
+        var bodyReturnType = returnType;
+        if (declaration.Async is { } @async)
+        {
+            if (!declaration.HasBody)
+                _diagnostics.ReportAsyncWithoutBody(@async.Span);
+            bodyReturnType = AsyncBodyType(returnType) ?? TypeSymbol.Error;
+            if (bodyReturnType == TypeSymbol.Error && returnType != TypeSymbol.Error)
+                _diagnostics.ReportInvalidAsyncReturnType(declaration.ReturnType!.Span, "function", returnType);
+        }
+        bool isAsync = declaration.Async is not null;
 
         if (containingType is null)
         {
@@ -796,7 +811,11 @@ public sealed partial class Binder
                 _diagnostics.ReportStaticOutsideExtend(@static.Span);
             if (!declaration.HasBody)
                 _diagnostics.ReportMissingBody(declaration.Name.Span, declaration.Name.Text);
-            var function = new FunctionSymbol(declaration.Name.Text, typeParameters, parameters.ToImmutable(), returnType, declaration);
+            var function = new FunctionSymbol(declaration.Name.Text, typeParameters, parameters.ToImmutable(), returnType, declaration)
+            {
+                IsAsync = isAsync,
+                BodyReturnType = bodyReturnType,
+            };
             return new FunctionInfo(function, declaration, file, scope);
         }
 
@@ -810,6 +829,8 @@ public sealed partial class Binder
             DeclaringFile = file.Source,
             Namespace = file.Namespace,
             IsPrivate = declaration.Private is not null,
+            IsAsync = isAsync,
+            BodyReturnType = bodyReturnType,
         };
         return new FunctionInfo(method, declaration, file, scope);
     }
@@ -821,7 +842,8 @@ public sealed partial class Binder
             return null;
 
         InFile(file);
-        _return = new ReturnContext(function.ReturnType, function.Name);
+        _return = new ReturnContext(function.BodyReturnType, function.Name, IsAsync: function.IsAsync);
+        _sawAwait = false;
         _finallyLoopDepth = -1;
         _loopDepth = 0;
         _scope = new Scope(signatureScope);
@@ -830,7 +852,7 @@ public sealed partial class Binder
         foreach (var parameter in function.Parameters)
             _scope.TryDeclare(parameter);
 
-        var expected = function.ReturnType == TypeSymbol.Unit ? null : function.ReturnType;
+        var expected = function.BodyReturnType == TypeSymbol.Unit ? null : function.BodyReturnType;
         BoundBlockExpression body;
         ExpressionSyntax? trailingSyntax;
         if (declaration.ExpressionBody is { } expressionBody)
@@ -846,6 +868,8 @@ public sealed partial class Binder
         }
 
         body = CheckFunctionResult(function, declaration, body, trailingSyntax);
+        if (function.IsAsync && !_sawAwait && function.BodyReturnType != TypeSymbol.Error)
+            _diagnostics.ReportAsyncWithoutAwait(declaration.Name.Span, "function");
 
         _scope = file.Scope;
         _return = null;
@@ -859,7 +883,7 @@ public sealed partial class Binder
         BoundBlockExpression body,
         ExpressionSyntax? trailingSyntax)
     {
-        var returnType = function.ReturnType;
+        var returnType = function.BodyReturnType;
         if (returnType == TypeSymbol.Unit || returnType == TypeSymbol.Error)
             return body;
 
@@ -1117,14 +1141,14 @@ public sealed partial class Binder
         }
 
         if (syntax.Using is not null)
-            CheckDisposable(type, syntax.Initializer.Span);
+            CheckDisposable(type, syntax.Initializer.Span, syntax.Await);
 
         // Declared after binding the initializer, so `let x = x + 1;` refers to the outer x.
         var variable = new VariableSymbol(syntax.Name.Text, type, syntax.IsMutable, VariableKind.Local);
         if (!syntax.Name.IsMissing && !_scope.TryDeclare(variable))
             _diagnostics.ReportDuplicateDeclaration(syntax.Name.Span, variable.Name);
 
-        return new BoundVariableDeclaration(variable, initializer, isUsing: syntax.Using is not null);
+        return new BoundVariableDeclaration(variable, initializer, isUsing: syntax.Using is not null) { IsAwait = syntax.Await is not null };
     }
 
     /// <summary><c>using (let r = open()) { … }</c>: r is in scope (and read-only) in the body only.</summary>
@@ -1134,7 +1158,7 @@ public sealed partial class Binder
         var resource = RequireValue(BindExpression(syntax.Resource, type), syntax.Resource.Span);
         if (type is not null)
             resource = Convert(resource, type, syntax.Resource.Span);
-        CheckDisposable(resource.Type, syntax.Resource.Span);
+        CheckDisposable(resource.Type, syntax.Resource.Span, syntax.Await);
 
         var outer = _scope;
         _scope = new Scope(outer);
@@ -1147,13 +1171,17 @@ public sealed partial class Binder
         }
         var body = BindBlock(syntax.Body);
         _scope = outer;
-        return new BoundUsingStatement(variable, resource, new BoundExpressionStatement(body));
+        return new BoundUsingStatement(variable, resource, new BoundExpressionStatement(body)) { IsAwait = syntax.Await is not null };
     }
 
-    private void CheckDisposable(TypeSymbol type, TextSpan span)
+    /// <param name="await">`await using`: the value must be an IAsyncDisposable, in an async function.</param>
+    private void CheckDisposable(TypeSymbol type, TextSpan span, Token? await = null)
     {
-        if (type != TypeSymbol.Error && !(ClrTypes.ToClr(type) is { } clr && typeof(IDisposable).IsAssignableFrom(clr)))
-            _diagnostics.ReportNotDisposable(span, type);
+        if (await is not null)
+            CheckAwaitAllowed(await);
+        var required = await is null ? typeof(IDisposable) : typeof(IAsyncDisposable);
+        if (type != TypeSymbol.Error && !(ClrTypes.ToClr(type) is { } clr && required.IsAssignableFrom(clr)))
+            _diagnostics.ReportNotDisposable(span, type, required.Name);
     }
 
     private BoundStatement BindWhile(WhileStatementSyntax syntax)
@@ -1185,7 +1213,7 @@ public sealed partial class Binder
         BoundExpression lower, upper;
         TypeSymbol type;
         bool inclusive = false;
-        if (syntax.Range is RangeExpressionSyntax range && syntax.Deconstruction is null)
+        if (syntax.Range is RangeExpressionSyntax range && syntax.Deconstruction is null && syntax.Await is null)
         {
             inclusive = range.IsInclusive;
             lower = BindExpression(range.Start);

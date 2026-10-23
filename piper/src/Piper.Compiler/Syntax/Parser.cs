@@ -19,6 +19,9 @@ public sealed class Parser
     private int _lastErrorPosition = -1;
     private bool _inGuard;
 
+    /// <summary>Inside an async function or lambda, where (as in C#) `await (x)` is the operator rather than a call.</summary>
+    private bool _inAsync;
+
     private Parser(SourceText source, DiagnosticBag diagnostics, ImmutableArray<Token> tokens)
     {
         _source = source;
@@ -165,6 +168,8 @@ public sealed class Parser
         {
             case TokenKind.FnKeyword or TokenKind.StaticKeyword:
                 return ParseFunction();
+            case TokenKind.Identifier when IsAsyncModifier(0):
+                return ParseFunction();
             case TokenKind.RecordKeyword:
                 return ParseRecord();
             case TokenKind.EnumKeyword:
@@ -194,9 +199,22 @@ public sealed class Parser
     /// </summary>
     private FunctionDeclarationSyntax ParseFunction()
     {
-        Token? @static = Current.Kind == TokenKind.StaticKeyword ? NextToken() : null;
+        // Modifiers, in either order as in C#: `static`, and the contextual `async`.
+        Token? @static = null;
+        Token? @async = null;
+        var first = Current;
+        while (true)
+        {
+            if (Current.Kind == TokenKind.StaticKeyword && @static is null)
+                @static = NextToken();
+            else if (IsAsyncModifier(0) && @async is null)
+                @async = NextToken();
+            else
+                break;
+        }
         var keyword = Expect(TokenKind.FnKeyword);
-        var first = @static ?? keyword;
+        if (@static is null && @async is null)
+            first = keyword;
         var name = Expect(TokenKind.Identifier);
         var typeParameters = ParseTypeParameters();
         Expect(TokenKind.OpenParen);
@@ -214,6 +232,8 @@ public sealed class Parser
             returnType = ParseType();
         }
 
+        var outerAsync = _inAsync;
+        _inAsync = @async is not null;
         BlockExpressionSyntax? block = null;
         ExpressionSyntax? expression = null;
         if (Current.Kind == TokenKind.Equals)
@@ -231,8 +251,22 @@ public sealed class Parser
             block = ParseBlock();
         }
 
-        return new FunctionDeclarationSyntax(SpanFrom(first), name, typeParameters, @static, parameters, returnType, block, expression);
+        _inAsync = outerAsync;
+        return new FunctionDeclarationSyntax(SpanFrom(first), name, typeParameters, @static, parameters, returnType, block, expression)
+        {
+            Async = @async,
+        };
     }
+
+    /// <summary>`async` is a keyword only where C# treats it as one: before `fn` (or `static fn`) and before a lambda.</summary>
+    private bool IsAsyncModifier(int offset) =>
+        Peek(offset) is { Kind: TokenKind.Identifier, Text: "async" } &&
+        (Peek(offset + 1).Kind is TokenKind.FnKeyword || (Peek(offset + 1).Kind == TokenKind.StaticKeyword && Peek(offset + 2).Kind == TokenKind.FnKeyword));
+
+    /// <summary>A function declaration starts here: `fn`, `static fn`, `async fn`, `static async fn`, ….</summary>
+    private bool AtFunctionStart(int offset = 0) =>
+        Peek(offset).Kind is TokenKind.FnKeyword || IsAsyncModifier(offset) ||
+        (Peek(offset).Kind == TokenKind.StaticKeyword && (Peek(offset + 1).Kind == TokenKind.FnKeyword || IsAsyncModifier(offset + 1)));
 
     /// <summary>
     /// typeParameters = "&lt;" typeParameter { "," typeParameter } [ "," ] "&gt;" ;
@@ -327,13 +361,13 @@ public sealed class Parser
         var methods = ImmutableArray.CreateBuilder<FunctionDeclarationSyntax>();
         while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
         {
-            if (Current.Kind is TokenKind.FnKeyword or TokenKind.StaticKeyword)
+            if (AtFunctionStart())
             {
                 methods.Add(ParseFunction());
                 continue;
             }
 
-            if (Current.Kind == TokenKind.PrivateKeyword && Peek(1).Kind is TokenKind.FnKeyword or TokenKind.StaticKeyword)
+            if (Current.Kind == TokenKind.PrivateKeyword && AtFunctionStart(1))
             {
                 var @private = NextToken();
                 methods.Add(ParseFunction() with { Private = @private });
@@ -570,6 +604,20 @@ public sealed class Parser
                 case TokenKind.UsingKeyword:
                     statements.Add(ParseUsing());
                     break;
+                // `await for x in stream { … }`, `await using …`: the asynchronous forms, as C#'s `await foreach`/`await using`.
+                case TokenKind.Identifier when Current.Text == "await" && Peek(1).Kind is TokenKind.ForKeyword or TokenKind.UsingKeyword:
+                {
+                    var awaitKeyword = NextToken();
+                    statements.Add(Current.Kind == TokenKind.ForKeyword
+                        ? ParseFor() with { Await = awaitKeyword }
+                        : ParseUsing() switch
+                        {
+                            VariableDeclarationSyntax declaration => declaration with { Await = awaitKeyword },
+                            UsingStatementSyntax statement => statement with { Await = awaitKeyword },
+                            var other => other,
+                        });
+                    break;
+                }
                 case TokenKind.BreakKeyword:
                 {
                     var keyword = NextToken();
@@ -800,6 +848,14 @@ public sealed class Parser
             var number = NextToken();
             left = new LiteralExpressionSyntax(SpanFrom(minus), number, min.Negated);
         }
+        else if (Current is { Kind: TokenKind.Identifier, Text: "await" } && StartsOperand(Peek(1).Kind) &&
+                 (_inAsync || Peek(1).Kind != TokenKind.OpenParen) && CastPrecedence >= parentPrecedence)
+        {
+            // `await task`: like C#'s, a keyword only when an operand follows, and it binds like a unary operator.
+            var keyword = NextToken();
+            var operand = ParseBinary(CastPrecedence);
+            left = new AwaitExpressionSyntax(Span(keyword, operand), keyword, operand);
+        }
         else if (Current.Kind == TokenKind.OpenParen && CastPrecedence >= parentPrecedence && IsCast())
         {
             // `(Int)x`: binds like a unary operator, so `(Int)x.y` casts `x.y`.
@@ -927,6 +983,18 @@ public sealed class Parser
             }
             case TokenKind.Identifier when Peek(1).Kind == TokenKind.FatArrow && !_inGuard:
                 return ParseLambda();
+            // `async x => …`, `async (x) => …`
+            case TokenKind.Identifier when Current.Text == "async" && !_inGuard &&
+                                           ((Peek(1).Kind == TokenKind.Identifier && Peek(2).Kind == TokenKind.FatArrow) ||
+                                            (Peek(1).Kind == TokenKind.OpenParen && IsParenthesizedLambda(start: 1))):
+            {
+                var asyncKeyword = NextToken();
+                var outerAsync = _inAsync;
+                _inAsync = true;
+                var lambda = ParseLambda();
+                _inAsync = outerAsync;
+                return lambda with { Span = TextSpan.FromBounds(asyncKeyword.Span.Start, lambda.Span.End), Async = asyncKeyword };
+            }
             // A builtin type's keyword is used like its name: `int.Parse(s)`, `string.Join(…)`, `int[5]`.
             case TokenKind.Identifier or TokenKind.ThisKeyword or TokenKind.PredefinedTypeKeyword:
             {
@@ -1059,6 +1127,13 @@ public sealed class Parser
 
     private static readonly int CastPrecedence = SyntaxFacts.GetUnaryPrecedence(TokenKind.Minus);
 
+    /// <summary>Tokens that can start an operand, so that `await` before one is the operator rather than a name.</summary>
+    private static bool StartsOperand(TokenKind kind) => kind is
+        TokenKind.Identifier or TokenKind.PredefinedTypeKeyword or TokenKind.IntegerLiteral or TokenKind.DoubleLiteral or
+        TokenKind.CharLiteral or TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral or TokenKind.OpenParen or
+        TokenKind.OpenBracket or TokenKind.ThisKeyword or TokenKind.TrueKeyword or TokenKind.FalseKeyword or
+        TokenKind.NullKeyword or TokenKind.Bang or TokenKind.IfKeyword or TokenKind.MatchKeyword;
+
     /// <summary>
     /// C#'s rule for <c>(T)x</c> versus a parenthesized expression: the tokens inside the parentheses must be able to
     /// form a type, and the token after them must be one that can start an operand: an identifier, a literal,
@@ -1097,12 +1172,12 @@ public sealed class Parser
     }
 
     /// <summary>True at a '(' that starts a lambda: the matching ')' is followed by '=>'.</summary>
-    private bool IsParenthesizedLambda()
+    private bool IsParenthesizedLambda(int start = 0)
     {
         if (_inGuard)
             return false;
         int depth = 0;
-        for (int offset = 0; ; offset++)
+        for (int offset = start; ; offset++)
         {
             var kind = Peek(offset).Kind;
             if (kind == TokenKind.EndOfFile)

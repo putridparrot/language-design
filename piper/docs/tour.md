@@ -155,6 +155,28 @@ for (name, age) in ages { print("{name} is {age}"); }
 Function types are written `(int, int) => int` and are .NET delegates, so lambdas go straight into LINQ and any
 other .NET API.
 
+## Async
+
+As in C#: an `async fn` returns a `Task<T>` (or `Task`), and `await` waits for anything awaitable.
+
+```piper
+using System.Net.Http;
+using System.Threading.Tasks;
+
+async fn pageLength(client: HttpClient, url: string) => Task<int> {
+    let body = await client.GetStringAsync(url);
+    body.Length
+}
+
+async fn main() {
+    using let client = HttpClient();
+    print(await pageLength(client, "https://example.com"));
+}
+```
+
+Async lambdas (`async x => await f(x)`), `await for` over an `IAsyncEnumerable` and `await using` work as their C#
+counterparts do.
+
 ## Tuples
 
 ```piper
@@ -198,7 +220,7 @@ Reference the `Piper.Build` package and a project compiles its `.piper` files al
 </ItemGroup>
 ```
 
-Piper functions are static methods of a class named after their file (`geometry.piper` → `Geometry`), and records,
+It also brings in `Piper.Runtime`, the small library that defines `Option` and `Result` for all Piper code. (C# from`npiper build` needs that package too.) Piper functions are static methods of a class named after their file (`geometry.piper` → `Geometry`), and records,
 enums and traits are ordinary C# types, so C# code can call Piper code directly. Errors appear in the build output
 against `.piper` lines, and stack traces and the debugger show Piper source.
 

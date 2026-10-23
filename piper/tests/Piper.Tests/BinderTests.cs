@@ -15,6 +15,35 @@ public class BinderTests
     }
 
     [Theory]
+    [InlineData("PIP0297", "async fn f() => int = 1;")]
+    [InlineData("PIP0297", "using System.Threading.Tasks; fn f() { let g: () => int = async () => { await Task.Yield(); 1 }; }")]
+    [InlineData("PIP0298", "using System.Threading.Tasks; async fn f() => Task<int> = 1;")]
+    [InlineData("PIP0299", "using System.Threading.Tasks; fn f() => int { await Task.Yield(); 1 }")]
+    [InlineData("PIP0299", "using System.Threading.Tasks; async fn f() { let g = () => await Task.Yield(); await Task.Yield(); }")]
+    [InlineData("PIP0300", "async fn f() { await 5; }")]
+    [InlineData("PIP0302", "async fn f() { await for x in [1, 2] { } }")]
+    [InlineData("PIP0299", "fn f(s: System.Collections.Generic.IAsyncEnumerable<int>) { await for x in s { } }")]
+    [InlineData("PIP0294", "async fn f() { await using let s = System.Text.StringBuilder(); }")]
+    [InlineData("PIP0301", "using System.Threading.Tasks; trait T { async fn m() => Task; }")]
+    [InlineData("PIP0219", "async fn main() => System.Threading.Tasks.Task<int> = await System.Threading.Tasks.Task.FromResult(1);")]
+    [InlineData("PIP0247", "trait Show { fn show() => string; } extend Option: Show { fn show() => string = \"\"; }")]
+    public void Async_and_runtime_type_errors_are_reported(string code, string program)
+    {
+        AssertSingleError(code, program);
+    }
+
+    [Theory]
+    // `async` and `await` are contextual, as in C#: still usable as names.
+    [InlineData("fn f() { let async = 1; let await = async + 1; print(await); }")]
+    [InlineData("fn await(x: int) => int = x; fn f() => int = await(2) + 1;")]
+    // An async main.
+    [InlineData("using System.Threading.Tasks; async fn main() { await Task.Delay(1); }")]
+    public void Async_keywords_are_contextual(string program)
+    {
+        AssertNoErrors(program);
+    }
+
+    [Theory]
     // .NET's names for the builtin types are the same types, as in C#.
     [InlineData("using System; fn f(s: String, n: Int32) => string = s + n.ToString();")]
     [InlineData("fn f(o: object) => string = o.ToString() ?? \"\";")]

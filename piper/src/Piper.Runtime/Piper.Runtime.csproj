@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The types every compiled Piper program uses: Option<T> (T?), Result<T, E> and the helpers where .NET's null meets
+    Option. One shared assembly, so Piper libraries can pass these to each other and don't clash in one application.
+  -->
+  <PropertyGroup>
+    <PackageId>Piper.Runtime</PackageId>
+    <Description>The runtime support for programs compiled from Piper: Option, Result and .NET interop helpers.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RootNamespace>Piper.Runtime</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

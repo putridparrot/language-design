@@ -77,6 +77,9 @@ public sealed class BoundVariableDeclaration(VariableSymbol variable, BoundExpre
     public BoundExpression? Initializer { get; } = initializer;
 
     public bool IsUsing { get; } = isUsing;
+
+    /// <summary>`await using`: disposed with DisposeAsync.</summary>
+    public bool IsAwait { get; init; }
 }
 
 /// <summary><c>using (let r = …) { … }</c> or <c>using (expression) { … }</c>: disposes the resource after the body.</summary>
@@ -87,6 +90,9 @@ public sealed class BoundUsingStatement(VariableSymbol? variable, BoundExpressio
     public BoundExpression Resource { get; } = resource;
 
     public BoundStatement Body { get; } = body;
+
+    /// <summary>`await using`: disposed with DisposeAsync.</summary>
+    public bool IsAwait { get; init; }
 }
 
 public sealed class BoundExpressionStatement(BoundExpression expression) : BoundStatement
@@ -157,6 +163,9 @@ public sealed class BoundForEachStatement(
     public BoundExpression Collection { get; } = collection;
 
     public BoundStatement Body { get; } = body;
+
+    /// <summary>`await for`: over an IAsyncEnumerable (C#'s `await foreach`).</summary>
+    public bool IsAwait { get; init; }
 }
 
 public sealed class BoundTryCatchStatement(BoundStatement body, ImmutableArray<BoundCatchClause> catches, BoundStatement? @finally)
@@ -356,6 +365,9 @@ public sealed class BoundLambdaExpression(
 
     public bool IsExpressionBodied { get; } = isExpressionBodied;
 
+    /// <summary>`async x => …`: <see cref="Type"/> returns a Task, and <see cref="ReturnType"/> is the Task's result.</summary>
+    public bool IsAsync { get; init; }
+
     public override TypeSymbol Type { get; } = type;
 }
 
@@ -378,6 +390,14 @@ public sealed class BoundDelegateInvocationExpression(BoundExpression target, Im
     public BoundExpression Target { get; } = target;
 
     public ImmutableArray<BoundExpression> Arguments { get; } = arguments;
+
+    public override TypeSymbol Type { get; } = type;
+}
+
+/// <summary><c>await task</c>: <see cref="Type"/> is the awaited result (unit for a plain Task).</summary>
+public sealed class BoundAwaitExpression(BoundExpression operand, TypeSymbol type) : BoundExpression
+{
+    public BoundExpression Operand { get; } = operand;
 
     public override TypeSymbol Type { get; } = type;
 }

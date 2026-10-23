@@ -37,7 +37,7 @@ using           = "using" qualifiedName ";" ;                (* a Piper or .NET 
 qualifiedName   = IDENT { "." IDENT } ;
 declaration     = function | record | enum | trait | extend ;
 
-function        = [ "static" ] "fn" IDENT [ typeParameters ] "(" [ parameters ] ")" [ "=>" type ]
+function        = [ "static" ] [ "async" ] "fn" IDENT [ typeParameters ] "(" [ parameters ] ")" [ "=>" type ]
                   ( block | "=" expression ";" | ";" ) ;      (* ";" only for required trait methods; "static" only in extend blocks *)
 record          = "record" IDENT [ typeParameters ] "(" [ parameters ] ")" ";" ;
 enum            = "enum" IDENT [ typeParameters ] "{" [ variant { "," variant } [ "," ] ] "}" ;
@@ -61,17 +61,17 @@ blockLike       = if | match | block ;                        (* ends at its '}'
 variableDecl    = ( "let" | "var" ) ( IDENT [ ":" type ] | designation ) "=" expression ";" ;
 designation     = "(" ( IDENT | designation ) "," ( IDENT | designation ) { "," ( IDENT | designation ) } ")" ;   (* "_" discards *)
 while           = "while" expression block ;
-for             = "for" ( IDENT | designation ) "in" expression block ;   (* a range, or anything enumerable *)
+for             = [ "await" ] "for" ( IDENT | designation ) "in" expression block ;   (* a range, anything enumerable, or with await an IAsyncEnumerable *)
 try             = "try" block { catch } [ "finally" block ] ;   (* at least one catch or a finally *)
 catch           = "catch" [ "(" IDENT [ ":" type ] ")" ] block ;   (* no type: any exception *)
 return          = "return" [ expression ] ";" ;
-using           = "using" ( "let" | "var" ) IDENT [ ":" type ] "=" expression ";"   (* disposed at the end of the block *)
+using           = [ "await" ] "using" ( "let" | "var" ) IDENT [ ":" type ] "=" expression ";"   (* disposed at the end of the block *)
                 | "using" "(" [ ( "let" | "var" ) IDENT [ ":" type ] "=" ] expression ")" block ;
 
 expression      = assignment ;
 assignment      = binary [ ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" ) assignment ] ;
 binary          = unary { binaryOp unary | "is" pattern } ;   (* precedence table below *)
-unary           = ( "-" | "!" ) unary | "(" type ")" unary | postfix ;   (* a cast, by C#'s rule; see below *)
+unary           = ( "-" | "!" | "await" ) unary | "(" type ")" unary | postfix ;   (* a cast, by C#'s rule; see below *)
 postfix         = primary { "(" [ arguments ] ")" | "[" arguments "]" | "." IDENT [ typeArguments ] | "?" | "?." IDENT postfix } ;
                                                               (* after "?." the rest of the chain is skipped on None *)
 arguments       = argument { "," argument } [ "," ] ;
@@ -80,7 +80,7 @@ primary         = INT | DOUBLE | CHAR | STRING | "true" | "false" | "null" | IDE
                 | "(" expression ")" | tuple | block | if | match | lambda | collection | "throw" expression ;
 typeArguments   = "<" type { "," type } ">" ;               (* only where C#'s rule allows; see below *)
 tuple           = "(" [ IDENT ":" ] expression "," [ IDENT ":" ] expression { "," [ IDENT ":" ] expression } ")" ;
-lambda          = ( IDENT | "(" [ lambdaParam { "," lambdaParam } [ "," ] ] ")" ) "=>" ( block | expression ) ;
+lambda          = [ "async" ] ( IDENT | "(" [ lambdaParam { "," lambdaParam } [ "," ] ] ")" ) "=>" ( block | expression ) ;
 lambdaParam     = IDENT [ ":" type ] ;                        (* types may come from the expected function type *)
 collection      = "[" [ arguments ] "]" ;
 if              = "if" expression block [ "else" ( block | if ) ] ;
@@ -126,7 +126,7 @@ generic call `a<b, c>(d)`, as in C#.
 ### Lexical structure
 
 - **Identifiers:** ASCII letters, digits and `_`, not starting with a digit.
-- **Keywords:** `fn let var if else while for in return break continue record enum match trait extend static this null is namespace using private try catch finally throw out true false`, and the builtin type names `int long double bool string char object byte sbyte short ushort uint ulong float decimal unit`.
+- **Keywords:** `fn let var if else while for in return break continue record enum match trait extend static this null is namespace using private try catch finally throw out true false`; `async` and `await`, which are contextual as in C# (still usable as names); and the builtin type names `int long double bool string char object byte sbyte short ushort uint ulong float decimal unit`.
 - **Comments:** `// line` and `/* block */`. Block comments nest.
 - **Integers:** `42`, `1_000_000`, `0xFF`, `0b1010`. Suffixes as in C#: `L` long (`3_000_000_000L`), `U` uint (or ulong if it doesn't fit), `UL` ulong. An unsuffixed literal must fit in int (C# would make a larger one a uint or long; Piper asks for the suffix); as in C#, `-2147483648` and `-9223372036854775808L` are allowed too.
 - **Doubles:** `1.5`, `2e3`, `2.5E-1`. A digit is required after the `.`, so `0..10` is a range. Suffixes `F` (float), `D` (double) and `M` (decimal) work on any decimal number: `1.5f`, `19.99m`, `2m`.
@@ -311,7 +311,8 @@ fn compute(a: int, b: int) => Result<int, MathError> {
 
 - **`?` propagates errors.** On a `Result`, `?` unwraps `Ok`, or returns the `Err` from a function that itself returns a `Result` with a compatible error type.
 - **Pattern matching:** `Result` values match like any enum, e.g. `Err(MathError.DivideByZero)`.
-- **No redeclaring:** `Option` and `Result` are built in, so they can't be redeclared. You can extend them, e.g. `extend Option { fn isNone() => bool = this is None; }`.
+- **No redeclaring:** `Option` and `Result` are built in, so they can't be redeclared. You can extend them with methods, e.g. `extend Option { fn isNone() => bool = this is None; }`, but not make them implement traits.
+- **One runtime:** they're defined once, in the `Piper.Runtime` assembly (as `Piper.Runtime.Option<T>` and `Piper.Runtime.Result<T, E>`), which every compiled Piper program and library references. So Piper libraries can pass them to each other, and C# code can use them too.
 
 ### Programs, namespaces and visibility
 
@@ -431,6 +432,34 @@ match cell { (0, 0) => "origin", (0, _) | (_, 0) => "axis", _ => "elsewhere" }
 - **Patterns:** `(p1, p2)` matches a tuple, and exhaustiveness checks it like a record: `match (a, b) { (true, true) => …, (true, false) | (false, true) => …, (false, false) => … }` is exhaustive.
 - A tuple has at least two elements; .NET methods taking or returning tuples work up to seven.
 
+### Async and await
+
+As in C#: an `async fn` returns `Task<T>`, `Task`, `ValueTask<T>` or `ValueTask`, and its body produces the `T` (or
+nothing), awaiting as it goes.
+
+```piper
+using System.Net.Http;
+using System.Threading.Tasks;
+
+async fn pageLength(client: HttpClient, url: string) => Task<int> {
+    let body = await client.GetStringAsync(url);
+    body.Length
+}
+
+async fn main() {                              // no return type: a plain Task
+    using let client = HttpClient();
+    let lengths = await Task.WhenAll(["https://a.example", "https://b.example"].Select(async url => await pageLength(client, url)));
+    print(lengths.Sum());
+}
+```
+
+- **`await x`** works on anything awaitable by C#'s rules: a Task, a ValueTask, `ConfigureAwait(false)`, or any type with a `GetAwaiter()`. Its value is the result (`int` for a `Task<int>`; nothing for a plain `Task`). It can appear anywhere in an expression: `if await ready() { … }`, `"{await name()}"`.
+- **Async lambdas:** `async x => await f(x)` and `async () => { … }`, as values of `(int) => Task<int>` and the like, or for .NET APIs such as `Task.Run` and LINQ.
+- **`async fn main()`** may be the entry point.
+- **`await for x in stream { … }`** iterates an `IAsyncEnumerable<T>` (C#'s `await foreach`), and **`await using`** disposes an `IAsyncDisposable` with `DisposeAsync`.
+- `await` only works in an async function or lambda. An async function with no `await` gets a warning, as in C#, since it runs synchronously. `async` and `await` are contextual keywords, as in C#, so they can still be names.
+- A trait's required methods can't be `async` (it's part of a body, not a signature), but an implementation can be.
+
 ### Exceptions
 
 Exceptions are .NET exceptions, for code that crosses into .NET; within Piper, prefer `Result`.
@@ -525,7 +554,11 @@ is locale-independent. `main()` takes no parameters and returns unit; it is the 
 | `match o { Some(v) => …, None => … }`, `o is Some(v)` | property patterns `o is { IsSome: true, Value: var v }`, `{ IsSome: false }` |
 | `a ?? b`, `a?.b` | `a.IsSome ? a.Value : b`, `a.IsSome ? Option<T>.Some(a.Value.b) : Option<T>.None` (non-variable operands are first stored in a temporary) |
 | `let x = f()?;` | `var t = f(); if (!t.IsSome) { return Option<R>.None; } x = t.Value;` |
-| a `.piper` file | a `.cs` file of the same name; the file with `main` also gets the entry point, Option/Result and `PiperInterop` helpers |
+| a `.piper` file | a `.cs` file of the same name, starting `using Piper.Runtime;` (for Option, Result and the `PiperInterop` helpers); the file with `main` also gets the entry point |
+| `async fn f() => Task<int>`, `await t` | `async Task<int> f()`, `await t` |
+| `async fn main()` | an `async Task main()`, run by `main().GetAwaiter().GetResult()` |
+| `await for x in s`, `await using let r = …;` | `await foreach (T x in s)`, `await using T r = …;` |
+| `extend Option { … }` | C# 14 `extension<T>(Option<T> self) { … }`, since Option lives in Piper.Runtime |
 | `namespace Geometry;` | `namespace Geometry { … }`; names from other namespaces are written `global::Geometry.Point` |
 | `private record R(…)` / `private trait T` | `file sealed record R(…)` / `file interface T` (C# 11 file-local types) |
 | `private fn f()` / private method | `internal static` in the file's module class / `internal` member |
@@ -572,7 +605,7 @@ The match is known to be exhaustive, so a final arm without a guard or bindings 
 - A match guard, or the rest of an if/while condition after an `is` that binds variables, can't contain `?`, or `?.`/`??` on anything but a variable.
 - .NET interop: no `ref` parameters or events yet. Element names of tuples returned by .NET (`Math.DivRem`'s `Quotient`) aren't read; use `Item1` or deconstruct.
 - An `out` parameter marked `[MaybeNullWhen(false)]` gives an optional variable even when the call returned true.
-- Each Piper program or library carries its own `Option`, `Result` and `PiperInterop` in the global namespace, so two Piper-built assemblies used by one C# project clash.
+- No `async` iterators (`yield`), though `await for` consumes IAsyncEnumerables from .NET.
 
 ## Roadmap
 
@@ -583,5 +616,6 @@ The match is known to be exhaustive, so a final arm without a guard or bindings 
 5. ~~**Collections and lambdas**~~, done in milestone 6: lambdas and function types, LINQ, collection literals, `for x in collection`, indexing, property setters, and `try`/`catch`/`throw`.
 6. ~~**Language freeze**~~, done in milestone 7: C#-compatible printing and minimum-value literals, arrays (`int[]`, `int[5]`), explicit type arguments, generic functions as values, tuples and deconstruction, and `out` parameters.
 7. ~~**Robustness and tooling**~~, done in milestone 8: `#line` mapping to `.piper` sources, constant checking and C# errors reported as internal compiler errors, larger sample programs, raw strings, C#'s numeric types and casts, `using`, equality on type parameters, `|` patterns that bind, the `piper` dotnet tool and the Piper.Build MSBuild package.
-8. **Smaller features:** `defer`, async/await, and a pipe operator `|>`.
-9. **A language server** that reuses the fault-tolerant parser and binder.
+8. ~~**Async**~~, done after milestone 8: `async`/`await`, async lambdas and `main`, `await for` and `await using`; and the shared `Piper.Runtime` assembly.
+9. **Smaller features:** `defer`, a pipe operator `|>`, async iterators.
+10. **A language server** that reuses the fault-tolerant parser and binder.

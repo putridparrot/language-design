@@ -2,20 +2,23 @@
 
   <!--
     The Piper.Build package: a project that references it compiles its .piper files as part of its build. It holds
-    MSBuild logic (build/Piper.Build.targets) and the compiler itself (tools/), but no library: it's a build tool only.
+    MSBuild logic (build/Piper.Build.targets) and the compiler itself (tools/). The compiled code needs Piper.Runtime,
+    so that is a package dependency, which flows on to anything that uses the project.
   -->
   <PropertyGroup>
     <PackageId>Piper.Build</PackageId>
     <Description>Compiles a project's .piper files with its C#, so a .NET project can be written partly or wholly in Piper.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <IncludeBuildOutput>false</IncludeBuildOutput>
-    <DevelopmentDependency>true</DevelopmentDependency>
-    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
-    <!-- No lib/ folder, on purpose. -->
+    <!-- No lib/ folder of its own, on purpose: the library code is Piper.Runtime's. -->
     <NoWarn>$(NoWarn);NU5128</NoWarn>
     <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);IncludePiperCompiler</TargetsForTfmSpecificContentInPackage>
     <PiperCompilerPublishDir>$(MSBuildThisFileDirectory)obj\compiler\$(Configuration)\</PiperCompilerPublishDir>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Piper.Runtime\Piper.Runtime.csproj" />
+  </ItemGroup>
 
   <ItemGroup>
     <None Include="build\Piper.Build.targets" Pack="true" PackagePath="build\" />
