@@ -40,7 +40,7 @@ fn order(inventory: Inventory, sku: string, quantity: int) => Result<Money, Orde
     if item.stock < quantity {
         return Err(OrderError.OutOfStock(sku, quantity, item.stock));
     }
-    inventory.items[sku] = Item(item.sku, item.name, item.category, item.price, item.stock - quantity);
+    inventory.items[sku] = { ...item, stock: item.stock - quantity };
     Ok(item.price.times(quantity))
 }
 

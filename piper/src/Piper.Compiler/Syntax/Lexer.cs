@@ -96,7 +96,12 @@ public sealed class Lexer
             case '.':
                 if (Peek(1) != '.')
                     return Punctuation(TokenKind.Dot, 1);
-                return Peek(2) == '=' ? Punctuation(TokenKind.DotDotEquals, 3) : Punctuation(TokenKind.DotDot, 2);
+                return Peek(2) switch
+                {
+                    '=' => Punctuation(TokenKind.DotDotEquals, 3),
+                    '.' => Punctuation(TokenKind.Ellipsis, 3),
+                    _ => Punctuation(TokenKind.DotDot, 2),
+                };
             case '-':
                 return Peek(1) switch
                 {

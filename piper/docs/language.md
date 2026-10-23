@@ -78,7 +78,8 @@ postfix         = primary { "(" [ arguments ] ")" | "[" arguments "]" | "." IDEN
 arguments       = argument { "," argument } [ "," ] ;
 argument        = expression | "out" [ "let" | "var" ] IDENT ;   (* out: only for .NET out parameters *)
 primary         = INT | DOUBLE | CHAR | STRING | "true" | "false" | "null" | IDENT [ typeArguments ] | "this"
-                | "(" expression ")" | tuple | block | if | match | lambda | collection | "throw" expression ;
+                | "(" expression ")" | tuple | block | if | match | lambda | collection | recordSpread | "throw" expression ;
+recordSpread    = "{" "..." expression { "," IDENT [ ":" expression ] } [ "," ] "}" ;   (* { ...p, y: 5, height } *)
 typeArguments   = "<" type { "," type } ">" ;               (* only where C#'s rule allows; see below *)
 tuple           = "(" [ IDENT ":" ] expression "," [ IDENT ":" ] expression { "," [ IDENT ":" ] expression } ")" ;
 lambda          = [ "async" ] ( IDENT | "(" [ lambdaParam { "," lambdaParam } [ "," ] ] ")" ) "=>" ( block | expression ) ;
@@ -144,7 +145,7 @@ The builtin types are C#'s, with C#'s names: `int`, `long`, `double`, `bool`, `s
 types `byte`, `sbyte`, `short`, `ushort`, `uint`, `ulong`, `float` and `decimal`. As in C# they're keywords, so they can't name
 anything else, and .NET's names for them (`String`, `Int32` with `using System;`) are the same types. The one addition is
 `unit`, the type of expressions evaluated only for their effect, which is written as C# `void`.
-- **Records:** `record Point(x: int, y: int);` declares an immutable value type with value equality. Construct one with `Point(1, 2)` and read fields with `p.x`.
+- **Records:** `record Point(x: int, y: int);` declares an immutable value type with value equality. Construct one with `Point(1, 2)` and read fields with `p.x`. To change fields, copy with a spread, as in TypeScript: `{ ...p, y: 5 }` is `p` with `y` replaced, and a field written alone takes the variable of that name (`{ ...p, height }`).
 - **Implicit conversions:** C#'s implicit numeric conversions, which never lose magnitude: int → long → float → double, byte → int, char → int, int → decimal and so on. Narrowing needs a cast. As in C#, a constant that fits converts implicitly to a smaller integer type: `let b: byte = 200;`, `stream.WriteByte(7)`.
 - **Arithmetic:** C#'s numeric promotion: mixed operands are converted to the wider type, so `1 + 2.5` is a double, and anything smaller than int is done as int, so `byte + byte` is an int and `'a' + 1` is 98. decimal doesn't mix with float or double, nor ulong with signed types, without a cast. `/` on integers truncates. `b += 1` on a byte works, as in C#.
 - **Casts:** `(int)2.7` is 2, `(byte)300` wraps to 44 (unless it's a constant, when it's an error), `(char)65` is `'A'`, as in C#. Casts also go from a trait, `object` or a .NET base type to something more specific (throwing `InvalidCastException` if the value isn't one). As in C#, `(T)` is a cast only if the token after it can start an operand (an identifier, literal, `(`, `!`, …), so `(a) - b` is a subtraction.
@@ -566,6 +567,7 @@ is locale-independent. `main()` takes no parameters and returns unit; it is the 
 | Piper | C# |
 |---|---|
 | `record P(x: int)` | `public sealed record P(int x);` |
+| `{ ...p, y: 5 }` | `p with { y = 5 }` |
 | `enum Shape { Circle(r: double), Empty }` | `public abstract record Shape` with a private constructor and nested `public sealed record Circle(double r) : Shape;`, `public sealed record Empty() : Shape;` |
 | `Shape.Circle(1.0)` | `new Shape.Circle(1.0)` |
 | `match s { Circle(r) if r > 1.0 => a, Empty => b, … }` | `if (s is Shape.Circle(var r) && r > 1.0) { … } else if … else { … }` |

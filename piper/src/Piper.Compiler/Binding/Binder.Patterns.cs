@@ -104,6 +104,7 @@ public sealed partial class Binder
         BoundNullableBoundaryExpression boundary => ContainsStatements(boundary.Operand),
         BoundTupleExpression tuple => tuple.Elements.Any(ContainsStatements),
         BoundCastExpression cast => ContainsStatements(cast.Operand),
+        BoundRecordSpreadExpression spread => ContainsStatements(spread.Source) || spread.Updates.Any(u => ContainsStatements(u.Value)),
         BoundAwaitExpression await => ContainsStatements(await.Operand),
         // `out let n` is declared by a statement before the call.
         BoundOutArgument output => output.Declares,

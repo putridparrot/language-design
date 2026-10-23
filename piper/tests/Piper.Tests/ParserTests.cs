@@ -86,6 +86,8 @@ public class ParserTests
     [InlineData("(List<int>)x", "(cast x)")]
     [InlineData("-(int)x", "(-(cast x))")]
     [InlineData("(int)-x", "(cast (-x))")]
+    [InlineData("{ ...p, y: 1 } == q", "(RecordSpreadExpressionSyntax == q)")]
+    [InlineData("{ p }", "{}")]
     [InlineData("(x) => x", "LambdaExpressionSyntax")]
     [InlineData("f<(int) => int>(g)", "f<1>(g)")]
     public void Expressions_respect_precedence_and_associativity(string text, string expected)

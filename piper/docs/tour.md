@@ -66,6 +66,7 @@ fn area(shape: Shape) => double = match shape {
 ```
 
 Construct values by calling the type: `Point(1.0, 2.0)`, `Shape.Circle(origin, 2.0)` (C#'s `new` isn't needed).
+Records are immutable; to change a field, copy with a spread, as in TypeScript: `{ ...p, y: 5.0 }`.
 `match` is exhaustive: leave out the `Empty` arm and the program doesn't compile, with an error naming the missing
 case. Patterns nest, take guards (`Circle(_, r) if r > 10.0 => …`), match literals and ranges (`1..=9`), and
 combine with `|`.

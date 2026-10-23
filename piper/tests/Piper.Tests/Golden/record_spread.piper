@@ -1,0 +1,44 @@
+// Copying records with some fields changed: `{ ...value, field: newValue }`, as TypeScript's spread.
+
+record Point(x: int, y: int);
+
+record Line(start: Point, end: Point, label: string);
+
+record Box<T>(value: T, count: int);
+
+fn moveRight(p: Point, by: int) => Point = { ...p, x: p.x + by };
+
+fn main() {
+    let p = Point(1, 2);
+    let q = { ...p, y: 5 };
+    print("{p} {q}");
+
+    // Several fields, and a field written alone takes the variable of that name.
+    let x = 10;
+    let y = 20;
+    print({ ...p, x, y });
+
+    // Nested: a copy of a line whose end point is itself a copy.
+    let line = Line(Point(0, 0), Point(3, 4), "diagonal");
+    let longer = { ...line, end: { ...line.end, x: 9 }, label: "stretched" };
+    print(longer);
+    print(line.end);
+
+    // Generic records keep their type arguments.
+    let box = Box("apples", 3);
+    let more = { ...box, count: box.count + 1 };
+    print(more);
+
+    // A copy is equal to an equal record, as C# records are.
+    print({ ...p } == p);
+    print(moveRight(p, 2) == Point(3, 2));
+
+    // In lambdas and match arms.
+    let points = [Point(1, 1), Point(2, 2)];
+    print(string.Join(" ", System.Linq.Enumerable.Select(points, pt => { ...pt, y: 0 })));
+    let flipped = match p {
+        Point(a, b) if a < b => { ...p, x: b, y: a },
+        _ => p,
+    };
+    print(flipped);
+}

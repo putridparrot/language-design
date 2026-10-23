@@ -440,6 +440,12 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportYieldInTry(TextSpan span, string where) =>
         Error("PIP0306", span, $"'yield' can't be used {where}, as in C#.");
+    public void ReportSpreadNotRecord(TextSpan span, TypeSymbol type) =>
+        Error("PIP0307", span, $"Only a record can be spread into a copy ({{ ...value, field: … }}); '{type}' isn't one.");
+
+    public void ReportFieldUpdatedTwice(TextSpan span, string field) =>
+        Error("PIP0308", span, $"Field '{field}' is set more than once.");
+
     public void ReportEmptyRangePattern(TextSpan span) =>
         Error("PIP0239", span, "This range pattern is empty: its lower bound is not below its upper bound.");
 }

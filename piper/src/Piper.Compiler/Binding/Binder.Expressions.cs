@@ -32,6 +32,7 @@ public sealed partial class Binder
         IndexExpressionSyntax s => BindIndex(s),
         CollectionExpressionSyntax s => BindCollection(s, expected),
         TupleExpressionSyntax s => BindTuple(s, expected),
+        RecordSpreadExpressionSyntax s => BindRecordSpread(s, expected),
         ThrowExpressionSyntax s => BindThrow(s),
         AwaitExpressionSyntax s => BindAwait(s),
         OutArgumentSyntax s => ReportMisplacedOut(s),
@@ -85,6 +86,41 @@ public sealed partial class Binder
         return BindSymbolAsValue(_scope.Lookup(name.Text), name, syntax.Span, expected, syntax.TypeArguments);
     }
 
+    /// <summary>
+    /// `{ ...p, y: 5, height }`: a copy of the record `p` with the named fields replaced, as C#'s `p with { … }`.
+    /// The result has p's type; each value converts to its field's type (for a generic record, as instantiated).
+    /// </summary>
+    private BoundExpression BindRecordSpread(RecordSpreadExpressionSyntax syntax, TypeSymbol? expected)
+    {
+        var source = RequireValue(BindExpression(syntax.Source, expected), syntax.Source.Span);
+        var record = source.Type.OriginalDefinition as RecordSymbol;
+        if (record is null && source.Type != TypeSymbol.Error)
+            _diagnostics.ReportSpreadNotRecord(syntax.Source.Span, source.Type);
+
+        var updates = ImmutableArray.CreateBuilder<(FieldSymbol, BoundExpression)>();
+        var seen = new HashSet<string>();
+        foreach (var update in syntax.Updates)
+        {
+            // `height` alone means `height: height`.
+            var valueSyntax = update.Value ?? new NameExpressionSyntax(update.Name.Span, update.Name);
+            var field = update.Name.IsMissing ? null : record?.Fields.FirstOrDefault(f => f.Name == update.Name.Text);
+            if (field is null)
+            {
+                BindExpression(valueSyntax);
+                if (record is not null && !update.Name.IsMissing)
+                    _diagnostics.ReportUnknownMember(update.Name.Span, source.Type, update.Name.Text);
+                continue;
+            }
+            if (!seen.Add(field.Name))
+                _diagnostics.ReportFieldUpdatedTwice(update.Name.Span, field.Name);
+
+            var fieldType = TypeSubstitution.FieldType(field, source.Type);
+            var value = RequireValue(BindExpression(valueSyntax, fieldType), valueSyntax.Span);
+            updates.Add((field, Convert(value, fieldType, valueSyntax.Span)));
+        }
+
+        return record is null ? new BoundErrorExpression() : new BoundRecordSpreadExpression(source, updates.ToImmutable());
+    }
     /// <summary>The type arguments written in <c>f&lt;Int&gt;</c>, or null when there are none.</summary>
     private ImmutableArray<TypeSymbol>? ExplicitTypeArguments(ImmutableArray<TypeSyntax> syntax) =>
         syntax.IsEmpty ? null : [.. syntax.Select(t => BindValueType(t, "type argument"))];

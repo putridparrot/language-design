@@ -199,7 +199,7 @@ namespace Shop.Store
             {
                 return Result<global::Shop.Model.Money, OrderError>.Err(new OrderError.OutOfStock(sku, quantity, item.stock));
             }
-            inventory.items[sku] = new global::Shop.Model.Item(item.sku, item.name, item.category, item.price, item.stock - quantity);
+            inventory.items[sku] = item with { stock = item.stock - quantity };
             return Result<global::Shop.Model.Money, OrderError>.Ok(item.price.times(quantity));
         }
 

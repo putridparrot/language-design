@@ -304,6 +304,16 @@ public sealed record TupleExpressionSyntax(TextSpan Span, ImmutableArray<TupleEl
 /// <summary>One element of a tuple expression; <see cref="Name"/> is optional.</summary>
 public sealed record TupleElementSyntax(TextSpan Span, Token? Name, ExpressionSyntax Expression) : SyntaxNode(Span);
 
+/// <summary>
+/// `{ ...p, y: 5, height }`: a copy of the record <see cref="Source"/> with some fields changed (C#'s `p with { … }`).
+/// A field written alone, like `height`, takes the value of the variable of that name, as in TypeScript.
+/// </summary>
+public sealed record RecordSpreadExpressionSyntax(TextSpan Span, ExpressionSyntax Source, ImmutableArray<FieldUpdateSyntax> Updates)
+    : ExpressionSyntax(Span);
+
+/// <summary>`y: 5`, or `height` alone (<see cref="Value"/> null) for `height: height`.</summary>
+public sealed record FieldUpdateSyntax(TextSpan Span, Token Name, ExpressionSyntax? Value) : SyntaxNode(Span);
+
 /// <summary><c>[1, 2, 3]</c>: a <c>List&lt;T&gt;</c> (or another collection the context expects).</summary>
 public sealed record CollectionExpressionSyntax(TextSpan Span, ImmutableArray<ExpressionSyntax> Elements) : ExpressionSyntax(Span);
 

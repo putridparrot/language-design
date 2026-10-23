@@ -466,6 +466,13 @@ public sealed class Lowerer
             case BoundArrayCreationExpression creation:
                 return new BoundArrayCreationExpression(LowerOperands(creation.Sizes, prelude), creation.Type);
 
+            case BoundRecordSpreadExpression spread:
+            {
+                // The record first, then the new values, in order (as C#'s `with` evaluates them).
+                var operands = LowerOperands([spread.Source, .. spread.Updates.Select(u => u.Value)], prelude);
+                return new BoundRecordSpreadExpression(operands[0], [.. spread.Updates.Select((u, i) => (u.Field, operands[i + 1]))]);
+            }
+
             case BoundCastExpression cast:
                 return new BoundCastExpression(cast.Type, LowerForValue(cast.Operand, prelude));
 

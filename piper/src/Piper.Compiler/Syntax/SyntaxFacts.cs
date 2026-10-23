@@ -135,6 +135,7 @@ public static class SyntaxFacts
         TokenKind.Dot => ".",
         TokenKind.DotDot => "..",
         TokenKind.DotDotEquals => "..=",
+        TokenKind.Ellipsis => "...",
         TokenKind.Arrow => "->",
         TokenKind.FatArrow => "=>",
         TokenKind.Question => "?",

@@ -489,6 +489,18 @@ public sealed class BoundParenthesizedDesignation(ImmutableArray<BoundDesignatio
     });
 }
 
+/// <summary>`{ ...source, y: 5 }`: a copy of a record with some fields changed (emitted as C#'s `source with { y = 5 }`).</summary>
+public sealed class BoundRecordSpreadExpression(BoundExpression source, ImmutableArray<(FieldSymbol Field, BoundExpression Value)> updates)
+    : BoundExpression
+{
+    public BoundExpression Source { get; } = source;
+
+    /// <summary>In the order written, which is the order the values are evaluated in.</summary>
+    public ImmutableArray<(FieldSymbol Field, BoundExpression Value)> Updates { get; } = updates;
+
+    public override TypeSymbol Type => Source.Type;
+}
+
 /// <summary><c>Int[5]</c> or <c>Double[2, 3]</c>: a new array of default values (C#'s <c>new int[5]</c>).</summary>
 public sealed class BoundArrayCreationExpression(ImmutableArray<BoundExpression> sizes, TypeSymbol type) : BoundExpression
 {

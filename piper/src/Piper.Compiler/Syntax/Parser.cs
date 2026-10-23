@@ -673,12 +673,12 @@ public sealed class Parser
     /// </summary>
     private ExpressionSyntax? ParseExpressionStatementOrTrailing(ImmutableArray<StatementSyntax>.Builder statements)
     {
-        bool isBlockLike = Current.Kind is TokenKind.IfKeyword or TokenKind.MatchKeyword or TokenKind.OpenBrace;
+        bool isBlockLike = Current.Kind is TokenKind.IfKeyword or TokenKind.MatchKeyword || (Current.Kind == TokenKind.OpenBrace && !AtRecordSpread());
         var expression = Current.Kind switch
         {
             TokenKind.IfKeyword => ParseIf(),
             TokenKind.MatchKeyword => ParseMatch(),
-            TokenKind.OpenBrace => ParseBlock(),
+            TokenKind.OpenBrace when !AtRecordSpread() => ParseBlock(),
             _ => ParseExpression(),
         };
 
@@ -1061,6 +1061,8 @@ public sealed class Parser
                 var exception = ParseExpression();
                 return new ThrowExpressionSyntax(Span(keyword, exception), keyword, exception);
             }
+            case TokenKind.OpenBrace when AtRecordSpread():
+                return ParseRecordSpread();
             case TokenKind.OpenBrace:
                 return ParseBlock();
             case TokenKind.IfKeyword:
@@ -1127,6 +1129,37 @@ public sealed class Parser
         Token? declaration = Current.Kind is TokenKind.LetKeyword or TokenKind.VarKeyword ? NextToken() : null;
         var name = Expect(TokenKind.Identifier);
         return new OutArgumentSyntax(SpanFrom(keyword), keyword, declaration, name);
+    }
+
+    /// <summary>A `{` that starts a record spread rather than a block: no block starts with `...`.</summary>
+    private bool AtRecordSpread() => Current.Kind == TokenKind.OpenBrace && Peek(1).Kind == TokenKind.Ellipsis;
+
+    /// <summary>
+    /// recordSpread = "{" "..." expression { "," fieldUpdate } [ "," ] "}" ;
+    /// fieldUpdate  = IDENT [ ":" expression ] ;   (* `height` alone is `height: height` *)
+    /// </summary>
+    private RecordSpreadExpressionSyntax ParseRecordSpread()
+    {
+        var open = NextToken();
+        NextToken();
+        var source = ParseExpression();
+        var updates = ImmutableArray.CreateBuilder<FieldUpdateSyntax>();
+        while (Current.Kind == TokenKind.Comma)
+        {
+            NextToken();
+            if (Current.Kind == TokenKind.CloseBrace)
+                break;
+            var name = Expect(TokenKind.Identifier);
+            ExpressionSyntax? value = null;
+            if (Current.Kind == TokenKind.Colon)
+            {
+                NextToken();
+                value = ParseExpression();
+            }
+            updates.Add(new FieldUpdateSyntax(SpanFrom(name), name, value));
+        }
+        Expect(TokenKind.CloseBrace);
+        return new RecordSpreadExpressionSyntax(SpanFrom(open), source, updates.ToImmutable());
     }
 
     /// <summary>tupleElement = [ IDENT ":" ] expression ;</summary>
@@ -1240,7 +1273,7 @@ public sealed class Parser
         Expect(TokenKind.FatArrow);
         // A lambda's `yield` doesn't make the enclosing function an iterator (it's reported: lambdas can't be iterators).
         var outerYield = _sawYield;
-        ExpressionSyntax body = Current.Kind == TokenKind.OpenBrace ? ParseBlock() : ParseExpression();
+        ExpressionSyntax body = Current.Kind == TokenKind.OpenBrace && !AtRecordSpread() ? ParseBlock() : ParseExpression();
         _sawYield = outerYield;
         return new LambdaExpressionSyntax(TextSpan.FromBounds(first.Span.Start, body.Span.End), parameters, body);
     }

@@ -756,6 +756,12 @@ public sealed class CSharpEmitter
                 ($"{Expr(index.Target, PrimaryPrecedence)}[{Arguments(index.Arguments)}]", PrimaryPrecedence),
             BoundCollectionExpression collection => (Collection(collection), PrimaryPrecedence),
             // The operand is parenthesized unless primary: C# reads `(Point)-x` as a subtraction.
+            // C#'s `with` binds tighter than `*` but looser than unary operators.
+            BoundRecordSpreadExpression spread => (
+                spread.Updates.IsEmpty
+                    ? $"{Expr(spread.Source, PrimaryPrecedence)} with {{ }}"
+                    : $"{Expr(spread.Source, PrimaryPrecedence)} with {{ {string.Join(", ", spread.Updates.Select(u => $"{Escape(u.Field.Name)} = {Expr(u.Value, AssignmentPrecedence)}"))} }}",
+                MultiplicativePrecedence),
             BoundAwaitExpression await => ($"await {Expr(await.Operand, UnaryPrecedence)}", UnaryPrecedence),
             BoundCastExpression cast => ($"({TypeName(cast.Type)}){Expr(cast.Operand, PrimaryPrecedence)}", UnaryPrecedence),
             BoundTupleExpression tuple => ($"({Arguments(tuple.Elements)})", PrimaryPrecedence),

@@ -60,6 +60,8 @@ public enum TokenKind
     Dot,
     DotDot,
     DotDotEquals,
+    /// <summary>`...`: a spread, as in `{ ...p, y: 5 }`.</summary>
+    Ellipsis,
     Arrow,
     FatArrow,
     Question,
