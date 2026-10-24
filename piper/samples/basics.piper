@@ -1,0 +1,68 @@
+// The basics: bindings, functions, expressions, loops and strings.
+using System.Collections.Generic;
+
+// A function's last expression is its value; `=` gives a one-expression body.
+fn Square(x: int) => int = x * x;
+
+// `if` and `match` are expressions, so they can be a function's value.
+fn Fizzbuzz(n: int) => string = match (n % 3, n % 5) {
+    (0, 0) => "FizzBuzz",
+    (0, _) => "Fizz",
+    (_, 0) => "Buzz",
+    _ => n.ToString(),
+};
+
+// Tuples return several values; naming their elements lets callers read them by name.
+fn MinMax(values: int[]) => (min: int, max: int) {
+    mut min = values[0];
+    mut max = values[0];
+    for v in values {
+        if v < min { min = v; }
+        if v > max { max = v; }
+    }
+    (min, max)
+}
+
+fn Main() {
+    // `let` can't be reassigned; `mut` can.
+    let name = "Piper";
+    mut total = 0;
+
+    // Ranges: `1..5` includes 5, `0..<5` stops before it.
+    for i in 1..5 {
+        total += Square(i);
+    }
+    Print("{name}: the squares of 1 to 5 add up to {total}");
+
+    let words = List<string>();
+    for n in 1..15 {
+        words.Add(Fizzbuzz(n));
+    }
+    Print(string.Join(" ", words));
+
+    let (min, max) = MinMax([7, 3, 9, 1, 4]);
+    Print("min {min}, max {max}");
+
+    // Blocks are expressions too: their value is the last expression.
+    let grade = {
+        let score = 82;
+        if score >= 90 { 'A' } else if score >= 75 { 'B' } else { 'C' }
+    };
+    Print("grade {grade}");
+
+    // C#'s numeric types and rules: integer division, casts, decimal.
+    Print("{7 / 2} {7 % 2} {(double)7 / 2} {(int)3.9} {0.1m + 0.2m}");
+
+    // `while` loops as in C#; `if` gives a value, so it can be assigned.
+    mut n = 27;
+    mut steps = 0;
+    while n != 1 {
+        n = if n % 2 == 0 { n / 2 } else { 3 * n + 1 };
+        steps += 1;
+    }
+    Print("27 reaches 1 in {steps} steps");
+
+    // Every string interpolates; raw strings keep quotes and braces as they are.
+    Print("{name.ToUpper()} has {name.Length} letters");
+    Print("""{"json": true}""");
+}

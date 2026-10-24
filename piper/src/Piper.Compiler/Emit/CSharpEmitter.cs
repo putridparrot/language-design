@@ -185,8 +185,12 @@ public sealed partial class CSharpEmitter
                 sections.Add(() => EmitPartialPart(type, file));
 
             var functions = _program.Functions.Where(f => f.Symbol.DeclaringFile == file).ToList();
-            if (functions.Count > 0 || file == _runtimeFile)
-                sections.Add(() => EmitModuleClass(file, functions));
+            var moduleFunctions = functions.Where(f => !InFileClass(f.Symbol)).ToList();
+            var fileFunctions = functions.Where(f => InFileClass(f.Symbol)).ToList();
+            if (moduleFunctions.Count > 0 || file == _runtimeFile)
+                sections.Add(() => EmitModuleClass(file, moduleFunctions, fileClass: false));
+            if (fileFunctions.Count > 0)
+                sections.Add(() => EmitModuleClass(file, fileFunctions, fileClass: true));
             if (BoxedTypesIn(file).Count > 0)
                 sections.Add(() => EmitBoxes(file));
             if (HasExtensions(file))
@@ -219,11 +223,27 @@ public sealed partial class CSharpEmitter
 
     private NamespaceSymbol NamespaceOf(Symbol symbol) => symbol.Namespace ?? RootOf(_program.FileNamespaces[0]);
 
-    private void EmitModuleClass(SourceText file, List<BoundFunction> functions)
+    /// <summary>
+    /// A private function whose signature mentions a private type (a C# `file` type) can't be a member of the public
+    /// module class, as C# allows file types only in file types' signatures, so it goes in a `file` class of its own.
+    /// </summary>
+    private static bool InFileClass(FunctionSymbol function) =>
+        function.IsPrivate && (Piper.Binding.Binder.MentionsPrivateType(function.ReturnType) || function.Parameters.Any(p => Piper.Binding.Binder.MentionsPrivateType(p.Type)));
+
+    private string ModuleClassName(SourceText file, bool fileClass) =>
+        Escape(_moduleClassNames[file] + (fileClass ? "_Private" : ""));
+
+    /// <summary>Whether a call to <paramref name="function"/> from the class being written needs no qualifier.</summary>
+    private bool InCurrentClass(FunctionSymbol function) => function.DeclaringFile == _moduleFile && InFileClass(function) == _inFileClass;
+
+    private bool _inFileClass;
+
+    private void EmitModuleClass(SourceText file, List<BoundFunction> functions, bool fileClass)
     {
-        _writer.WriteLine($"public static class {Escape(_moduleClassNames[file])}");
+        _writer.WriteLine($"{(fileClass ? "file" : "public")} static class {ModuleClassName(file, fileClass)}");
         _writer.OpenBrace();
         _moduleFile = file;
+        _inFileClass = fileClass;
         for (int i = 0; i < functions.Count; i++)
         {
             if (i > 0)
@@ -231,6 +251,7 @@ public sealed partial class CSharpEmitter
             EmitFunction(functions[i], functions[i].Symbol.IsPrivate ? "internal static " : "public static ");
         }
         _moduleFile = null;
+        _inFileClass = false;
         _writer.CloseBrace();
     }
 
@@ -568,7 +589,7 @@ public sealed partial class CSharpEmitter
     /// <summary>How to reach a top-level function from the current position: its module class, qualified as needed.</summary>
     private string FunctionContainer(FunctionSymbol function)
     {
-        var className = Escape(_moduleClassNames[function.DeclaringFile!]);
+        var className = ModuleClassName(function.DeclaringFile!, InFileClass(function));
         return function.Namespace == _namespace ? className : $"global::{Qualified(function.Namespace!, className)}";
     }
 
@@ -925,7 +946,7 @@ public sealed partial class CSharpEmitter
             BoundLambdaExpression lambda => (Lambda(lambda), AssignmentPrecedence),
             // A method group; it converts to the delegate type the context gives it.
             BoundFunctionReferenceExpression reference =>
-                ($"{(reference.Function.DeclaringFile == _moduleFile ? "" : FunctionContainer(reference.Function) + ".")}{Escape(reference.Function.Name)}{TypeArgumentList(reference.TypeArguments)}", PrimaryPrecedence),
+                ($"{(InCurrentClass(reference.Function) ? "" : FunctionContainer(reference.Function) + ".")}{Escape(reference.Function.Name)}{TypeArgumentList(reference.TypeArguments)}", PrimaryPrecedence),
             BoundDelegateInvocationExpression invocation => (DelegateInvocation(invocation), PrimaryPrecedence),
             // Lowering leaves throw expressions only where C# allows them (a ?: branch, the right of ??), which can't be parenthesized.
             BoundThrowExpression thrown => ($"throw {Expr(thrown.Exception, LogicalOrPrecedence)}", PrimaryPrecedence),
@@ -1133,7 +1154,7 @@ public sealed partial class CSharpEmitter
             return $"global::Piper.Runtime.PiperAssert.True({Arguments(call.Arguments)})";
         if (call.Function == BuiltinFunctions.AssertEqual)
             return $"global::Piper.Runtime.PiperAssert.Equal{TypeArgumentList(call.TypeArguments)}({Arguments(call.Arguments)})";
-        var qualifier = call.Function.DeclaringFile == _moduleFile ? "" : FunctionContainer(call.Function) + ".";
+        var qualifier = InCurrentClass(call.Function) ? "" : FunctionContainer(call.Function) + ".";
         return $"{qualifier}{Escape(call.Function.Name)}{TypeArgumentList(call.TypeArguments)}({Arguments(call.Arguments)})";
     }
 

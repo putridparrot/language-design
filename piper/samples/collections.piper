@@ -1,0 +1,73 @@
+// Collections, lambdas, LINQ and the pipe operator.
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+record Sale(product: string, region: string, amount: decimal);
+
+// A function type, `(int) => int`, is .NET's Func<int, int>.
+fn Twice(f: (int) => int, x: int) => int = f(f(x));
+
+fn MakeAdder(n: int) => (int) => int = x => x + n;
+
+fn Main() {
+    // Collection literals make Lists (or arrays, where one is expected); `...` spreads another collection in.
+    let numbers = [3, 1, 4, 1, 5, 9, 2, 6];
+    let more = [0, ...numbers, 10];
+    let array: int[] = [1, 2, 3];
+    Print("{more.Count} numbers, the array has {array.Length}");
+
+    // Lambdas, and functions as values.
+    let square = (x: int) => x * x;
+    Print("{Twice(square, 3)} {Twice(MakeAdder(10), 1)}");
+
+    // LINQ, as in C#.
+    let evens = numbers.Where(n => n % 2 == 0).Select(n => n * 10).ToList();
+    Print("evens x10: {string.Join(", ", evens)}");
+    Print("sum {numbers.Sum()}, max {numbers.Max()}, distinct {numbers.Distinct().Count()}");
+
+    // `|>` passes a value as the first argument, so a chain reads in the order it runs.
+    let top = numbers
+        |> Enumerable.OrderByDescending(n => n)
+        |> Enumerable.Take(3)
+        |> Enumerable.ToList();
+    Print("top three: {string.Join(", ", top)}");
+
+    // Dictionaries, and `out` parameters as in C#.
+    let stock = Dictionary<string, int>();
+    stock["apples"] = 3;
+    stock["pears"] = 0;
+    stock["apples"] += 2;
+    for name in ["apples", "pears", "plums"] {
+        if stock.TryGetValue(name, out let count) {
+            Print("{name}: {count}");
+        } else {
+            Print("{name}: not stocked");
+        }
+    }
+    // Deconstruct each key/value pair.
+    for (name, count) in stock {
+        Print("{name} -> {count}");
+    }
+
+    // Grouping records.
+    let sales = [
+        Sale("tea", "north", 12.5m),
+        Sale("cake", "north", 4m),
+        Sale("tea", "south", 7.25m),
+        Sale("cake", "south", 9m),
+        Sale("tea", "north", 3m),
+    ];
+    for group in sales.GroupBy(s => s.product).OrderBy(g => g.Key) {
+        Print("{group.Key}: {group.Sum(s => s.amount)} over {group.Count()} sales");
+    }
+
+    // Tuples, and sorting with a key.
+    let byRegion = sales
+        .GroupBy(s => s.region)
+        .Select(g => (region: g.Key, total: g.Sum(s => s.amount)))
+        .OrderByDescending(t => t.total);
+    for (region, total) in byRegion {
+        Print("{region}: {total}");
+    }
+}

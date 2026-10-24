@@ -1,4 +1,4 @@
-// A tour of Piper's milestone-1 features.
+// Hello, Piper: a record, functions, a loop and string interpolation.
 
 record Point(x: int, y: int);
 

@@ -1119,7 +1119,7 @@ public sealed partial class Binder
     private static IEnumerable<TypeSymbol> SignatureTypes(FunctionSymbol function) =>
         [.. function.Parameters.Select(p => p.Type), function.ReturnType, .. function.TypeParameters.SelectMany(p => p.Constraints)];
 
-    private static bool MentionsPrivateType(TypeSymbol type) => PrivateTypeIn(type) is not null;
+    internal static bool MentionsPrivateType(TypeSymbol type) => PrivateTypeIn(type) is not null;
 
     private static string? PrivateTypeIn(TypeSymbol type) => type switch
     {

@@ -1,0 +1,84 @@
+// No null references: `T?` is an Option, and errors are Result values.
+using System.Collections.Generic;
+
+record User(name: string, email: string?, managerId: int?);
+
+enum ParseError {
+    Empty,
+    NotANumber(text: string),
+    OutOfRange(value: int),
+}
+
+fn Users() => List<User> = [
+    User("Ada", "ada@example.com", null),
+    User("Grace", null, 0),
+    User("Linus", "linus@example.com", 1),
+];
+
+// A missing value is None, not null; the return type says it may be missing.
+fn FindUser(id: int) => User? {
+    let users = Users();
+    if id >= 0 && id < users.Count { users[id] } else { null }
+}
+
+// `?.` reads through an optional, and `??` supplies a default.
+fn ManagerName(id: int) => string {
+    let managerId = FindUser(id)?.managerId ?? -1;
+    FindUser(managerId)?.name ?? "no manager"
+}
+
+// `?` returns None early when an optional is empty.
+fn ManagerEmail(id: int) => string? {
+    let user = FindUser(id)?;
+    let manager = FindUser(user.managerId?)?;
+    manager.email
+}
+
+// Result carries either a value or an error.
+fn ParsePercent(text: string) => Result<int, ParseError> {
+    if text.Length == 0 {
+        return Err(ParseError.Empty);
+    }
+    if !int.TryParse(text, out let value) {
+        return Err(ParseError.NotANumber(text));
+    }
+    if value < 0 || value > 100 {
+        return Err(ParseError.OutOfRange(value));
+    }
+    Ok(value)
+}
+
+// `?` on a Result returns the error from the function.
+fn Average(texts: List<string>) => Result<double, ParseError> {
+    mut total = 0;
+    for text in texts {
+        total += ParsePercent(text)?;
+    }
+    Ok((double)total / texts.Count)
+}
+
+fn Explain(error: ParseError) => string = match error {
+    Empty => "an empty string",
+    NotANumber(text) => "'{text}' isn't a number",
+    OutOfRange(value) => "{value} is out of range",
+};
+
+fn Main() {
+    // Id 3 doesn't exist, to show what's printed when a user is missing.
+    for id in 0..3 {
+        // Match on an optional with Some and None (or null).
+        let email = match FindUser(id)?.email {
+            Some(address) => address,
+            None => "(no email)",
+        };
+        Print("{id}: {FindUser(id)?.name ?? "nobody"}, {email}, managed by {ManagerName(id)}");
+    }
+    Print("Linus's manager's email: {ManagerEmail(2) ?? "unknown"}");
+
+    for input in [["50", "75", "100"], ["50", "lots"], ["50", "150"], ["", "1"]] {
+        match Average(input) {
+            Ok(average) => Print("average {average}"),
+            Err(error) => Print("can't average: {Explain(error)}"),
+        }
+    }
+}

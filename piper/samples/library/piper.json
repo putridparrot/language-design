@@ -1,0 +1,5 @@
+{
+  // `piper build samples/library` makes bin/library.exe; `piper run` and `piper test` work on the folder too.
+  "name": "library",
+  "output": "exe"
+}

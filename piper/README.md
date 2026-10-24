@@ -6,6 +6,8 @@ C#'s types, numeric rules and the whole of .NET underneath.
 
 - **New to Piper?** Start with [the tour](docs/tour.md), written for C# developers.
 - **The reference:** [docs/language.md](docs/language.md) has the grammar, semantics and how each construct maps to C#.
+- **Examples:** [samples/](samples) has a runnable program for each area of the language.
+- **What's in each release:** [CHANGELOG.md](CHANGELOG.md).
 
 ## Installing
 

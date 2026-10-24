@@ -1,0 +1,49 @@
+// Operators on your own types: declared in an extend block, compiled to C# operators.
+using System;
+
+record Vector(x: double, y: double);
+
+extend Vector {
+    // The usual form: `this` is the left operand.
+    operator +(other: Vector) => Vector = Vector(this.x + other.x, this.y + other.y);
+    operator -(other: Vector) => Vector = Vector(this.x - other.x, this.y - other.y);
+    operator *(k: double) => Vector = Vector(this.x * k, this.y * k);
+    // Unary minus takes no other operand.
+    operator -() => Vector = Vector(-this.x, -this.y);
+    // A static operator takes every operand as a parameter, for when the type is on the right: `2.0 * v`.
+    static operator *(k: double, v: Vector) => Vector = v * k;
+
+    fn Length() => double = Math.Sqrt(this.x * this.x + this.y * this.y);
+}
+
+// Money in cents, so arithmetic is exact.
+record Money(cents: long);
+
+extend Money {
+    static fn Of(amount: decimal) => Money = Money((long)(amount * 100));
+    operator +(other: Money) => Money = Money(this.cents + other.cents);
+    operator *(quantity: int) => Money = Money(this.cents * quantity);
+    operator /(parts: int) => Money = Money(this.cents / parts);
+    operator %(parts: int) => Money = Money(this.cents % parts);
+    fn Format() => string = "${this.cents / 100}.{(this.cents % 100).ToString("00")}";
+}
+
+fn Main() {
+    let a = Vector(1.0, 2.0);
+    let b = Vector(3.0, 4.0);
+    Print(a + b);
+    Print(b - a);
+    Print(-a);
+    Print(2 * a);                      // the int widens to double, as in C#
+    Print("length of a + b: {Math.Round((a + b).Length(), 3)}");
+
+    // Compound assignment uses the operator too.
+    mut position = Vector(0.0, 0.0);
+    for step in [a, b, -a] {
+        position += step;
+    }
+    Print("ended at {position}");
+
+    let bill = Money.Of(12.50m) * 3 + Money.Of(4.99m);
+    Print("bill {bill.Format()}, split three ways: {(bill / 3).Format()} each and {(bill % 3).Format()} over");
+}

@@ -1,0 +1,71 @@
+// Calling .NET: any type, method, property or event, with C#'s rules.
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Globalization;
+using System.IO;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+// .NET attributes work as in C#; a record field's attribute goes on its property, where serializers look.
+record Book(
+    [JsonPropertyName("title")] name: string,
+    year: int,
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] rating: int,
+);
+
+// A record can implement a .NET interface with extend, and be passed where .NET expects it.
+record ByYear();
+extend ByYear: IComparer<Book> {
+    fn Compare(a: Book?, b: Book?) => int = (a?.year ?? 0).CompareTo(b?.year ?? 0);
+}
+
+fn Main() {
+    // Construct .NET types by calling them (no `new`), and use their methods and properties.
+    let builder = StringBuilder();
+    builder.Append("Piper").Append(' ').Append(1.0);
+    builder.Length -= 2;
+    Print("{builder} has {builder.Length} characters");
+
+    // .NET APIs that may return null give optionals.
+    let reader = StringReader("first\nsecond");
+    while reader.ReadLine() is Some(line) {
+        Print("read '{line}'");
+    }
+    Print("then {reader.ReadLine() ?? "nothing"}");
+
+    // `out` parameters, statics and formatting.
+    if DateTime.TryParse("2026-03-14", CultureInfo.InvariantCulture, DateTimeStyles.None, out let date) {
+        Print("{date.ToString("yyyy-MM-dd")} is a {date.DayOfWeek}");
+    }
+    Print("pi to 3 places: {Math.Round(Math.PI, 3)}, max int: {int.MaxValue}");
+
+    // Events: `+=` subscribes a lambda.
+    let names = ObservableCollection<string>();
+    names.CollectionChanged += (sender, change) => Print("collection: {change.Action}");
+    names.Add("Ada");
+    names.Clear();
+
+    // Sorting with a Piper type as the comparer.
+    let books = [Book("Dune", 1965, 5), Book("Neuromancer", 1984, 0), Book("Foundation", 1951, 4)];
+    books.Sort(ByYear());
+    Print(string.Join(", ", books.ConvertAll(b => b.name)));
+
+    // JSON round trip, using the attributes above.
+    let json = JsonSerializer.Serialize(books[2]);
+    Print(json);
+    match JsonSerializer.Deserialize<Book>("""{"title": "Hyperion", "year": 1989, "rating": 5}""") {
+        Some(book) => Print("{book.name} ({book.year}), rated {book.rating}"),
+        None => Print("no book"),
+    }
+
+    // Exceptions, caught by type.
+    try {
+        let size = File.ReadAllText(Path.Combine(Path.GetTempPath(), "no-such-piper-file.txt")).Length;
+        Print("{size} bytes");
+    } catch (e: FileNotFoundException) {
+        // .NET says GetFileName may return null, so its result is optional too.
+        Print("not found: {Path.GetFileName(e.FileName ?? "?") ?? "?"}");
+    }
+}

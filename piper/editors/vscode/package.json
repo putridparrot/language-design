@@ -5,6 +5,15 @@
   "version": "1.0.0",
   "publisher": "putridparrot",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/putridparrot/language-design.git",
+    "directory": "piper/editors/vscode"
+  },
+  "homepage": "https://github.com/putridparrot/language-design/tree/main/piper",
+  "bugs": {
+    "url": "https://github.com/putridparrot/language-design/issues"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -172,6 +181,11 @@
         },
         {
           "command": "piper.debug",
+          "when": "resourceLangId == piper",
+          "group": "navigation"
+        },
+        {
+          "command": "piper.test",
           "when": "resourceLangId == piper",
           "group": "navigation"
         }

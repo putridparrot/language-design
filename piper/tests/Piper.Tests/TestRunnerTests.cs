@@ -82,6 +82,40 @@ public class TestRunnerTests
         Assert.False(broken.Success);
     }
 
+    [Fact]
+    public void Dotnet_operators_overloads_and_private_helpers_work()
+    {
+        // Regressions found writing the samples: .NET types' own operators, C#'s better-conversion-target rule for
+        // overloads (Task.WhenAll on a List), and a private function whose signature uses a private type.
+        var run = Run("""
+            using System;
+            using System.Collections.Generic;
+            using System.Threading.Tasks;
+
+            private record Entry(name: string);
+            private fn Entries() => List<Entry> = [Entry("a"), Entry("b")];
+            fn Count() => int = Entries().Count;
+
+            async fn One() => Task<int> { await Task.Yield(); 1 }
+
+            async test "dotnet" {
+                let start = DateOnly(2026, 1, 1);
+                Assert(start.AddDays(1) > start);
+                AssertEqual(TimeSpan.FromDays(2), DateTime(2026, 1, 3) - DateTime(2026, 1, 1));
+                mut span = TimeSpan.FromHours(1);
+                span += TimeSpan.FromHours(1);
+                AssertEqual(TimeSpan.FromHours(-2), -span);
+
+                let tasks: List<Task<int>> = [One(), One()];
+                let results = await Task.WhenAll(tasks);
+                AssertEqual(2, results.Length);
+
+                AssertEqual(2, Count());
+            }
+            """);
+        Assert.True(run.Success, string.Join("\n", run.Results.Select(r => r.Failure)));
+    }
+
     [Theory]
     [InlineData("PIP0336", "test \"t\" { AssertEqual(1, \"one\"); }")]
     [InlineData("PIP0337", "test \"t{1}\" { }")]

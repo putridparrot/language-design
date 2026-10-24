@@ -212,7 +212,7 @@ public sealed partial class Binder
 
         var kind = Operators.GetUnaryKind(syntax.Operator.Kind)!.Value;
         var type = Operators.ResolveUnary(kind, operand.Type);
-        if (type is null && kind == BoundUnaryOperatorKind.Negate && FindUserOperator("-", [operand]) is var (_, operandTypes, resultType))
+        if (type is null && kind == BoundUnaryOperatorKind.Negate && FindUserOperator("-", [operand]) is var (operandTypes, resultType))
             return new BoundUnaryExpression(kind, Convert(operand, operandTypes[0], syntax.Operand.Span), resultType);
         if (type is null)
         {
@@ -274,7 +274,7 @@ public sealed partial class Binder
 
         var resolution = Operators.ResolveBinary(kind, left.Type, right.Type);
         // `a + b` on a record with `operator +`; C# finds the operator the emitter writes.
-        if (resolution is null && FindUserOperator(syntax.Operator.Text, [left, right]) is var (_, operandTypes, resultType))
+        if (resolution is null && FindUserOperator(syntax.Operator.Text, [left, right]) is var (operandTypes, resultType))
         {
             return new BoundBinaryExpression(
                 Convert(left, operandTypes[0], syntax.Left.Span), kind, Convert(right, operandTypes[1], syntax.Right.Span), resultType);
@@ -362,7 +362,7 @@ public sealed partial class Binder
         var resolution = Operators.ResolveBinary(kind, variable.Type, value.Type);
         // `total += v` with a user-defined `+`, whose result must fit back in the variable.
         if (resolution is null &&
-            FindUserOperator(Operators.GetText(kind), [new BoundVariableExpression(variable), value]) is var (_, operandTypes, resultType))
+            FindUserOperator(Operators.GetText(kind), [new BoundVariableExpression(variable), value]) is var (operandTypes, resultType))
         {
             if (operandTypes[0] != variable.Type || !IsConvertible(resultType, variable.Type))
                 _diagnostics.ReportCannotConvert(syntax.Value.Span, resultType, variable.Type);

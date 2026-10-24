@@ -1,0 +1,61 @@
+// Async code and iterators.
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+
+// An async function returns a Task, and can `await`.
+async fn Fetch(name: string, delayMs: int) => Task<string> {
+    await Task.Delay(delayMs);
+    "{name} (after {delayMs}ms)"
+}
+
+// Run several at once and wait for them all.
+async fn FetchAll() => Task<List<string>> {
+    let tasks = [Fetch("a", 30), Fetch("b", 10), Fetch("c", 20)];
+    let results = await Task.WhenAll(tasks);
+    [...results]
+}
+
+// `yield` makes a function an iterator: its items are produced as they're asked for.
+fn Fibonacci() => IEnumerable<long> {
+    mut (a, b) = (0L, 1L);
+    while true {
+        yield return a;
+        (a, b) = (b, a + b);
+    }
+}
+
+// An async iterator, read with `await for`.
+async fn Countdown(from: int) => IAsyncEnumerable<int> {
+    // Ranges only count up, so count down from `from` by subtracting.
+    for i in 0..<from {
+        await Task.Delay(5);
+        yield return from - i;
+    }
+}
+
+// Disposal: `using let` disposes at the end of the block, and `defer` runs code there.
+fn Process(name: string) {
+    defer { Print("  finished {name}"); }
+    using let log = System.IO.StringWriter();
+    log.Write("processing {name}");
+    Print("  {log}");
+}
+
+// `Main` can be async too.
+async fn Main() {
+    let results = await FetchAll();
+    // Task.WhenAll keeps the order the tasks were given in.
+    Print(string.Join(", ", results));
+
+    Print(string.Join(" ", Fibonacci().Take(12)));
+    Print("first Fibonacci number over 1000: {Fibonacci().First(n => n > 1000)}");
+
+    await for n in Countdown(3) {
+        Print("{n}...");
+    }
+    Print("lift off");
+
+    Process("order 1");
+}

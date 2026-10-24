@@ -6,10 +6,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 
-    <!-- Package metadata shared by the Piper tool and the Piper.Build MSBuild package. -->
+    <!-- Package metadata shared by the Piper tool, Piper.Build and Piper.Runtime. -->
     <Version>1.0.0</Version>
     <Authors>Mark Timmings</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>piper;language;compiler;transpiler;csharp</PackageTags>
+    <PackageProjectUrl>https://github.com/putridparrot/language-design/tree/main/piper</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/putridparrot/language-design</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReleaseNotes>https://github.com/putridparrot/language-design/blob/main/piper/CHANGELOG.md</PackageReleaseNotes>
   </PropertyGroup>
 </Project>

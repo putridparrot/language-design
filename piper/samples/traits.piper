@@ -1,0 +1,103 @@
+// Traits, generics and extend: Piper's take on interfaces, generic code and extension methods.
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+// A trait is an interface whose methods can have default bodies.
+trait Shape {
+    fn Area() => double;
+    fn Name() => string;
+    fn Describe() => string = "{this.Name()} with area {Math.Round(this.Area(), 2)}";
+}
+
+record Circle(radius: double);
+record Square(side: double);
+
+// `extend` adds methods to a type, and can make it implement traits, like Rust's `impl`.
+extend Circle: Shape {
+    fn Area() => double = Math.PI * this.radius * this.radius;
+    fn Name() => string = "circle";
+}
+
+extend Square: Shape {
+    fn Area() => double = this.side * this.side;
+    fn Name() => string = "square";
+    fn Describe() => string = "a {this.side}x{this.side} square";     // overrides the default
+}
+
+// Builtin types can be extended, and implement traits, too.
+extend int: Shape {
+    fn Area() => double = 0.0;
+    fn Name() => string = "the number {this}";
+}
+
+extend string {
+    fn Shout() => string = this.ToUpper() + "!";
+}
+
+// Generics with a trait bound: `T` can be any Shape, and calls go straight to its methods.
+fn Largest<T: Shape>(items: List<T>) => T {
+    mut best = items[0];
+    for item in items {
+        if item.Area() > best.Area() { best = item; }
+    }
+    best
+}
+
+// A trait is also a type: a List<Shape> can hold different shapes.
+fn TotalArea(shapes: List<Shape>) => double = shapes.Sum(s => s.Area());
+
+// Traits inherit from other traits, and can have static methods.
+trait Named {
+    fn Name() => string;
+}
+
+trait Greeter: Named {
+    fn Greet() => string = "Hello, {this.Name()}";
+}
+
+trait Monoid<T: Monoid<T>> {
+    static fn Identity() => T;
+    fn Combine(other: T) => T;
+}
+
+record Person(name: string);
+extend Person: Greeter {
+    fn Name() => string = this.name;
+}
+
+record Count(n: int);
+extend Count: Monoid<Count> {
+    static fn Identity() => Count = Count(0);
+    fn Combine(other: Count) => Count = Count(this.n + other.n);
+}
+
+// `T.Identity()` calls the static method of whichever type T is.
+fn CombineAll<T: Monoid<T>>(items: List<T>) => T {
+    mut result = T.Identity();
+    for item in items { result = result.Combine(item); }
+    result
+}
+
+// A generic record, and a generic function over it.
+record Pair<A, B>(first: A, second: B);
+
+fn Swap<A, B>(pair: Pair<A, B>) => Pair<B, A> = Pair(pair.second, pair.first);
+
+fn Main() {
+    let shapes: List<Shape> = [Circle(1.0), Square(3.0), 7];
+    for shape in shapes {
+        Print(shape.Describe());
+    }
+    Print("total area {Math.Round(TotalArea(shapes), 2)}");
+    Print("largest circle: radius {Largest([Circle(1.0), Circle(4.0), Circle(2.0)]).radius}");
+
+    Print("piper".Shout());
+    Print(Person("Ada").Greet());
+    Print(CombineAll([Count(1), Count(2), Count(3)]));
+
+    // Type arguments are inferred, or written as in C#.
+    let pair = Pair(1, "one");
+    Print(Swap(pair));
+    Print(Swap<string, bool>(Pair("yes", true)));
+}

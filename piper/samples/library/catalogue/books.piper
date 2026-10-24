@@ -1,0 +1,53 @@
+// Everything in this file is in the Library.Catalogue namespace.
+namespace Library.Catalogue;
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+// Public by default: any file can use these.
+enum Genre {
+    Fiction,
+    Science,
+    History,
+}
+
+record Book(isbn: string, title: string, author: string, genre: Genre);
+
+// `private` limits a declaration to this file. This record is how the catalogue stores books internally;
+// no other file can name it.
+private record Entry(book: Book, copies: int);
+
+// Private types can be used freely inside the file...
+private fn Entries() => List<Entry> = [
+    Entry(Book("978-0441013593", "Dune", "Frank Herbert", Genre.Fiction), 2),
+    Entry(Book("978-0553380163", "A Brief History of Time", "Stephen Hawking", Genre.Science), 1),
+    Entry(Book("978-0679722762", "The Guns of August", "Barbara Tuchman", Genre.History), 1),
+    Entry(Book("978-0553293357", "Foundation", "Isaac Asimov", Genre.Fiction), 3),
+];
+
+// ...but a public function can't mention one in its signature, so this public API only exposes Book.
+// (Writing `fn AllEntries() => List<Entry>` here would be an error: it would expose the private Entry.)
+fn AllBooks() => List<Book> = Entries().Select(e => e.book).ToList();
+
+fn Copies(isbn: string) => int = Entries().FirstOrDefault(e => e.book.isbn == isbn)?.copies ?? 0;
+
+fn ByGenre(genre: Genre) => List<Book> = AllBooks().Where(b => b.genre == genre).ToList();
+
+fn Find(isbn: string) => Book? = AllBooks().FirstOrDefault(b => b.isbn == isbn);
+
+extend Book {
+    fn Label() => string = "{this.title} by {this.author}";
+
+    // Methods can be private too: this one is only callable in this file.
+    private fn Shelf() => string = match this.genre {
+        Fiction => "F-{Initial(this.author)}",
+        Science => "S-{Initial(this.author)}",
+        History => "H-{Initial(this.author)}",
+    };
+
+    // A public method can use private helpers.
+    fn ShelfLabel() => string = "{this.Shelf()}: {this.Label()}";
+}
+
+private fn Initial(author: string) => char = author.Split(' ').Last()[0];

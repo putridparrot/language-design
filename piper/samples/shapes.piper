@@ -1,0 +1,76 @@
+// Records, enums and pattern matching.
+using System;
+using System.Collections.Generic;
+
+// A record is an immutable value with value equality.
+record Point(x: double, y: double);
+
+// An enum is a sum type: each value is exactly one variant, and variants can carry fields.
+enum Shape {
+    Circle(centre: Point, radius: double),
+    Rect(corner: Point, width: double, height: double),
+    Line(from: Point, to: Point),
+    Empty,
+}
+
+// `match` must handle every variant; leave one out and it doesn't compile.
+fn Area(shape: Shape) => double = match shape {
+    Circle(_, r) => Math.PI * r * r,
+    Rect(_, w, h) => w * h,
+    Line(_, _) | Empty => 0.0,
+};
+
+fn Describe(shape: Shape) => string = match shape {
+    Circle(Point(0.0, 0.0), r) => "a circle of radius {r} at the origin",
+    Circle(_, r) if r > 10.0 => "a big circle",
+    Circle(_, _) => "a circle",
+    // Property patterns name the fields they test; the rest match anything.
+    Rect { width: w, height: h } if w == h => "a {w} by {w} square",
+    Rect { width: < 1.0 } => "a thin rectangle",
+    Rect(_, _, _) => "a rectangle",
+    Line(a, b) if a == b => "a line that goes nowhere",
+    Line(_, _) => "a line",
+    Empty => "nothing",
+};
+
+// List patterns match a list by its elements; `...rest` binds the remainder.
+fn Summarise(shapes: List<Shape>) => string = match shapes {
+    [] => "no shapes",
+    [only] => "just {Describe(only)}",
+    [first, ...rest] => "{Describe(first)} and {rest.Count} more",
+};
+
+// Ranges and comparisons are patterns too.
+fn Size(area: double) => string = match area {
+    0.0 => "flat",
+    < 10.0 => "small",
+    < 100.0 => "medium",
+    _ => "large",
+};
+
+fn Main() {
+    let origin = Point(0.0, 0.0);
+    let shapes = [
+        Shape.Circle(origin, 2.0),
+        Shape.Circle(Point(5.0, 5.0), 12.0),
+        Shape.Rect(origin, 3.0, 3.0),
+        Shape.Rect(Point(1.0, 1.0), 0.5, 20.0),
+        Shape.Line(origin, origin),
+        Shape.Empty,
+    ];
+
+    for shape in shapes {
+        let area = Area(shape);
+        Print("{Describe(shape)}: area {Math.Round(area, 2)} ({Size(area)})");
+    }
+    Print(Summarise(shapes));
+
+    // Records compare by value, and `{ ...p, y: 5 }` copies with changes.
+    let moved = { ...origin, y: 5.0 };
+    Print("{moved} == Point(0, 5)? {moved == Point(0.0, 5.0)}");
+
+    // `is` tests a pattern and binds its variables in the `if`.
+    if shapes[0] is Circle(_, r) {
+        Print("the first shape is a circle of radius {r}");
+    }
+}

@@ -427,6 +427,7 @@ points.Add(Point(1, 2));                   // and can hold Piper values
   Where .NET may write null (`out string?`), the variable is optional. `[MaybeNullWhen(false)]`, as on `Dictionary.TryGetValue`, means null only when the call returns false, so where it returned true the variable is a plain value: in the body of `if names.TryGetValue(key, out let name) { Print(name.Length); }` (or a `while`, or later in an `&&` chain), and after a guard `if !names.TryGetValue(key, out let name) { return; }`. Anywhere else it is optional. Piper functions have no `out` parameters; they return several values as a [tuple](#tuples-and-deconstruction).
 - **`in` parameters** take ordinary arguments.
 - **`ref` parameters** take `ref x`, where x is a `mut` variable of exactly the parameter's type, or an array element: `Interlocked.Increment(ref counter)`, `Array.Resize(ref items, 10)`. .NET's nullability on a ref parameter is ignored, since the variable already has a type.
+- **Operators** a .NET type declares work as in C#: `date > other` on DateOnly, `end - start` on DateTime (a TimeSpan), `span += TimeSpan.FromHours(1)`, BigInteger arithmetic. Its implicit conversions don't apply yet, so write `BigInteger(2)` rather than passing `2` where a BigInteger is expected.
 - **Events:** `list.CollectionChanged += handler` adds a handler and `-=` removes it, as in C#. The handler is a lambda or a function, converted to the event's delegate type. An event can't be read or assigned with `=`.
 
 ### Attributes
@@ -813,7 +814,7 @@ None known.
 9. ~~**Smaller features**~~, done: spreading sequences into collection literals (`[0, ...xs]`), `defer` and the pipe operator `|>`, generic trait methods, traits overriding inherited methods, `extend Trait`, and builtin, .NET and runtime types implementing traits (through witnesses).
 10. ~~**A language server**~~, done: `piper lsp`, reusing the fault-tolerant parser and binder, with a VS Code extension in `editors/vscode`.
 
-Version 1.0 includes everything above. Since then (1.x, all additions):
+Version 1.0 includes everything above, and also:
 
 - **Tooling:** debugging in VS Code (breakpoints and stepping in `.piper` files, through the C# extension's debugger), and signature help, inlay hints, semantic highlighting and an "add missing match arms" quick fix in the language server.
 - **Patterns:** list patterns (`[first, ...rest]`), property patterns (`Point { x: 0 }`, `{ Length: > 5 }`) and relational patterns (`< 0`).

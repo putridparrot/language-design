@@ -1,0 +1,41 @@
+// A second namespace, which uses the first.
+namespace Library.Loans;
+
+using System;
+using Library.Catalogue;
+
+record Member(id: int, name: string);
+
+record Loan(book: Book, member: Member, due: DateOnly);
+
+enum LoanError {
+    UnknownBook(isbn: string),
+    NoCopiesLeft(title: string),
+}
+
+fn Borrow(isbn: string, member: Member, today: DateOnly) => Result<Loan, LoanError> {
+    let book = match Find(isbn) {
+        Some(b) => b,
+        None => return Err(LoanError.UnknownBook(isbn)),
+    };
+    if Copies(isbn) == 0 {
+        return Err(LoanError.NoCopiesLeft(book.title));
+    }
+    Ok(Loan(book, member, today.AddDays(LoanDays(book.genre))))
+}
+
+// Private: the loan rules are this file's business.
+private fn LoanDays(genre: Genre) => int = match genre {
+    Fiction => 21,
+    Science | History => 14,
+};
+
+// `extend` works across files and namespaces: Book is declared in catalogue/books.piper.
+extend Book {
+    fn IsReference() => bool = this.genre != Genre.Fiction;
+}
+
+extend Loan {
+    fn IsOverdue(today: DateOnly) => bool = today > this.due;
+    fn Describe() => string = "{this.member.name} has {this.book.title} until {this.due.ToString("yyyy-MM-dd")}";
+}

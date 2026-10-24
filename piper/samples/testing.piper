@@ -1,0 +1,45 @@
+// Tests live next to the code: `piper test samples/testing.piper` runs them, and `piper run` ignores them.
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+fn WordCount(text: string) => int =
+    text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+
+fn Initials(name: string) => string =
+    string.Concat(name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(part => part[0]));
+
+fn ParseAge(text: string) => Result<int, string> {
+    if !int.TryParse(text, out let age) {
+        return Err("'{text}' isn't a number");
+    }
+    if age < 0 { Err("an age can't be negative") } else { Ok(age) }
+}
+
+fn Main() {
+    Print("{WordCount("the quick brown fox")} words, initials {Initials("Grace Brewster Hopper")}");
+}
+
+test "counts words, ignoring extra spaces" {
+    AssertEqual(4, WordCount("the quick  brown fox"));
+    AssertEqual(0, WordCount(""));
+}
+
+test "takes the first letter of each name" {
+    AssertEqual("GBH", Initials("Grace Brewster Hopper"));
+}
+
+test "parses ages" {
+    // Assert reports its condition's text if it fails, e.g. `Assertion failed: ParseAge("42") == Ok(42)`.
+    Assert(ParseAge("42") == Ok(42));
+    Assert(ParseAge("-1") is Err(_), "negative ages are rejected");
+    match ParseAge("forty") {
+        Ok(_) => Assert(false, "'forty' should not parse"),
+        Err(message) => AssertEqual("'forty' isn't a number", message),
+    }
+}
+
+test "compares lists element by element" {
+    let lengths: List<int> = ["a", "bb", "ccc"].Select(s => s.Length).ToList();
+    AssertEqual([1, 2, 3], lengths);
+}

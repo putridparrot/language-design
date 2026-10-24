@@ -1,0 +1,46 @@
+// A program of several files: `piper run samples/library` compiles every .piper file under the folder together.
+// This file has no namespace, so it's in the global namespace.
+
+using System;
+using Library.Catalogue;            // imports Book, Genre, AllBooks, … (but not Library.Loans)
+
+fn Main() {
+    let today = DateOnly(2026, 3, 1);
+    let ada = Library.Loans.Member(1, "Ada");       // a qualified name works without a `using`
+
+    for book in AllBooks() {
+        Print(book.ShelfLabel());
+    }
+    Print("science books: {ByGenre(Genre.Science).Count}");
+
+    // `book.Shelf()` or `Entries()` wouldn't compile here: they're private to catalogue/books.piper.
+
+    for isbn in ["978-0441013593", "000-0000000000"] {
+        match Library.Loans.Borrow(isbn, ada, today) {
+            Ok(loan) => {
+                Print(loan.Describe());
+                Print("overdue on 2026-04-01? {loan.IsOverdue(DateOnly(2026, 4, 1))}");
+            }
+            // Variants needn't be qualified in a pattern: the matched type says which enum they belong to.
+            Err(UnknownBook(code)) => Print("no book with ISBN {code}"),
+            Err(NoCopiesLeft(title)) => Print("all copies of {title} are out"),
+        }
+    }
+
+    // IsReference comes from an extend block in loans/loans.piper.
+    Print("Dune is a reference book? {Find("978-0441013593")?.IsReference() ?? false}");
+}
+
+test "fiction is borrowed for three weeks" {
+    let loan = Library.Loans.Borrow("978-0553293357", Library.Loans.Member(2, "Grace"), DateOnly(2026, 1, 1));
+    match loan {
+        Ok(l) => AssertEqual(DateOnly(2026, 1, 22), l.due),
+        Err(e) => Assert(false, "couldn't borrow: {e}"),
+    }
+}
+
+test "every book has a shelf label" {
+    for book in AllBooks() {
+        Assert(book.ShelfLabel().Contains(book.title));
+    }
+}

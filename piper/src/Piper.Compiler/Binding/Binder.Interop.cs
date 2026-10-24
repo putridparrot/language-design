@@ -452,15 +452,30 @@ public sealed partial class Binder
 
     private static bool Beats((ClrCandidate Candidate, int[] Scores, bool Expanded) a, (ClrCandidate Candidate, int[] Scores, bool Expanded) b)
     {
-        bool allAtLeastAsGood = a.Scores.Zip(b.Scores).All(p => p.First <= p.Second);
+        // Per argument, negative when a's conversion is better: by score, then (as C#'s "better conversion target") the
+        // more specific parameter type, so a List<Task<int>> goes to IEnumerable<Task<int>> rather than IEnumerable<Task>.
+        var comparisons = a.Scores.Select((score, i) => score != b.Scores[i] ? score.CompareTo(b.Scores[i]) : TargetComparison(a, b, i)).ToList();
+        bool allAtLeastAsGood = comparisons.All(c => c <= 0);
         // As in C#: a better conversion wins; then a normal form beats a params expansion, a candidate that
         // needs fewer default arguments beats one that needs more, and a non-generic method beats a generic one.
-        bool someBetter = a.Scores.Zip(b.Scores).Any(p => p.First < p.Second) ||
+        bool someBetter = comparisons.Any(c => c < 0) ||
                           (!a.Expanded && b.Expanded) ||
                           (a.Expanded == b.Expanded && a.Candidate.Parameters.Length < b.Candidate.Parameters.Length) ||
                           (a.Candidate.TypeArguments.IsEmpty && !b.Candidate.TypeArguments.IsEmpty) ||
                           IsMoreSpecific(a.Candidate, b.Candidate);
         return allAtLeastAsGood && someBetter;
+    }
+
+    /// <summary>-1 if a's parameter type for argument <paramref name="index"/> converts to b's but not back (so is more specific), 1 if the reverse, else 0.</summary>
+    private static int TargetComparison((ClrCandidate Candidate, int[] Scores, bool Expanded) a, (ClrCandidate Candidate, int[] Scores, bool Expanded) b, int index)
+    {
+        if (ClrTypes.ToClr(ParameterFor(a.Candidate, index, a.Expanded).Type) is not { } first ||
+            ClrTypes.ToClr(ParameterFor(b.Candidate, index, b.Expanded).Type) is not { } second || first == second)
+        {
+            return 0;
+        }
+        bool firstToSecond = second.IsAssignableFrom(first), secondToFirst = first.IsAssignableFrom(second);
+        return firstToSecond && !secondToFirst ? -1 : secondToFirst && !firstToSecond ? 1 : 0;
     }
 
     /// <summary>
