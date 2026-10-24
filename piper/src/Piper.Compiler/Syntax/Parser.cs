@@ -179,6 +179,8 @@ public sealed class Parser
                 return ParseFunction();
             case TokenKind.Identifier when IsAsyncModifier(0):
                 return ParseFunction();
+            case TokenKind.Identifier when IsTestStart(0) || (Current.Text == "async" && IsTestStart(1)):
+                return ParseTest();
             case TokenKind.RecordKeyword:
                 return ParseRecord();
             case TokenKind.EnumKeyword:
@@ -248,10 +250,23 @@ public sealed class Parser
             else
                 break;
         }
-        var keyword = Expect(TokenKind.FnKeyword);
-        if (@static is null && @async is null)
-            first = keyword;
-        var name = Expect(TokenKind.Identifier);
+        // `operator +(other: T) => T`: an operator, which is declared like a method named by its symbol.
+        Token? @operator = null;
+        Token name;
+        if (IsOperatorStart(0))
+        {
+            @operator = NextToken();
+            if (@static is null && @async is null)
+                first = @operator;
+            name = NextToken();
+        }
+        else
+        {
+            var keyword = Expect(TokenKind.FnKeyword);
+            if (@static is null && @async is null)
+                first = keyword;
+            name = Expect(TokenKind.Identifier);
+        }
         var typeParameters = ParseTypeParameters();
         Expect(TokenKind.OpenParen);
 
@@ -293,19 +308,51 @@ public sealed class Parser
         return new FunctionDeclarationSyntax(SpanFrom(first), name, typeParameters, @static, parameters, returnType, block, expression)
         {
             Async = @async,
+            Operator = @operator,
             IsIterator = isIterator,
         };
     }
 
     /// <summary>`async` is a keyword only where C# treats it as one: before `fn` (or `static fn`) and before a lambda.</summary>
+    /// <summary>`test "name"`: `test` is reserved, so it only means this.</summary>
+    private bool IsTestStart(int offset) =>
+        Peek(offset) is { Kind: TokenKind.Identifier, Text: "test" } &&
+        Peek(offset + 1).Kind is TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral;
+
+    /// <summary>test = [ "async" ] "test" STRING block ;</summary>
+    private TestDeclarationSyntax ParseTest()
+    {
+        var first = Current;
+        var @async = Current.Text == "async" ? NextToken() : null;
+        NextToken();
+        var name = NextToken();
+        if (name.Kind == TokenKind.InterpolatedStringLiteral)
+            _diagnostics.ReportInterpolatedTestName(name.Span);
+        var outerAsync = _inAsync;
+        _inAsync = @async is not null;
+        var body = ParseBlock();
+        _inAsync = outerAsync;
+        var testName = name.Value as string ?? name.Text;
+        // The body becomes a function that nothing can call, since its name isn't declared in any scope.
+        var functionName = new Token(TokenKind.Identifier, name.Span, $"PiperTest_{name.Span.Start}");
+        var function = new FunctionDeclarationSyntax(SpanFrom(first), functionName, [], null, [], null, body, null) { Async = @async };
+        return new TestDeclarationSyntax(SpanFrom(first), name, testName, function);
+    }
+
     private bool IsAsyncModifier(int offset) =>
         Peek(offset) is { Kind: TokenKind.Identifier, Text: "async" } &&
         (Peek(offset + 1).Kind is TokenKind.FnKeyword || (Peek(offset + 1).Kind == TokenKind.StaticKeyword && Peek(offset + 2).Kind == TokenKind.FnKeyword));
 
-    /// <summary>A function declaration starts here: `fn`, `static fn`, `async fn`, `static async fn`, ….</summary>
+    /// <summary>A function declaration starts here: `fn`, `static fn`, `async fn`, `static async fn`, `operator +`, ….</summary>
     private bool AtFunctionStart(int offset = 0) =>
-        Peek(offset).Kind is TokenKind.FnKeyword || IsAsyncModifier(offset) ||
-        (Peek(offset).Kind == TokenKind.StaticKeyword && (Peek(offset + 1).Kind == TokenKind.FnKeyword || IsAsyncModifier(offset + 1)));
+        Peek(offset).Kind is TokenKind.FnKeyword || IsAsyncModifier(offset) || IsOperatorStart(offset) ||
+        (Peek(offset).Kind == TokenKind.StaticKeyword &&
+         (Peek(offset + 1).Kind == TokenKind.FnKeyword || IsAsyncModifier(offset + 1) || IsOperatorStart(offset + 1)));
+
+    /// <summary>`operator` (reserved, so only meaning this) followed by an operator that can be declared.</summary>
+    private bool IsOperatorStart(int offset) =>
+        Peek(offset) is { Kind: TokenKind.Identifier, Text: "operator" } &&
+        Peek(offset + 1).Kind is TokenKind.Plus or TokenKind.Minus or TokenKind.Star or TokenKind.Slash or TokenKind.Percent;
 
     /// <summary>
     /// typeParameters = "&lt;" typeParameter { "," typeParameter } [ "," ] "&gt;" ;

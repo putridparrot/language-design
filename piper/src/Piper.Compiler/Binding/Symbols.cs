@@ -109,6 +109,9 @@ public sealed class MethodSymbol(
 
     public bool IsStatic => This is null;
 
+    /// <summary>A user-defined operator (`operator +(other: T) => T`), named by its symbol.</summary>
+    public bool IsOperator => Declaration?.Operator is not null;
+
     public TraitSymbol? Trait => ContainingType as TraitSymbol;
 
     /// <summary>A required trait method, declared without a body.</summary>
@@ -131,5 +134,27 @@ public static class BuiltinFunctions
         TypeSymbol.Unit,
         declaration: null);
 
-    public static readonly ImmutableArray<FunctionSymbol> All = [Print];
+    /// <summary><c>Assert(condition)</c> or <c>Assert(condition, message)</c>: fails a test (throws) when the condition is false.</summary>
+    public static readonly FunctionSymbol Assert = new(
+        "Assert",
+        [],
+        [
+            new VariableSymbol("condition", TypeSymbol.Bool, isMutable: false, VariableKind.Parameter),
+            new VariableSymbol("message", TypeSymbol.String, isMutable: false, VariableKind.Parameter),
+        ],
+        TypeSymbol.Unit,
+        declaration: null);
+
+    /// <summary><c>AssertEqual(expected, actual)</c>: fails a test unless the values are equal; they must have a common type.</summary>
+    public static readonly FunctionSymbol AssertEqual = new(
+        "AssertEqual",
+        [],
+        [
+            new VariableSymbol("expected", TypeSymbol.Error, isMutable: false, VariableKind.Parameter),
+            new VariableSymbol("actual", TypeSymbol.Error, isMutable: false, VariableKind.Parameter),
+        ],
+        TypeSymbol.Unit,
+        declaration: null);
+
+    public static readonly ImmutableArray<FunctionSymbol> All = [Print, Assert, AssertEqual];
 }

@@ -28,6 +28,7 @@ public sealed class Lowerer
             [.. functions.Select(f => new BoundFunction(f.Symbol, lowerer.LowerFunction(f), f.IsExpressionBodied))];
         return new BoundProgram(program.Files, program.FileNamespaces, program.Types, program.BuiltinTypes, LowerAll(program.Functions), LowerAll(program.Methods), program.Main)
         {
+            Tests = [.. program.Tests.Select(t => t with { Function = LowerAll([t.Function])[0] })],
             ExternalConformances = program.ExternalConformances,
         };
     }

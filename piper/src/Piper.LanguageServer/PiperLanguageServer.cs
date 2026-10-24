@@ -355,14 +355,19 @@ public sealed class PiperLanguageServer
                 continue;
             var (kind, children) = declaration switch
             {
-                FunctionDeclarationSyntax => (12, []),
+                FunctionDeclarationSyntax or TestDeclarationSyntax => (12, []),
                 RecordDeclarationSyntax r => (23, r.Fields.Select(f => (f.Name, f.Span, 8))),
                 EnumDeclarationSyntax e => (10, e.Variants.Select(v => (v.Name, v.Span, 22))),
                 TraitDeclarationSyntax t => (11, t.Methods.Select(m => (m.Name, m.Span, 6))),
                 ExtendDeclarationSyntax x => (3, x.Methods.Select(m => (m.Name, m.Span, 6))),
                 _ => (13, Enumerable.Empty<(Token, TextSpan, int)>()),
             };
-            var name = declaration is ExtendDeclarationSyntax ? $"extend {declaration.Name.Text}" : declaration.Name.Text;
+            var name = declaration switch
+            {
+                ExtendDeclarationSyntax => $"extend {declaration.Name.Text}",
+                TestDeclarationSyntax test => $"test {declaration.Name.Text}",
+                _ => declaration.Name.Text,
+            };
             var symbol = DocumentSymbol(unit.Source, name, kind, declaration.Span, declaration.Name.Span);
             var childArray = new JsonArray();
             foreach (var (childName, childSpan, childKind) in children.Where(c => !c.Item1.IsMissing))

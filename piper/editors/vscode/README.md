@@ -18,6 +18,7 @@ Support for [Piper](../../README.md) `.piper` files:
 
 - **Running:** the ▶ button in the editor title bar, **Piper: Run** or Ctrl+Shift+F5 saves your files and runs the
   current file's program with `piper run`, in the terminal panel.
+- **Tests:** **Piper: Run Tests** runs the current file's program's `test` blocks with `piper test`, in the terminal panel.
 - **Debugging:** F5, or the debug button next to ▶, builds the current file's program and debugs it with breakpoints,
   stepping and variables in the `.piper` source. It uses the .NET debugger from Microsoft's
   [C# extension](https://marketplace.visualstudio.com/items?itemName=ms-dotnettools.csharp), which needs to be installed.

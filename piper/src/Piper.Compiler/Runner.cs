@@ -16,6 +16,18 @@ public sealed record CSharpBuildResult(byte[]? Assembly, byte[]? Pdb, ImmutableA
 
 public sealed record RunResult(bool Success, string Output, ImmutableArray<string> Errors);
 
+/// <param name="Failure">Why the test failed (the assertion's message or the exception, then the Piper lines), or null if it passed.</param>
+public sealed record TestResult(string Name, string? Failure)
+{
+    public bool Passed => Failure is null;
+}
+
+/// <param name="Errors">Errors building the program, in which case no tests ran.</param>
+public sealed record TestRunResult(ImmutableArray<TestResult> Results, ImmutableArray<string> Errors)
+{
+    public bool Success => Errors.IsEmpty && Results.All(r => r.Passed);
+}
+
 /// <summary>Compiles generated C# in memory with Roslyn and runs it.</summary>
 public static class Runner
 {
@@ -91,6 +103,70 @@ public static class Runner
         finally
         {
             context.Unload();
+        }
+    }
+
+    /// <summary>
+    /// Runs the program's tests (compiled with <see cref="CompilationOptions.IncludeTests"/>) in declaration order, each
+    /// whose name contains <paramref name="filter"/>, if one is given.
+    /// </summary>
+    public static TestRunResult RunTests(IEnumerable<GeneratedFile> files, string? filter = null)
+    {
+        var build = Build(files);
+        if (!build.Success)
+            return new TestRunResult([], build.Errors);
+
+        var context = new AssemblyLoadContext("PiperTests", isCollectible: true);
+        var culture = Thread.CurrentThread.CurrentCulture;
+        try
+        {
+            var assembly = context.LoadFromStream(new MemoryStream(build.Assembly!), new MemoryStream(build.Pdb!));
+            var tests = assembly.GetTypes()
+                .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static).OrderBy(m => m.MetadataToken))
+                .Select(m => (Method: m, Name: m.GetCustomAttribute<Piper.Runtime.PiperTestAttribute>()?.Name))
+                .Where(t => t.Name is not null && (filter is null || t.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+
+            // As the generated Main does, so results don't depend on the machine's culture.
+            Thread.CurrentThread.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+            return new TestRunResult([.. tests.Select(t => RunTest(t.Name!, t.Method))], []);
+        }
+        finally
+        {
+            Thread.CurrentThread.CurrentCulture = culture;
+            context.Unload();
+        }
+    }
+
+    private static TestResult RunTest(string name, MethodInfo method)
+    {
+        try
+        {
+            if (method.Invoke(null, null) is Task task)
+                task.GetAwaiter().GetResult();
+            return new TestResult(name, null);
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException is { } inner)
+        {
+            return new TestResult(name, Failure(inner));
+        }
+        catch (Exception ex)
+        {
+            return new TestResult(name, Failure(ex));
+        }
+
+        static string Failure(Exception exception)
+        {
+            var message = exception is Piper.Runtime.PiperAssertionException
+                ? exception.Message
+                : $"Unhandled exception: {exception.GetType().FullName}: {exception.Message}";
+            // The test's own frame is named after its position; just give its line.
+            var frames = new System.Diagnostics.StackTrace(exception, fNeedFileInfo: true).GetFrames()
+                .Where(f => f.GetFileName() is { } file && file.EndsWith(".piper", StringComparison.OrdinalIgnoreCase))
+                .Select(f => f.GetMethod()?.Name is { } method && !method.StartsWith("PiperTest_", StringComparison.Ordinal) && method != "MoveNext"
+                    ? $"\n   at {method} in {f.GetFileName()}:line {f.GetFileLineNumber()}"
+                    : $"\n   at {f.GetFileName()}:line {f.GetFileLineNumber()}");
+            return message + string.Concat(frames);
         }
     }
 

@@ -48,7 +48,21 @@ public sealed class BoundProgram(
 
     /// <summary>Traits implemented by builtin, .NET and runtime types, which are boxed to be used as the trait.</summary>
     public ImmutableArray<ExternalConformance> ExternalConformances { get; init; } = [];
+
+    /// <summary>`test` blocks, which are only compiled in for `piper test` (see <see cref="WithTestsAsFunctions"/>).</summary>
+    public ImmutableArray<BoundTest> Tests { get; init; } = [];
+
+    /// <summary>The program with its tests added to its functions, so they're emitted (each marked with PiperTestAttribute).</summary>
+    public BoundProgram WithTestsAsFunctions() =>
+        new(Files, FileNamespaces, Types, BuiltinTypes, [.. Functions, .. Tests.Select(t => t.Function)], Methods, Main)
+        {
+            ExternalConformances = ExternalConformances,
+            Tests = Tests,
+        };
 }
+
+/// <summary>A `test "name" { … }` block, as a parameterless function.</summary>
+public sealed record BoundTest(string Name, BoundFunction Function);
 
 /// <summary>
 /// `extend int: Shape`, in <paramref name="File"/>. For Option or Result, <paramref name="Target"/> is the definition and

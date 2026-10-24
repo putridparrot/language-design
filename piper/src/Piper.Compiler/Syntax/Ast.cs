@@ -39,6 +39,14 @@ public abstract record DeclarationSyntax(TextSpan Span, Token Name) : SyntaxNode
 }
 
 /// <summary>
+/// <c>test "adds up" { … }</c> (or <c>async test</c>): a test, run by <c>piper test</c> and left out of other builds.
+/// <see cref="DeclarationSyntax.Name"/> is the name's string literal; <see cref="Function"/> is the body as a
+/// parameterless function (named after the test's position, so it can't be called).
+/// </summary>
+public sealed record TestDeclarationSyntax(TextSpan Span, Token Name, string TestName, FunctionDeclarationSyntax Function)
+    : DeclarationSyntax(Span, Name);
+
+/// <summary>
 /// <c>[Obsolete("Use area")]</c>: a .NET attribute, with constant <see cref="Arguments"/> for its constructor followed
 /// by any <c>Name = value</c> assignments to its properties, as in C#.
 /// </summary>
@@ -63,6 +71,12 @@ public sealed record FunctionDeclarationSyntax(
 
     /// <summary>The `async` modifier: the function returns a Task, and its body can `await`.</summary>
     public Token? Async { get; init; }
+
+    /// <summary>
+    /// The `operator` keyword of `operator +(other: T) => T`, a user-defined operator; <see cref="DeclarationSyntax.Name"/>
+    /// is then the operator's token.
+    /// </summary>
+    public Token? Operator { get; init; }
 
     /// <summary>The body contains `yield`, so (as in C#) the function is an iterator.</summary>
     public bool IsIterator { get; init; }

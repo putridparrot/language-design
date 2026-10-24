@@ -139,6 +139,16 @@ fn DescribeAll<T: Describe>(items: List<T>) => string =
 
 Type arguments are inferred, and can be written as in C# when they can't be: `Enumerable.Empty<int>()`.
 
+Records and enums can have arithmetic operators, declared in an extend block with `this` as the left operand:
+
+```piper
+extend Point {
+    operator +(other: Point) => Point = Point(this.x + other.x, this.y + other.y);
+}
+
+let moved = Point(1.0, 2.0) + Point(0.5, 0.5);
+```
+
 ## Collections, lambdas and LINQ
 
 ```piper
@@ -233,6 +243,30 @@ record Person([JsonPropertyName("first_name")] first: string, age: int);
 
 Print(JsonSerializer.Serialize(Person("Ada", 36)));   // {"first_name":"Ada","age":36}
 ```
+
+## Testing
+
+Write tests next to the code, as `test` blocks, and run them with `piper test`:
+
+```piper
+fn Divide(a: int, b: int) => (quotient: int, remainder: int) = (a / b, a % b);
+
+test "divides with a remainder" {
+    let (q, r) = Divide(17, 5);
+    AssertEqual(3, q);
+    Assert(r == 2);
+}
+```
+
+```
+$ piper test src/
+PASS divides with a remainder
+
+1 passed, 0 failed
+```
+
+A failing `Assert` reports its condition (`Assertion failed: r == 2`) and the line. Tests are checked in every build
+but only compiled in by `piper test`.
 
 ## Modules
 

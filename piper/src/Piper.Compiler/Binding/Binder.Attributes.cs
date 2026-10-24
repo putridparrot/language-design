@@ -202,6 +202,12 @@ public sealed partial class Binder
     /// <summary>Warns about a use of a declaration marked <c>[Obsolete]</c> (an error with <c>[Obsolete("…", true)]</c>), as C# does.</summary>
     private void CheckObsolete(Token name, Symbol symbol)
     {
+        // A .NET type: Piper's own types (and Option and Result) carry their attributes as symbols do.
+        if (symbol is TypeSymbol type && type.OriginalDefinition is not GenericTypeDefinition && ClrTypes.ToClr(type) is { } clr)
+        {
+            CheckClrObsolete(name.Span, clr);
+            return;
+        }
         if (symbol.Attributes.FirstOrDefault(a => ClrTypes.ToClr(a.Type) == typeof(ObsoleteAttribute)) is not { } obsolete ||
             !_obsoleteReported.Add((_file.Source, name.Span.Start)))
         {
@@ -210,5 +216,22 @@ public sealed partial class Binder
         var message = obsolete.Arguments.FirstOrDefault() is BoundLiteralExpression { Value: string text } ? text : null;
         bool isError = obsolete.Arguments.Length > 1 && obsolete.Arguments[1] is BoundLiteralExpression { Value: true };
         _diagnostics.ReportObsolete(name.Span, symbol.Name, message, isError);
+    }
+
+    /// <summary>
+    /// The same for a .NET type, method, constructor, property or field. Otherwise C# would report it in the generated
+    /// code: a warning nobody sees, or for an error an internal compiler error.
+    /// </summary>
+    private void CheckClrObsolete(Piper.Text.TextSpan span, MemberInfo member)
+    {
+        if (member.GetCustomAttribute<ObsoleteAttribute>(inherit: false) is not { } obsolete || !_obsoleteReported.Add((_file.Source, span.Start)))
+            return;
+        var name = member switch
+        {
+            Type type => type.Name.Split('`')[0],
+            ConstructorInfo constructor => constructor.DeclaringType!.Name.Split('`')[0],
+            _ => $"{member.DeclaringType?.Name.Split('`')[0]}.{member.Name}",
+        };
+        _diagnostics.ReportObsolete(span, name, obsolete.Message, obsolete.IsError);
     }
 }

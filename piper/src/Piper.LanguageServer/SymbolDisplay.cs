@@ -30,6 +30,8 @@ public static class SymbolDisplay
         var modifiers = (function is MethodSymbol { IsStatic: true } ? "static " : "") + (function.IsAsync ? "async " : "");
         var parameters = string.Join(", ", function.Parameters.Select(p => $"{p.Name}: {p.Type}"));
         var result = function.ReturnType == TypeSymbol.Unit ? "" : $" => {function.ReturnType}";
+        if (function is MethodSymbol { IsOperator: true })
+            return $"{modifiers}operator {function.Name}({parameters}){result}";
         return $"{modifiers}fn {owner}{function.Name}{TypeParameters(function.TypeParameters)}({parameters}){result}";
     }
 

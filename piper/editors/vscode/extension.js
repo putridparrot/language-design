@@ -28,11 +28,11 @@ function programRoot(file) {
     }
 }
 
-// Runs the current file's program with `piper run` (the same command as the server, with `run` instead of `lsp`).
-async function run() {
+// Runs the current file's program with `piper run`, or its tests with `piper test` (the server's command, with `run` or `test` instead of `lsp`).
+async function run(subcommand = "run") {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.languageId !== "piper") {
-        vscode.window.showWarningMessage("Open a .piper file to run it.");
+        vscode.window.showWarningMessage(`Open a .piper file to ${subcommand} it.`);
         return;
     }
     await vscode.workspace.saveAll(false);
@@ -43,8 +43,8 @@ async function run() {
     if (!piper) {
         return;
     }
-    const execution = new vscode.ShellExecution(piper.command, [...piper.args, "run", target], { cwd: path.dirname(target) });
-    const task = new vscode.Task({ type: "piper", target }, vscode.TaskScope.Workspace, `run ${path.basename(target)}`, "piper", execution);
+    const execution = new vscode.ShellExecution(piper.command, [...piper.args, subcommand, target], { cwd: path.dirname(target) });
+    const task = new vscode.Task({ type: "piper", target }, vscode.TaskScope.Workspace, `${subcommand} ${path.basename(target)}`, "piper", execution);
     task.presentationOptions = { reveal: vscode.TaskRevealKind.Always, clear: true, focus: false };
     await vscode.tasks.executeTask(task);
 }
@@ -204,7 +204,8 @@ async function start() {
 }
 
 async function activate(context) {
-    context.subscriptions.push(vscode.commands.registerCommand("piper.run", run));
+    context.subscriptions.push(vscode.commands.registerCommand("piper.run", () => run("run")));
+    context.subscriptions.push(vscode.commands.registerCommand("piper.test", () => run("test")));
     context.subscriptions.push(vscode.commands.registerCommand("piper.debug", debug));
     context.subscriptions.push(vscode.debug.registerDebugConfigurationProvider("piper", debugConfigurationProvider));
     context.subscriptions.push(output);

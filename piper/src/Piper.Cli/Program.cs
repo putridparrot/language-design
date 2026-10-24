@@ -11,6 +11,8 @@ const string Usage = """
                                            Compile to a library: <name>.dll, .pdb and Piper.Runtime.dll
       piper emit  <inputs...>              Print the generated C# to stdout
       piper run   <inputs...>              Transpile, compile and run
+      piper test  <inputs...> [--filter <text>]
+                                           Run the program's test blocks (those whose name contains <text>)
       piper lsp                            Run the language server (LSP over stdin and stdout), for editors
       piper --version                      Show the compiler's version
 
@@ -33,7 +35,7 @@ if (args is ["--version" or "-v"])
 if (args is ["lsp", ..])
     return await Piper.LanguageServer.PiperLanguageServer.RunAsync(Console.OpenStandardInput(), Console.OpenStandardOutput());
 
-if (args.Length < 2 || args[0] is not ("build" or "emit" or "run"))
+if (args.Length < 2 || args[0] is not ("build" or "emit" or "run" or "test"))
 {
     Console.Error.WriteLine(Usage);
     return 2;
@@ -43,6 +45,7 @@ var command = args[0];
 var inputs = new List<string>();
 string? outputDirectory = null;
 string? assemblyName = null;
+string? filter = null;
 bool executable = false, library = false;
 for (int i = 1; i < args.Length; i++)
 {
@@ -50,6 +53,8 @@ for (int i = 1; i < args.Length; i++)
         outputDirectory = args[++i];
     else if (args[i] == "--name" && i + 1 < args.Length)
         assemblyName = args[++i];
+    else if (args[i] == "--filter" && i + 1 < args.Length && command == "test")
+        filter = args[++i];
     else if (args[i] == "--exe" && command == "build")
         executable = true;
     else if (args[i] == "--library" && command == "build")
@@ -108,7 +113,7 @@ if (inputs is [var folder] && Directory.Exists(folder) && File.Exists(Path.Combi
 // An assembly's PDB names its source files, which debuggers find breakpoints' files by, so those need full paths.
 var sources = files.Select(path => new SourceText(File.ReadAllText(path), executable || library ? Path.GetFullPath(path) : path)).ToList();
 // `emit` is for reading the C#; `build` and `run` map it back to the Piper source for errors and debugging.
-var result = Compilation.Compile(sources, new CompilationOptions(LineDirectives: command != "emit"));
+var result = Compilation.Compile(sources, new CompilationOptions(LineDirectives: command != "emit", IncludeTests: command == "test"));
 foreach (var diagnostic in result.FormattedDiagnostics)
     Console.Error.WriteLine(diagnostic);
 
@@ -120,6 +125,28 @@ switch (command)
     case "emit":
         Console.Write(result.CSharp);
         return 0;
+
+    case "test":
+    {
+        if (result.TestCount == 0)
+        {
+            Console.WriteLine("No tests found; write them as test \"name\" { … } blocks.");
+            return 0;
+        }
+        var tests = Runner.RunTests(result.Files, filter);
+        foreach (var error in tests.Errors)
+            Console.Error.WriteLine(error);
+        foreach (var test in tests.Results)
+        {
+            Console.WriteLine($"{(test.Passed ? "PASS" : "FAIL")} {test.Name}");
+            if (test.Failure is { } failure)
+                Console.WriteLine("     " + failure.Replace("\n", "\n     "));
+        }
+        int failed = tests.Results.Count(t => !t.Passed);
+        Console.WriteLine();
+        Console.WriteLine($"{tests.Results.Length - failed} passed, {failed} failed");
+        return tests.Success ? 0 : 1;
+    }
 
     case "build" when executable || library:
     {

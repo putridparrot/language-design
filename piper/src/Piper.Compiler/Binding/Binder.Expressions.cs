@@ -212,6 +212,8 @@ public sealed partial class Binder
 
         var kind = Operators.GetUnaryKind(syntax.Operator.Kind)!.Value;
         var type = Operators.ResolveUnary(kind, operand.Type);
+        if (type is null && kind == BoundUnaryOperatorKind.Negate && FindUserOperator("-", [operand]) is var (_, operandTypes, resultType))
+            return new BoundUnaryExpression(kind, Convert(operand, operandTypes[0], syntax.Operand.Span), resultType);
         if (type is null)
         {
             _diagnostics.ReportUndefinedUnaryOperator(syntax.Operator.Span, syntax.Operator.Text, operand.Type);
@@ -271,6 +273,12 @@ public sealed partial class Binder
         }
 
         var resolution = Operators.ResolveBinary(kind, left.Type, right.Type);
+        // `a + b` on a record with `operator +`; C# finds the operator the emitter writes.
+        if (resolution is null && FindUserOperator(syntax.Operator.Text, [left, right]) is var (_, operandTypes, resultType))
+        {
+            return new BoundBinaryExpression(
+                Convert(left, operandTypes[0], syntax.Left.Span), kind, Convert(right, operandTypes[1], syntax.Right.Span), resultType);
+        }
         if (resolution is null)
         {
             _diagnostics.ReportUndefinedBinaryOperator(syntax.Operator.Span, syntax.Operator.Text, left.Type, right.Type);
@@ -352,6 +360,14 @@ public sealed partial class Binder
             return new BoundAssignmentExpression(variable, kind, value);
 
         var resolution = Operators.ResolveBinary(kind, variable.Type, value.Type);
+        // `total += v` with a user-defined `+`, whose result must fit back in the variable.
+        if (resolution is null &&
+            FindUserOperator(Operators.GetText(kind), [new BoundVariableExpression(variable), value]) is var (_, operandTypes, resultType))
+        {
+            if (operandTypes[0] != variable.Type || !IsConvertible(resultType, variable.Type))
+                _diagnostics.ReportCannotConvert(syntax.Value.Span, resultType, variable.Type);
+            return new BoundAssignmentExpression(variable, kind, Convert(value, operandTypes[1], syntax.Value.Span));
+        }
         if (resolution is null)
             _diagnostics.ReportUndefinedBinaryOperator(syntax.Operator.Span, syntax.Operator.Text, variable.Type, value.Type);
         else if (!CompoundResultFits(resolution.ResultType, variable.Type, value))
@@ -522,7 +538,7 @@ public sealed partial class Binder
         switch (symbol)
         {
             case not FunctionSymbol and not (null or ErrorSymbol or AmbiguousSymbol) when explicitArguments is not null:
-            case FunctionSymbol when explicitArguments is not null && symbol == BuiltinFunctions.Print:
+            case FunctionSymbol builtin when explicitArguments is not null && BuiltinFunctions.All.Contains(builtin):
                 BindArgumentsForDiagnostics(syntax.Arguments);
                 _diagnostics.ReportNotGeneric(syntax.Callee.Span, calleeName);
                 return new BoundErrorExpression();
@@ -538,6 +554,12 @@ public sealed partial class Binder
                 var argument = RequireValue(BindExpression(syntax.Arguments[0]), syntax.Arguments[0].Span);
                 return new BoundCallExpression(function, [], [argument], TypeSymbol.Unit);
             }
+
+            case FunctionSymbol function when function == BuiltinFunctions.Assert:
+                return BindAssert(syntax, calleeName);
+
+            case FunctionSymbol function when function == BuiltinFunctions.AssertEqual:
+                return BindAssertEqual(syntax, calleeName);
 
             // A variable holding a function: `f(1)`.
             case VariableSymbol variable when DelegateSignature(variable.Type) is not null:
@@ -836,6 +858,50 @@ public sealed partial class Binder
 
         var type = @enum.Construct(TypeArgumentsFrom(@enum.TypeParameters, map, span));
         return new BoundVariantCreationExpression(variant, boundArguments.Value, type);
+    }
+
+    /// <summary>
+    /// `Assert(condition)`, or `Assert(condition, message)`. Without a message, a failure reports the condition's source
+    /// text, as Rust's assert! does: `Assertion failed: total == 10`.
+    /// </summary>
+    private BoundExpression BindAssert(CallExpressionSyntax syntax, string name)
+    {
+        if (syntax.Arguments.Length is not (1 or 2))
+        {
+            BindArgumentsForDiagnostics(syntax.Arguments);
+            _diagnostics.ReportWrongArgumentCount(syntax.Span, name, 1, syntax.Arguments.Length);
+            return new BoundErrorExpression();
+        }
+        var conditionSyntax = syntax.Arguments[0];
+        var condition = Convert(RequireValue(BindExpression(conditionSyntax, TypeSymbol.Bool), conditionSyntax.Span), TypeSymbol.Bool, conditionSyntax.Span);
+        BoundExpression description = syntax.Arguments.Length == 2
+            ? Convert(RequireValue(BindExpression(syntax.Arguments[1], TypeSymbol.String), syntax.Arguments[1].Span), TypeSymbol.String, syntax.Arguments[1].Span)
+            : new BoundLiteralExpression(_file.Source.ToString(conditionSyntax.Span), TypeSymbol.String);
+        return new BoundCallExpression(BuiltinFunctions.Assert, [], [condition, description], TypeSymbol.Unit);
+    }
+
+    /// <summary>`AssertEqual(expected, actual)`: both are converted to their common type, which the comparison is made at.</summary>
+    private BoundExpression BindAssertEqual(CallExpressionSyntax syntax, string name)
+    {
+        if (syntax.Arguments.Length != 2)
+        {
+            BindArgumentsForDiagnostics(syntax.Arguments);
+            _diagnostics.ReportWrongArgumentCount(syntax.Span, name, 2, syntax.Arguments.Length);
+            return new BoundErrorExpression();
+        }
+        var expected = RequireValue(BindExpression(syntax.Arguments[0]), syntax.Arguments[0].Span);
+        var actual = RequireValue(BindExpression(syntax.Arguments[1], expected.Type), syntax.Arguments[1].Span);
+        if (expected.Type == TypeSymbol.Error || actual.Type == TypeSymbol.Error)
+            return new BoundErrorExpression();
+        if (CommonType([expected.Type, actual.Type], null, out _) is not { } type)
+        {
+            _diagnostics.ReportAssertEqualTypes(syntax.Span, expected.Type, actual.Type);
+            return new BoundErrorExpression();
+        }
+        return new BoundCallExpression(
+            BuiltinFunctions.AssertEqual, [type],
+            [Convert(expected, type, syntax.Arguments[0].Span), Convert(actual, type, syntax.Arguments[1].Span)],
+            TypeSymbol.Unit);
     }
 
     private BoundErrorExpression BindArgumentsForDiagnostics(ImmutableArray<ExpressionSyntax>? arguments)

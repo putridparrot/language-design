@@ -369,6 +369,52 @@ public class BinderTests
     [InlineData("fn F(x: int?) => int = match x { Some(public) => 1, None => 0 };")]
     public void Reserved_words_cant_be_names(string program) => AssertSingleError("PIP0335", program);
 
+    [Fact]
+    public void Using_an_obsolete_dotnet_member_is_a_warning()
+    {
+        var result = Compilation.Compile("fn F() { let client = System.Net.WebClient(); }");
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        var warning = Assert.Single(result.Diagnostics);
+        Assert.Equal(("PIP0333", DiagnosticSeverity.Warning), (warning.Code, warning.Severity));
+        Assert.StartsWith("'WebClient' is obsolete: ", warning.Message);
+    }
+
+    [Fact]
+    public void Using_a_dotnet_member_obsolete_as_an_error_is_an_error_not_an_internal_one()
+    {
+        AssertSingleError("PIP0334", "fn F() { let v = System.Runtime.CompilerServices.RuntimeOps.CreateRuntimeVariables(); }");
+    }
+
+    private const string Vectors = "record V(x: int); ";
+
+    [Theory]
+    [InlineData("PIP0339", "extend int { operator +(other: int) => int = 0; }")]
+    [InlineData("PIP0339", "trait T { operator +(other: T) => T; }")]
+    [InlineData("PIP0339", Vectors + "extend V { operator +() => V = this; }")]
+    [InlineData("PIP0339", Vectors + "extend V { operator *(a: V, b: V) => V = this; }")]
+    [InlineData("PIP0339", Vectors + "extend V { static operator +(a: int, b: int) => int = 0; }")]
+    [InlineData("PIP0339", Vectors + "extend V { operator +(other: V) { } }")]
+    [InlineData("PIP0339", Vectors + "extend V { operator +<U>(other: U) => V = this; }")]
+    [InlineData("PIP0201", Vectors + "extend V { operator +(o: V) => V = this; operator +(p: V) => V = p; }")]
+    [InlineData("PIP0203", Vectors + "extend V { operator +(o: V) => V = o; } fn F(v: V) => V = v - v;")]
+    [InlineData("PIP0203", Vectors + "extend V { operator +(o: V) => V = o; } fn F(v: V) => V = v + 1;")]
+    [InlineData("PIP0202", Vectors + "extend V { operator +(o: V) => int = 1; } fn F(v: V) { mut w = v; w += v; }")]
+    public void Invalid_operators_are_errors(string code, string program) => AssertSingleError(code, program);
+
+    [Fact]
+    public void Operator_overloads_are_chosen_by_operand_types()
+    {
+        AssertNoErrors(Vectors + """
+            extend V {
+                operator -() => V = V(-this.x);
+                operator -(other: V) => V = V(this.x - other.x);
+                operator *(k: int) => V = V(this.x * k);
+                static operator *(k: int, v: V) => V = v * k;
+            }
+            fn F(v: V) => V { mut w = -v - v * 2; w -= 3 * v; w }
+            """);
+    }
+
     private const string GenericTraits = "trait Convert<T> { fn convert() => T; } trait Ord<T: Ord<T>> { fn cmp(other: T) => int; } record M(x: int); ";
 
     [Theory]

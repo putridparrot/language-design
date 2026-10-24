@@ -17,6 +17,7 @@ piper run hello.piper         # transpile, compile and run
 piper build src/ -o out/      # write the C# (one .cs per .piper file; it references the Piper.Runtime package)
 piper build app.piper --exe   # compile to bin/app.exe (plus app.dll, its .pdb and Piper.Runtime.dll)
 piper build src/ --library    # compile to bin/src.dll; --name and -o choose the name and folder
+piper test src/               # run the program's test blocks (--filter picks some by name)
 piper emit hello.piper        # print the C#
 ```
 

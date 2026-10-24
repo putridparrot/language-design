@@ -92,7 +92,7 @@ public sealed partial class Binder
             _diagnostics.ReportUnknownMethod(member.Span, type, member.Text);
             return new BoundErrorExpression();
         }
-        return BindClrInvocation(null, type, methods, $"{type}.{member.Text}", arguments.Value, [], span, map, explicitTypeArguments);
+        return BindClrInvocation(null, type, methods, $"{type}.{member.Text}", arguments.Value, [], span, map, explicitTypeArguments, member.Span);
     }
 
     private BoundExpression BindClrInstanceCall(
@@ -105,7 +105,7 @@ public sealed partial class Binder
         var (clrType, map) = ClrContext(receiver.Type);
         var methods = InstanceMethods(clrType).Where(m => m.Name == member.Text).ToList();
         if (methods.Count > 0)
-            return BindClrInvocation(receiver, receiver.Type, methods, member.Text, arguments, [], span, map, explicitTypeArguments);
+            return BindClrInvocation(receiver, receiver.Type, methods, member.Text, arguments, [], span, map, explicitTypeArguments, member.Span);
 
         // Extension methods from the namespaces this file imports: `numbers.Where(n => n > 2)`.
         var extensions = ImportedExtensionMethods(member.Text);
@@ -177,6 +177,7 @@ public sealed partial class Binder
                 continue;
             }
 
+            CheckClrObsolete(name.Span, member);
             var access = new BoundClrMemberExpression(receiver, container, member, BoundaryInnerType(mapped));
             return FromClrBoundary(access, mapped);
         }
@@ -231,12 +232,14 @@ public sealed partial class Binder
         ImmutableArray<BoundExpression> leadingArguments,
         TextSpan span,
         IReadOnlyDictionary<Type, TypeSymbol> map,
-        ImmutableArray<TypeSymbol>? explicitTypeArguments = null)
+        ImmutableArray<TypeSymbol>? explicitTypeArguments = null,
+        TextSpan? nameSpan = null)
     {
         if (ResolveClrOverload(members, container, displayName, argumentSyntax, leadingArguments, span, map, explicitTypeArguments) is not { } resolved)
             return new BoundErrorExpression();
 
         var chosen = resolved.Candidate;
+        CheckClrObsolete(nameSpan ?? span, chosen.Member);
         var call = new BoundClrInvocationExpression(
             receiver, chosen.Container, chosen.Member, resolved.Arguments,
             BoundaryInnerType((chosen.ReturnType, chosen.ReturnBoundary)), chosen.TypeArguments);

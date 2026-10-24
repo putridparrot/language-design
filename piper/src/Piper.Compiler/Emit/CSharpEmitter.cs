@@ -403,8 +403,11 @@ public sealed partial class CSharpEmitter
             if (i > 0)
                 _writer.WriteLine();
             var access = methods[i].IsPrivate ? "internal " : "public ";
+            // An instance-form operator is a static C# operator whose first parameter, `self`, is Piper's `this`.
+            _thisName = methods[i].IsOperator ? "self" : "this";
             EmitFunction(_methodBodies[methods[i]], access + (methods[i].IsStatic ? "static " : ""));
         }
+        _thisName = "this";
 
         var bridges = methods.Select(m => m.ContainingType).OfType<NamedTypeDefinition>().Distinct()
             .SelectMany(t => t.InterfaceBridges)
@@ -587,6 +590,12 @@ public sealed partial class CSharpEmitter
         var parameters = string.Join(", ", symbol.Parameters.Select(p => $"{InlineAttributes(p)}{TypeName(p.Type)} {Escape(_names.Declare(p))}"));
         // `async` belongs to a body, so a required trait (interface) method never has it.
         var @async = symbol.IsAsync && symbol.Declaration?.HasBody == true ? "async " : "";
+        // `operator +(other: T)` → `public static T operator +(T self, T other)` (C# operators are public and static).
+        if (symbol is MethodSymbol { IsOperator: true } @operator)
+        {
+            var self = @operator.IsStatic ? "" : $"{TypeName(@operator.This!.Type)} self{(symbol.Parameters.IsEmpty ? "" : ", ")}";
+            return $"public static {TypeName(symbol.ReturnType)} operator {symbol.Name}({self}{parameters})";
+        }
         // A trait's override is an explicit implementation of the parent's method, which inherits its constraints.
         if (symbol is MethodSymbol { Overrides: var (_, parent) })
         {
@@ -1120,6 +1129,10 @@ public sealed partial class CSharpEmitter
     {
         if (call.Function == BuiltinFunctions.Print)
             return $"global::System.Console.WriteLine({Expr(call.Arguments[0], ConditionalPrecedence)})";
+        if (call.Function == BuiltinFunctions.Assert)
+            return $"global::Piper.Runtime.PiperAssert.True({Arguments(call.Arguments)})";
+        if (call.Function == BuiltinFunctions.AssertEqual)
+            return $"global::Piper.Runtime.PiperAssert.Equal{TypeArgumentList(call.TypeArguments)}({Arguments(call.Arguments)})";
         var qualifier = call.Function.DeclaringFile == _moduleFile ? "" : FunctionContainer(call.Function) + ".";
         return $"{qualifier}{Escape(call.Function.Name)}{TypeArgumentList(call.TypeArguments)}({Arguments(call.Arguments)})";
     }

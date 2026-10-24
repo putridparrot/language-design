@@ -1,0 +1,63 @@
+// Operators on records and enums: `operator +(other: T)` takes `this` as its left operand, and a static operator
+// takes every operand as a parameter (for `2.0 * v`). They compile to C# operators, so `+=` works too.
+
+record Vector(x: double, y: double);
+
+extend Vector {
+    operator +(other: Vector) => Vector = Vector(this.x + other.x, this.y + other.y);
+    operator -(other: Vector) => Vector = Vector(this.x - other.x, this.y - other.y);
+    operator -() => Vector = Vector(-this.x, -this.y);
+    operator *(k: double) => Vector = Vector(this.x * k, this.y * k);
+    static operator *(k: double, v: Vector) => Vector = v * k;
+    fn Length() => double = System.Math.Sqrt(this.x * this.x + this.y * this.y);
+}
+
+record Money(cents: long);
+
+extend Money {
+    operator +(other: Money) => Money = Money(this.cents + other.cents);
+    operator /(parts: int) => Money = Money(this.cents / parts);
+    operator %(parts: int) => long = this.cents % parts;
+}
+
+enum Interval {
+    Closed(low: int, high: int),
+    Empty,
+}
+
+extend Interval {
+    // The smallest interval holding both.
+    operator +(other: Interval) => Interval = match (this, other) {
+        (Empty, x) | (x, Empty) => x,
+        (Closed(a, b), Closed(c, d)) => Interval.Closed(System.Math.Min(a, c), System.Math.Max(b, d)),
+    };
+}
+
+record Pair<T>(first: T, second: T);
+
+extend Pair {
+    static operator -(p: Pair<T>) => Pair<T> = Pair(p.second, p.first);
+}
+
+fn Main() {
+    let a = Vector(1.0, 2.0);
+    let b = Vector(3.0, 4.0);
+    Print(a + b);
+    Print(b - a);
+    Print(-a);
+    Print(a * 2.0);
+    Print(2 * a);
+    Print((a + b * 2).Length());
+
+    mut total = Vector(0.0, 0.0);
+    for v in [a, b, -a] {
+        total += v;
+    }
+    Print(total);
+
+    let bill = Money(1000) + Money(250);
+    Print("{bill / 3} remainder {bill % 3}");
+
+    Print(Interval.Closed(1, 3) + Interval.Empty + Interval.Closed(5, 8));
+    Print(-Pair("left", "right"));
+}

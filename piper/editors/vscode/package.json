@@ -156,6 +156,11 @@
         "command": "piper.debug",
         "title": "Piper: Debug",
         "icon": "$(debug-alt)"
+      },
+      {
+        "command": "piper.test",
+        "title": "Piper: Run Tests",
+        "icon": "$(beaker)"
       }
     ],
     "menus": {
@@ -178,6 +183,10 @@
         },
         {
           "command": "piper.debug",
+          "when": "editorLangId == piper"
+        },
+        {
+          "command": "piper.test",
           "when": "editorLangId == piper"
         }
       ]

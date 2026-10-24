@@ -35,11 +35,12 @@ Notation: `{ x }` is zero or more, `[ x ]` is optional, `|` separates alternativ
 compilationUnit = { using } [ "namespace" qualifiedName ";" ] { using } { attributes [ "private" ] declaration } EOF ;
 using           = "using" qualifiedName ";" ;                (* a Piper or .NET namespace *)
 qualifiedName   = IDENT { "." IDENT } ;
-declaration     = function | record | enum | trait | extend ;
+declaration     = function | record | enum | trait | extend | test ;
+test            = [ "async" ] "test" STRING block ;            (* run by piper test, left out of other builds *)
 attributes      = { "[" attribute { "," attribute } [ "," ] "]" } ;
 attribute       = qualifiedName [ "(" [ expression { "," expression } [ "," ] ] ")" ] ;   (* constants, then Name = value *)
 
-function        = [ "static" ] [ "async" ] "fn" IDENT [ typeParameters ] "(" [ parameters ] ")" [ "=>" type ]
+function        = [ "static" ] [ "async" ] ( "fn" IDENT [ typeParameters ] | "operator" ( "+" | "-" | "*" | "/" | "%" ) ) "(" [ parameters ] ")" [ "=>" type ]
                   ( block | "=" expression ";" | ";" ) ;      (* ";" only for required trait methods; "static" only in traits and extend blocks *)
 record          = "record" IDENT [ typeParameters ] "(" [ parameters ] ")" ";" ;
 enum            = "enum" IDENT [ typeParameters ] "{" [ variant { "," variant } [ "," ] ] "}" ;
@@ -298,6 +299,18 @@ let n = 7.Squared();
 let s = Option.Some(5).GetOr(0);
 ```
 
+- **Operators:** an extend block for a record or enum can declare `+`, `-`, `*`, `/`, `%` and unary `-`, which become C# operators. The usual form takes `this` as the left (or only) operand; a `static operator` takes every operand as a parameter, one of them of the type, for when the type is on the right:
+
+  ```piper
+  extend Vector {
+      operator +(other: Vector) => Vector = Vector(this.x + other.x, this.y + other.y);
+      operator -() => Vector = Vector(-this.x, -this.y);
+      operator *(k: double) => Vector = Vector(this.x * k, this.y * k);
+      static operator *(k: double, v: Vector) => Vector = v * k;    // 2.0 * v
+  }
+  ```
+
+  Operands convert as for a call (`2 * v` widens the int), the overload whose operand types match exactly wins, and `+=` and the other compound assignments use the operator. Comparisons and `==` can't be declared (records already compare by value); nor can operators on traits, builtin or .NET types.
 - **Instance and static methods:** as in C#, a method is an instance method by default, with `this` referring to the receiver. Mark it `static fn` to call it on the type instead, e.g. `int.Zero()`. There is no explicit receiver parameter.
 - **`this` is immutable.** Using it in a static method or a top-level function is an error.
 - **Generic types:** write `extend Option`, not `extend Option<int>`. Methods apply to every instantiation.
@@ -433,7 +446,7 @@ fn LegacyParse(text: string) => int = int.Parse(text);
 - **Names:** `Obsolete` means `ObsoleteAttribute` (tried first) or `Obsolete`, found like any type name, so it needs a `using` or a qualified name (`System.Obsolete`). It must be a .NET attribute class; Piper can't declare attributes.
 - **Arguments** are the constructor's, which must be constants (literals, .NET enum members such as `AttributeTargets.Method`, constant fields, and operators on those), followed by `Name = value` for the attribute's settable properties and fields: `[Obsolete("Old", DiagnosticId = "APP001")]`. Several attributes can share brackets: `[Serializable, Obsolete]`.
 - **Where they go:** on records, enums and traits (C# classes and interfaces), functions and methods, parameters, and record and variant fields. A field's attribute goes on the C# property when it applies to properties (`[property: …]`, so System.Text.Json and similar see it), otherwise on the backing field, otherwise the constructor parameter. An attribute that can't go where it's written (`[Serializable]` on a function) is an error, as is repeating one that doesn't allow it.
-- **`[Obsolete]`** on a Piper declaration makes each use of it a warning, `'F' is obsolete: message` (an error with `[Obsolete("…", true)]`), as in C#.
+- **`[Obsolete]`** on a Piper declaration makes each use of it a warning, `'F' is obsolete: message` (an error with `[Obsolete("…", true)]`), as in C#. Uses of obsolete .NET types, methods, constructors and properties are reported the same way (`'WebClient' is obsolete: … Use HttpClient instead.`).
 
 ### Lambdas and function values
 
@@ -645,11 +658,38 @@ Evaluation is strictly left to right, including operands that contain blocks.
 - The right-hand side of `&&` or `||` is evaluated only when needed.
 - The upper bound of `for i in a..<b` is evaluated once.
 
+### Tests
+
+A `test` block checks something, with `Assert` and `AssertEqual`. `piper test` runs them; other builds type-check them
+but leave them out, so they cost nothing in the program.
+
+```piper
+using System.Threading.Tasks;
+
+fn Add(a: int, b: int) => int = a + b;
+
+test "adds two numbers" {
+    AssertEqual(5, Add(2, 3));
+    Assert(Add(-1, 1) == 0);
+}
+
+async test "waits" {
+    await Task.Delay(10);
+    Assert(true, "still here");
+}
+```
+
+- **`Assert(condition)`** fails the test when the condition is false, reporting its source text: `Assertion failed: Add(-1, 1) == 0`. `Assert(condition, message)` reports the message instead.
+- **`AssertEqual(expected, actual)`** fails unless the values are equal (by `Equals`, as `==` compares). Sequences other than strings are compared element by element, so `AssertEqual([1, 2], xs)` works on a List. They must have a common type. A failure shows both: `Expected [1, 2] but got [1, 2, 3]`.
+- **Running:** `piper test src/` runs every test in order and prints `PASS` or `FAIL` for each, with the reason and the Piper line for a failure, then a count. It exits with 1 if any failed. `--filter text` runs only the tests whose name contains `text`. An exception fails a test too.
+- **Names** are plain strings (no interpolation), unique in the program. A test can't be called, takes no parameters and returns nothing; `async test` can `await`.
+
 ### Builtins
 
 `Print(value)` writes any value followed by a newline, using its C# `ToString`: Bools print as `True`/`False`,
 records as `Point { x = 1, y = 2 }`, fieldless enum variants by name (`Food`, as a C# enum member) and tuples as `(1, a)`. Output
-is locale-independent. `Main()` takes no parameters and returns unit; it is the program's entry point.
+is locale-independent. `Assert` and `AssertEqual` are for tests (see [Tests](#tests)), though they work anywhere: a failure throws.
+`Main()` takes no parameters and returns unit; it is the program's entry point.
 
 As in C#, functions and methods are PascalCase (`Print`, `Main`, `Area()`), and variables, parameters and fields camelCase. That's a convention, not a rule: the compiler accepts any casing. A method added to a .NET or builtin type mustn't have the name of one of its members (`extend int { fn Clamp(…) }` clashes with `int.Clamp`).
 
@@ -719,6 +759,9 @@ As in C#, functions and methods are PascalCase (`Print`, `Main`, `Area()`), and 
 | `x \|> F(a)` | `F(x, a)` |
 | `defer d; rest` | `try { rest } finally { d }`, with the block's value stored in a temporary inside the `try` |
 | `"…{e}…"` | `$"…{e}…"` |
+| `test "adds" { … }` | with `piper test`, `[global::Piper.Runtime.PiperTestAttribute("adds")] public static void PiperTest_N() { … }` in the module class; otherwise nothing |
+| `Assert(c)`, `AssertEqual(a, b)` | `global::Piper.Runtime.PiperAssert.True(c, "c")`, `global::Piper.Runtime.PiperAssert.Equal<T>(a, b)` |
+| `extend V { operator +(o: V) => V = … }` | `public static V operator +(V self, V o) => …` in the record, with `this` as `self` |
 | `Print(x)` | `global::System.Console.WriteLine(x)` |
 | `(byte)x`, `1.5f`, `19.99m`, `string('#', 3)` | `(byte)x`, `1.5f`, `19.99m`, `new string('#', 3)` |
 | `using let r = Open();`, `using (let r = Open()) { … }` | `using T r = Open();`, `using (T r = Open()) { … }` |
@@ -774,4 +817,6 @@ Version 1.0 includes everything above. Since then (1.x, all additions):
 
 - **Tooling:** debugging in VS Code (breakpoints and stepping in `.piper` files, through the C# extension's debugger), and signature help, inlay hints, semantic highlighting and an "add missing match arms" quick fix in the language server.
 - **Patterns:** list patterns (`[first, ...rest]`), property patterns (`Point { x: 0 }`, `{ Length: > 5 }`) and relational patterns (`< 0`).
-- **Attributes:** .NET attributes on declarations, fields and parameters, with `[Obsolete]` warnings for Piper declarations.
+- **Attributes:** .NET attributes on declarations, fields and parameters, with `[Obsolete]` warnings for Piper declarations and .NET members.
+- **Tests:** `test "name" { … }` blocks with `Assert` and `AssertEqual`, run by `piper test`.
+- **Operators:** `operator +` and the other arithmetic operators on records and enums, as C# operators.

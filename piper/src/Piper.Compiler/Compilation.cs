@@ -17,8 +17,11 @@ public sealed record CompilationResult(ImmutableArray<SourceText> Sources, Immut
 
     public IEnumerable<string> FormattedDiagnostics => Diagnostics.Select(d => d.Format());
 
-    /// <summary>Whether the program has a `main` function (an entry point), so it can be built as an executable.</summary>
+    /// <summary>Whether the program has a `Main` function (an entry point), so it can be built as an executable.</summary>
     public bool HasMain { get; init; }
+
+    /// <summary>How many `test` blocks the program has.</summary>
+    public int TestCount { get; init; }
 
     /// <summary>All generated C#; with several files each is preceded by a <c>// ==== name ====</c> line.</summary>
     public string? CSharp => !Success
@@ -38,7 +41,8 @@ public sealed record AnalysisResult(
 /// Write `#line` directives into the C#, so C# compiler errors, stack traces and debuggers point at the `.piper`
 /// source. Off by default to keep the generated code easy to read.
 /// </param>
-public sealed record CompilationOptions(bool LineDirectives = false);
+/// <param name="IncludeTests">Compile `test` blocks in, for `piper test`; other builds leave them out (but still check them).</param>
+public sealed record CompilationOptions(bool LineDirectives = false, bool IncludeTests = false);
 
 /// <summary>Runs the whole pipeline over a program's files: lex → parse → bind → lower → emit C#.</summary>
 public static class Compilation
@@ -62,7 +66,13 @@ public static class Compilation
             return new CompilationResult(files, sorted, []);
 
         var lowered = Lowerer.Lower(program);
-        return new CompilationResult(files, sorted, CSharpEmitter.Emit(lowered, options.LineDirectives)) { HasMain = program.Main is not null };
+        if (options.IncludeTests)
+            lowered = lowered.WithTestsAsFunctions();
+        return new CompilationResult(files, sorted, CSharpEmitter.Emit(lowered, options.LineDirectives))
+        {
+            HasMain = program.Main is not null,
+            TestCount = program.Tests.Length,
+        };
     }
 
     /// <summary>

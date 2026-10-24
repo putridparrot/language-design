@@ -443,6 +443,18 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportEmptyRelationalPattern(TextSpan span, TypeSymbol type) =>
         Error("PIP0328", span, $"This pattern matches no '{type}' values.");
 
+    public void ReportInvalidOperator(TextSpan span, string problem) =>
+        Error("PIP0339", span, problem);
+
+    public void ReportInterpolatedTestName(TextSpan span) =>
+        Error("PIP0337", span, "A test's name must be a plain string, without interpolation.");
+
+    public void ReportDuplicateTest(TextSpan span, string name) =>
+        Error("PIP0338", span, $"There's already a test named \"{name}\".");
+
+    public void ReportAssertEqualTypes(TextSpan span, TypeSymbol expected, TypeSymbol actual) =>
+        Error("PIP0336", span, $"AssertEqual compares values of one type, but got '{expected}' and '{actual}'.");
+
     public void ReportReservedName(TextSpan span, string name) =>
         Error("PIP0335", span, $"'{name}' is reserved for future use, so it can't be used as a name.");
 

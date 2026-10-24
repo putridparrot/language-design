@@ -1,0 +1,10 @@
+Vector { x = 4, y = 6 }
+Vector { x = 2, y = 2 }
+Vector { x = -1, y = -2 }
+Vector { x = 2, y = 4 }
+Vector { x = 2, y = 4 }
+12.206555615733702
+Vector { x = 3, y = 4 }
+Money { cents = 416 } remainder 2
+Closed { low = 1, high = 8 }
+Pair { first = right, second = left }

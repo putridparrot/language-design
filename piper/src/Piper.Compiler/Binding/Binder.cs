@@ -275,11 +275,36 @@ public sealed partial class Binder
             }
         }
 
+        // Tests are functions no scope declares, so nothing can call them, marked for `piper test` to find.
+        var tests = new List<(string Name, FunctionInfo Info)>();
+        var testNames = new HashSet<string>();
+        foreach (var file in _files)
+        {
+            InFile(file);
+            foreach (var test in file.Unit.Declarations.OfType<TestDeclarationSyntax>())
+            {
+                if (!testNames.Add(test.TestName))
+                    _diagnostics.ReportDuplicateTest(test.Name.Span, test.TestName);
+                var info = BindFunctionSignature(test.Function, file, file.Scope, containingType: null, thisType: null);
+                info.Symbol.DeclaringFile = file.Source;
+                info.Symbol.Namespace = file.Namespace;
+                info.Symbol.Attributes =
+                [
+                    new BoundAttribute(ClrTypeSymbol.For(typeof(Piper.Runtime.PiperTestAttribute)), [new BoundLiteralExpression(test.TestName, TypeSymbol.String)], []),
+                ];
+                tests.Add((test.TestName, info));
+            }
+        }
+
         BindAttributes(types, functions.Concat(methods));
         CheckExposure(types, functions, methods);
 
         var boundFunctions = functions.Select(BindFunctionBody).OfType<BoundFunction>().ToImmutableArray();
         var boundMethods = methods.Select(BindFunctionBody).OfType<BoundFunction>().ToImmutableArray();
+        var boundTests = tests.Select(t => (t.Name, Function: BindFunctionBody(t.Info)))
+            .Where(t => t.Function is not null)
+            .Select(t => new BoundTest(t.Name, t.Function!))
+            .ToImmutableArray();
 
         var mains = functions.Select(f => f.Symbol).Where(f => f.Name == "Main").ToList();
         foreach (var extra in mains.Skip(1))
@@ -299,6 +324,7 @@ public sealed partial class Binder
         return new BoundProgram([.. units.Select(u => u.Source)], [.. _files.Select(f => f.Namespace)], [.. types], [_option, _result], boundFunctions, boundMethods, main)
         {
             ExternalConformances = [.. _externalConformances.SelectMany(e => e.Value.Select(c => new ExternalConformance(e.Key, c.Trait, c.File)))],
+            Tests = boundTests,
         };
     }
 
@@ -755,6 +781,11 @@ public sealed partial class Binder
             var method = (MethodSymbol)info.Symbol;
             if (syntax.Name.IsMissing)
                 continue;
+            if (syntax.Operator is not null)
+            {
+                _diagnostics.ReportInvalidOperator(syntax.Name.Span, "Operators can only be declared for records and enums declared in Piper, not traits.");
+                continue;
+            }
             if (!names.Add(method.Name) || ReservedMemberNames.Contains(method.Name))
             {
                 ReportMemberClash(syntax.Name);
@@ -863,6 +894,12 @@ public sealed partial class Binder
             if (target is TraitSymbol && syntax.Private is { } @private)
             {
                 _diagnostics.ReportInvalidTraitMethod(@private.Span, $"Trait method '{syntax.Name.Text}' cannot be private.");
+                continue;
+            }
+            if (syntax.Operator is not null)
+            {
+                if (RegisterOperator(target, method, syntax) && syntax.HasBody)
+                    infos.Add(info);
                 continue;
             }
             if (syntax.Name.IsMissing || !RegisterMethod(target, method, syntax.Name))
