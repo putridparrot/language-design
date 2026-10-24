@@ -38,7 +38,7 @@ qualifiedName   = IDENT { "." IDENT } ;
 declaration     = function | record | enum | trait | extend ;
 
 function        = [ "static" ] [ "async" ] "fn" IDENT [ typeParameters ] "(" [ parameters ] ")" [ "=>" type ]
-                  ( block | "=" expression ";" | ";" ) ;      (* ";" only for required trait methods; "static" only in extend blocks *)
+                  ( block | "=" expression ";" | ";" ) ;      (* ";" only for required trait methods; "static" only in traits and extend blocks *)
 record          = "record" IDENT [ typeParameters ] "(" [ parameters ] ")" ";" ;
 enum            = "enum" IDENT [ typeParameters ] "{" [ variant { "," variant } [ "," ] ] "}" ;
 variant         = IDENT [ "(" [ parameters ] ")" ] ;
@@ -255,14 +255,18 @@ extend Circle: Shape {
 - **Using the expected type:** when an `if` or `match` produces different types that all implement the expected trait, the trait is used, e.g. `let s: Shape = if c { circle } else { rect };`.
 - **Generic traits:** a trait can take type parameters, as `trait Convert<T> { fn convert() => T; }`, implemented as `extend Celsius: Convert<string>` and used as a bound (`T: Convert<int>`) or a type (`List<Convert<string>>`). A generic type can implement one in terms of its own type parameters: `extend Box: Convert<T>`. A type implements each generic trait once, since its methods can't be overloaded: not both `Convert<string>` and `Convert<int>`.
 - **Referring to the implementing type:** as in C# (`IComparable<T>`, `INumber<TSelf>`), a trait takes the implementing type as a type parameter bounded by the trait itself, and implementers name themselves: `trait Comparable<T: Comparable<T>> { fn compareTo(other: T) => int; }` with `extend Money: Comparable<Money>`, and `fn largest<T: Comparable<T>>(items: List<T>) => T`.
-- **Inheritance:** `trait Person: Named, Aged { … }` builds on other traits (generic ones too: `trait Ordered<T>: Equatable<T>`). A child trait's defaults can call its parents' methods. Implementing `Person` means implementing `Named` and `Aged` as well, in the same `extend` block or separate ones. A `Person` converts to `Named`, and a bound `T: Person` gives `T` its parents' methods. A trait can't redeclare or override an inherited method, and can't inherit methods with the same name from two parents.
+- **Inheritance:** `trait Person: Named, Aged { … }` builds on other traits (generic ones too: `trait Ordered<T>: Equatable<T>`). A child trait's defaults can call its parents' methods. Implementing `Person` means implementing `Named` and `Aged` as well, in the same `extend` block or separate ones. A `Person` converts to `Named`, and a bound `T: Person` gives `T` its parents' methods.
+  - **Overriding:** a child trait can give an inherited method a new default by declaring it with a body and the same signature: `trait Formal: Named { fn greet() => string = "Good day, {this.name()}"; }`. A required method gets a default the same way. Calls through `Named` use the most specific default, so a `Judge` that implements `Formal` greets formally wherever it is used. Static methods can't be overridden, and declaring an inherited method without a body is an error.
+  - **Ambiguity:** two parents can't both declare a method with the same name. If two unrelated parents override the same method, a trait or type that inherits both must override it again, as in C#.
+- **Generic methods:** a trait method can take type parameters of its own, `fn mapAll<U>(f: (T) => U) => List<U>;`. An implementation has as many type parameters, with the same bounds, under any names: `fn mapAll<R>(f: (int) => R) => List<R>`.
+- **Adding methods to a trait:** `extend Named { fn shout() => string = this.greet().ToUpper(); }` adds default methods to a trait, including one declared in another file or namespace, and every implementer gets them. They must have bodies and can't be static or private, and the block can't make the trait implement other traits (list parents in its declaration).
 - **.NET interfaces:** `extend` can implement a .NET interface too, and one can be a bound. Each method of `extend Money: IComparable<Money> { fn CompareTo(other: Money?) => int = … }` has the interface's signature as Piper sees it: a parameter or result .NET marks as possibly null is an Option, as when calling .NET. Then `wallet.Sort()` uses it, `using let c = Connection(…)` works for an `IDisposable`, and the record passes wherever .NET expects the interface (`words.Sort(ByLength())` for an `IComparer<string>`). `fn largest<T: IComparable<T>>(items: List<T>)` accepts Piper types that implement it and .NET types such as `int` and `string`, and calls `a.CompareTo(b)` on them. Only interfaces made of instance methods (no properties, events, static or generic methods, or ref and out parameters) can be implemented.
 - **Static methods:** `static fn empty() => T;` in a trait is a C# static abstract member, and one with a body a default (`static virtual`). Implementers write `static fn empty() => Total = …`. They are called through a type parameter bounded by the trait, as in C#: `fn concat<T: Monoid<T>>(items: List<T>) => T { var result = T.empty(); … }`. A trait with static methods can only be a bound, not the type of a value, and a trait's default static method can only be called through a type parameter, not on a type that doesn't implement it itself (`Total.describe()`).
 - **Builtin and .NET types can't implement traits** (`extend int: Shape`). Traits become C# interfaces, and C# has no way to make `int` or `string` implement one, even with extension members, so they couldn't satisfy a bound either. Use a record that wraps the value, or a .NET interface they already implement (`T: IComparable<T>` accepts `int`).
 
 ### Methods and `extend`
 
-`extend` adds methods to an existing type: a record, an enum, or a builtin such as `int` or `string`.
+`extend` adds methods to an existing type: a record, an enum, a trait (see [Traits](#traits)), or a builtin such as `int` or `string`.
 
 ```piper
 extend int {
@@ -631,6 +635,7 @@ is locale-independent. `main()` takes no parameters and returns unit; it is the 
 | `Interlocked.Increment(ref n)`, `list.Changed += h` | the same: `ref n`, `list.Changed += h` |
 | `trait Shape { fn area() => double; fn d() => string = …; }` | `public interface Shape { double area(); string d() => …; }` |
 | `trait Ordered<T: Ordered<T>>: Equatable<T> { … }` | `public interface Ordered<T> : Equatable<T> where T : Ordered<T> { … }` |
+| `trait Formal: Named { fn greet() => string = …; }` (an override) | `public interface Formal : Named { string Named.greet() => …; }` (an explicit implementation) |
 | `trait Monoid<T: Monoid<T>> { static fn empty() => T; static fn d() => string = …; }`, `T.empty()` | `interface Monoid<T> where T : Monoid<T> { static abstract T empty(); static virtual string d() => …; }`, `T.empty()` |
 | `extend Money: IComparable<Money> { fn CompareTo(other: Money?) => int … }` | `record Money : IComparable<Money>` with `public int CompareTo(Option<Money> other)`, plus `int IComparable<Money>.CompareTo(Money? other) => CompareTo(PiperInterop.FromNullableReference(other));` where nullability differs |
 | `extend Circle: Shape { fn area() … }` | members inside `public sealed record Circle(…) : Shape { public double area() … }` |
@@ -651,7 +656,8 @@ is locale-independent. `main()` takes no parameters and returns unit; it is the 
 | `namespace Geometry;` | `namespace Geometry { … }`; names from other namespaces are written `global::Geometry.Point` |
 | `private record R(…)` / `private trait T` | `file sealed record R(…)` / `file interface T` (C# 11 file-local types) |
 | `private fn f()` / private method | `internal static` in the file's module class / `internal` member |
-| `extend` of a type declared in another file | that type becomes `partial`; the other file holds a `partial record` part with the added members |
+| `extend` of a type declared in another file | that type becomes `partial`; the other file holds a `partial record` (or, for a trait, `partial interface`) part with the added members |
+| `extend Named { fn shout() … }` | default interface methods, in `Named` itself or a `partial interface Named` part |
 | `Math.Sqrt(2.0)`, `StringBuilder()`, `s.Length` | `global::System.Math.Sqrt(2.0)`, `new global::System.Text.StringBuilder()`, `s.Length` |
 | a possibly-null .NET result / a `T?` passed to .NET | `PiperInterop.FromNullableReference(…)` / `PiperInterop.ToNullableReference(…)` (and `…Value` versions for `Nullable<T>`) |
 | `fn f(a: int) => int { … }` | `public static int f(int a) { … }` in a static module class |
@@ -694,8 +700,7 @@ variables are assigned.
 
 ## Known limitations
 
-- Builtin and .NET types can't implement traits, because C# can't make them implement an interface (see [Traits](#traits)). A trait can't override a method it inherits.
-- Trait methods can't have type parameters of their own, and a trait can't be the target of `extend` (add default methods to the trait instead).
+- Builtin and .NET types can't implement traits, because C# can't make them implement an interface (see [Traits](#traits)).
 
 ## Roadmap
 
@@ -707,5 +712,5 @@ variables are assigned.
 6. ~~**Language freeze**~~, done in milestone 7: C#-compatible printing and minimum-value literals, arrays (`int[]`, `int[5]`), explicit type arguments, generic functions as values, tuples and deconstruction, and `out` parameters.
 7. ~~**Robustness and tooling**~~, done in milestone 8: `#line` mapping to `.piper` sources, constant checking and C# errors reported as internal compiler errors, larger sample programs, raw strings, C#'s numeric types and casts, `using`, equality on type parameters, `|` patterns that bind, the `piper` dotnet tool and the Piper.Build MSBuild package.
 8. ~~**Async and iterators**~~, done after milestone 8: `async`/`await`, async lambdas and `main`, `await for`, `await using`, `yield` iterators (sync and async), and the shared `Piper.Runtime` assembly.
-9. ~~**Smaller features**~~, done: spreading sequences into collection literals (`[0, ...xs]`), `defer` and the pipe operator `|>`.
+9. ~~**Smaller features**~~, done: spreading sequences into collection literals (`[0, ...xs]`), `defer` and the pipe operator `|>`, generic trait methods, traits overriding inherited methods, and `extend Trait`.
 10. **A language server** that reuses the fault-tolerant parser and binder.

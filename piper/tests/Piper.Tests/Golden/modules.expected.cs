@@ -17,11 +17,20 @@ public static class MainModule
         global::Geometry.Shape rect = new global::Geometry.Shape.Rect(new global::Geometry.Point(1.0, 2.0), 3.0, 4.0);
         global::System.Console.WriteLine(circle.describe());
         global::System.Console.WriteLine(rect.describe());
+        global::System.Console.WriteLine(((global::Geometry.Describe)circle).shout());
         global::System.Collections.Generic.List<global::Geometry.Shape> shapes = new global::System.Collections.Generic.List<global::Geometry.Shape>();
         shapes.Add(circle);
         shapes.Add(rect);
         Totals totals = new Totals(shapes.Count, global::Geometry.Shapes.area(circle) + global::Geometry.Shapes.area(rect));
         global::System.Console.WriteLine(totals);
+    }
+}
+
+namespace Geometry
+{
+    partial interface Describe
+    {
+        string shout() => this.describe().ToUpper();
     }
 }
 
@@ -89,7 +98,7 @@ using Piper.Runtime;
 
 namespace Geometry
 {
-    public interface Describe
+    public partial interface Describe
     {
         string describe();
     }

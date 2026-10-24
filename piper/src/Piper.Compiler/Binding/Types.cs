@@ -301,8 +301,11 @@ public sealed class TraitSymbol : GenericTypeDefinition
 
     public TraitDeclarationSyntax Declaration { get; }
 
-    /// <summary>The methods it declares itself (not those it inherits).</summary>
+    /// <summary>The methods it declares itself (not those it inherits, or its overrides of them).</summary>
     public ImmutableArray<MethodSymbol> Methods { get; internal set; } = [];
+
+    /// <summary>Its new bodies for methods it inherits.</summary>
+    public ImmutableArray<MethodSymbol> Overrides { get; internal set; } = [];
 
     /// <summary>The traits it inherits, written in terms of its own type parameters: <c>Named</c>, <c>Equatable&lt;T&gt;</c>.</summary>
     public ImmutableArray<TypeSymbol> Parents { get; internal set; } = [];

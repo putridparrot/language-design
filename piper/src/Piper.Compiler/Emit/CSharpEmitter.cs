@@ -165,7 +165,7 @@ public sealed class CSharpEmitter
                 {
                     RecordSymbol record => () => EmitRecord(record, file),
                     EnumSymbol @enum => () => EmitEnum(@enum, file),
-                    TraitSymbol trait => () => EmitTrait(trait),
+                    TraitSymbol trait => () => EmitTrait(trait, file),
                     _ => throw new InvalidOperationException(),
                 });
             }
@@ -237,21 +237,31 @@ public sealed class CSharpEmitter
     }
 
     /// <summary>The file a type's main declaration is written to: its own, or (for Option/Result) the runtime file.</summary>
-    private SourceText HomeFile(NamedTypeDefinition type) => type.DeclaringFile ?? _runtimeFile;
+    private SourceText HomeFile(GenericTypeDefinition type) => type.DeclaringFile ?? _runtimeFile;
 
-    private IEnumerable<MethodSymbol> MethodsFrom(NamedTypeDefinition type, SourceText file) =>
-        type.Methods.Where(m => (m.DeclaringFile ?? _runtimeFile) == file);
+    /// <summary>A record's or enum's methods; a trait's methods and overrides, including those added by `extend Trait`.</summary>
+    private static IEnumerable<MethodSymbol> MethodsOf(GenericTypeDefinition type) => type switch
+    {
+        TraitSymbol trait => trait.Methods.Concat(trait.Overrides),
+        NamedTypeDefinition definition => definition.Methods,
+        _ => [],
+    };
 
-    private IEnumerable<TypeSymbol> TraitsFrom(NamedTypeDefinition type, SourceText file) =>
-        type.Conformances.Where(c => (c.File ?? _runtimeFile) == file).Select(c => c.Trait);
+    private IEnumerable<MethodSymbol> MethodsFrom(GenericTypeDefinition type, SourceText file) =>
+        MethodsOf(type).Where(m => (m.DeclaringFile ?? _runtimeFile) == file);
+
+    private IEnumerable<TypeSymbol> TraitsFrom(GenericTypeDefinition type, SourceText file) =>
+        type is NamedTypeDefinition definition
+            ? definition.Conformances.Where(c => (c.File ?? _runtimeFile) == file).Select(c => c.Trait)
+            : [];
 
     /// <summary>Other files add to this type with extend blocks, so every C# part must be <c>partial</c>.</summary>
-    private bool IsPartial(NamedTypeDefinition type) =>
-        type.Methods.Any(m => (m.DeclaringFile ?? _runtimeFile) != HomeFile(type)) ||
-        type.Conformances.Any(c => (c.File ?? _runtimeFile) != HomeFile(type));
+    private bool IsPartial(GenericTypeDefinition type) =>
+        MethodsOf(type).Any(m => (m.DeclaringFile ?? _runtimeFile) != HomeFile(type)) ||
+        (type is NamedTypeDefinition definition && definition.Conformances.Any(c => (c.File ?? _runtimeFile) != HomeFile(type)));
 
-    private IEnumerable<NamedTypeDefinition> ForeignContributions(SourceText file) =>
-        _program.Types.OfType<NamedTypeDefinition>()
+    private IEnumerable<GenericTypeDefinition> ForeignContributions(SourceText file) =>
+        _program.Types.OfType<GenericTypeDefinition>()
             .Where(t => HomeFile(t) != file && (MethodsFrom(t, file).Any() || TraitsFrom(t, file).Any()));
 
     private static string Visibility(Symbol symbol) => symbol.IsPrivate ? "file" : "public";
@@ -315,25 +325,40 @@ public sealed class CSharpEmitter
     }
 
     /// <summary>A part of a type declared in another file, holding what this file's extend blocks add to it.</summary>
-    private void EmitPartialPart(NamedTypeDefinition type, SourceText file)
+    private void EmitPartialPart(GenericTypeDefinition type, SourceText file)
     {
-        var keyword = type is EnumSymbol { BuiltinKind: not BuiltinEnumKind.None } ? "readonly partial record struct" : "partial record";
+        var keyword = type switch
+        {
+            TraitSymbol => "partial interface",
+            EnumSymbol { BuiltinKind: not BuiltinEnumKind.None } => "readonly partial record struct",
+            _ => "partial record",
+        };
         _writer.WriteLine($"{keyword} {Escape(type.Name)}{TypeParameterList(type.TypeParameters)}{BaseList(TraitsFrom(type, file))}");
         _writer.OpenBrace();
-        EmitMembers(MethodsFrom(type, file).ToList());
+        if (type is TraitSymbol)
+            EmitTraitMembers(MethodsFrom(type, file).ToList());
+        else
+            EmitMembers(MethodsFrom(type, file).ToList());
         _writer.CloseBrace();
     }
 
     /// <summary>A trait is an interface; methods with a body become default interface methods.</summary>
-    private void EmitTrait(TraitSymbol trait)
+    private void EmitTrait(TraitSymbol trait, SourceText file)
     {
-        _writer.WriteLine($"{Visibility(trait)} interface {Escape(trait.Name)}{TypeParameterList(trait.TypeParameters)}{BaseList(trait.Parents)}{Constraints(trait.TypeParameters)}");
+        var partial = IsPartial(trait) ? "partial " : "";
+        _writer.WriteLine($"{Visibility(trait)} {partial}interface {Escape(trait.Name)}{TypeParameterList(trait.TypeParameters)}{BaseList(trait.Parents)}{Constraints(trait.TypeParameters)}");
         _writer.OpenBrace();
-        for (int i = 0; i < trait.Methods.Length; i++)
+        EmitTraitMembers(MethodsFrom(trait, file).ToList());
+        _writer.CloseBrace();
+    }
+
+    private void EmitTraitMembers(IReadOnlyList<MethodSymbol> methods)
+    {
+        for (int i = 0; i < methods.Count; i++)
         {
             if (i > 0)
                 _writer.WriteLine();
-            var method = trait.Methods[i];
+            var method = methods[i];
             _thisName = "this";
             // A static trait method is a C# 11 static abstract (or, with a body, static virtual) interface member.
             if (_methodBodies.TryGetValue(method, out var body))
@@ -346,7 +371,6 @@ public sealed class CSharpEmitter
                 _writer.WriteLine($"{Signature(method, method.IsStatic ? "static abstract " : "")};");
             }
         }
-        _writer.CloseBrace();
     }
 
     private void EmitMembers(IReadOnlyList<MethodSymbol> methods)
@@ -508,6 +532,12 @@ public sealed class CSharpEmitter
         var parameters = string.Join(", ", symbol.Parameters.Select(p => $"{TypeName(p.Type)} {Escape(_names.Declare(p))}"));
         // `async` belongs to a body, so a required trait (interface) method never has it.
         var @async = symbol.IsAsync && symbol.Declaration?.HasBody == true ? "async " : "";
+        // A trait's override is an explicit implementation of the parent's method, which inherits its constraints.
+        if (symbol is MethodSymbol { Overrides: var (_, parent) })
+        {
+            return $"{modifiers}{@async}{TypeName(symbol.ReturnType)} {TypeName(parent)}.{Escape(symbol.Name)}{TypeParameterList(symbol.TypeParameters)}" +
+                   $"({parameters})";
+        }
         return $"{modifiers}{@async}{TypeName(symbol.ReturnType)} {Escape(symbol.Name)}{TypeParameterList(symbol.TypeParameters)}" +
                $"({parameters}){Constraints(symbol.TypeParameters)}";
     }

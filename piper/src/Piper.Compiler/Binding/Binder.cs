@@ -216,8 +216,11 @@ public sealed partial class Binder
         var methods = new List<FunctionInfo>();
         foreach (var trait in types.OfType<TraitSymbol>())
             methods.AddRange(BindTraitMethods(trait));
-        CheckInheritedMethods(types.OfType<TraitSymbol>());
-        foreach (var extend in extends)
+        // `extend Trait` adds default methods to the trait, so they come before inheritance is checked.
+        foreach (var extend in extends.Where(e => e.Target is TraitSymbol))
+            methods.AddRange(BindExtendMethods(extend));
+        CheckInheritedMethods([.. types.OfType<TraitSymbol>()]);
+        foreach (var extend in extends.Where(e => e.Target is not TraitSymbol))
             methods.AddRange(BindExtendMethods(extend));
         CheckConformances(extends);
 
@@ -601,6 +604,7 @@ public sealed partial class Binder
             TypeSymbol? target = symbol switch
             {
                 NamedTypeDefinition definition => definition,
+                TraitSymbol trait => trait,
                 TypeSymbol builtin when ClrTypes.BuiltinTypes.ContainsKey(builtin) => builtin,
                 ClrTypeSymbol { IsGenericDefinition: false } clr when !clr.Type.IsGenericType => clr,
                 _ => null,
@@ -608,9 +612,7 @@ public sealed partial class Binder
 
             if (target is null)
             {
-                if (symbol is TraitSymbol)
-                    _diagnostics.ReportInvalidExtendTarget(targetSyntax.Span, "Traits cannot be extended (yet); add default methods to the trait instead.");
-                else if (symbol is TypeSymbol or ClrTypeGroupSymbol)
+                if (symbol is TypeSymbol or ClrTypeGroupSymbol)
                     _diagnostics.ReportInvalidExtendTarget(targetSyntax.Span, $"'{symbol.Name}' cannot be extended.");
                 else if (symbol is null && !ReportIfPrivateElsewhere(syntax.Name))
                     _diagnostics.ReportUndefinedType(syntax.Name.Span, syntax.Name.Text);
@@ -627,6 +629,12 @@ public sealed partial class Binder
             var traits = new List<(TypeSymbol Trait, TypeSyntax Syntax)>();
             foreach (var traitSyntax in syntax.Traits)
             {
+                if (target is TraitSymbol)
+                {
+                    _diagnostics.ReportInvalidExtendTarget(traitSyntax.Span,
+                        $"A trait can't implement traits with extend; inherit them in its declaration ('trait {target.Name}: Parent').");
+                    break;
+                }
                 var type = TypeSymbol.Error;
                 WithScope(typeParameterScope, () => type = BindBound(traitSyntax));
                 if (!IsInterfaceType(type))
@@ -675,8 +683,6 @@ public sealed partial class Binder
         var names = new HashSet<string>();
         foreach (var syntax in trait.Declaration.Methods)
         {
-            if (!syntax.TypeParameters.IsEmpty)
-                _diagnostics.ReportInvalidTraitMethod(syntax.Name.Span, $"Trait method '{syntax.Name.Text}' cannot be generic (yet).");
             if (syntax.Private is { } @private)
                 _diagnostics.ReportInvalidTraitMethod(@private.Span, $"Trait method '{syntax.Name.Text}' cannot be private.");
 
@@ -699,37 +705,83 @@ public sealed partial class Binder
     }
 
     /// <summary>
-    /// A trait's methods and those it inherits must have different names: it can't redeclare (or override) a parent's
-    /// method, and two parents can't both supply one, since a call through the trait would be ambiguous.
+    /// Separates each trait's overrides from its own methods. A method with an inherited name must override it: have a
+    /// body and the same signature (not be static). Two parents can't both supply a method, since a call through the
+    /// trait would be ambiguous, and an inherited method overridden in two unrelated parents must be overridden again.
     /// </summary>
-    private void CheckInheritedMethods(IEnumerable<TraitSymbol> traits)
+    private void CheckInheritedMethods(IReadOnlyList<TraitSymbol> traits)
     {
+        // First decide which methods are overrides, everywhere, so each trait's Methods hold only its new declarations.
+        var overrides = traits.ToDictionary(t => t, t => t.Methods
+            .Where(m => WithAncestors(t.SelfType).Skip(1).Any(a => a.TraitDefinition!.Methods.Any(p => p.Name == m.Name)))
+            .ToList());
+        foreach (var trait in traits)
+            trait.Methods = [.. trait.Methods.Except(overrides[trait])];
+
         foreach (var trait in traits)
         {
             InFile(FileOf(trait));
-            var inherited = new Dictionary<string, TypeSymbol>();
+            var inherited = new Dictionary<string, (MethodSymbol Method, TypeSymbol Parent)>();
             foreach (var ancestor in WithAncestors(trait.SelfType).Skip(1))
             {
                 foreach (var method in ancestor.TraitDefinition!.Methods)
                 {
-                    if (inherited.TryGetValue(method.Name, out var first) && first.TraitDefinition != ancestor.TraitDefinition)
-                        _diagnostics.ReportTraitMethodInheritedTwice(trait.Declaration.Name.Span, method.Name, first, ancestor);
-                    inherited.TryAdd(method.Name, ancestor);
+                    if (inherited.TryGetValue(method.Name, out var first) && first.Parent.TraitDefinition != ancestor.TraitDefinition)
+                        _diagnostics.ReportTraitMethodInheritedTwice(trait.Declaration.Name.Span, method.Name, first.Parent, ancestor);
+                    inherited.TryAdd(method.Name, (method, ancestor));
                 }
             }
-            foreach (var method in trait.Methods)
+
+            var valid = ImmutableArray.CreateBuilder<MethodSymbol>();
+            foreach (var method in overrides[trait])
             {
-                if (inherited.TryGetValue(method.Name, out var parent))
-                    _diagnostics.ReportTraitMethodRedeclared(method.Declaration!.Name.Span, method.Name, parent);
+                var (parentMethod, parent) = inherited[method.Name];
+                var name = method.Declaration!.Name.Span;
+                var map = TypeSubstitution.MapFor(parent);
+                if (!method.Declaration.HasBody)
+                    _diagnostics.ReportTraitMethodRedeclared(name, method.Name, parent);
+                else if (method.IsStatic || parentMethod.IsStatic)
+                    _diagnostics.ReportInvalidTraitMethod(name, $"Static method '{method.Name}' can't be overridden in a trait.");
+                else if (!SignaturesMatch(method, parentMethod, map))
+                    _diagnostics.ReportTraitSignatureMismatch(name, method.Name, parent, Signature(parentMethod, map));
+                else
+                {
+                    method.Overrides = (parentMethod, parent);
+                    valid.Add(method);
+                }
+            }
+            trait.Overrides = valid.ToImmutable();
+        }
+
+        foreach (var trait in traits)
+        {
+            InFile(FileOf(trait));
+            var ancestors = WithAncestors(trait.SelfType).ToList();
+            foreach (var method in ancestors.Skip(1).SelectMany(a => a.TraitDefinition!.Methods).Distinct())
+            {
+                if (MostSpecificOverriders(ancestors, method) is [var first, var second, ..])
+                    _diagnostics.ReportAmbiguousTraitOverride(trait.Declaration.Name.Span, method.Name, first, second, "in this trait");
             }
         }
+    }
+
+    /// <summary>
+    /// Of <paramref name="traits"/>, those that override <paramref name="method"/> and don't inherit another that does.
+    /// More than one means C# finds no most specific implementation.
+    /// </summary>
+    private List<TypeSymbol> MostSpecificOverriders(IReadOnlyList<TypeSymbol> traits, MethodSymbol method)
+    {
+        var overriders = traits.Where(t => t.TraitDefinition?.Overrides.Any(o => o.Overrides!.Value.Method == method) == true).ToList();
+        return overriders
+            .Where(t => !overriders.Any(other => other != t && WithAncestors(other).Skip(1).Any(a => a.TraitDefinition == t.TraitDefinition)))
+            .ToList();
     }
 
     private IEnumerable<FunctionInfo> BindExtendMethods(ExtendInfo extend)
     {
         InFile(extend.File);
         var target = extend.Target;
-        var thisType = target is NamedTypeDefinition definition ? definition.SelfType : target;
+        var thisType = target is GenericTypeDefinition definition ? definition.SelfType : target;
         var infos = new List<FunctionInfo>();
         foreach (var syntax in extend.Syntax.Methods)
         {
@@ -737,6 +789,17 @@ public sealed partial class Binder
             var method = (MethodSymbol)info.Symbol;
             if (!syntax.HasBody)
                 _diagnostics.ReportMissingBody(syntax.Name.Span, syntax.Name.Text);
+            if (target is TraitSymbol && syntax.Static is { } @static)
+            {
+                // A static method would make the trait usable only as a bound, which belongs in its declaration.
+                _diagnostics.ReportInvalidTraitMethod(@static.Span, $"'extend {target.Name}' can only add instance methods; declare static method '{syntax.Name.Text}' in the trait.");
+                continue;
+            }
+            if (target is TraitSymbol && syntax.Private is { } @private)
+            {
+                _diagnostics.ReportInvalidTraitMethod(@private.Span, $"Trait method '{syntax.Name.Text}' cannot be private.");
+                continue;
+            }
             if (syntax.Name.IsMissing || !RegisterMethod(target, method, syntax.Name))
                 continue;
             if (syntax.HasBody)
@@ -755,6 +818,18 @@ public sealed partial class Binder
         {
             _diagnostics.ReportReservedMemberName(name.Span, method.Name);
             return false;
+        }
+
+        if (target is TraitSymbol trait)
+        {
+            // A method a parent trait declares becomes an override, checked with the trait's own methods.
+            if (method.Name == trait.Name || trait.Methods.Any(m => m.Name == method.Name) || trait.TypeParameters.Any(p => p.Name == method.Name))
+            {
+                ReportMemberClash(name);
+                return false;
+            }
+            trait.Methods = trait.Methods.Add(method);
+            return true;
         }
 
         if (target is NamedTypeDefinition definition)
@@ -826,7 +901,11 @@ public sealed partial class Binder
                     var implementation = definition.Methods.FirstOrDefault(m => m.Name == required.Name);
                     if (implementation is null)
                     {
-                        if (required.IsAbstract)
+                        // A trait the type implements may override the method, supplying (or replacing) its default.
+                        var overriders = MostSpecificOverriders([.. TraitsOf(definition)], required);
+                        if (overriders is [var first, var second, ..])
+                            _diagnostics.ReportAmbiguousTraitOverride(traitSyntax.Span, required.Name, first, second, "in the extend block");
+                        else if (required.IsAbstract && overriders.Count == 0)
                             _diagnostics.ReportMissingTraitMethod(traitSyntax.Span, definition, required.Name, traitType);
                         continue;
                     }
@@ -842,18 +921,33 @@ public sealed partial class Binder
         }
     }
 
-    private static bool SignaturesMatch(MethodSymbol implementation, MethodSymbol required, IReadOnlyDictionary<TypeParameterSymbol, TypeSymbol> map) =>
-        implementation.IsStatic == required.IsStatic &&
-        implementation.TypeParameters.IsEmpty &&
-        implementation.ReturnType == TypeSubstitution.Substitute(required.ReturnType, map) &&
-        implementation.Parameters.Select(p => p.Type).SequenceEqual(required.Parameters.Select(p => TypeSubstitution.Substitute(p.Type, map)));
+    /// <summary>
+    /// A generic method matches one with as many type parameters, renamed to the trait's (`fn map<U>` implements
+    /// `fn map<R>`), and with the same bounds, as C# requires.
+    /// </summary>
+    private static bool SignaturesMatch(MethodSymbol implementation, MethodSymbol required, IReadOnlyDictionary<TypeParameterSymbol, TypeSymbol> traitMap)
+    {
+        if (implementation.IsStatic != required.IsStatic || implementation.TypeParameters.Length != required.TypeParameters.Length)
+            return false;
+
+        var map = new Dictionary<TypeParameterSymbol, TypeSymbol>(traitMap);
+        for (int i = 0; i < required.TypeParameters.Length; i++)
+            map[required.TypeParameters[i]] = implementation.TypeParameters[i];
+
+        return implementation.ReturnType == TypeSubstitution.Substitute(required.ReturnType, map) &&
+               implementation.Parameters.Select(p => p.Type).SequenceEqual(required.Parameters.Select(p => TypeSubstitution.Substitute(p.Type, map))) &&
+               implementation.TypeParameters.Zip(required.TypeParameters).All(pair =>
+                   pair.First.Constraints.ToHashSet().SetEquals(pair.Second.Constraints.Select(c => TypeSubstitution.Substitute(c, map))));
+    }
 
     private static string Signature(MethodSymbol method, IReadOnlyDictionary<TypeParameterSymbol, TypeSymbol> map)
     {
         var parameters = string.Join(", ", method.Parameters.Select(p => $"{p.Name}: {TypeSubstitution.Substitute(p.Type, map)}"));
         var returnType = TypeSubstitution.Substitute(method.ReturnType, map);
         var result = returnType == TypeSymbol.Unit ? "" : $" => {returnType}";
-        return $"fn {method.Name}({parameters}){result}";
+        var typeParameters = method.TypeParameters.IsEmpty ? "" : "<" + string.Join(", ", method.TypeParameters.Select(p =>
+            p.Constraints.IsEmpty ? p.Name : $"{p.Name}: {string.Join(" + ", p.Constraints.Select(c => TypeSubstitution.Substitute(c, map)))}")) + ">";
+        return $"fn {method.Name}{typeParameters}({parameters}){result}";
     }
 
     /// <summary>

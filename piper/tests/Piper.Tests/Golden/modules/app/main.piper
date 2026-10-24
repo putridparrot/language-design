@@ -4,11 +4,17 @@ using System.Collections.Generic;
 // A private type, only visible in this file.
 private record Totals(count: int, area: double);
 
+// Adding a default method to a trait declared in another file and namespace.
+extend Describe {
+    fn shout() => string = this.describe().ToUpper();
+}
+
 fn main() {
     let circle = Shape.Circle(Point(0.0, 0.0), 1.0);
     let rect = Geometry.Shape.Rect(Geometry.Point(1.0, 2.0), 3.0, 4.0);   // fully qualified also works
     print(circle.describe());
     print(rect.describe());
+    print(circle.shout());
 
     let shapes: List<Shape> = List();
     shapes.Add(circle);

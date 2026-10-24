@@ -110,6 +110,12 @@ public sealed class MethodSymbol(
 
     /// <summary>A required trait method, declared without a body.</summary>
     public bool IsAbstract => !Declaration!.HasBody;
+
+    /// <summary>
+    /// For a trait method that overrides one it inherits: that method, and the parent trait declaring it as seen from
+    /// this trait (`Equatable&lt;T&gt;`). It's emitted as an explicit implementation (`bool Equatable&lt;T&gt;.equals(…)`).
+    /// </summary>
+    public (MethodSymbol Method, TypeSymbol Parent)? Overrides { get; internal set; }
 }
 
 public static class BuiltinFunctions

@@ -405,7 +405,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0315", span, $"Trait '{trait}' inherits from itself.");
 
     public void ReportTraitMethodRedeclared(TextSpan span, string method, TypeSymbol parent) =>
-        Error("PIP0316", span, $"'{method}' is already declared by '{parent}', which this trait inherits; a trait can't redeclare or override an inherited method.");
+        Error("PIP0316", span, $"'{method}' is already declared by '{parent}', which this trait inherits; a trait can override an inherited method only by giving it a body with the same signature.");
 
     public void ReportTraitMethodInheritedTwice(TextSpan span, string method, TypeSymbol first, TypeSymbol second) =>
         Error("PIP0317", span, $"This trait inherits '{method}' from both '{first}' and '{second}', so calls to it would be ambiguous.");
@@ -418,6 +418,9 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportStaticTraitMethodCall(TextSpan span, string method, TypeSymbol type) =>
         Error("PIP0320", span, $"'{type}' doesn't implement static method '{method}' itself; call the trait's default through a type parameter bounded by the trait, or implement it in the extend block.");
+
+    public void ReportAmbiguousTraitOverride(TextSpan span, string method, TypeSymbol first, TypeSymbol second, string where) =>
+        Error("PIP0321", span, $"'{first}' and '{second}' both override '{method}', so neither is the most specific; override it {where}.");
 
     public void ReportConstantOverflow(TextSpan span) =>
         Error("PIP0292", span, "This constant expression overflows. Constant arithmetic is checked, as in C#; use a long or a variable if wrapping around is intended.");
