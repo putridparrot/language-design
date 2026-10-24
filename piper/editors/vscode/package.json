@@ -67,6 +67,34 @@
       {
         "command": "piper.restartServer",
         "title": "Piper: Restart Language Server"
+      },
+      {
+        "command": "piper.run",
+        "title": "Piper: Run",
+        "icon": "$(play)"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "piper.run",
+          "when": "resourceLangId == piper",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "piper.run",
+          "when": "editorLangId == piper"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "piper.run",
+        "key": "ctrl+shift+f5",
+        "mac": "cmd+shift+f5",
+        "when": "editorLangId == piper"
       }
     ]
   },

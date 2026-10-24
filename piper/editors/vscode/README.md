@@ -12,6 +12,9 @@ Support for [Piper](../../README.md) `.piper` files:
   - completion, including members after a dot
   - an outline
 
+- **Running:** the ▶ button in the editor title bar, **Piper: Run** or Ctrl+Shift+F5 saves your files and runs the
+  current file's program with `piper run`, in the terminal panel.
+
 ## Setup
 
 The extension starts the language server with the `piper` tool:
@@ -20,7 +23,9 @@ The extension starts the language server with the `piper` tool:
 dotnet tool install -g Piper --prerelease
 ```
 
-To use a compiler built from this repository instead, set these in your settings:
+If `piper` isn't installed and the extension is run from this repository, it uses the compiler built there
+(`src/Piper.Cli/bin/Debug` or `Release`) with `dotnet`, so `dotnet build` is enough. To use another build, set these in
+your settings:
 
 ```json
 "piper.server.path": "dotnet",
