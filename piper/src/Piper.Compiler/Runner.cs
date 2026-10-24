@@ -11,6 +11,9 @@ namespace Piper;
 /// <param name="Pdb">Portable debug information, so stack traces can name source lines (Piper ones, given <c>#line</c>).</param>
 public sealed record CSharpBuildResult(byte[]? Assembly, byte[]? Pdb, ImmutableArray<string> Errors)
 {
+    /// <summary>The XML documentation file, from the program's `///` comments.</summary>
+    public byte[]? Documentation { get; init; }
+
     public bool Success => Assembly is not null;
 }
 
@@ -46,7 +49,8 @@ public static class Runner
     /// <param name="executable">Build a console application whose entry point is the program's `main`, rather than a library.</param>
     public static CSharpBuildResult Build(IEnumerable<GeneratedFile> files, string assemblyName = "PiperProgram", bool executable = false)
     {
-        var options = new CSharpParseOptions(LanguageVersion.Latest);
+        // Parse doc comments, so `///` comments go into the XML documentation file (without warnings for missing ones).
+        var options = new CSharpParseOptions(LanguageVersion.Latest, DocumentationMode.Parse);
         var trees = files.Select(f => CSharpSyntaxTree.ParseText(f.Text, options, path: f.Name, encoding: System.Text.Encoding.UTF8)).ToList();
         var compilation = CSharpCompilation.Create(
             assemblyName,
@@ -59,13 +63,16 @@ public static class Runner
 
         using var stream = new MemoryStream();
         using var pdb = new MemoryStream();
-        var result = compilation.Emit(stream, pdb, options: new EmitOptions(debugInformationFormat: DebugInformationFormat.PortablePdb));
+        using var documentation = new MemoryStream();
+        var result = compilation.Emit(stream, pdb, documentation, options: new EmitOptions(debugInformationFormat: DebugInformationFormat.PortablePdb));
         var errors = result.Diagnostics
             .Where(d => d.Severity == DiagnosticSeverity.Error)
             .Select(FormatInternalError)
             .ToImmutableArray();
 
-        return result.Success ? new CSharpBuildResult(stream.ToArray(), pdb.ToArray(), errors) : new CSharpBuildResult(null, null, errors);
+        return result.Success
+            ? new CSharpBuildResult(stream.ToArray(), pdb.ToArray(), errors) { Documentation = documentation.ToArray() }
+            : new CSharpBuildResult(null, null, errors);
     }
 
     /// <summary>

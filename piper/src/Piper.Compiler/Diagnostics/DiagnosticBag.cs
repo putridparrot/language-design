@@ -443,6 +443,30 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportEmptyRelationalPattern(TextSpan span, TypeSymbol type) =>
         Error("PIP0328", span, $"This pattern matches no '{type}' values.");
 
+    public void ReportContractBroken(TextSpan span, string owner, string kind, string condition) =>
+        Error("PIP0340", span, $"This call breaks {owner}'s {kind} '{condition}'.");
+
+    public void ReportInvalidRequires(TextSpan span, string problem) =>
+        Error("PIP0341", span, problem);
+
+    public void ReportInvalidDefault(TextSpan span, string problem) =>
+        Error("PIP0345", span, problem);
+
+    public void ReportNamedArgument(TextSpan span, string problem) =>
+        Error("PIP0346", span, problem);
+
+    public void ReportLetElse(TextSpan span, string problem) =>
+        Error("PIP0343", span, problem);
+
+    public void ReportRefutableLet(TextSpan span, string missing, string statement) =>
+        Error("PIP0347", span, $"This pattern doesn't match '{missing}', so 'let' needs an else: {statement} else {{ ... }};");
+
+    public void ReportIrrefutableLetElse(TextSpan span) =>
+        Warning("PIP0344", span, "This pattern always matches, so the else block never runs; use a plain 'let'.");
+
+    public void ReportInvalidAlignment(TextSpan span) =>
+        Error("PIP0342", span, "An interpolation's alignment, after ',', must be a whole number, such as {name,-10}.");
+
     public void ReportInvalidOperator(TextSpan span, string problem) =>
         Error("PIP0339", span, problem);
 
@@ -456,7 +480,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0336", span, $"AssertEqual compares values of one type, but got '{expected}' and '{actual}'.");
 
     public void ReportReservedName(TextSpan span, string name) =>
-        Error("PIP0335", span, $"'{name}' is reserved for future use, so it can't be used as a name.");
+        Error("PIP0335", span, name == "requires" ? "'requires' is a keyword, so it can't be used as a name." : $"'{name}' is reserved for future use, so it can't be used as a name.");
 
     public void ReportUnknownAttribute(TextSpan span, string name) =>
         Error("PIP0329", span, $"There's no attribute type '{name}' (or '{name}Attribute'); attributes are .NET types deriving from System.Attribute. Is a 'using' missing?");

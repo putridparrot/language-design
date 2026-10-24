@@ -59,7 +59,8 @@ public sealed partial class CSharpEmitter
     /// <summary><c>U mapAll&lt;U&gt;(TPiperSelf piperSelf, Func&lt;T, U&gt; f) where …</c>, after the given modifiers.</summary>
     private string WitnessSignature(MethodSymbol method, IReadOnlyDictionary<TypeParameterSymbol, TypeSymbol> map, string modifiers, bool withSelf)
     {
-        var parameters = method.Parameters.Select(p => $"{TypeName(TypeSubstitution.Substitute(p.Type, map))} {Escape(p.Name)}");
+        // Defaults too, so generic code calling the trait method through its witness can leave arguments out.
+        var parameters = method.Parameters.Select(p => $"{TypeName(TypeSubstitution.Substitute(p.Type, map))} {Escape(p.Name)}{DefaultValue(p.Default)}");
         if (withSelf && !method.IsStatic)
             parameters = parameters.Prepend($"{Self} {SelfParameter}");
         return $"{modifiers}{TypeName(TypeSubstitution.Substitute(method.ReturnType, map))} {Escape(method.Name)}" +

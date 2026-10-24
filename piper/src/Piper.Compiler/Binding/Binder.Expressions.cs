@@ -24,6 +24,7 @@ public sealed partial class Binder
         LiteralExpressionSyntax s => BindLiteral(s),
         InterpolatedStringExpressionSyntax s => BindInterpolatedString(s),
         NullLiteralExpressionSyntax s => BindNull(s, expected),
+        NamedArgumentSyntax s => BindMisplacedNamedArgument(s, expected),
         NameExpressionSyntax s => BindName(s, expected),
         IsExpressionSyntax s => BindIs(s, allowBindings: false),
         ConditionalAccessExpressionSyntax s => BindConditionalAccess(s),
@@ -74,7 +75,8 @@ public sealed partial class Binder
         var parts = syntax.Parts.Select(part => part switch
         {
             InterpolatedTextSyntax text => new BoundLiteralExpression(text.Text, TypeSymbol.String),
-            InterpolationSyntax hole => RequireValue(BindExpression(hole.Expression), hole.Expression.Span),
+            InterpolationSyntax { Alignment: null, Format: null } hole => RequireValue(BindExpression(hole.Expression), hole.Expression.Span),
+            InterpolationSyntax hole => new BoundFormattedExpression(RequireValue(BindExpression(hole.Expression), hole.Expression.Span), hole.Alignment, hole.Format),
             _ => throw new InvalidOperationException(),
         });
         return new BoundInterpolatedStringExpression([.. parts]);
@@ -571,12 +573,12 @@ public sealed partial class Binder
                 if (!ApplyExplicitTypeArguments(explicitArguments, function.TypeParameters, map, syntax.Callee.Span, calleeName))
                     return BindArgumentsForDiagnostics(syntax.Arguments);
                 Seed(function.ReturnType, expected, map, function.TypeParameters);
-                var arguments = BindArguments(syntax.Span, calleeName, function.Parameters.Select(p => p.Type), function.TypeParameters, map, syntax.Arguments);
-                if (arguments is null)
+                if (BindNamedArguments(syntax.Span, calleeName, Signature(function.Parameters), function.TypeParameters, map, syntax.Arguments) is not var (arguments, names, byParameter))
                     return new BoundErrorExpression();
 
                 var typeArguments = TypeArgumentsFrom(function.TypeParameters, map, syntax.Span);
-                return new BoundCallExpression(function, typeArguments, arguments.Value, TypeSubstitution.Substitute(function.ReturnType, map));
+                CheckContracts(function.Preconditions, function.Parameters, byParameter, syntax.Span, function.Name, "precondition");
+                return new BoundCallExpression(function, typeArguments, arguments, TypeSubstitution.Substitute(function.ReturnType, map)) { ArgumentNames = names };
             }
 
             case RecordSymbol record:
@@ -628,12 +630,13 @@ public sealed partial class Binder
     {
         var map = new Dictionary<TypeParameterSymbol, TypeSymbol>();
         Seed(record.SelfType, expected, map, record.TypeParameters);
-        var arguments = BindArguments(syntax.Span, record.Name, record.Fields.Select(f => f.Type), record.TypeParameters, map, syntax.Arguments);
-        if (arguments is null)
+        var fields = record.Fields.Select(f => (f.Name, f.Type, f.Default)).ToList();
+        if (BindNamedArguments(syntax.Span, record.Name, fields, record.TypeParameters, map, syntax.Arguments) is not var (arguments, names, byField))
             return new BoundErrorExpression();
 
         var type = record.Construct(TypeArgumentsFrom(record.TypeParameters, map, syntax.Span));
-        return new BoundRecordCreationExpression(record, arguments.Value, type);
+        CheckContracts(record.Invariants, record.InvariantFields, byField, syntax.Span, record.Name, "invariant");
+        return new BoundRecordCreationExpression(record, arguments, type) { ArgumentNames = names };
     }
 
     /// <summary><c>Shape.Circle(1.0)</c>, <c>Shape.Empty</c>, or a static method call <c>Point.origin()</c>.</summary>
@@ -712,18 +715,19 @@ public sealed partial class Binder
         if (!ApplyExplicitTypeArguments(explicitArguments, method.TypeParameters, map, member.Span, method.Name))
             return BindArgumentsForDiagnostics(arguments);
         Seed(method.ReturnType, expected, map, inferred);
-        var boundArguments = BindArguments(span, $"{type}.{method.Name}", method.Parameters.Select(p => p.Type), inferred, map, arguments.Value);
-        if (boundArguments is null)
+        if (BindNamedArguments(span, $"{type}.{method.Name}", Signature(method.Parameters), inferred, map, arguments.Value) is not var (boundArguments, names, byParameter))
             return new BoundErrorExpression();
 
         var receiverType = definition is { IsGeneric: true }
             ? definition.Construct(TypeArgumentsFrom(definition.TypeParameters, map, span))
             : type;
         var typeArguments = TypeArgumentsFrom(method.TypeParameters, map, span);
+        CheckContracts(method.Preconditions, method.Parameters, byParameter, span, $"{type}.{method.Name}", "precondition");
         return new BoundMethodCallExpression(
-            null, receiverType, method, typeArguments, boundArguments.Value, TypeSubstitution.Substitute(method.ReturnType, map))
+            null, receiverType, method, typeArguments, boundArguments, TypeSubstitution.Substitute(method.ReturnType, map))
         {
             TraitType = owner.IsTrait ? owner : null,
+            ArgumentNames = names,
         };
     }
 
@@ -787,15 +791,16 @@ public sealed partial class Binder
         if (!ApplyExplicitTypeArguments(explicitArguments, method.TypeParameters, map, member.Span, method.Name))
             return BindArgumentsForDiagnostics(syntax.Arguments);
         Seed(method.ReturnType, expected, map, method.TypeParameters);
-        var arguments = BindArguments(syntax.Span, method.Name, method.Parameters.Select(p => p.Type), method.TypeParameters, map, syntax.Arguments);
-        if (arguments is null)
+        if (BindNamedArguments(syntax.Span, method.Name, Signature(method.Parameters), method.TypeParameters, map, syntax.Arguments) is not var (arguments, names, byParameter))
             return new BoundErrorExpression();
 
         var typeArguments = TypeArgumentsFrom(method.TypeParameters, map, syntax.Span);
+        CheckContracts(method.Preconditions, method.Parameters, byParameter, syntax.Span, method.Name, "precondition");
         return new BoundMethodCallExpression(
-            receiver, receiver.Type, method, typeArguments, arguments.Value, TypeSubstitution.Substitute(method.ReturnType, map))
+            receiver, receiver.Type, method, typeArguments, arguments, TypeSubstitution.Substitute(method.ReturnType, map))
         {
             TraitType = owner.IsTrait ? owner : null,
+            ArgumentNames = names,
         };
     }
 
@@ -933,6 +938,94 @@ public sealed partial class Binder
     /// argument whose parameter type is already known is bound with that as its expected type; otherwise
     /// its type is unified with the parameter type. Arguments are then converted to the parameter types.
     /// </summary>
+    /// <summary>
+    /// Arguments for a call to a Piper function or method, or a record's construction: positional ones first, then
+    /// `name: value` ones in any order, and parameters with defaults may be left out. They're bound in the order they're
+    /// written (and stay in that order, with their names, for C# to evaluate). <c>ByParameter</c> gives each parameter
+    /// its argument, or its default.
+    /// </summary>
+    private (ImmutableArray<BoundExpression> Arguments, ImmutableArray<string?> Names, ImmutableArray<BoundExpression> ByParameter)? BindNamedArguments(
+        TextSpan span,
+        string calleeName,
+        IReadOnlyList<(string Name, TypeSymbol Type, ParameterDefault? Default)> parameters,
+        IReadOnlyList<TypeParameterSymbol> inferred,
+        Dictionary<TypeParameterSymbol, TypeSymbol> map,
+        ImmutableArray<ExpressionSyntax> arguments)
+    {
+        if (arguments.Length == parameters.Count && !arguments.Any(a => a is NamedArgumentSyntax))
+        {
+            var positional = BindArguments(span, calleeName, parameters.Select(p => p.Type), inferred, map, arguments);
+            return positional is { } all ? (all, [], all) : null;
+        }
+
+        var unwrapped = arguments.Select(a => a is NamedArgumentSyntax named ? named.Value : a).ToImmutableArray();
+        var indices = new List<int>();
+        bool valid = true, sawNamed = false;
+        for (int i = 0; i < arguments.Length; i++)
+        {
+            int index;
+            if (arguments[i] is NamedArgumentSyntax named)
+            {
+                sawNamed = true;
+                index = parameters.ToList().FindIndex(p => p.Name == named.Name.Text);
+                if (index < 0)
+                {
+                    _diagnostics.ReportNamedArgument(named.Name.Span, $"'{calleeName}' has no parameter named '{named.Name.Text}'.");
+                    valid = false;
+                    continue;
+                }
+            }
+            else if (sawNamed)
+            {
+                _diagnostics.ReportNamedArgument(arguments[i].Span, "Positional arguments must come before named ones.");
+                valid = false;
+                continue;
+            }
+            else
+            {
+                index = i;
+                if (index >= parameters.Count)
+                {
+                    BindArgumentsForDiagnostics(unwrapped);
+                    _diagnostics.ReportWrongArgumentCount(span, calleeName, parameters.Count, arguments.Length);
+                    return null;
+                }
+            }
+            if (indices.Contains(index))
+            {
+                _diagnostics.ReportNamedArgument(arguments[i].Span, $"'{parameters[index].Name}' is given more than once.");
+                valid = false;
+                continue;
+            }
+            indices.Add(index);
+        }
+        if (!valid)
+        {
+            BindArgumentsForDiagnostics(unwrapped);
+            return null;
+        }
+        if (Enumerable.Range(0, parameters.Count).FirstOrDefault(i => !indices.Contains(i) && parameters[i].Default is null, -1) is var missing and >= 0)
+        {
+            BindArgumentsForDiagnostics(unwrapped);
+            // Without names, it's simply too few arguments.
+            if (arguments.Any(a => a is NamedArgumentSyntax))
+                _diagnostics.ReportNamedArgument(span, $"'{calleeName}' needs an argument for '{parameters[missing].Name}'.");
+            else
+                _diagnostics.ReportWrongArgumentCount(span, calleeName, parameters.Count(p => p.Default is null), arguments.Length);
+            return null;
+        }
+
+        var bound = BindArguments(span, calleeName, indices.Select(i => parameters[i].Type), inferred, map, unwrapped);
+        if (bound is not { } boundArguments)
+            return null;
+        var names = arguments.Select(a => a is NamedArgumentSyntax named ? named.Name.Text : null).ToImmutableArray();
+        var byParameter = parameters.Select((p, i) => indices.IndexOf(i) is >= 0 and var j ? boundArguments[j] : p.Default!.Value).ToImmutableArray();
+        return (boundArguments, names.All(n => n is null) ? [] : names, byParameter);
+    }
+
+    private static IReadOnlyList<(string Name, TypeSymbol Type, ParameterDefault? Default)> Signature(IEnumerable<VariableSymbol> parameters) =>
+        [.. parameters.Select(p => (p.Name, p.Type, p.Default))];
+
     private ImmutableArray<BoundExpression>? BindArguments(
         TextSpan span,
         string calleeName,
@@ -1285,6 +1378,13 @@ public sealed partial class Binder
     }
 
     /// <summary><c>null</c> is the None of the optional type the context expects.</summary>
+    /// <summary>Named arguments work in calls to Piper functions, methods and records; anywhere else they're an error.</summary>
+    private BoundExpression BindMisplacedNamedArgument(NamedArgumentSyntax syntax, TypeSymbol? expected)
+    {
+        _diagnostics.ReportNamedArgument(syntax.Name.Span, "Named arguments can only be used in calls to Piper functions and methods, and when making records.");
+        return BindExpression(syntax.Value, expected);
+    }
+
     private BoundExpression BindNull(NullLiteralExpressionSyntax syntax, TypeSymbol? expected)
     {
         if (expected is { IsOption: true })

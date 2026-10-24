@@ -116,6 +116,23 @@ public class TestRunnerTests
         Assert.True(run.Success, string.Join("\n", run.Results.Select(r => r.Failure)));
     }
 
+    [Fact]
+    public void A_broken_precondition_fails_the_test_with_its_condition_and_values()
+    {
+        var run = Run("""
+            fn Divide(a: int, b: int) => int requires b != 0 = a / b;
+
+            test "divides" {
+                let zero = 0;
+                Print(Divide(1, zero));
+            }
+            """);
+        var failure = Assert.Single(run.Results).Failure!;
+        Assert.StartsWith("Unhandled exception: System.ArgumentException: Precondition failed: b != 0 (b = 0)", failure);
+        Assert.Contains("at Divide in maths.piper:line 1", failure);
+        Assert.Contains("maths.piper:line 5", failure);
+    }
+
     [Theory]
     [InlineData("PIP0336", "test \"t\" { AssertEqual(1, \"one\"); }")]
     [InlineData("PIP0337", "test \"t{1}\" { }")]

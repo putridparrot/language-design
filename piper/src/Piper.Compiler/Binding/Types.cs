@@ -156,6 +156,12 @@ public sealed class RecordSymbol : NamedTypeDefinition
 
     /// <summary>Field types are written in terms of the record's own type parameters; see <see cref="TypeSubstitution"/>.</summary>
     public ImmutableArray<FieldSymbol> Fields { get; internal set; } = [];
+
+    /// <summary>Its `requires` conditions, checked when it's constructed, over <see cref="InvariantFields"/>.</summary>
+    public ImmutableArray<BoundContract> Invariants { get; internal set; } = [];
+
+    /// <summary>The fields as the variables the invariants are written in terms of (the constructor's parameters).</summary>
+    public ImmutableArray<VariableSymbol> InvariantFields { get; internal set; } = [];
 }
 
 public enum BuiltinEnumKind

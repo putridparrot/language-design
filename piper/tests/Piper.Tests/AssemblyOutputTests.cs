@@ -42,7 +42,7 @@ public sealed class AssemblyOutputTests : IDisposable
         var output = AssemblyWriter.Write(result.Files, _directory, "app", executable: true);
 
         Assert.True(output.Success, string.Join("\n", output.Errors));
-        foreach (var file in new[] { "app.dll", "app.pdb", "app.runtimeconfig.json", "Piper.Runtime.dll" })
+        foreach (var file in new[] { "app.dll", "app.pdb", "app.xml", "app.runtimeconfig.json", "Piper.Runtime.dll" })
             Assert.True(File.Exists(Path.Combine(_directory, file)), file);
 
         // Through `dotnet app.dll`, and through the native launcher where the SDK provides one.

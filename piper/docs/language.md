@@ -41,8 +41,9 @@ attributes      = { "[" attribute { "," attribute } [ "," ] "]" } ;
 attribute       = qualifiedName [ "(" [ expression { "," expression } [ "," ] ] ")" ] ;   (* constants, then Name = value *)
 
 function        = [ "static" ] [ "async" ] ( "fn" IDENT [ typeParameters ] | "operator" ( "+" | "-" | "*" | "/" | "%" ) ) "(" [ parameters ] ")" [ "=>" type ]
-                  ( block | "=" expression ";" | ";" ) ;      (* ";" only for required trait methods; "static" only in traits and extend blocks *)
-record          = "record" IDENT [ typeParameters ] "(" [ parameters ] ")" ";" ;
+                  { requires } ( block | "=" expression ";" | ";" ) ;      (* ";" only for required trait methods; "static" only in traits and extend blocks *)
+record          = "record" IDENT [ typeParameters ] "(" [ parameters ] ")" { requires } ";" ;
+requires        = "requires" condition { "," condition } ;    (* condition: an expression without assignment, of type bool *)
 enum            = "enum" IDENT [ typeParameters ] "{" [ variant { "," variant } [ "," ] ] "}" ;
 variant         = IDENT [ "(" [ parameters ] ")" ] ;
 trait           = "trait" IDENT [ typeParameters ] [ ":" type { "," type } ] "{" { attributes function } "}" ;   (* ": Named" inherits *)
@@ -50,7 +51,7 @@ extend          = "extend" namedType [ ":" type { "," type } ] "{" { attributes 
 typeParameters  = "<" typeParameter { "," typeParameter } [ "," ] ">" ;
 typeParameter   = IDENT [ ":" type { "+" type } ] ;           (* bounds must be traits *)
 parameters      = parameter { "," parameter } [ "," ] ;
-parameter       = attributes IDENT ":" type ;
+parameter       = attributes IDENT ":" type [ "=" expression ] ;   (* a default: a constant, or null for an optional *)
 type            = ( namedType | functionType | tupleType ) { "?" | "[" { "," } "]" } ;   (* T? is Option<T>; int[] an array, int[,] 2-D *)
 functionType    = "(" [ type { "," type } [ "," ] ] ")" "=>" type ;   (* (int) => bool is Func<int, bool> *)
 tupleType       = "(" tupleElement "," tupleElement { "," tupleElement } ")" ;
@@ -61,7 +62,8 @@ block           = "{" { statement } [ expression ] "}" ;      (* final expressio
 statement       = variableDecl | while | for | return | try | using | defer | yield | "break" ";" | "continue" ";"
                 | blockLike [ ";" ] | expression ";" | ";" ;
 blockLike       = if | match | block ;                        (* ends at its '}', no ';' needed *)
-variableDecl    = ( "let" | "mut" ) ( IDENT [ ":" type ] | designation ) "=" expression ";" ;
+variableDecl    = ( "let" | "mut" ) ( IDENT [ ":" type ] | designation ) "=" expression ";"
+                | "let" pattern "=" expression "else" block [ ";" ] ;   (* let ... else: the pattern starts with "[" or a name followed by "(", "." or "{" *)
 designation     = "(" ( IDENT | designation ) "," ( IDENT | designation ) { "," ( IDENT | designation ) } ")" ;   (* "_" discards *)
 while           = "while" expression block ;
 for             = [ "await" ] "for" ( IDENT | designation ) "in" expression block ;   (* a range, anything enumerable, or with await an IAsyncEnumerable *)
@@ -80,7 +82,7 @@ unary           = ( "-" | "!" | "await" ) unary | "(" type ")" unary | postfix ;
 postfix         = primary { "(" [ arguments ] ")" | "[" arguments "]" | "." IDENT [ typeArguments ] | "?" | "?." IDENT postfix } ;
                                                               (* after "?." the rest of the chain is skipped on None *)
 arguments       = argument { "," argument } [ "," ] ;
-argument        = expression | "out" [ "let" | "mut" ] IDENT | "ref" expression ;   (* out and ref: only for .NET out and ref parameters *)
+argument        = [ IDENT ":" ] ( expression | "out" [ "let" | "mut" ] IDENT | "ref" expression ) ;   (* name: a named argument; out and ref: only for .NET out and ref parameters *)
 primary         = INT | DOUBLE | CHAR | STRING | "true" | "false" | "null" | IDENT [ typeArguments ] | "this"
                 | "(" expression ")" | tuple | block | if | match | lambda | collection | recordSpread | "throw" expression ;
 recordSpread    = "{" "..." expression { "," IDENT [ ":" expression ] } [ "," ] "}" ;   (* { ...p, y: 5, height } *)
@@ -139,15 +141,15 @@ generic call `a<b, c>(d)`, as in C#.
 ### Lexical structure
 
 - **Identifiers:** ASCII letters, digits and `_`, not starting with a digit.
-- **Reserved words:** `const operator test where type impl module import self public internal protected sealed abstract override virtual class struct interface` aren't keywords yet but may become ones, so they can't be used as names (of variables, parameters, fields, functions or types). They can still follow a dot, to reach a .NET member of that name.
+- **Reserved words:** `requires` is a keyword only after a signature, but can't be a name anywhere. `const operator test where type impl module import self public internal protected sealed abstract override virtual class struct interface` aren't keywords yet but may become ones, so they can't be used as names (of variables, parameters, fields, functions or types). They can still follow a dot, to reach a .NET member of that name.
 - **Keywords:** `fn let mut if else while for in return break continue record enum match trait extend static this null is namespace using private try catch finally defer throw out true false`; `async`, `await`, `yield` and `ref`, which are contextual as in C# (still usable as names); and the builtin type names `int long double bool string char object byte sbyte short ushort uint ulong float decimal unit`.
-- **Comments:** `// line` and `/* block */`. Block comments nest.
+- **Comments:** `// line` and `/* block */`. Block comments nest. `///` lines directly above a declaration, method, parameter, field or enum variant are its documentation: the editor shows it, and the generated C# carries it as XML documentation (`piper build --exe` and `--library` also write the `.xml` file).
 - **Integers:** `42`, `1_000_000`, `0xFF`, `0b1010`. Suffixes as in C#: `L` long (`3_000_000_000L`), `U` uint (or ulong if it doesn't fit), `UL` ulong. An unsuffixed literal must fit in int (C# would make a larger one a uint or long; Piper asks for the suffix); as in C#, `-2147483648` and `-9223372036854775808L` are allowed too.
 - **Doubles:** `1.5`, `2e3`, `2.5E-1`. A digit is required after the `.`, so `0..10` is a range. Suffixes `F` (float), `D` (double) and `M` (decimal) work on any decimal number: `1.5f`, `19.99m`, `2m`.
 - **Chars:** `'a'`, `'\n'`.
 - **Strings:** `"..."`, with escapes `\n \t \r \0 \\ \" \' \{ \} \u{1F99C}`.
 - **Raw strings:** as in C# 11, ```"""…"""``` (three or more quotes) has no escapes and no interpolation, so quotes and braces are literal. A multi-line raw string starts on the line after the opening quotes and ends on the line before the closing ones, whose indentation is removed from every line; line breaks are always `\n`.
-- **Interpolation:** `{expression}` inside a string, for example `"sum={a + b}"`. Write `\{` for a literal brace.
+- **Interpolation:** `{expression}` inside a string, for example `"sum={a + b}"`. Write `\{` for a literal brace. As in C#, an alignment and a format can follow the expression: `"{price:C}"`, `"{date:yyyy-MM-dd}"`, `"{name,-10}"`, `"{total,8:F2}"`. A `,` or `:` inside brackets (a named tuple element, a lambda's parameter type) is part of the expression.
 
 ## Semantics
 
@@ -449,6 +451,26 @@ fn LegacyParse(text: string) => int = int.Parse(text);
 - **Where they go:** on records, enums and traits (C# classes and interfaces), functions and methods, parameters, and record and variant fields. A field's attribute goes on the C# property when it applies to properties (`[property: …]`, so System.Text.Json and similar see it), otherwise on the backing field, otherwise the constructor parameter. An attribute that can't go where it's written (`[Serializable]` on a function) is an error, as is repeating one that doesn't allow it.
 - **`[Obsolete]`** on a Piper declaration makes each use of it a warning, `'F' is obsolete: message` (an error with `[Obsolete("…", true)]`), as in C#. Uses of obsolete .NET types, methods, constructors and properties are reported the same way (`'WebClient' is obsolete: … Use HttpClient instead.`).
 
+### Named arguments and default values
+
+As in C#, a parameter (or record field) can have a default value, and a call can name its arguments:
+
+```piper
+fn Connect(host: string, port: int = 443, retries: int = 3) => Connection = …;
+
+Connect("example.com");
+Connect("example.com", retries: 5);
+Connect(retries: 1, host: "localhost");
+
+record Options(verbose: bool = false, label: string? = null);
+let quiet = Options();
+```
+
+- **Defaults** must be constants (literals, .NET constants and enum members, operators on those) or `null` for an optional, and come after the parameters without them. Operators can't have them.
+- **Named arguments** come after the positional ones, each naming a parameter once; parameters with defaults can be left out. Arguments are evaluated in the order they're written, whatever order the parameters are in.
+- **They work for** Piper functions, methods and records, and .NET methods and constructors (`Math.Round(x, digits: 2)`, `DateTime(year: 2026, month: 3, day: 14)`). Not for function values (lambdas and delegates) or attributes, whose properties are set with `Name = value`.
+- **Through traits:** a trait method's defaults apply when it's called through a generic bound too.
+
 ### Lambdas and function values
 
 A function type `(int, int) => bool` is the .NET delegate `Func<int, int, bool>`, and one returning unit is an
@@ -623,6 +645,9 @@ fn Copy(from: string, to: string) {
 
 ### Bindings
 
+- **`let … else`** unwraps a value or leaves: `let Some(user) = Find(id) else { return Err("no user"); };` binds `user` for the rest of the block when the value matches the pattern, and otherwise runs the `else` block, which must leave (`return`, `break`, `continue` or `throw`). Any pattern that starts with `[` or a name followed by `(`, `.` or `{` works: `let [first, ...rest] = items else { return 0; };`, `let Circle(r) | Ring(r, _) = shape else { … };`. The else block can't see the pattern's variables, and a pattern that always matches is a warning.
+- **Destructuring with `let`:** a pattern that always matches needs no else: `let Point(x, y) = p;`, `let Line(Point(x1, _), _) = line;`, `let Point { y: height } = p;`. One that can fail, such as `let Some(v) = i;`, is an error that suggests adding an else (there's no unchecked unwrap).
+
 - `let` declares an immutable binding and `mut` a mutable one. Assigning to a `let` binding, a parameter or a `for` loop variable is a compile error.
 - Shadowing is allowed in nested scopes (`let x = x + 1;` inside a block), but redeclaring a name in the same scope is not.
 - Declarations at the top level can appear in any order.
@@ -658,6 +683,37 @@ Evaluation is strictly left to right, including operands that contain blocks.
 - `x |> F(a)` evaluates `F`, then `x`, then `a`, as the call `F(x, a)` would.
 - The right-hand side of `&&` or `||` is evaluated only when needed.
 - The upper bound of `for i in a..<b` is evaluated once.
+
+### Preconditions and invariants
+
+A function, method or operator can state what its arguments must satisfy, and a record what its fields must, with
+`requires` clauses:
+
+```piper
+fn Sqrt(x: double) => double
+    requires x >= 0.0
+= Math.Sqrt(x);
+
+fn Withdraw(amount: decimal, balance: decimal) => decimal
+    requires amount > 0
+    requires amount <= balance
+= balance - amount;
+
+record Percentage(value: int) requires value >= 0 && value <= 100;
+```
+
+- **Conditions** are `bool` expressions over the parameters (and `this` in an instance method), or a record's fields. As in an `if`, they can bind with `is`: `requires count is Some(n) && n > 0`.
+  Separate several with commas, or write several `requires` clauses; each is checked on its own.
+- **At run time** every call checks its function's preconditions before the body runs. A broken one throws
+  `ArgumentException`, saying which condition failed and the values it used, and naming the parameter when there's
+  only one: `Precondition failed: x >= 0.0 (x = -1) (Parameter 'x')`. The stack trace points at the `requires` line. In an
+  async function or iterator the check runs where C# runs a body's first statement: in the Task, or on the first item.
+- **Records** are checked whenever one is made, including by a copy: `{ ...p, value: 200 }` is checked like
+  `Percentage(200)`, and fails with `Invariant failed: value >= 0 && value <= 100 (value = 200)`. So a Percentage outside
+  0 to 100 can't exist in Piper code. (C# code using `with` on the record isn't checked.)
+- **At compile time** a call whose arguments are constants that break a condition is an error (PIP0340), such as
+  `Sqrt(-1.0)` or `Percentage(150)`. Calls that can't be decided this way are left to run time.
+- **Not yet:** trait methods (PIP0341), enum variants and lambdas can't have `requires` clauses.
 
 ### Tests
 
@@ -762,7 +818,12 @@ As in C#, functions and methods are PascalCase (`Print`, `Main`, `Area()`), and 
 | `"…{e}…"` | `$"…{e}…"` |
 | `test "adds" { … }` | with `piper test`, `[global::Piper.Runtime.PiperTestAttribute("adds")] public static void PiperTest_N() { … }` in the module class; otherwise nothing |
 | `Assert(c)`, `AssertEqual(a, b)` | `global::Piper.Runtime.PiperAssert.True(c, "c")`, `global::Piper.Runtime.PiperAssert.Equal<T>(a, b)` |
+| `fn F(x: int) => int requires x > 0 = …` | `public static int F(int x) { global::Piper.Runtime.PiperContract.Require(x > 0, "x > 0", $"x = {x}", "x"); return …; }` |
+| `record P(v: int) requires v >= 0;` | `record P(int v) { public int v { get; init; } = global::Piper.Runtime.PiperContract.Invariant(v, v >= 0, "v >= 0", …); }`, and copies construct a new P instead of using `with` |
 | `extend V { operator +(o: V) => V = … }` | `public static V operator +(V self, V o) => …` in the record, with `this` as `self` |
+| `let Some(u) = e else { return; };` | `T u; if (e is { IsSome: true, Value: var u1 }) { u = u1; goto matched; } { return; } matched: ;` |
+| `fn F(a: int, b: int = 2)`, `F(1, b: 5)` | `static int F(int a, int b = 2)`, `F(1, b: 5)` (C#'s named arguments, so the written order is kept) |
+| `/// Adds.` above `fn Add` | `/// <summary>Adds.</summary>` above `Add` |
 | `Print(x)` | `global::System.Console.WriteLine(x)` |
 | `(byte)x`, `1.5f`, `19.99m`, `string('#', 3)` | `(byte)x`, `1.5f`, `19.99m`, `new string('#', 3)` |
 | `using let r = Open();`, `using (let r = Open()) { … }` | `using T r = Open();`, `using (T r = Open()) { … }` |
@@ -821,3 +882,7 @@ Version 1.0 includes everything above, and also:
 - **Attributes:** .NET attributes on declarations, fields and parameters, with `[Obsolete]` warnings for Piper declarations and .NET members.
 - **Tests:** `test "name" { … }` blocks with `Assert` and `AssertEqual`, run by `piper test`.
 - **Operators:** `operator +` and the other arithmetic operators on records and enums, as C# operators.
+- **Preconditions and invariants:** `requires` clauses on functions, methods and records, checked at run time and, for constant arguments, at compile time.
+- **`let … else`,** **named arguments and default values,** **doc comments** (`///`, shown in the editor and written as XML documentation) and **format specifiers** in interpolation (`{price:C}`, `{name,-10}`).
+
+What comes next, including removing code only tests use from normal builds, is in [future.md](future.md).

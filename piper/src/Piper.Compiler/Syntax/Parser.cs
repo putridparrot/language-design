@@ -147,9 +147,12 @@ public sealed class Parser
                     break;
                 }
                 default:
+                {
+                    var documentation = DocumentationBefore(Current.Span.Start);
                     if (ParseDeclaration() is { } parsed)
-                        declarations.Add(parsed);
+                        declarations.Add(parsed with { Documentation = documentation });
                     break;
+                }
             }
             if (_position == start)
                 NextToken();
@@ -195,6 +198,37 @@ public sealed class Parser
                     NextToken();
                 return null;
         }
+    }
+
+    /// <summary>
+    /// The text of the `///` lines directly above the line <paramref name="position"/> starts, when it's the first thing
+    /// on its line (a field after another on the same line has none). One space after `///` is dropped; `////` isn't a
+    /// doc comment.
+    /// </summary>
+    private string? DocumentationBefore(int position)
+    {
+        int lineStart = position;
+        while (lineStart > 0 && _source[lineStart - 1] != '\n')
+            lineStart--;
+        for (int i = lineStart; i < position; i++)
+        {
+            if (!char.IsWhiteSpace(_source[i]))
+                return null;
+        }
+
+        var lines = new List<string>();
+        for (int end = lineStart; end > 0;)
+        {
+            int start = end - 1;
+            while (start > 0 && _source[start - 1] != '\n')
+                start--;
+            var line = _source.ToString(TextSpan.FromBounds(start, end - 1)).Trim();
+            if (!line.StartsWith("///", StringComparison.Ordinal) || line.StartsWith("////", StringComparison.Ordinal))
+                break;
+            lines.Insert(0, line.Length > 3 && line[3] == ' ' ? line[4..] : line[3..]);
+            end = start;
+        }
+        return lines.Count == 0 ? null : string.Join("\n", lines);
     }
 
     /// <summary>
@@ -282,6 +316,7 @@ public sealed class Parser
                 NextToken();
             returnType = ParseType();
         }
+        var requires = ParseRequires();
 
         var (outerAsync, outerYield) = (_inAsync, _sawYield);
         _inAsync = @async is not null;
@@ -309,11 +344,32 @@ public sealed class Parser
         {
             Async = @async,
             Operator = @operator,
+            Requires = requires,
             IsIterator = isIterator,
         };
     }
 
     /// <summary>`async` is a keyword only where C# treats it as one: before `fn` (or `static fn`) and before a lambda.</summary>
+    /// <summary>
+    /// requires = { "requires" condition { "," condition } } ;  conditions are expressions without assignment, so a
+    /// function's `= body` that follows isn't read as one. `requires` is reserved, so it only means this.
+    /// </summary>
+    private ImmutableArray<ExpressionSyntax> ParseRequires()
+    {
+        var conditions = ImmutableArray.CreateBuilder<ExpressionSyntax>();
+        while (Current is { Kind: TokenKind.Identifier, Text: "requires" })
+        {
+            NextToken();
+            conditions.Add(ParseBinary(0));
+            while (Current.Kind == TokenKind.Comma)
+            {
+                NextToken();
+                conditions.Add(ParseBinary(0));
+            }
+        }
+        return conditions.ToImmutable();
+    }
+
     /// <summary>`test "name"`: `test` is reserved, so it only means this.</summary>
     private bool IsTestStart(int offset) =>
         Peek(offset) is { Kind: TokenKind.Identifier, Text: "test" } &&
@@ -393,8 +449,9 @@ public sealed class Parser
         Expect(TokenKind.OpenParen);
         var fields = ParseSeparatedList(ParseParameter, TokenKind.CloseParen);
         Expect(TokenKind.CloseParen);
+        var requires = ParseRequires();
         Expect(TokenKind.Semicolon);
-        return new RecordDeclarationSyntax(SpanFrom(keyword), name, typeParameters, fields);
+        return new RecordDeclarationSyntax(SpanFrom(keyword), name, typeParameters, fields) { Requires = requires };
     }
 
     /// <summary>
@@ -459,12 +516,13 @@ public sealed class Parser
         var methods = ImmutableArray.CreateBuilder<FunctionDeclarationSyntax>();
         while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
         {
+            var documentation = DocumentationBefore(Current.Span.Start);
             if (Current.Kind == TokenKind.OpenBracket)
             {
                 var attributes = ParseAttributes();
                 var @private = Current.Kind == TokenKind.PrivateKeyword && AtFunctionStart(1) ? NextToken() : (Token?)null;
                 if (AtFunctionStart())
-                    methods.Add(ParseFunction() with { Attributes = attributes, Private = @private });
+                    methods.Add(ParseFunction() with { Attributes = attributes, Private = @private, Documentation = documentation });
                 else
                     ReportOnce(Current.Span, () => _diagnostics.ReportExpectedToken(Current.Span, TokenKind.FnKeyword, Current));
                 continue;
@@ -472,14 +530,14 @@ public sealed class Parser
 
             if (AtFunctionStart())
             {
-                methods.Add(ParseFunction());
+                methods.Add(ParseFunction() with { Documentation = documentation });
                 continue;
             }
 
             if (Current.Kind == TokenKind.PrivateKeyword && AtFunctionStart(1))
             {
                 var @private = NextToken();
-                methods.Add(ParseFunction() with { Private = @private });
+                methods.Add(ParseFunction() with { Private = @private, Documentation = documentation });
                 continue;
             }
 
@@ -495,6 +553,7 @@ public sealed class Parser
 
     private VariantSyntax ParseVariant()
     {
+        var documentation = DocumentationBefore(Current.Span.Start);
         var name = Expect(TokenKind.Identifier);
         var fields = ImmutableArray<ParameterSyntax>.Empty;
         if (Current.Kind == TokenKind.OpenParen)
@@ -503,17 +562,24 @@ public sealed class Parser
             fields = ParseSeparatedList(ParseParameter, TokenKind.CloseParen);
             Expect(TokenKind.CloseParen);
         }
-        return new VariantSyntax(SpanFrom(name), name, fields);
+        return new VariantSyntax(SpanFrom(name), name, fields) { Documentation = documentation };
     }
 
-    /// <summary>parameter = attributes IDENT ":" type ;</summary>
+    /// <summary>parameter = attributes IDENT ":" type [ "=" expression ] ;</summary>
     private ParameterSyntax ParseParameter()
     {
+        var documentation = DocumentationBefore(Current.Span.Start);
         var attributes = ParseAttributes();
         var name = Expect(TokenKind.Identifier);
         Expect(TokenKind.Colon);
         var type = ParseType();
-        return new ParameterSyntax(Span(name, type), name, type) { Attributes = attributes };
+        ExpressionSyntax? @default = null;
+        if (Current.Kind == TokenKind.Equals)
+        {
+            NextToken();
+            @default = ParseBinary(0);
+        }
+        return new ParameterSyntax(Span(name, type), name, type) { Attributes = attributes, Documentation = documentation, Default = @default };
     }
 
     /// <summary>
@@ -813,6 +879,27 @@ public sealed class Parser
     private StatementSyntax ParseVariableDeclaration()
     {
         var keyword = NextToken();
+
+        // `let Some(x) = value else { … };` or `let Point(x, y) = p;`: a pattern where a name would be (a list, or a name
+        // followed by `(`, `.` or `{`).
+        if (Current.Kind == TokenKind.OpenBracket ||
+            (Current.Kind == TokenKind.Identifier && Peek(1).Kind is TokenKind.OpenParen or TokenKind.Dot or TokenKind.OpenBrace))
+        {
+            var pattern = ParsePattern();
+            Expect(TokenKind.Equals);
+            var value = ParseExpression();
+            if (Current.Kind != TokenKind.ElseKeyword)
+            {
+                Expect(TokenKind.Semicolon);
+                return new LetElseStatementSyntax(SpanFrom(keyword), keyword, pattern, value, null);
+            }
+            NextToken();
+            var @else = ParseBlock();
+            if (Current.Kind == TokenKind.Semicolon)
+                NextToken();
+            return new LetElseStatementSyntax(SpanFrom(keyword), keyword, pattern, value, @else);
+        }
+
         if (Current.Kind == TokenKind.OpenParen)
         {
             // `let (a, (b, _)) = value;`
@@ -1230,9 +1317,18 @@ public sealed class Parser
         }
     }
 
-    /// <summary>argument = expression | "out" [ "let" | "mut" ] IDENT | "ref" expression ;</summary>
+    /// <summary>argument = [ IDENT ":" ] ( expression | "out" [ "let" | "mut" ] IDENT | "ref" expression ) ;</summary>
     private ExpressionSyntax ParseArgument()
     {
+        // `retries: 5`: a named argument.
+        if (Current.Kind == TokenKind.Identifier && Peek(1).Kind == TokenKind.Colon)
+        {
+            var parameterName = NextToken();
+            NextToken();
+            var value = ParseArgument();
+            return new NamedArgumentSyntax(Span(parameterName, value), parameterName, value);
+        }
+
         // `ref x`: `ref` is a keyword only before a name, so it can still be one itself.
         if (Current is { Kind: TokenKind.Identifier, Text: "ref" } && Peek(1).Kind == TokenKind.Identifier)
         {
@@ -1712,7 +1808,10 @@ public sealed class Parser
         }
     }
 
-    /// <summary>interpolatedString ='"' { text | "{" expression "}" } '"' ;  each hole is lexed and parsed separately.</summary>
+    /// <summary>
+    /// interpolatedString = '"' { text | "{" expression [ "," alignment ] [ ":" format ] "}" } '"' ;  each hole is lexed
+    /// and parsed separately. As in C#, a `,` or `:` outside brackets ends the expression: `{price,10:C}`.
+    /// </summary>
     private InterpolatedStringExpressionSyntax ParseInterpolatedString()
     {
         var token = NextToken();
@@ -1725,12 +1824,62 @@ public sealed class Parser
                     parts.Add(new InterpolatedTextSyntax(text.Span, text.Value));
                     break;
                 case InterpolationHole hole:
-                    var holeParser = new Parser(_source, _diagnostics, Lexer.Tokenize(_source, _diagnostics, hole.Span));
+                {
+                    var (expressionSpan, alignment, format) = SplitHole(hole.Span);
+                    var holeParser = new Parser(_source, _diagnostics, Lexer.Tokenize(_source, _diagnostics, expressionSpan));
                     var expression = holeParser.ParseStandaloneExpression();
-                    parts.Add(new InterpolationSyntax(hole.Span, expression));
+                    parts.Add(new InterpolationSyntax(hole.Span, expression) { Alignment = alignment, Format = format });
                     break;
+                }
             }
         }
         return new InterpolatedStringExpressionSyntax(token.Span, parts.ToImmutable());
+    }
+
+    /// <summary>
+    /// Splits a hole into its expression and, after a `,` or `:` at its top level (outside brackets and literals), its
+    /// alignment and format: `price,10:C` is `price`, 10 and "C".
+    /// </summary>
+    private (TextSpan Expression, int? Alignment, string? Format) SplitHole(TextSpan hole)
+    {
+        int depth = 0, comma = -1, colon = -1;
+        for (int i = hole.Start; i < hole.End && colon < 0; i++)
+        {
+            switch (_source[i])
+            {
+                case '(' or '[' or '{':
+                    depth++;
+                    break;
+                case ')' or ']' or '}':
+                    depth--;
+                    break;
+                case '"' or '\'':
+                    char quote = _source[i];
+                    for (i++; i < hole.End && _source[i] != quote; i++)
+                    {
+                        if (_source[i] == '\\')
+                            i++;
+                    }
+                    break;
+                case ',' when depth == 0 && comma < 0:
+                    comma = i;
+                    break;
+                case ':' when depth == 0:
+                    colon = i;
+                    break;
+            }
+        }
+        int expressionEnd = comma >= 0 ? comma : colon >= 0 ? colon : hole.End;
+        int? alignment = null;
+        if (comma >= 0)
+        {
+            var span = TextSpan.FromBounds(comma + 1, colon >= 0 ? colon : hole.End);
+            if (int.TryParse(_source.ToString(span).Trim(), out var value))
+                alignment = value;
+            else
+                _diagnostics.ReportInvalidAlignment(span);
+        }
+        string? format = colon >= 0 ? _source.ToString(TextSpan.FromBounds(colon + 1, hole.End)) : null;
+        return (TextSpan.FromBounds(hole.Start, expressionEnd), alignment, format);
     }
 }

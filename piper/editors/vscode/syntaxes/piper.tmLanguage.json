@@ -90,7 +90,7 @@
     "keywords": {
       "patterns": [
         { "name": "keyword.control.piper", "match": "\\b(if|else|while|for|in|return|break|continue|match|try|catch|finally|throw|defer|yield|await)\\b" },
-        { "name": "keyword.declaration.piper", "match": "\\b(fn|record|enum|trait|extend|namespace|using|let|mut|test|operator)\\b" },
+        { "name": "keyword.declaration.piper", "match": "\\b(fn|record|enum|trait|extend|namespace|using|let|mut|test|operator|requires)\\b" },
         { "name": "storage.modifier.piper", "match": "\\b(static|private|async|out|ref)\\b" },
         { "name": "keyword.operator.word.piper", "match": "\\bis\\b" },
         { "name": "variable.language.this.piper", "match": "\\bthis\\b" },

@@ -134,6 +134,9 @@ namespace Shop.Model
 
     public static class Model
     {
+        /// <summary>
+        /// The total value of anything priced.
+        /// </summary>
         public static Money Total<T>(global::System.Collections.Generic.List<T> items)
         {
             Money sum = Money.Zero();
@@ -200,6 +203,9 @@ namespace Shop.Store
             }
         }
 
+        /// <summary>
+        /// Takes stock for an order, returning what it costs, or why it can&apos;t be filled.
+        /// </summary>
         public static Result<global::Shop.Model.Money, OrderError> Order(Inventory inventory, string sku, int quantity)
         {
             if (quantity <= 0)
@@ -244,6 +250,9 @@ namespace Shop.Store
             }
         }
 
+        /// <summary>
+        /// (category, number of items, units in stock) per category, largest stock first.
+        /// </summary>
         public static global::System.Collections.Generic.List<(global::Shop.Model.Category category, int items, int units)> StockByCategory(Inventory inventory) => global::System.Linq.Enumerable.ToList<(global::Shop.Model.Category Key, int, int)>(global::System.Linq.Enumerable.OrderByDescending<(global::Shop.Model.Category Key, int, int), int>(global::System.Linq.Enumerable.Select<global::System.Linq.IGrouping<global::Shop.Model.Category, global::Shop.Model.Item>, (global::Shop.Model.Category Key, int, int)>(global::System.Linq.Enumerable.GroupBy<global::Shop.Model.Item, global::Shop.Model.Category>(inventory.items.Values, (global::Shop.Model.Item item) => item.category), (global::System.Linq.IGrouping<global::Shop.Model.Category, global::Shop.Model.Item> group) => (group.Key, global::System.Linq.Enumerable.Count<global::Shop.Model.Item>(group), global::System.Linq.Enumerable.Sum<global::Shop.Model.Item>(group, (global::Shop.Model.Item item_1) => item_1.stock))), ((global::Shop.Model.Category Key, int, int) entry) => entry.Item3));
 
         internal static int LowStockThreshold() => 3;

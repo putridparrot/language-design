@@ -9,7 +9,8 @@ Support for [Piper](../../README.md) `.piper` files:
   - go to definition
   - find references and highlights
   - rename
-  - completion, including members after a dot
+  - completion, including members after a dot. After `x.` on an optional, it offers the value's members (turning the
+    `.` into `?.`) and snippets to unwrap it: `match`, `ifSome`, `letElse` and `orDefault`
   - signature help for the call being written
   - inlay hints for the types of variables declared without one
   - semantic highlighting (variants, traits, parameters and so on, coloured by what they are)

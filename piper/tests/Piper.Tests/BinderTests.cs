@@ -385,6 +385,70 @@ public class BinderTests
         AssertSingleError("PIP0334", "fn F() { let v = System.Runtime.CompilerServices.RuntimeOps.CreateRuntimeVariables(); }");
     }
 
+    private const string Contracts = """
+        fn Sqrt(x: double) => double requires x >= 0.0 = x;
+        fn Between(low: int, high: int) => int requires low <= high, low >= 0 = high - low;
+        record Percentage(value: int) requires value >= 0 && value <= 100;
+        record P(x: int);
+        extend P { fn Scale(k: int) => P requires k != 0 = P(this.x * k); }
+
+        """;
+
+    [Theory]
+    [InlineData("PIP0340", "fn F() => double = Sqrt(-1.0);")]
+    [InlineData("PIP0340", "fn F() => double = Sqrt(-1);")]
+    [InlineData("PIP0340", "fn F() => int = Between(5, 2);")]
+    [InlineData("PIP0340", "fn F() => int = Between(-1, 2);")]
+    [InlineData("PIP0340", "fn F() => Percentage = Percentage(150);")]
+    [InlineData("PIP0340", "fn F() => P = P(1).Scale(0);")]
+    [InlineData("PIP0341", "trait T { fn F(n: int) => int requires n > 0; }")]
+    [InlineData("PIP0210", "fn F(s: string) => int requires s.Length = 1;")]
+    [InlineData("PIP0200", "fn F(n: int) => int requires m > 0 = n;")]
+    [InlineData("PIP0335", "fn requires() { }")]
+    public void Broken_and_invalid_contracts_are_errors(string code, string program) => AssertSingleError(code, Contracts + program);
+
+    [Theory]
+    [InlineData("fn F(n: double) => double = Sqrt(n);")]
+    [InlineData("fn F() => int = Between(1, 2) + Between(0, 0);")]
+    [InlineData("fn F(n: int) => Percentage = Percentage(n);")]
+    [InlineData("fn F(p: Percentage) => Percentage = { ...p, value: 5 };")]
+    public void Calls_that_meet_or_cant_be_checked_are_fine(string program) => AssertNoErrors(Contracts + program);
+
+    [Theory]
+    [InlineData("PIP0343", "fn F(x: int?) => int { let Some(v) = x else { Print(0); }; v }")]
+    [InlineData("PIP0343", "fn F(x: int?) => int { mut Some(v) = x else { return 0; }; v }")]
+    [InlineData("PIP0200", "fn F(x: int?) => int { let Some(v) = x else { return v; }; v }")]
+    [InlineData("PIP0347", "fn F(x: int?) => int { let Some(v) = x; v }")]
+    [InlineData("PIP0347", "enum S { A(n: int), B } fn F(s: S) => int { let A(n) = s; n }")]
+    [InlineData("PIP0347", "fn F(xs: int[]) => int { let [a, b] = xs; a + b }")]
+    [InlineData("PIP0342", "fn F(n: int) => string = \"{n,wide}\";")]
+    [InlineData("PIP0345", "fn F(a: int = 1, b: int) => int = a;")]
+    [InlineData("PIP0345", "record R(x: int); fn F(r: R = R(1)) => int = 0;")]
+    [InlineData("PIP0345", "record V(x: int); extend V { operator +(o: V = V(0)) => V = o; }")]
+    [InlineData("PIP0346", "fn F(a: int, b: int = 2) => int = a; fn G() => int = F(b: 1);")]
+    [InlineData("PIP0346", "fn F(a: int, b: int = 2) => int = a; fn G() => int = F(1, c: 2);")]
+    [InlineData("PIP0346", "fn F(a: int, b: int = 2) => int = a; fn G() => int = F(a: 1, 2);")]
+    [InlineData("PIP0346", "fn F(a: int, b: int = 2) => int = a; fn G() => int = F(1, a: 2);")]
+    [InlineData("PIP0346", "fn G(f: (int) => int) => int = f(x: 1);")]
+    [InlineData("PIP0205", "fn F(a: int, b: int = 2) => int = a; fn G() => int = F();")]
+    [InlineData("PIP0340", "fn F(n: int = 0) => int requires n > 0 = n; fn G() => int = F();")]
+    public void Invalid_let_else_formats_defaults_and_named_arguments_are_errors(string code, string program) => AssertSingleError(code, program);
+
+    [Fact]
+    public void A_let_pattern_that_always_matches_needs_no_else()
+    {
+        AssertNoErrors("record P(x: int, y: int); record L(a: P, b: P); fn F(l: L) => int { let L(P(x1, _), P(x2, _)) = l; let P { y: h } = l.a; x2 - x1 + h }");
+        Assert.Empty(Compilation.Compile("record P(x: int, y: int); fn F(p: P) => int { let P(x, y) = p; x + y }").Diagnostics);
+    }
+
+    [Fact]
+    public void A_let_else_that_always_matches_is_a_warning()
+    {
+        var result = Compilation.Compile("record P(x: int); fn F(p: P) => int { let P(x) = p else { return 0; }; x }");
+        Assert.True(result.Success);
+        Assert.Equal(("PIP0344", DiagnosticSeverity.Warning), (Assert.Single(result.Diagnostics).Code, result.Diagnostics[0].Severity));
+    }
+
     private const string Vectors = "record V(x: int); ";
 
     [Theory]

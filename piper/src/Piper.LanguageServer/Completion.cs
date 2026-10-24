@@ -34,19 +34,76 @@ public static class Completion
             : ScopeItems(analysis, source, position);
 
         var array = new JsonArray();
-        foreach (var (label, kind, detail) in items.DistinctBy(i => i.Label).OrderBy(i => i.Label, StringComparer.Ordinal))
+        foreach (var (label, kind, detail, documentation) in items.DistinctBy(i => i.Label).OrderBy(i => i.Label, StringComparer.Ordinal))
         {
             var item = new JsonObject { ["label"] = label, ["kind"] = kind };
             if (detail is not null)
                 item["detail"] = detail;
+            if (documentation is not null)
+                item["documentation"] = new JsonObject { ["kind"] = "markdown", ["value"] = documentation };
             array.Add(item);
         }
+        if (start > 0 && source[start - 1] == '.')
+            AddOptionalItems(analysis, source, start - 1, position, array);
         return array;
+    }
+
+    // LSP CompletionItemKind and InsertTextFormat values.
+    private const int SnippetKind = 15, SnippetFormat = 2;
+
+    /// <summary>
+    /// After <c>i.</c> on an optional, which has no members of its own: the wrapped type's members, reached with
+    /// <c>?.</c> (choosing one turns the <c>.</c> into <c>?.</c>), and snippets that replace <c>i.</c> with the ways to
+    /// unwrap it: <c>match</c>, <c>if … is Some</c>, <c>let … else</c> and <c>??</c>.
+    /// </summary>
+    private static void AddOptionalItems(AnalysisResult analysis, SourceText source, int dot, int position, JsonArray array)
+    {
+        if (analysis.Semantic.ExpressionEndingAt(source, dot) is not { Type: { IsOption: true } optional } receiver)
+            return;
+
+        var dotRange = PiperLanguageServer.Range(source, new TextSpan(dot, 1));
+        foreach (var (label, kind, detail, documentation) in Members(analysis, optional.TypeArguments[0], instance: true).DistinctBy(i => i.Label))
+        {
+            var item = new JsonObject
+            {
+                ["label"] = label,
+                ["kind"] = kind,
+                ["detail"] = $"{detail} (through ?.)",
+                ["additionalTextEdits"] = new JsonArray(new JsonObject { ["range"] = dotRange.DeepClone(), ["newText"] = "?." }),
+            };
+            if (documentation is not null)
+                item["documentation"] = new JsonObject { ["kind"] = "markdown", ["value"] = documentation };
+            array.Add(item);
+        }
+
+        // The snippets replace the receiver and the dot, so they filter on that text too.
+        var text = source.ToString(receiver.Span);
+        var snippetText = text.Replace("\\", "\\\\").Replace("$", "\\$").Replace("}", "\\}");
+        var whole = PiperLanguageServer.Range(source, TextSpan.FromBounds(receiver.Span.Start, position));
+        (string Label, string Snippet, string Detail)[] snippets =
+        [
+            ("match", $"match {snippetText} {{\n\tSome(${{1:value}}) => $2,\n\tNone => $0,\n}}", "match on Some and None"),
+            ("ifSome", $"if {snippetText} is Some(${{1:value}}) {{\n\t$0\n}}", "run code when there's a value"),
+            ("letElse", $"let Some(${{1:value}}) = {snippetText} else {{ ${{2:return;}} }};", "unwrap the value, or leave"),
+            ("orDefault", $"{snippetText} ?? ${{1:fallback}}", "the value, or a fallback when there's none"),
+        ];
+        foreach (var (label, snippet, detail) in snippets)
+        {
+            array.Add(new JsonObject
+            {
+                ["label"] = label,
+                ["kind"] = SnippetKind,
+                ["detail"] = detail,
+                ["filterText"] = $"{text}.{label}",
+                ["insertTextFormat"] = SnippetFormat,
+                ["textEdit"] = new JsonObject { ["range"] = whole.DeepClone(), ["newText"] = snippet },
+            });
+        }
     }
 
     // Names
 
-    private static IEnumerable<(string Label, int Kind, string? Detail)> ScopeItems(AnalysisResult analysis, SourceText source, int position)
+    private static IEnumerable<(string Label, int Kind, string? Detail, string? Documentation)> ScopeItems(AnalysisResult analysis, SourceText source, int position)
     {
         for (var scope = analysis.Semantic.ScopeAt(source, position); scope is not null; scope = scope.Parent)
         {
@@ -60,12 +117,12 @@ public static class Completion
         foreach (var function in analysis.Program.Functions.Select(f => f.Symbol).Where(f => !f.IsPrivate || f.DeclaringFile == source))
             yield return Item(function);
         foreach (var type in TypeSymbol.Builtins.Where(t => t != TypeSymbol.Unit))
-            yield return (type.Name, KeywordKind, null);
+            yield return (type.Name, KeywordKind, null, null);
         foreach (var keyword in Keywords)
-            yield return (keyword, KeywordKind, null);
+            yield return (keyword, KeywordKind, null, null);
     }
 
-    private static (string Label, int Kind, string? Detail) Item(Symbol symbol) => (symbol.Name, KindOf(symbol), Detail(symbol));
+    private static (string Label, int Kind, string? Detail, string? Documentation) Item(Symbol symbol) => (symbol.Name, KindOf(symbol), Detail(symbol), symbol.Documentation);
 
     private static string? Detail(Symbol symbol) => symbol is TraitSymbol trait ? $"trait {trait.Name}" : SymbolDisplay.Describe(symbol);
 
@@ -86,7 +143,7 @@ public static class Completion
 
     // Members
 
-    private static IEnumerable<(string Label, int Kind, string? Detail)> MemberItems(AnalysisResult analysis, SourceText source, int dot)
+    private static IEnumerable<(string Label, int Kind, string? Detail, string? Documentation)> MemberItems(AnalysisResult analysis, SourceText source, int dot)
     {
         // `Shape.` names a type: its variants and static methods. `shape.` is a value: its fields and instance methods.
         if (analysis.Semantic.OccurrenceAt(source, dot) is { Span.End: var end, Symbol: TypeSymbol type } && end == dot)
@@ -96,18 +153,18 @@ public static class Completion
         return [];
     }
 
-    private static IEnumerable<(string Label, int Kind, string? Detail)> Members(AnalysisResult analysis, TypeSymbol type, bool instance)
+    private static IEnumerable<(string Label, int Kind, string? Detail, string? Documentation)> Members(AnalysisResult analysis, TypeSymbol type, bool instance)
     {
         var definition = type.OriginalDefinition;
         if (instance && definition is RecordSymbol record)
         {
             foreach (var field in record.Fields)
-                yield return (field.Name, FieldKind, $"{field.Name}: {TypeSubstitution.FieldType(field, type)}");
+                yield return (field.Name, FieldKind, $"{field.Name}: {TypeSubstitution.FieldType(field, type)}", null);
         }
         if (instance && type is TupleTypeSymbol tuple)
         {
             for (int i = 0; i < tuple.ElementTypes.Length; i++)
-                yield return (tuple.ElementNames[i] ?? $"Item{i + 1}", FieldKind, tuple.ElementTypes[i].ToString());
+                yield return (tuple.ElementNames[i] ?? $"Item{i + 1}", FieldKind, tuple.ElementTypes[i].ToString(), null);
         }
         if (!instance && definition is EnumSymbol @enum)
         {
@@ -159,7 +216,7 @@ public static class Completion
         }
     }
 
-    private static IEnumerable<(string Label, int Kind, string? Detail)> ClrMembers(Type? type, bool instance)
+    private static IEnumerable<(string Label, int Kind, string? Detail, string? Documentation)> ClrMembers(Type? type, bool instance)
     {
         if (type is null)
             yield break;
@@ -172,16 +229,16 @@ public static class Completion
             switch (member)
             {
                 case MethodInfo { IsSpecialName: false } method when method.DeclaringType != typeof(object) || method.Name is "ToString" or "Equals" or "GetHashCode":
-                    yield return (method.Name, MethodKind, $"{method.ReturnType.Name} {method.Name}({string.Join(", ", method.GetParameters().Select(p => $"{p.ParameterType.Name} {p.Name}"))})");
+                    yield return (method.Name, MethodKind, $"{method.ReturnType.Name} {method.Name}({string.Join(", ", method.GetParameters().Select(p => $"{p.ParameterType.Name} {p.Name}"))})", null);
                     break;
                 case PropertyInfo property when property.GetIndexParameters().Length == 0:
-                    yield return (property.Name, PropertyKind, $"{property.PropertyType.Name} {property.Name}");
+                    yield return (property.Name, PropertyKind, $"{property.PropertyType.Name} {property.Name}", null);
                     break;
                 case FieldInfo field:
-                    yield return (field.Name, FieldKind, $"{field.FieldType.Name} {field.Name}");
+                    yield return (field.Name, FieldKind, $"{field.FieldType.Name} {field.Name}", null);
                     break;
                 case EventInfo @event:
-                    yield return (@event.Name, EventKind, $"event {@event.EventHandlerType?.Name} {@event.Name}");
+                    yield return (@event.Name, EventKind, $"event {@event.EventHandlerType?.Name} {@event.Name}", null);
                     break;
             }
         }
@@ -190,7 +247,7 @@ public static class Completion
         if (instance && type.GetInterfaces().Append(type).Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>)))
         {
             foreach (var method in typeof(Enumerable).GetMethods(BindingFlags.Public | BindingFlags.Static))
-                yield return (method.Name, MethodKind, "(System.Linq extension)");
+                yield return (method.Name, MethodKind, "(System.Linq extension)", null);
         }
     }
 }

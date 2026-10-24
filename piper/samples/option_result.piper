@@ -34,6 +34,13 @@ fn ManagerEmail(id: int) => string? {
     manager.email
 }
 
+// `let … else` unwraps a value or leaves, with whatever result fits.
+fn Greeting(id: int) => string {
+    let Some(user) = FindUser(id) else { return "Who are you?"; };
+    let Some(email) = user.email else { return "Hello, {user.name}. We need your email."; };
+    "Hello, {user.name} <{email}>"
+}
+
 // Result carries either a value or an error.
 fn ParsePercent(text: string) => Result<int, ParseError> {
     if text.Length == 0 {
@@ -74,6 +81,9 @@ fn Main() {
         Print("{id}: {FindUser(id)?.name ?? "nobody"}, {email}, managed by {ManagerName(id)}");
     }
     Print("Linus's manager's email: {ManagerEmail(2) ?? "unknown"}");
+    for id in [0, 1, 7] {
+        Print(Greeting(id));
+    }
 
     for input in [["50", "75", "100"], ["50", "lots"], ["50", "150"], ["", "1"]] {
         match Average(input) {

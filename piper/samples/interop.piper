@@ -35,11 +35,11 @@ fn Main() {
     }
     Print("then {reader.ReadLine() ?? "nothing"}");
 
-    // `out` parameters, statics and formatting.
+    // `out` parameters, statics, and C#'s format specifiers in interpolation.
     if DateTime.TryParse("2026-03-14", CultureInfo.InvariantCulture, DateTimeStyles.None, out let date) {
-        Print("{date.ToString("yyyy-MM-dd")} is a {date.DayOfWeek}");
+        Print("{date:yyyy-MM-dd} is a {date.DayOfWeek}");
     }
-    Print("pi to 3 places: {Math.Round(Math.PI, 3)}, max int: {int.MaxValue}");
+    Print("pi to 3 places: {Math.PI:F3}, max int: {int.MaxValue:N0}");
 
     // Events: `+=` subscribes a lambda.
     let names = ObservableCollection<string>();

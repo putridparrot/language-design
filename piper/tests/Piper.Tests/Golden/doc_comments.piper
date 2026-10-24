@@ -1,0 +1,41 @@
+// Doc comments (`///`) become C# XML documentation, and interpolation takes C#'s alignment and format specifiers.
+using System;
+
+/// A product in the catalogue.
+record Product(
+    /// What it's called.
+    name: string,
+    /// Its price, in pounds.
+    price: decimal,
+);
+
+/// Kinds of discount.
+enum Discount {
+    /// A percentage off.
+    Percent(rate: double),
+    None,
+}
+
+/// The price after a discount.
+fn Discounted(
+    /// What's being bought.
+    product: Product,
+    discount: Discount,
+) => decimal = match discount {
+    Percent(rate) => product.price * (decimal)(1.0 - rate),
+    None => product.price,
+};
+
+//// four slashes: an ordinary comment
+fn Main() {
+    let items = [Product("Tea", 2.5m), Product("Teapot", 24.99m), Product("Cake", 3m)];
+    Print("{"Item",-8}|{"Price",8}|{"Sale",8}");
+    for item in items {
+        Print("{item.name,-8}|{item.price,8:F2}|{Discounted(item, Discount.Percent(0.1)),8:F2}");
+    }
+    let date = DateTime(2026, 3, 14);
+    let ratio = 0.256;
+    Print("{date:yyyy-MM-dd} {date:ddd} {ratio:P0} {1234567:N0} {42:D5} {255:X}");
+    let pair = (a: 1, b: 2);
+    Print("{pair.b} {((x: int) => x * 2)(4):D3}");
+}

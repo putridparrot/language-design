@@ -27,6 +27,12 @@ and means the same thing (see [Compatibility](README.md#compatibility)).
 - **Control flow:** `for x in xs`, `for i in 1..10`, `while`, `try`/`catch`/`finally`, `throw`, `using`, `defer`.
 - **Async and iterators:** `async`/`await`, `await for`, `await using`, and `yield` iterators.
 - **Programs:** namespaces, `using`, `private`, and programs of many files.
+- **Preconditions and invariants:** `requires` clauses on functions and records, checked on every call and construction,
+  and at compile time when the arguments are constants.
+- **Bindings and calls:** `let … else` to unwrap or leave; named arguments and default parameter values, for Piper
+  and .NET calls.
+- **Strings:** C#'s alignment and format specifiers in interpolation (`{price:C}`, `{name,-10}`).
+- **Doc comments:** `///` documentation, shown in the editor and written as C# XML documentation.
 - **Tests:** `test "name" { … }` blocks with `Assert` and `AssertEqual`.
 - **Conventions:** functions and methods are PascalCase (`Print`, `Main`), variables and fields camelCase, as in C#.
   `let` binds immutably and `mut` mutably. Some words are reserved for future versions, such as `const`, `type` and

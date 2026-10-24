@@ -36,6 +36,9 @@ public abstract record DeclarationSyntax(TextSpan Span, Token Name) : SyntaxNode
     public Token? Private { get; init; }
 
     public ImmutableArray<AttributeSyntax> Attributes { get; init; } = [];
+
+    /// <summary>The text of the `///` comment lines directly above it, if any.</summary>
+    public string? Documentation { get; init; }
 }
 
 /// <summary>
@@ -78,6 +81,9 @@ public sealed record FunctionDeclarationSyntax(
     /// </summary>
     public Token? Operator { get; init; }
 
+    /// <summary>The conditions of its `requires` clauses: preconditions on the arguments, checked when it's called.</summary>
+    public ImmutableArray<ExpressionSyntax> Requires { get; init; } = [];
+
     /// <summary>The body contains `yield`, so (as in C#) the function is an iterator.</summary>
     public bool IsIterator { get; init; }
 }
@@ -86,7 +92,11 @@ public sealed record RecordDeclarationSyntax(
     TextSpan Span,
     Token Name,
     ImmutableArray<TypeParameterSyntax> TypeParameters,
-    ImmutableArray<ParameterSyntax> Fields) : DeclarationSyntax(Span, Name);
+    ImmutableArray<ParameterSyntax> Fields) : DeclarationSyntax(Span, Name)
+{
+    /// <summary>The conditions of its `requires` clauses: invariants its fields must meet, checked on construction.</summary>
+    public ImmutableArray<ExpressionSyntax> Requires { get; init; } = [];
+}
 
 public sealed record EnumDeclarationSyntax(
     TextSpan Span,
@@ -117,12 +127,22 @@ public sealed record ExtendDeclarationSyntax(
 public sealed record TypeParameterSyntax(TextSpan Span, Token Name, ImmutableArray<TypeSyntax> Constraints) : SyntaxNode(Span);
 
 /// <summary>A variant of an enum; <see cref="Fields"/> is empty for a fieldless variant such as <c>Empty</c>.</summary>
-public sealed record VariantSyntax(TextSpan Span, Token Name, ImmutableArray<ParameterSyntax> Fields) : SyntaxNode(Span);
+public sealed record VariantSyntax(TextSpan Span, Token Name, ImmutableArray<ParameterSyntax> Fields) : SyntaxNode(Span)
+{
+    /// <summary>The text of the `///` comment lines directly above it, if any.</summary>
+    public string? Documentation { get; init; }
+}
 
-/// <summary>A function's parameter, or a record's or variant's field.</summary>
+/// <summary>A function's parameter, or a record's or variant's field, with an optional <see cref="Default"/> value.</summary>
 public sealed record ParameterSyntax(TextSpan Span, Token Name, TypeSyntax Type) : SyntaxNode(Span)
 {
     public ImmutableArray<AttributeSyntax> Attributes { get; init; } = [];
+
+    /// <summary>`= 443`: the value used when a call leaves the argument out.</summary>
+    public ExpressionSyntax? Default { get; init; }
+
+    /// <summary>The text of the `///` comment lines directly above it, if any.</summary>
+    public string? Documentation { get; init; }
 }
 
 // Types
@@ -197,6 +217,14 @@ public sealed record DeconstructionDeclarationSyntax(
     public bool IsMutable => Keyword.Kind == TokenKind.MutKeyword;
 }
 
+/// <summary>
+/// <c>let Some(user) = Find(id) else { return; };</c>: binds the pattern's variables when the value matches it, and
+/// otherwise runs <see cref="Else"/>, which must leave (return, break, continue or throw). Without an else
+/// (<c>let Point(x, y) = p;</c>) the pattern must match every value.
+/// </summary>
+public sealed record LetElseStatementSyntax(TextSpan Span, Token Keyword, PatternSyntax Pattern, ExpressionSyntax Initializer, BlockExpressionSyntax? Else)
+    : StatementSyntax(Span);
+
 /// <summary>What a deconstruction declares: a name (<c>_</c> discards), or a parenthesized list of designations.</summary>
 public abstract record DesignationSyntax(TextSpan Span) : SyntaxNode(Span);
 
@@ -260,7 +288,13 @@ public abstract record InterpolatedStringPartSyntax(TextSpan Span) : SyntaxNode(
 
 public sealed record InterpolatedTextSyntax(TextSpan Span, string Text) : InterpolatedStringPartSyntax(Span);
 
-public sealed record InterpolationSyntax(TextSpan Span, ExpressionSyntax Expression) : InterpolatedStringPartSyntax(Span);
+/// <summary><c>{expression}</c>, or as in C# <c>{price,10:C}</c> with an <see cref="Alignment"/> and a <see cref="Format"/>.</summary>
+public sealed record InterpolationSyntax(TextSpan Span, ExpressionSyntax Expression) : InterpolatedStringPartSyntax(Span)
+{
+    public int? Alignment { get; init; }
+
+    public string? Format { get; init; }
+}
 
 /// <summary><c>x</c>, or <c>identity&lt;Int&gt;</c> with explicit <see cref="TypeArguments"/>.</summary>
 public sealed record NameExpressionSyntax(TextSpan Span, Token Identifier) : ExpressionSyntax(Span)
@@ -370,6 +404,9 @@ public sealed record OutArgumentSyntax(TextSpan Span, Token Keyword, Token? Decl
 {
     public bool IsDiscard => Declaration is null && Name.Text == "_";
 }
+
+/// <summary><c>retries: 5</c> in an argument list: an argument for the parameter of that name, as in C#.</summary>
+public sealed record NamedArgumentSyntax(TextSpan Span, Token Name, ExpressionSyntax Value) : ExpressionSyntax(Span);
 
 /// <summary><c>ref x</c> or <c>ref items[i]</c>: passes a variable or array element to a .NET <c>ref</c> parameter. <c>ref</c> is contextual.</summary>
 public sealed record RefArgumentSyntax(TextSpan Span, Token Keyword, ExpressionSyntax Target) : ExpressionSyntax(Span);

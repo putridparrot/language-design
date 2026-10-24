@@ -1,0 +1,15 @@
+sqrt 16: 4
+sqrt -16: Precondition failed: x >= 0.0 (x = -16) (Parameter 'x')
+slice 1..3: 2,3,4
+slice too far: Precondition failed: start + count <= items.Count (start = 1, count = 9)
+Percentage { value = 50 }
+150%: Invariant failed: value >= 0 && value <= 100 (value = 150)
+copy to 75%: Percentage { value = 75 }
+copy to -1%: Invariant failed: value >= 0 && value <= 100 (value = -1)
+True Range { low = -1, high = 7 } Range { low = 1, high = 9 }
+widen -1: Precondition failed: by >= 0 (by = -1) (Parameter 'by')
+add lower: Precondition failed: other.low >= this.low (other = Range { low = 0, high = 2 }) (Parameter 'other')
+3
+positive none: Precondition failed: n is Some(v) && v > 0 (n = None) (Parameter 'n')
+1
+delay: Precondition failed: ms >= 0 (ms = -1) (Parameter 'ms') [ms]

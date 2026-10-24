@@ -275,10 +275,12 @@ public sealed class PiperLanguageServer
     private static JsonNode? Hover(AnalysisResult analysis, SourceText source, int position)
     {
         string text;
+        string? documentation = null;
         TextSpan span;
         if (analysis.Semantic.OccurrenceAt(source, position) is { } occurrence)
         {
             text = SymbolDisplay.Describe(occurrence.Symbol);
+            documentation = occurrence.Symbol.Documentation;
             span = occurrence.Span;
         }
         else if (analysis.Semantic.ExpressionAt(source, position) is { Type: var type } expression && type != TypeSymbol.Error)
@@ -292,7 +294,11 @@ public sealed class PiperLanguageServer
         }
         return new JsonObject
         {
-            ["contents"] = new JsonObject { ["kind"] = "markdown", ["value"] = $"```piper\n{text}\n```" },
+            ["contents"] = new JsonObject
+            {
+                ["kind"] = "markdown",
+                ["value"] = $"```piper\n{text}\n```" + (documentation is null ? "" : $"\n\n{documentation}"),
+            },
             ["range"] = Range(source, span),
         };
     }

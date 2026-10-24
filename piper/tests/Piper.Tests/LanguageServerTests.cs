@@ -81,6 +81,65 @@ public sealed class LanguageServerTests : IDisposable
     }
 
     [Fact]
+    public async Task Completion_on_an_optional_offers_its_value_s_members_and_ways_to_unwrap_it()
+    {
+        var text = "record User(name: string);\nfn F(u: User?, n: int?) {\n    Print(u.);\n    Print(n.);\n}";
+        var uri = await OpenAsync(text);
+
+        var items = ((JsonArray)(await _server.HandleAsync("textDocument/completion", At(uri, text, "u.)", 2)))!).OfType<JsonObject>().ToList();
+        var name = items.Single(i => i["label"]!.GetValue<string>() == "name");
+        Assert.Equal("?.", name["additionalTextEdits"]![0]!["newText"]!.GetValue<string>());
+        // The edit replaces the `.` itself: column 11 of `    Print(u.);`.
+        var dot = name["additionalTextEdits"]![0]!["range"]!;
+        Assert.Equal((2, 11, 12), (dot["start"]!["line"]!.GetValue<int>(), dot["start"]!["character"]!.GetValue<int>(), dot["end"]!["character"]!.GetValue<int>()));
+
+        var match = items.Single(i => i["label"]!.GetValue<string>() == "match");
+        Assert.StartsWith("match u {\n\tSome(${1:value}) => $2,", match["textEdit"]!["newText"]!.GetValue<string>());
+        Assert.Equal("u.match", match["filterText"]!.GetValue<string>());
+        Assert.Contains(items, i => i["label"]!.GetValue<string>() == "letElse");
+
+        // An int?'s value is an int, so int's .NET members are offered too.
+        var numbers = ((JsonArray)(await _server.HandleAsync("textDocument/completion", At(uri, text, "n.)", 2)))!).OfType<JsonObject>().ToList();
+        Assert.Contains(numbers, i => i["label"]!.GetValue<string>() == "CompareTo" && i["additionalTextEdits"] is not null);
+    }
+
+    [Fact]
+    public async Task Doc_comments_and_defaults_show_in_hover_completion_and_signature_help()
+    {
+        var text = "/// Connects to a server.\nfn Connect(\n    /// The host name.\n    host: string,\n    port: int = 443,\n) => int = port;\nfn Main() { Print(Connect(\"x\")); }";
+        var uri = await OpenAsync(text);
+
+        var hover = await _server.HandleAsync("textDocument/hover", At(uri, text, "Connect(\"x\")"));
+        var value = hover!["contents"]!["value"]!.GetValue<string>();
+        Assert.Contains("fn Connect(host: string, port: int = 443) => int", value);
+        Assert.EndsWith("\n\nConnects to a server.", value);
+
+        var help = await _server.HandleAsync("textDocument/signatureHelp", At(uri, text, "\"x\")"));
+        var signature = help!["signatures"]![0]!;
+        Assert.Equal("Connects to a server.", signature["documentation"]!.GetValue<string>());
+        Assert.Equal("The host name.", signature["parameters"]![0]!["documentation"]!.GetValue<string>());
+
+        var completion = (JsonArray)(await _server.HandleAsync("textDocument/completion", At(uri, text, "Connect(\"x\")")))!;
+        var item = completion.First(i => i!["label"]!.GetValue<string>() == "Connect")!;
+        Assert.Equal("Connects to a server.", item["documentation"]!["value"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task Hover_and_signature_help_show_preconditions()
+    {
+        var text = "fn Sqrt(x: double) => double requires x >= 0.0 = x;\nrecord Pct(v: int) requires v <= 100;\nfn Main() { Print(Sqrt(4.0)); Print(Pct(1)); }";
+        var uri = await OpenAsync(text);
+
+        var hover = await _server.HandleAsync("textDocument/hover", At(uri, text, "Sqrt(4.0)"));
+        Assert.Contains("fn Sqrt(x: double) => double\n    requires x >= 0.0", hover!["contents"]!["value"]!.GetValue<string>());
+        hover = await _server.HandleAsync("textDocument/hover", At(uri, text, "Pct(1)"));
+        Assert.Contains("record Pct(v: int)\n    requires v <= 100", hover!["contents"]!["value"]!.GetValue<string>());
+
+        var help = await _server.HandleAsync("textDocument/signatureHelp", At(uri, text, "4.0)"));
+        Assert.Equal("requires x >= 0.0", help!["signatures"]![0]!["documentation"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task Hover_describes_symbols_and_expressions()
     {
         var uri = await OpenAsync(Program);

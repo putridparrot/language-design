@@ -297,6 +297,7 @@ public sealed partial class Binder
         }
 
         BindAttributes(types, functions.Concat(methods));
+        BindContracts(types, functions.Concat(methods));
         CheckExposure(types, functions, methods);
 
         var boundFunctions = functions.Select(BindFunctionBody).OfType<BoundFunction>().ToImmutableArray();
@@ -421,6 +422,7 @@ public sealed partial class Binder
         symbol.DeclaringFile = file.Source;
         symbol.Namespace = file.Namespace;
         symbol.IsPrivate = declaration.Private is not null;
+        symbol.Documentation ??= declaration.Documentation;
         if (_semantic is not null && !declaration.Name.IsMissing)
             _semantic.AddOccurrence(file.Source, declaration.Name.Span, symbol, isDeclaration: true);
         CheckReservedName(declaration.Name);
@@ -607,8 +609,39 @@ public sealed partial class Binder
     }
 
     /// <summary>Binds fields of a record or variant named <paramref name="owner"/> in the current (type-parameter) scope.</summary>
+    /// <summary>
+    /// A parameter's or field's `= value`, which must be a constant C# allows as a default (a literal, a .NET constant
+    /// or enum member, an operator on those) or `null` for an optional. Parameters with defaults come last, as in C#.
+    /// </summary>
+    /// <param name="forbiddenIn">What can't have defaults here (operators), or null.</param>
+    private ParameterDefault? BindDefault(ParameterSyntax syntax, TypeSymbol type, ref bool sawDefault, string? forbiddenIn)
+    {
+        if (syntax.Default is not { } defaultSyntax)
+        {
+            if (sawDefault && !syntax.Name.IsMissing)
+                _diagnostics.ReportInvalidDefault(syntax.Name.Span, $"'{syntax.Name.Text}' needs a default value too: parameters with defaults must come last.");
+            return null;
+        }
+        sawDefault = true;
+        var value = Convert(RequireValue(BindExpression(defaultSyntax, type), defaultSyntax.Span), type, defaultSyntax.Span);
+        if (forbiddenIn is not null)
+        {
+            _diagnostics.ReportInvalidDefault(defaultSyntax.Span, $"{forbiddenIn} can't have default parameter values.");
+            return null;
+        }
+        if (value.Type == TypeSymbol.Error)
+            return null;
+        if (value is not BoundVariantCreationExpression { Variant.Name: "None", Arguments.IsEmpty: true } && !IsAttributeConstant(value))
+        {
+            _diagnostics.ReportInvalidDefault(defaultSyntax.Span, "A default value must be a constant (a literal, or a .NET constant or enum member), or null for an optional.");
+            return null;
+        }
+        return new ParameterDefault(value, _file.Source.ToString(defaultSyntax.Span));
+    }
+
     private ImmutableArray<FieldSymbol> BindFields(ImmutableArray<ParameterSyntax> syntax, string owner)
     {
+        bool sawDefault = false;
         var fields = ImmutableArray.CreateBuilder<FieldSymbol>();
         var names = new HashSet<string>();
         foreach (var field in syntax)
@@ -624,7 +657,7 @@ public sealed partial class Binder
             else if (ReservedMemberNames.Contains(field.Name.Text))
                 _diagnostics.ReportReservedMemberName(field.Name.Span, field.Name.Text);
             else
-                fields.Add(Declared(new FieldSymbol(field.Name.Text, type), field.Name));
+                fields.Add(Declared(new FieldSymbol(field.Name.Text, type) { Documentation = field.Documentation, Default = BindDefault(field, type, ref sawDefault, null) }, field.Name));
         }
         return fields.ToImmutable();
     }
@@ -650,7 +683,7 @@ public sealed partial class Binder
             else if (ReservedMemberNames.Contains(name.Text))
                 _diagnostics.ReportReservedMemberName(name.Span, name.Text);
             else
-                variants.Add(Declared(new VariantSymbol(name.Text, @enum) { Fields = BindFields(syntax.Fields, name.Text) }, name));
+                variants.Add(Declared(new VariantSymbol(name.Text, @enum) { Fields = BindFields(syntax.Fields, name.Text), Documentation = syntax.Documentation }, name));
         }
         @enum.Variants = variants.ToImmutable();
     }
@@ -1147,14 +1180,20 @@ public sealed partial class Binder
 
         var parameters = ImmutableArray.CreateBuilder<VariableSymbol>();
         var names = new HashSet<string>();
+        bool sawDefault = false;
         foreach (var parameter in declaration.Parameters)
         {
             var type = BindValueType(parameter.Type, "parameter");
+            var @default = BindDefault(parameter, type, ref sawDefault, declaration.Operator is not null ? "An operator" : null);
             if (parameter.Name.IsMissing)
                 continue;
             if (!names.Add(parameter.Name.Text))
                 _diagnostics.ReportDuplicateDeclaration(parameter.Name.Span, parameter.Name.Text);
-            parameters.Add(Declared(new VariableSymbol(parameter.Name.Text, type, isMutable: false, VariableKind.Parameter), parameter.Name));
+            parameters.Add(Declared(new VariableSymbol(parameter.Name.Text, type, isMutable: false, VariableKind.Parameter)
+            {
+                Documentation = parameter.Documentation,
+                Default = @default,
+            }, parameter.Name));
         }
 
         // An async function with no return type returns a Task, as a plain one returns unit.
@@ -1195,6 +1234,7 @@ public sealed partial class Binder
                 IsAsync = isAsync,
                 BodyReturnType = bodyReturnType,
                 IteratorElementType = iteratorElement,
+                Documentation = declaration.Documentation,
             };
             return new FunctionInfo(function, declaration, file, scope);
         }
@@ -1212,6 +1252,7 @@ public sealed partial class Binder
             IsAsync = isAsync,
             BodyReturnType = bodyReturnType,
             IteratorElementType = iteratorElement,
+            Documentation = declaration.Documentation,
         };
         Record(declaration.Name, method, declaration: true);
         return new FunctionInfo(method, declaration, file, scope);
@@ -1256,6 +1297,8 @@ public sealed partial class Binder
 
         _scope = file.Scope;
         _return = null;
+        if (!function.Preconditions.IsEmpty)
+            body = new BoundBlockExpression([.. PreconditionChecks(function), .. body.Statements], body.Trailing, body.Type);
         return new BoundFunction(function, body, declaration.ExpressionBody is not null);
     }
 
@@ -1603,6 +1646,7 @@ public sealed partial class Binder
     private BoundStatement BindStatementCore(StatementSyntax syntax) => syntax switch
     {
         VariableDeclarationSyntax s => BindVariableDeclaration(s),
+        LetElseStatementSyntax s => BindLetElse(s),
         DeconstructionDeclarationSyntax s => BindDeconstructionDeclaration(s),
         ExpressionStatementSyntax s => new BoundExpressionStatement(BindExpression(s.Expression)),
         WhileStatementSyntax s => BindWhile(s),
@@ -1616,6 +1660,32 @@ public sealed partial class Binder
         ContinueStatementSyntax s => BindLoopJump(s.Keyword, new BoundContinueStatement()),
         _ => throw new InvalidOperationException($"Unexpected statement {syntax.GetType().Name}"),
     };
+
+    /// <summary>
+    /// `let Some(user) = Find(id) else { return; };`: the else block is bound first, so it can't see the pattern's
+    /// variables, and must leave. The pattern's variables are then declared in this block, after the statement.
+    /// </summary>
+    private BoundStatement BindLetElse(LetElseStatementSyntax syntax)
+    {
+        if (syntax.Keyword.Kind == TokenKind.MutKeyword)
+            _diagnostics.ReportLetElse(syntax.Keyword.Span, "A pattern in 'let' declares immutable variables; write 'let'.");
+        var value = RequireValue(BindExpression(syntax.Initializer), syntax.Initializer.Span);
+        BoundBlockExpression? @else = null;
+        if (syntax.Else is { } elseSyntax)
+        {
+            @else = BindBlock(elseSyntax);
+            if (@else.Type != TypeSymbol.Never && @else.Type != TypeSymbol.Error)
+                _diagnostics.ReportLetElse(elseSyntax.Span, "The else block of 'let ... else' must leave: end it with return, break, continue or throw.");
+        }
+        var pattern = BindPattern(syntax.Pattern, value.Type, allowBindings: true);
+        var missing = value.Type == TypeSymbol.Error ? null : Exhaustiveness.FindMissingPattern(value.Type, [pattern]);
+        // With an else, a pattern that can't fail makes it pointless; without one, the pattern must not be able to fail.
+        if (syntax.Else is not null && missing is null && value.Type != TypeSymbol.Error)
+            _diagnostics.ReportIrrefutableLetElse(syntax.Pattern.Span);
+        if (syntax.Else is null && missing is not null)
+            _diagnostics.ReportRefutableLet(syntax.Pattern.Span, missing, _file.Source.ToString(syntax.Span).TrimEnd(';'));
+        return new BoundLetElseStatement(pattern, value, @else);
+    }
 
     private BoundStatement BindVariableDeclaration(VariableDeclarationSyntax syntax)
     {

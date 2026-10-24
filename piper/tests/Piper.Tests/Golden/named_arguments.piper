@@ -1,0 +1,41 @@
+// Named arguments and default parameter values, as in C#: for Piper functions, methods and records, and .NET calls.
+record Options(host: string, port: int = 443, secure: bool = true, label: string? = null);
+
+trait Greeter {
+    fn Greet(name: string, punctuation: string = "!") => string;
+}
+record English();
+extend English: Greeter {
+    fn Greet(name: string, punctuation: string = "!") => string = "Hello, {name}{punctuation}";
+}
+
+fn Connect(host: string, port: int = 80, retries: int = 3, timeout: double = 1.5) => string =
+    "{host}:{port} retries={retries} timeout={timeout}";
+
+fn Log(tag: string) => string { Print("evaluating {tag}"); tag }
+
+fn GreetAll<T: Greeter>(g: T) => string = g.Greet("generic");
+
+fn Positive(n: int = 1) => int requires n > 0 = n;
+
+fn Main() {
+    Print(Connect("a"));
+    Print(Connect("b", 8080));
+    Print(Connect("c", retries: 5));
+    Print(Connect(timeout: 9.0, host: "d"));
+    Print(Options("example.com"));
+    Print(Options("x", secure: false, label: "test"));
+    Print(English().Greet("Ada"));
+    Print(English().Greet(punctuation: "?", name: "Grace"));
+    Print(GreetAll(English()));
+    // Arguments are evaluated in the order written.
+    Print(Connect(port: Log("port").Length, host: Log("host")));
+    Print(Positive());
+    DotNet();
+}
+
+fn DotNet() {
+    Print(System.Math.Round(2.567, digits: 2));
+    Print(string.Join(separator: "-", values: ["a", "b"]));
+    Print(System.DateTime(year: 2026, month: 3, day: 14).DayOfWeek);
+}

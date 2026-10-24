@@ -244,6 +244,40 @@ record Person([JsonPropertyName("first_name")] first: string, age: int);
 Print(JsonSerializer.Serialize(Person("Ada", 36)));   // {"first_name":"Ada","age":36}
 ```
 
+## Named arguments, defaults and let … else
+
+Parameters can have defaults and calls can name arguments, as in C#. `let … else` unwraps a value or leaves, which keeps
+"look it up or give up" code flat:
+
+```piper
+fn Connect(host: string, port: int = 443, retries: int = 3) => string = "{host}:{port} ({retries} tries)";
+
+Connect("example.com", retries: 5);
+
+fn ManagerName(id: int) => string {
+    let Some(user) = FindUser(id) else { return "nobody"; };
+    let Some(manager) = FindUser(user.managerId ?? -1) else { return "{user.name} has no manager"; };
+    manager.name
+}
+```
+
+Interpolation takes C#'s format specifiers, `"{price:C}"` and `"{name,-10}"`, and `///` comments are documentation the
+editor shows on hover.
+
+## Preconditions
+
+Say what a function's arguments, or a record's fields, must satisfy, and Piper checks it on every call:
+
+```piper
+fn Sqrt(x: double) => double requires x >= 0.0 = Math.Sqrt(x);
+
+record Percentage(value: int) requires value >= 0 && value <= 100;
+```
+
+`Sqrt(-1.0)` doesn't compile, since the argument is a constant. `Sqrt(n)` with a negative `n` throws an
+`ArgumentException` that names the condition and the value. A Percentage of 150 can't be made, not even by copying with
+`{ ...p, value: 150 }`.
+
 ## Testing
 
 Write tests next to the code, as `test` blocks, and run them with `piper test`:

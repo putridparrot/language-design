@@ -17,6 +17,9 @@ public abstract class Symbol(string name)
     /// <summary>Declared <c>private</c>: visible only in <see cref="DeclaringFile"/>.</summary>
     public bool IsPrivate { get; internal set; }
 
+    /// <summary>Its `///` doc comment, for the editor and the generated C#'s XML documentation.</summary>
+    public string? Documentation { get; internal set; }
+
     /// <summary>The .NET attributes written on the declaration, field or parameter.</summary>
     public ImmutableArray<BoundAttribute> Attributes { get; internal set; } = [];
 
@@ -26,6 +29,9 @@ public abstract class Symbol(string name)
 public sealed class FieldSymbol(string name, TypeSymbol type) : Symbol(name)
 {
     public TypeSymbol Type { get; } = type;
+
+    /// <summary>The value a construction that leaves this field out gets.</summary>
+    public ParameterDefault? Default { get; internal set; }
 }
 
 public enum VariableKind
@@ -48,8 +54,14 @@ public enum VariableKind
 /// A local, parameter or loop variable. Variables are compared by identity, so two variables with
 /// the same name (shadowing) are distinct symbols; the emitter gives each a unique C# name.
 /// </summary>
+/// <summary>A parameter's or field's default value: a constant (or None), and its source text for display.</summary>
+public sealed record ParameterDefault(BoundExpression Value, string Text);
+
 public sealed class VariableSymbol(string name, TypeSymbol type, bool isMutable, VariableKind kind) : Symbol(name)
 {
+    /// <summary>For a parameter: the value a call that leaves it out passes.</summary>
+    public ParameterDefault? Default { get; internal set; }
+
     public TypeSymbol Type { get; } = type;
 
     public bool IsMutable { get; } = isMutable;
@@ -67,6 +79,9 @@ public class FunctionSymbol(
     public ImmutableArray<TypeParameterSymbol> TypeParameters { get; } = typeParameters;
 
     public ImmutableArray<VariableSymbol> Parameters { get; } = parameters;
+
+    /// <summary>Its `requires` conditions, checked when it's called.</summary>
+    public ImmutableArray<BoundContract> Preconditions { get; internal set; } = [];
 
     public TypeSymbol ReturnType { get; } = returnType;
 
@@ -157,4 +172,20 @@ public static class BuiltinFunctions
         declaration: null);
 
     public static readonly ImmutableArray<FunctionSymbol> All = [Print, Assert, AssertEqual];
+
+    /// <summary>
+    /// The check of a `requires` condition, put at the start of a function's body (it isn't in scope, so it can't be
+    /// written): <c>Require(condition, text, values, parameter)</c>.
+    /// </summary>
+    public static readonly FunctionSymbol Require = new(
+        "Require",
+        [],
+        [
+            new VariableSymbol("condition", TypeSymbol.Bool, isMutable: false, VariableKind.Parameter),
+            new VariableSymbol("text", TypeSymbol.String, isMutable: false, VariableKind.Parameter),
+            new VariableSymbol("values", TypeSymbol.String, isMutable: false, VariableKind.Parameter),
+            new VariableSymbol("parameter", TypeSymbol.String, isMutable: false, VariableKind.Parameter),
+        ],
+        TypeSymbol.Unit,
+        declaration: null);
 }

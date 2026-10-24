@@ -25,7 +25,7 @@ extend Money {
     operator *(quantity: int) => Money = Money(this.cents * quantity);
     operator /(parts: int) => Money = Money(this.cents / parts);
     operator %(parts: int) => Money = Money(this.cents % parts);
-    fn Format() => string = "${this.cents / 100}.{(this.cents % 100).ToString("00")}";
+    fn Format() => string = "${this.cents / 100}.{this.cents % 100:00}";
 }
 
 fn Main() {

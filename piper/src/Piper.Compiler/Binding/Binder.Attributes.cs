@@ -123,6 +123,8 @@ public sealed partial class Binder
         var constructors = clr.GetConstructors(BindingFlags.Public | BindingFlags.Instance);
         if (ResolveClrOverload(constructors, type, type.Name, positional, [], syntax.Span, new Dictionary<Type, TypeSymbol>()) is not { } resolved)
             return null;
+        if (!resolved.Names.IsEmpty)
+            _diagnostics.ReportNamedArgument(syntax.Span, "An attribute's constructor arguments can't be named; set its properties with 'Name = value'.");
         foreach (var argument in resolved.Arguments.Where(a => !IsAttributeConstant(a)))
             _diagnostics.ReportAttributeArgument(argument.SourceSpan ?? syntax.Span, "Attribute arguments must be constants: literals, .NET enum members or constant fields.");
 

@@ -1,0 +1,16 @@
+a:80 retries=3 timeout=1.5
+b:8080 retries=3 timeout=1.5
+c:80 retries=5 timeout=1.5
+d:80 retries=3 timeout=9
+Options { host = example.com, port = 443, secure = True, label = None }
+Options { host = x, port = 443, secure = False, label = Some(test) }
+Hello, Ada!
+Hello, Grace?
+Hello, generic!
+evaluating port
+evaluating host
+host:4 retries=3 timeout=1.5
+1
+2.57
+a-b
+Saturday

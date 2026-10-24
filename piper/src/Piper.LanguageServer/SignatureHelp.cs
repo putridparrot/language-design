@@ -110,7 +110,7 @@ public static class SignatureHelp
             case FunctionSymbol function:
                 return [Function(function)];
             case RecordSymbol record:
-                return [Build($"{record.Name}{SymbolDisplay.TypeParameters(record.TypeParameters)}", record.Fields.Select(f => $"{f.Name}: {f.Type}"), "")];
+                return [Build($"{record.Name}{SymbolDisplay.TypeParameters(record.TypeParameters)}", record.Fields.Select(f => $"{f.Name}: {f.Type}{(f.Default is { } d ? $" = {d.Text}" : "")}"), "")];
             case VariantSymbol variant:
                 return [Build($"{variant.Enum.Name}.{variant.Name}", variant.Fields.Select(f => $"{f.Name}: {f.Type}"), "")];
             case TypeSymbol type when type.OriginalDefinition is not NamedTypeDefinition && ClrTypes.ToClr(type) is { } clr:
@@ -132,10 +132,21 @@ public static class SignatureHelp
     {
         var owner = function is MethodSymbol method ? $"{method.ContainingType}." : "";
         var result = function.ReturnType == TypeSymbol.Unit ? "" : $" => {function.ReturnType}";
-        return Build(
+        var signature = Build(
             $"fn {owner}{function.Name}{SymbolDisplay.TypeParameters(function.TypeParameters)}",
-            function.Parameters.Select(p => $"{p.Name}: {p.Type}"),
+            function.Parameters.Select(p => $"{p.Name}: {p.Type}{(p.Default is { } d ? $" = {d.Text}" : "")}"),
             result);
+        // The doc comment and preconditions show under the signature, where the arguments are being written.
+        var notes = function.Preconditions.Select(c => $"requires {c.Text}").Prepend(function.Documentation).OfType<string>().ToList();
+        if (notes.Count > 0)
+            signature.Json["documentation"] = string.Join("\n\n", notes);
+        var parameters = signature.Json["parameters"]!.AsArray();
+        for (int i = 0; i < parameters.Count && i < function.Parameters.Length; i++)
+        {
+            if (function.Parameters[i].Documentation is { } parameterDocumentation)
+                parameters[i]!["documentation"] = parameterDocumentation;
+        }
+        return signature;
     }
 
     private static IEnumerable<Signature> ClrMethods(TypeSymbol type, string name, bool instance)

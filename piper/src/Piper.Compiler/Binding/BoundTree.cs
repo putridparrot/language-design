@@ -322,6 +322,9 @@ public sealed class BoundCallExpression(
     ImmutableArray<BoundExpression> arguments,
     TypeSymbol type) : BoundExpression
 {
+    /// <summary>The names of named arguments (`retries: 5`), by position; empty when all are positional.</summary>
+    public ImmutableArray<string?> ArgumentNames { get; init; } = [];
+
     public FunctionSymbol Function { get; } = function;
 
     public ImmutableArray<TypeSymbol> TypeArguments { get; } = typeArguments;
@@ -343,6 +346,9 @@ public sealed class BoundMethodCallExpression(
     ImmutableArray<BoundExpression> arguments,
     TypeSymbol type) : BoundExpression
 {
+    /// <summary>The names of named arguments (`retries: 5`), by position; empty when all are positional.</summary>
+    public ImmutableArray<string?> ArgumentNames { get; init; } = [];
+
     public BoundExpression? Receiver { get; } = receiver;
 
     public TypeSymbol ReceiverType { get; } = receiverType;
@@ -362,6 +368,9 @@ public sealed class BoundMethodCallExpression(
 public sealed class BoundRecordCreationExpression(RecordSymbol record, ImmutableArray<BoundExpression> arguments, TypeSymbol type)
     : BoundExpression
 {
+    /// <summary>The names of named arguments (`retries: 5`), by position; empty when all are positional.</summary>
+    public ImmutableArray<string?> ArgumentNames { get; init; } = [];
+
     public RecordSymbol Record { get; } = record;
 
     public ImmutableArray<BoundExpression> Arguments { get; } = arguments;
@@ -597,6 +606,9 @@ public sealed class BoundClrInvocationExpression(
     TypeSymbol type,
     ImmutableArray<TypeSymbol> typeArguments = default) : BoundExpression
 {
+    /// <summary>The names of named arguments (`count: 2`), by position; empty when all are positional.</summary>
+    public ImmutableArray<string?> ArgumentNames { get; init; } = [];
+
     public BoundExpression? Receiver { get; } = receiver;
 
     public TypeSymbol ContainerType { get; } = containerType;
@@ -835,3 +847,34 @@ public sealed record BoundAttribute(
     ImmutableArray<BoundExpression> Arguments,
     ImmutableArray<(string Name, BoundExpression Value)> NamedArguments,
     string? Target = null);
+
+/// <summary>
+/// A `requires` condition: <see cref="Condition"/> bound in the function's (or record's) scope, its source
+/// <see cref="Text"/>, and the parameters (or fields) it mentions, whose values a failure reports.
+/// </summary>
+public sealed record BoundContract(BoundExpression Condition, string Text, ImmutableArray<VariableSymbol> Mentioned, TextSpan Span);
+
+/// <summary>A hole of an interpolated string with C#'s alignment and format: <c>{price,10:C}</c>.</summary>
+public sealed class BoundFormattedExpression(BoundExpression value, int? alignment, string? format) : BoundExpression
+{
+    public BoundExpression Value { get; } = value;
+
+    public int? Alignment { get; } = alignment;
+
+    public string? Format { get; } = format;
+
+    public override TypeSymbol Type => TypeSymbol.String;
+}
+
+/// <summary>
+/// `let Pattern = Initializer else { … };`: binds the pattern's variables, or runs <see cref="Else"/> (which leaves).
+/// Without an else, the pattern matches every value.
+/// </summary>
+public sealed class BoundLetElseStatement(BoundPattern pattern, BoundExpression initializer, BoundBlockExpression? @else) : BoundStatement
+{
+    public BoundPattern Pattern { get; } = pattern;
+
+    public BoundExpression Initializer { get; } = initializer;
+
+    public BoundBlockExpression? Else { get; } = @else;
+}

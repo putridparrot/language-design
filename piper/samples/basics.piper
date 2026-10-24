@@ -1,8 +1,13 @@
 // The basics: bindings, functions, expressions, loops and strings.
 using System.Collections.Generic;
 
-// A function's last expression is its value; `=` gives a one-expression body.
+/// A function's last expression is its value; `=` gives a one-expression body.
+/// Lines starting `///` are documentation, which the editor shows on hover.
 fn Square(x: int) => int = x * x;
+
+/// Parameters can have default values, and calls can name their arguments.
+fn Describe(name: string, age: int = 0, title: string = "") => string =
+    if age > 0 { "{title}{name}, {age}" } else { "{title}{name}" };
 
 // `if` and `match` are expressions, so they can be a function's value.
 fn Fizzbuzz(n: int) => string = match (n % 3, n % 5) {
@@ -62,7 +67,12 @@ fn Main() {
     }
     Print("27 reaches 1 in {steps} steps");
 
-    // Every string interpolates; raw strings keep quotes and braces as they are.
+    Print(Describe("Ada"));
+    Print(Describe("Grace", 85, title: "Rear Admiral "));
+    Print(Describe(age: 41, name: "Linus"));
+
+    // Every string interpolates, with C#'s alignment and formats; raw strings keep quotes and braces as they are.
     Print("{name.ToUpper()} has {name.Length} letters");
+    Print("[{name,-8}] [{3.14159:F2}] [{1234567:N0}]");
     Print("""{"json": true}""");
 }

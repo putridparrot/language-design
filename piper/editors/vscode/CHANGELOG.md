@@ -9,7 +9,7 @@ The first release, for Piper 1.0:
   - diagnostics as you type, including mistakes in `piper.json`;
   - hover and go to definition;
   - find references and rename;
-  - completion and signature help;
+  - completion and signature help, with the wrapped value's members and unwrapping snippets after `x.` on an optional;
   - inlay hints for inferred types;
   - semantic highlighting;
   - a quick fix that adds a match's missing arms;

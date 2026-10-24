@@ -103,6 +103,10 @@ public sealed class Lowerer
     {
         switch (statement)
         {
+            case BoundLetElseStatement letElse:
+                LowerLetElse(letElse, output);
+                break;
+
             // `using let r = …;`: C# needs the initializer in the declaration itself.
             case BoundVariableDeclaration { IsUsing: true, Initializer: { } resource } declaration:
                 output.Add(new BoundVariableDeclaration(declaration.Variable, LowerForValue(resource, output), isUsing: true)
@@ -429,31 +433,48 @@ public sealed class Lowerer
             }
 
             case BoundCallExpression call:
-                return new BoundCallExpression(call.Function, call.TypeArguments, LowerOperands(call.Arguments, prelude), call.Type);
+                return new BoundCallExpression(call.Function, call.TypeArguments, LowerOperands(call.Arguments, prelude), call.Type)
+                {
+                    ArgumentNames = call.ArgumentNames,
+                };
 
             case BoundMethodCallExpression { Receiver: { } receiver } call:
             {
                 // The receiver is evaluated before the arguments.
                 var operands = LowerOperands([receiver, .. call.Arguments], prelude);
                 return new BoundMethodCallExpression(
-                    operands[0], call.ReceiverType, call.Method, call.TypeArguments, operands[1..], call.Type) { TraitType = call.TraitType };
+                    operands[0], call.ReceiverType, call.Method, call.TypeArguments, operands[1..], call.Type)
+                {
+                    TraitType = call.TraitType,
+                    ArgumentNames = call.ArgumentNames,
+                };
             }
 
             case BoundMethodCallExpression call:
                 return new BoundMethodCallExpression(
-                    null, call.ReceiverType, call.Method, call.TypeArguments, LowerOperands(call.Arguments, prelude), call.Type) { TraitType = call.TraitType };
+                    null, call.ReceiverType, call.Method, call.TypeArguments, LowerOperands(call.Arguments, prelude), call.Type)
+                {
+                    TraitType = call.TraitType,
+                    ArgumentNames = call.ArgumentNames,
+                };
 
             case BoundClrInvocationExpression { Receiver: { } receiver } invocation:
             {
                 var operands = LowerOperands([receiver, .. invocation.Arguments], prelude);
                 return new BoundClrInvocationExpression(
-                    operands[0], invocation.ContainerType, invocation.Member, operands[1..], invocation.Type, invocation.TypeArguments);
+                    operands[0], invocation.ContainerType, invocation.Member, operands[1..], invocation.Type, invocation.TypeArguments)
+                {
+                    ArgumentNames = invocation.ArgumentNames,
+                };
             }
 
             case BoundClrInvocationExpression invocation:
                 return new BoundClrInvocationExpression(
                     null, invocation.ContainerType, invocation.Member, LowerOperands(invocation.Arguments, prelude), invocation.Type,
-                    invocation.TypeArguments);
+                    invocation.TypeArguments)
+                {
+                    ArgumentNames = invocation.ArgumentNames,
+                };
 
             case BoundLambdaExpression lambda:
                 return new BoundLambdaExpression(
@@ -496,6 +517,19 @@ public sealed class Lowerer
 
             case BoundArrayCreationExpression creation:
                 return new BoundArrayCreationExpression(LowerOperands(creation.Sizes, prelude), creation.Type);
+
+            case BoundRecordSpreadExpression spread when spread.Type.OriginalDefinition is RecordSymbol { Invariants.IsEmpty: false } record:
+            {
+                // C#'s `with` skips the constructor, where invariants are checked, so a copy of such a record is
+                // constructed: `{ ...p, value: 5 }` is `Percentage(5)`, its other fields read from p (evaluated first).
+                var operands = LowerOperands([spread.Source, .. spread.Updates.Select(u => u.Value)], prelude);
+                var source = operands[0] is BoundVariableExpression ? operands[0] : Spill(operands[0], prelude);
+                var arguments = record.Fields.Select(field =>
+                    spread.Updates.Select((u, i) => (u.Field, Index: i)).FirstOrDefault(u => u.Field == field) is { Field: not null } update
+                        ? operands[update.Index + 1]
+                        : new BoundFieldAccessExpression(source, field, TypeSubstitution.FieldType(field, spread.Type)));
+                return new BoundRecordCreationExpression(record, [.. arguments], spread.Type);
+            }
 
             case BoundRecordSpreadExpression spread:
             {
@@ -550,7 +584,10 @@ public sealed class Lowerer
                 return new BoundNullableBoundaryExpression(LowerForValue(boundary.Operand, prelude), boundary.Kind, boundary.Type);
 
             case BoundRecordCreationExpression creation:
-                return new BoundRecordCreationExpression(creation.Record, LowerOperands(creation.Arguments, prelude), creation.Type);
+                return new BoundRecordCreationExpression(creation.Record, LowerOperands(creation.Arguments, prelude), creation.Type)
+                {
+                    ArgumentNames = creation.ArgumentNames,
+                };
 
             case BoundVariantCreationExpression creation:
                 return new BoundVariantCreationExpression(creation.Variant, LowerOperands(creation.Arguments, prelude), creation.Type);
@@ -567,7 +604,13 @@ public sealed class Lowerer
                 return new BoundFieldAccessExpression(LowerForValue(access.Target, prelude), access.Field, access.Type);
 
             case BoundInterpolatedStringExpression interpolated:
-                return new BoundInterpolatedStringExpression(LowerOperands(interpolated.Parts, prelude));
+            {
+                // A formatted hole's value is lowered like any other, then given its alignment and format again.
+                var values = LowerOperands([.. interpolated.Parts.Select(p => p is BoundFormattedExpression f ? f.Value : p)], prelude);
+                return new BoundInterpolatedStringExpression([.. values.Select((value, i) => interpolated.Parts[i] is BoundFormattedExpression f
+                    ? new BoundFormattedExpression(value, f.Alignment, f.Format)
+                    : value)]);
+            }
 
             case BoundAssignmentExpression assignment:
                 return LowerAssignment(assignment, prelude);
@@ -713,6 +756,38 @@ public sealed class Lowerer
         output.Add(new BoundLabelStatement(matched));
         output.AddRange(onTrue);
         output.Add(new BoundLabelStatement(skip));
+    }
+
+    /// <summary>
+    /// `let P(x) = value else { … };`: x is declared first, and each alternative of the pattern binds its own copy and
+    /// jumps past the else block, which C# then knows x is assigned after:
+    /// <c>T x; if (value is P(var x1)) { x = x1; goto matched; } { else block } matched: ;</c>
+    /// </summary>
+    private void LowerLetElse(BoundLetElseStatement letElse, List<BoundStatement> output)
+    {
+        var value = LowerForValue(letElse.Initializer, output);
+        if (value is not BoundVariableExpression)
+            value = Spill(value, output);
+
+        var matched = new BoundLabel("matched");
+        var declared = new HashSet<VariableSymbol>();
+        foreach (var alternative in Alternatives(letElse.Pattern))
+        {
+            var copies = new Dictionary<VariableSymbol, VariableSymbol>();
+            var renamed = RenameBindings(alternative, copies);
+            var body = new List<BoundStatement>();
+            foreach (var (variable, copy) in copies)
+            {
+                if (declared.Add(variable))
+                    output.Add(new BoundVariableDeclaration(variable, null));
+                body.Add(Assign(variable, new BoundVariableExpression(copy)));
+            }
+            body.Add(new BoundGotoStatement(matched));
+            output.Add(new BoundIfStatement(new BoundIsPatternExpression(value, renamed), new BoundBlockStatement([.. body]), null));
+        }
+        // Without an else the pattern can't fail, so the end of the tests is never reached.
+        output.Add(letElse.Else is { } @else ? LowerToStatement(new BoundExpressionStatement(@else)) : new BoundUnreachableStatement());
+        output.Add(new BoundLabelStatement(matched));
     }
 
     /// <summary>The pattern with each variable it binds replaced by a fresh one, recorded in <paramref name="copies"/>.</summary>

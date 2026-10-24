@@ -12,7 +12,7 @@ public static class SymbolDisplay
         VariableSymbol v => $"{(v.IsMutable ? "mut" : "let")} {v.Name}: {v.Type}",
         MethodSymbol m => Function(m, $"{m.ContainingType}."),
         FunctionSymbol f => Function(f, ""),
-        RecordSymbol r => $"record {r.Name}{TypeParameters(r.TypeParameters)}({Fields(r.Fields)})",
+        RecordSymbol r => $"record {r.Name}{TypeParameters(r.TypeParameters)}({Fields(r.Fields)}){Requires(r.Invariants)}",
         EnumSymbol e => $"enum {e.Name}{TypeParameters(e.TypeParameters)} {{ {string.Join(", ", e.Variants.Select(Variant))} }}",
         TraitSymbol t => Trait(t),
         VariantSymbol v => $"{v.Enum.Name}.{Variant(v)}",
@@ -28,12 +28,15 @@ public static class SymbolDisplay
     private static string Function(FunctionSymbol function, string owner)
     {
         var modifiers = (function is MethodSymbol { IsStatic: true } ? "static " : "") + (function.IsAsync ? "async " : "");
-        var parameters = string.Join(", ", function.Parameters.Select(p => $"{p.Name}: {p.Type}"));
+        var parameters = string.Join(", ", function.Parameters.Select(p => $"{p.Name}: {p.Type}{(p.Default is { } d ? $" = {d.Text}" : "")}"));
         var result = function.ReturnType == TypeSymbol.Unit ? "" : $" => {function.ReturnType}";
         if (function is MethodSymbol { IsOperator: true })
-            return $"{modifiers}operator {function.Name}({parameters}){result}";
-        return $"{modifiers}fn {owner}{function.Name}{TypeParameters(function.TypeParameters)}({parameters}){result}";
+            return $"{modifiers}operator {function.Name}({parameters}){result}{Requires(function.Preconditions)}";
+        return $"{modifiers}fn {owner}{function.Name}{TypeParameters(function.TypeParameters)}({parameters}){result}{Requires(function.Preconditions)}";
     }
+
+    /// <summary>A function's or record's `requires` clauses, one per line.</summary>
+    private static string Requires(IEnumerable<BoundContract> contracts) => string.Concat(contracts.Select(c => $"\n    requires {c.Text}"));
 
     private static string Trait(TraitSymbol trait)
     {
@@ -44,7 +47,8 @@ public static class SymbolDisplay
 
     private static string Variant(VariantSymbol variant) => variant.Fields.IsEmpty ? variant.Name : $"{variant.Name}({Fields(variant.Fields)})";
 
-    private static string Fields(IEnumerable<FieldSymbol> fields) => string.Join(", ", fields.Select(f => $"{f.Name}: {f.Type}"));
+    private static string Fields(IEnumerable<FieldSymbol> fields) =>
+        string.Join(", ", fields.Select(f => $"{f.Name}: {f.Type}{(f.Default is { } d ? $" = {d.Text}" : "")}"));
 
     public static string TypeParameters(IReadOnlyCollection<TypeParameterSymbol> parameters) =>
         parameters.Count == 0

@@ -309,10 +309,11 @@ public sealed partial class CSharpEmitter
     {
         var partial = IsPartial(record) ? "partial " : "";
         var header = $"{Visibility(record)} sealed {partial}record {Escape(record.Name)}{TypeParameterList(record.TypeParameters)}" +
-                     $"({Fields(record.Fields)}){BaseList(TraitsFrom(record, file))}{Constraints(record.TypeParameters)}";
+                     $"({RecordFields(record)}){BaseList(TraitsFrom(record, file))}{Constraints(record.TypeParameters)}";
         var methods = MethodsFrom(record, file).ToList();
+        EmitDocumentation(record, record.Fields);
         EmitAttributes(record);
-        if (methods.Count == 0)
+        if (methods.Count == 0 && record.Invariants.IsEmpty)
         {
             _writer.WriteLine(header + ";");
             return;
@@ -320,8 +321,39 @@ public sealed partial class CSharpEmitter
 
         _writer.WriteLine(header);
         _writer.OpenBrace();
+        if (!record.Invariants.IsEmpty)
+        {
+            EmitInvariants(record);
+            if (methods.Count > 0)
+                _writer.WriteLine();
+        }
         EmitMembers(methods);
         _writer.CloseBrace();
+    }
+
+    /// <summary>
+    /// A record's `requires` conditions, checked on construction. Its properties are redeclared, in order (so
+    /// printing and deconstruction keep the fields' order), and the first one's initializer checks the conditions
+    /// before giving it its value: property initializers run in the primary constructor and can read all its parameters.
+    /// </summary>
+    private void EmitInvariants(RecordSymbol record)
+    {
+        _names = new NameAllocator([]);
+        foreach (var field in record.InvariantFields)
+            _names.Declare(field);
+        var first = record.Fields[0];
+        var value = Escape(first.Name);
+        foreach (var contract in record.Invariants)
+        {
+            var values = Expr(Piper.Binding.Binder.ContractValues(contract), AssignmentPrecedence);
+            value = $"global::Piper.Runtime.PiperContract.Invariant({value}, {Expr(contract.Condition, AssignmentPrecedence)}, {Literal(contract.Text)}, {values})";
+        }
+        foreach (var field in record.Fields)
+        {
+            var attributes = string.Concat(field.Attributes.Where(a => a.Target == "property").Select(a => $"[{Attribute(a with { Target = null })}] "));
+            var initializer = field == first ? value : Escape(field.Name);
+            _writer.WriteLine($"{attributes}public {TypeName(field.Type)} {Escape(field.Name)} {{ get; init; }} = {initializer};");
+        }
     }
 
     /// <summary>
@@ -336,6 +368,7 @@ public sealed partial class CSharpEmitter
         var variantNames = @enum.Variants.Select(v => v.Name).ToHashSet();
         var partial = IsPartial(@enum) ? "partial " : "";
 
+        EmitDocumentation(@enum, []);
         EmitAttributes(@enum);
         _writer.WriteLine($"{Visibility(@enum)} abstract {partial}record {name}{TypeParameterList(@enum.TypeParameters)}" +
                           $"{BaseList(TraitsFrom(@enum, file))}{Constraints(@enum.TypeParameters)}");
@@ -346,6 +379,7 @@ public sealed partial class CSharpEmitter
         foreach (var variant in @enum.Variants)
         {
             _writer.WriteLine();
+            EmitDocumentation(variant, variant.Fields);
             var header = $"public sealed record {Escape(variant.Name)}({Fields(variant.Fields, variantNames)}) : {selfType}";
             // A fieldless variant prints like a C# enum member (`Food`), not as an empty record (`Food { }`).
             _writer.WriteLine(variant.Fields.IsEmpty
@@ -383,6 +417,7 @@ public sealed partial class CSharpEmitter
     private void EmitTrait(TraitSymbol trait, SourceText file)
     {
         var partial = IsPartial(trait) ? "partial " : "";
+        EmitDocumentation(trait, []);
         EmitAttributes(trait);
         _writer.WriteLine($"{Visibility(trait)} {partial}interface {Escape(trait.Name)}{TypeParameterList(trait.TypeParameters)}{BaseList(trait.Parents)}{Constraints(trait.TypeParameters)}");
         _writer.OpenBrace();
@@ -410,6 +445,7 @@ public sealed partial class CSharpEmitter
             else
             {
                 _names = NewNameAllocator(method);
+                EmitDocumentation(method, method.Parameters);
                 EmitAttributes(method);
                 _writer.WriteLine($"{Signature(method, method.IsStatic ? "static abstract " : "")};");
             }
@@ -552,7 +588,38 @@ public sealed partial class CSharpEmitter
     }
 
     private string Fields(IEnumerable<FieldSymbol> fields, ISet<string>? shadowedNames = null) =>
-        string.Join(", ", fields.Select(f => $"{InlineAttributes(f)}{TypeName(f.Type, shadowedNames)} {Escape(f.Name)}"));
+        string.Join(", ", fields.Select(f => $"{InlineAttributes(f)}{TypeName(f.Type, shadowedNames)} {Escape(f.Name)}{DefaultValue(f.Default)}"));
+
+    /// <summary>A record's fields as its primary constructor's parameters; when its properties are redeclared (for invariants) their attributes go there.</summary>
+    private string RecordFields(RecordSymbol record) =>
+        string.Join(", ", record.Fields.Select((f, i) =>
+        {
+            var attributes = !record.Invariants.IsEmpty
+                ? string.Concat(f.Attributes.Where(a => a.Target != "property").Select(a => $"[{Attribute(a)}] "))
+                : InlineAttributes(f);
+            return $"{attributes}{TypeName(f.Type)} {Escape(f.Name)}{DefaultValue(f.Default)}";
+        }));
+
+    /// <summary>
+    /// A declaration's `///` comment as C# XML documentation, with a `<param>` for each documented parameter or field, so
+    /// C# callers and the generated .xml file see it.
+    /// </summary>
+    private void EmitDocumentation(Symbol symbol, IEnumerable<Symbol> parameters)
+    {
+        var documented = parameters.Where(p => p.Documentation is not null).ToList();
+        if (symbol.Documentation is null && documented.Count == 0)
+            return;
+        static string Xml(string text) => System.Security.SecurityElement.Escape(text)!;
+        if (symbol.Documentation is { } documentation)
+        {
+            _writer.WriteLine("/// <summary>");
+            foreach (var line in documentation.Split('\n'))
+                _writer.WriteLine($"/// {Xml(line)}".TrimEnd());
+            _writer.WriteLine("/// </summary>");
+        }
+        foreach (var parameter in documented)
+            _writer.WriteLine($"/// <param name=\"{Xml(parameter.Name)}\">{Xml(parameter.Documentation!.Replace('\n', ' '))}</param>");
+    }
 
     /// <summary>A declaration's attributes, one per line: <c>[global::System.ObsoleteAttribute("Use area")]</c>.</summary>
     private void EmitAttributes(Symbol symbol)
@@ -608,7 +675,7 @@ public sealed partial class CSharpEmitter
     /// <summary>e.g. <c>public static T first&lt;T&gt;(Pair&lt;T, T&gt; pair) where T : Show</c>; declares the parameter names.</summary>
     private string Signature(FunctionSymbol symbol, string modifiers)
     {
-        var parameters = string.Join(", ", symbol.Parameters.Select(p => $"{InlineAttributes(p)}{TypeName(p.Type)} {Escape(_names.Declare(p))}"));
+        var parameters = string.Join(", ", symbol.Parameters.Select(p => $"{InlineAttributes(p)}{TypeName(p.Type)} {Escape(_names.Declare(p))}{DefaultValue(p.Default)}"));
         // `async` belongs to a body, so a required trait (interface) method never has it.
         var @async = symbol.IsAsync && symbol.Declaration?.HasBody == true ? "async " : "";
         // `operator +(other: T)` → `public static T operator +(T self, T other)` (C# operators are public and static).
@@ -654,6 +721,7 @@ public sealed partial class CSharpEmitter
 
         var signature = Signature(symbol, modifiers);
         var body = (BoundBlockStatement)function.Body;
+        EmitDocumentation(symbol, symbol.Parameters);
         EmitAttributes(symbol);
 
         if (function.IsExpressionBodied && ExpressionBody(body) is { } expression)
@@ -663,6 +731,9 @@ public sealed partial class CSharpEmitter
         }
 
         _writer.WriteLine(signature);
+        // The directive before the signature numbers the lines after it too, so a first statement on the same Piper line
+        // (`fn F() { throw … }`, or a precondition check) needs its own directive, or it would map to a later line.
+        _lastLine = -1;
         EmitBlock(body);
     }
 
@@ -905,7 +976,7 @@ public sealed partial class CSharpEmitter
             BoundCallExpression call => (Call(call), PrimaryPrecedence),
             BoundMethodCallExpression call => (MethodCall(call), PrimaryPrecedence),
             BoundRecordCreationExpression creation =>
-                ($"new {TypeName(creation.Type)}({Arguments(creation.Arguments)})", PrimaryPrecedence),
+                ($"new {TypeName(creation.Type)}({Arguments(creation.Arguments, creation.ArgumentNames)})", PrimaryPrecedence),
             // Option/Result: static factories on the struct, e.g. `Option<int>.Some(1)` and `Option<int>.None`.
             BoundVariantCreationExpression { Variant.Enum.BuiltinKind: not BuiltinEnumKind.None } creation =>
                 ($"{TypeName(creation.Type)}.{creation.Variant.Name}{(creation.Arguments.IsEmpty ? "" : $"({Arguments(creation.Arguments)})")}", PrimaryPrecedence),
@@ -1118,13 +1189,15 @@ public sealed partial class CSharpEmitter
     private (string Call, List<(string Temp, BoundOutArgument Output)> Conversions) ClrCallWithOutTemps(BoundClrInvocationExpression invocation)
     {
         var conversions = new List<(string Temp, BoundOutArgument Output)>();
-        var arguments = string.Join(", ", invocation.Arguments.Select(argument =>
+        var names = invocation.ArgumentNames;
+        var arguments = string.Join(", ", invocation.Arguments.Select((argument, i) =>
         {
+            var name = !names.IsDefaultOrEmpty && names[i] is { } parameter ? $"{Escape(parameter)}: " : "";
             if (argument is not BoundOutArgument { Boundary: not ClrBoundary.None, Variable: not null } output)
-                return Arguments([argument]);
+                return name + Arguments([argument]);
             var temp = Escape(_names.Declare(new VariableSymbol("outValue", output.ClrType, isMutable: true, VariableKind.Temporary)));
             conversions.Add((temp, output));
-            return $"out var {temp}";
+            return $"{name}out var {temp}";
         }));
         var call = $"{ClrReceiver(invocation.Receiver, invocation.ContainerType)}.{Escape(invocation.Member.Name)}" +
                    $"{TypeArgumentList(invocation.TypeArguments)}({arguments})";
@@ -1152,10 +1225,12 @@ public sealed partial class CSharpEmitter
             return $"global::System.Console.WriteLine({Expr(call.Arguments[0], ConditionalPrecedence)})";
         if (call.Function == BuiltinFunctions.Assert)
             return $"global::Piper.Runtime.PiperAssert.True({Arguments(call.Arguments)})";
+        if (call.Function == BuiltinFunctions.Require)
+            return $"global::Piper.Runtime.PiperContract.Require({Arguments(call.Arguments)})";
         if (call.Function == BuiltinFunctions.AssertEqual)
             return $"global::Piper.Runtime.PiperAssert.Equal{TypeArgumentList(call.TypeArguments)}({Arguments(call.Arguments)})";
         var qualifier = InCurrentClass(call.Function) ? "" : FunctionContainer(call.Function) + ".";
-        return $"{qualifier}{Escape(call.Function.Name)}{TypeArgumentList(call.TypeArguments)}({Arguments(call.Arguments)})";
+        return $"{qualifier}{Escape(call.Function.Name)}{TypeArgumentList(call.TypeArguments)}({Arguments(call.Arguments, call.ArgumentNames)})";
     }
 
     /// <summary>
@@ -1165,7 +1240,7 @@ public sealed partial class CSharpEmitter
     private string MethodCall(BoundMethodCallExpression call)
     {
         var typeArguments = TypeArgumentList(call.TypeArguments);
-        var arguments = Arguments(call.Arguments);
+        var arguments = Arguments(call.Arguments, call.ArgumentNames);
 
         // A type parameter, builtin, .NET or runtime type reaches a trait's methods through its witness:
         // `PiperTraits.Witness<Shape.PiperWitness<T>>().area(x)`. So does a static default on any type.
@@ -1196,16 +1271,25 @@ public sealed partial class CSharpEmitter
     private string TypeArgumentList(ImmutableArray<TypeSymbol> arguments) =>
         arguments.IsEmpty ? "" : $"<{string.Join(", ", arguments.Select(a => TypeName(a)))}>";
 
-    private string Arguments(IEnumerable<BoundExpression> arguments) =>
-        string.Join(", ", arguments.Select(argument =>
+    /// <param name="names">Named arguments' names, by position (empty when all are positional), written as C#'s `name: value`.</param>
+    private string Arguments(IEnumerable<BoundExpression> arguments, ImmutableArray<string?> names = default) =>
+        string.Join(", ", arguments.Select((argument, i) =>
         {
             // A lambda needs no parentheses in an argument list.
             var text = Expr(argument, Unwrap(argument) is BoundLambdaExpression ? AssignmentPrecedence : ConditionalPrecedence);
             // `f(a < b, c > d)` could be misread by C# as a generic instantiation; parenthesize to be safe.
-            return Unwrap(argument) is BoundBinaryExpression { Operator: BoundBinaryOperatorKind.Less or BoundBinaryOperatorKind.Greater }
-                ? $"({text})"
-                : text;
+            if (Unwrap(argument) is BoundBinaryExpression { Operator: BoundBinaryOperatorKind.Less or BoundBinaryOperatorKind.Greater })
+                text = $"({text})";
+            return !names.IsDefaultOrEmpty && names[i] is { } name ? $"{Escape(name)}: {text}" : text;
         }));
+
+    /// <summary>` = 443` after a parameter with a default value (` = default` for an optional's None), or nothing.</summary>
+    private string DefaultValue(ParameterDefault? @default) => @default switch
+    {
+        null => "",
+        { Value: BoundVariantCreationExpression } => " = default",
+        { Value: var value } => $" = {Expr(value, AssignmentPrecedence)}",
+    };
 
     private string InterpolatedString(BoundInterpolatedStringExpression interpolated)
     {
@@ -1217,6 +1301,16 @@ public sealed partial class CSharpEmitter
         {
             if (part is BoundLiteralExpression { Value: string text })
                 builder.Append(EscapeString(text, interpolated: true));
+            else if (part is BoundFormattedExpression formatted)
+            {
+                var hole = Expr(formatted.Value, LogicalOrPrecedence);
+                builder.Append('{').Append(hole.Contains("::") && !IsParenthesized(hole) ? $"({hole})" : hole);
+                if (formatted.Alignment is { } alignment)
+                    builder.Append(',').Append(alignment);
+                if (formatted.Format is { } format)
+                    builder.Append(':').Append(EscapeString(format, interpolated: false));
+                builder.Append('}');
+            }
             else
             {
                 // A top-level ':' would start a format specifier, so ternaries and `global::` names must be parenthesized.

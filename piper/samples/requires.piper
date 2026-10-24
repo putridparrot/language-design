@@ -1,0 +1,19 @@
+fn RequiredFunction(i: int?) => unit
+    requires i is Some(> 0) 
+{
+    if i is Some(value) {
+        Print(value);
+    }
+
+    // match i {
+    //     Some(value) => Print(value),
+    //     None => {},
+    // }
+    //Print(i ?? 0);
+}
+
+fn Main() 
+{
+    //RequiredFunction(0);
+    RequiredFunction(5);
+}

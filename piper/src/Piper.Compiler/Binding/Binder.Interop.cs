@@ -46,10 +46,14 @@ public sealed partial class Binder
 
         public VariableSymbol? OutVariable { get; init; }
 
+        /// <summary>`count: 2`: the parameter a named argument is for.</summary>
+        public string? Name { get; init; }
+
         public TypeSymbol? Type => Bound?.Type ?? OutVariable?.Type;
     }
 
-    private sealed record ResolvedClrCall(ClrCandidate Candidate, ImmutableArray<BoundExpression> Arguments);
+    /// <param name="Names">Named arguments' names, by position (empty when all are positional), for C# to match the same way.</param>
+    private sealed record ResolvedClrCall(ClrCandidate Candidate, ImmutableArray<BoundExpression> Arguments, ImmutableArray<string?> Names);
 
     private static bool IsClrBacked(TypeSymbol type) => type is ClrTypeSymbol || ClrTypes.BuiltinTypes.ContainsKey(type);
 
@@ -242,7 +246,10 @@ public sealed partial class Binder
         CheckClrObsolete(nameSpan ?? span, chosen.Member);
         var call = new BoundClrInvocationExpression(
             receiver, chosen.Container, chosen.Member, resolved.Arguments,
-            BoundaryInnerType((chosen.ReturnType, chosen.ReturnBoundary)), chosen.TypeArguments);
+            BoundaryInnerType((chosen.ReturnType, chosen.ReturnBoundary)), chosen.TypeArguments)
+        {
+            ArgumentNames = resolved.Names,
+        };
         return FromClrBoundary(call, (chosen.ReturnType, chosen.ReturnBoundary));
     }
 
@@ -263,19 +270,30 @@ public sealed partial class Binder
             return null;
         }
 
+        // `name: value` arguments come after positional ones, as in C#.
+        if (argumentSyntax.SkipWhile(a => a is not NamedArgumentSyntax).FirstOrDefault(a => a is not NamedArgumentSyntax) is { } misplaced)
+        {
+            _diagnostics.ReportNamedArgument(misplaced.Span, "Positional arguments must come before named ones.");
+            BindArgumentsForDiagnostics([.. argumentSyntax.Select(a => a is NamedArgumentSyntax n ? n.Value : a)]);
+            return null;
+        }
         var arguments = leadingArguments.Select(a => new ClrArgument(a, null, span))
-            .Concat(argumentSyntax.Select(a => a switch
+            .Concat(argumentSyntax.Select(written =>
             {
-                LambdaExpressionSyntax lambda => new ClrArgument(null, lambda, a.Span),
-                OutArgumentSyntax output => new ClrArgument(null, null, a.Span) { Out = output, OutVariable = OutTarget(output) },
-                RefArgumentSyntax reference => new ClrArgument(BindRefTarget(reference), null, a.Span) { Ref = reference },
-                _ => new ClrArgument(RequireValue(BindExpression(a), a.Span), null, a.Span),
+                var (name, a) = written is NamedArgumentSyntax named ? (named.Name.Text, named.Value) : (null, written);
+                return (a switch
+                {
+                    LambdaExpressionSyntax lambda => new ClrArgument(null, lambda, a.Span),
+                    OutArgumentSyntax output => new ClrArgument(null, null, a.Span) { Out = output, OutVariable = OutTarget(output) },
+                    RefArgumentSyntax reference => new ClrArgument(BindRefTarget(reference), null, a.Span) { Ref = reference },
+                    _ => new ClrArgument(RequireValue(BindExpression(a), a.Span), null, a.Span),
+                }) with { Name = name };
             }))
             .ToList();
         if (arguments.Any(a => a.Type == TypeSymbol.Error || (a.Out is { Declaration: null, IsDiscard: false } && a.OutVariable is null)))
             return null;
 
-        var applicable = new List<(ClrCandidate Candidate, int[] Scores, bool Expanded)>();
+        var applicable = new List<(ClrCandidate Candidate, int[] Scores, bool Expanded, int[]? Positions)>();
         foreach (var member in members)
         {
             var memberMap = map;
@@ -295,10 +313,12 @@ public sealed partial class Binder
 
             if (Describe(member, container, memberMap) is not { } candidate)
                 continue;
-            if (Score(candidate, arguments, expanded: false) is { } normal)
-                applicable.Add((candidate, normal, false));
-            else if (candidate.ParamsElement is not null && Score(candidate, arguments, expanded: true) is { } expanded)
-                applicable.Add((candidate, expanded, true));
+            if (!Positions(candidate, arguments, out var positions))
+                continue;
+            if (Score(candidate, arguments, expanded: false, positions) is { } normal)
+                applicable.Add((candidate, normal, false, positions));
+            else if (positions is null && candidate.ParamsElement is not null && Score(candidate, arguments, expanded: true, null) is { } expanded)
+                applicable.Add((candidate, expanded, true, null));
         }
 
         if (applicable.Count == 0)
@@ -318,10 +338,10 @@ public sealed partial class Binder
             return null;
         }
 
-        var (chosen, _, isExpanded) = best[0];
+        var (chosen, _, isExpanded, chosenPositions) = best[0];
         var converted = arguments.Select((argument, i) =>
         {
-            var parameter = ParameterFor(chosen, i, isExpanded);
+            var parameter = ParameterFor(chosen, chosenPositions?[i] ?? i, isExpanded);
             if (argument.Out is { } output)
                 return BindOutArgument(output, argument.OutVariable, parameter);
             if (argument.Ref is not null)
@@ -330,7 +350,34 @@ public sealed partial class Binder
                 ? BindLambda(lambda, parameter.Type)
                 : ConvertClrArgument(argument.Bound!, parameter);
         }).ToImmutableArray();
-        return new ResolvedClrCall(chosen, converted);
+        var names = arguments.Any(a => a.Name is not null) ? arguments.Select(a => a.Name).ToImmutableArray() : [];
+        return new ResolvedClrCall(chosen, converted, names);
+    }
+
+    /// <summary>
+    /// Which of the candidate's parameters each argument goes to: null when all are positional (each to its own index),
+    /// otherwise positional ones in order and named ones by name. False if the names don't fit the candidate: one it
+    /// doesn't have, a parameter given twice, or a required one left out.
+    /// </summary>
+    private static bool Positions(ClrCandidate candidate, List<ClrArgument> arguments, out int[]? positions)
+    {
+        positions = null;
+        if (!arguments.Any(a => a.Name is not null))
+            return true;
+        var names = candidate.Member.GetParameters().Select(p => p.Name).ToList();
+        var result = new int[arguments.Count];
+        var used = new HashSet<int>();
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            int index = arguments[i].Name is { } name ? names.IndexOf(name) : i;
+            if (index < 0 || index >= candidate.Parameters.Length || !used.Add(index))
+                return false;
+            result[i] = index;
+        }
+        if (Enumerable.Range(0, candidate.RequiredCount).Any(i => !used.Contains(i)))
+            return false;
+        positions = result;
+        return true;
     }
 
     /// <summary>The existing variable named by <c>out n</c>, or null (after reporting, unless it's <c>out _</c> or <c>out let n</c>).</summary>
@@ -450,7 +497,8 @@ public sealed partial class Binder
         return new BoundOutArgument(existing, declares: false, parameter.Type, parameter.Boundary, type);
     }
 
-    private static bool Beats((ClrCandidate Candidate, int[] Scores, bool Expanded) a, (ClrCandidate Candidate, int[] Scores, bool Expanded) b)
+    private static bool Beats(
+        (ClrCandidate Candidate, int[] Scores, bool Expanded, int[]? Positions) a, (ClrCandidate Candidate, int[] Scores, bool Expanded, int[]? Positions) b)
     {
         // Per argument, negative when a's conversion is better: by score, then (as C#'s "better conversion target") the
         // more specific parameter type, so a List<Task<int>> goes to IEnumerable<Task<int>> rather than IEnumerable<Task>.
@@ -467,10 +515,11 @@ public sealed partial class Binder
     }
 
     /// <summary>-1 if a's parameter type for argument <paramref name="index"/> converts to b's but not back (so is more specific), 1 if the reverse, else 0.</summary>
-    private static int TargetComparison((ClrCandidate Candidate, int[] Scores, bool Expanded) a, (ClrCandidate Candidate, int[] Scores, bool Expanded) b, int index)
+    private static int TargetComparison(
+        (ClrCandidate Candidate, int[] Scores, bool Expanded, int[]? Positions) a, (ClrCandidate Candidate, int[] Scores, bool Expanded, int[]? Positions) b, int index)
     {
-        if (ClrTypes.ToClr(ParameterFor(a.Candidate, index, a.Expanded).Type) is not { } first ||
-            ClrTypes.ToClr(ParameterFor(b.Candidate, index, b.Expanded).Type) is not { } second || first == second)
+        if (ClrTypes.ToClr(ParameterFor(a.Candidate, a.Positions?[index] ?? index, a.Expanded).Type) is not { } first ||
+            ClrTypes.ToClr(ParameterFor(b.Candidate, b.Positions?[index] ?? index, b.Expanded).Type) is not { } second || first == second)
         {
             return 0;
         }
@@ -508,16 +557,16 @@ public sealed partial class Binder
         expanded && index >= candidate.Parameters.Length - 1 ? candidate.ParamsElement! : candidate.Parameters[index];
 
     /// <summary>One score per argument (lower is a better conversion), or null if the candidate can't take these arguments.</summary>
-    private int[]? Score(ClrCandidate candidate, List<ClrArgument> arguments, bool expanded)
+    private int[]? Score(ClrCandidate candidate, List<ClrArgument> arguments, bool expanded, int[]? positions)
     {
         int fixedCount = expanded ? candidate.Parameters.Length - 1 : candidate.Parameters.Length;
-        if (expanded ? arguments.Count < fixedCount : arguments.Count < candidate.RequiredCount || arguments.Count > fixedCount)
+        if (positions is null && (expanded ? arguments.Count < fixedCount : arguments.Count < candidate.RequiredCount || arguments.Count > fixedCount))
             return null;
 
         var scores = new int[arguments.Count];
         for (int i = 0; i < arguments.Count; i++)
         {
-            var parameter = ParameterFor(candidate, i, expanded);
+            var parameter = ParameterFor(candidate, positions?[i] ?? i, expanded);
             // An out argument goes only to an out parameter (an existing variable must have exactly its type), and vice versa.
             if (parameter.IsOut != arguments[i].Out is not null)
                 return null;

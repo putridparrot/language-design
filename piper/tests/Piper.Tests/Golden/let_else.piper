@@ -1,0 +1,58 @@
+// let ... else: bind a pattern or leave, which keeps "get the value or return" code flat.
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
+record User(name: string, managerId: int?);
+enum Shape { Circle(r: double), Ring(r: double, inner: double), Empty }
+
+fn Find(id: int) => User? = if id == 1 { User("Ada", null) } else if id == 2 { User("Grace", 1) } else { null };
+
+fn ManagerName(id: int) => string {
+    let Some(user) = Find(id) else { return "no user {id}"; };
+    let Some(managerId) = user.managerId else { return "{user.name} has no manager"; };
+    let Some(manager) = Find(managerId) else { return "unknown manager"; };
+    "{user.name} reports to {manager.name}"
+}
+
+fn ToInt(text: string) => int? = if int.TryParse(text, out let v) { v } else { null };
+
+fn Parse(text: string) => Result<int, string> {
+    let Some(n) = ToInt(text) else { return Err("'{text}' isn't a number"); };
+    Ok(n * 2)
+}
+
+fn Sum(items: List<int>) => int {
+    let [first, ...rest] = items else { return 0; };
+    first + Sum(rest)
+}
+
+fn Radius(s: Shape) => double {
+    let Circle(r) | Ring(r, _) = s else { throw System.ArgumentException("no radius"); };
+    r
+}
+
+async fn Later(id: int) => Task<string> {
+    await Task.Yield();
+    let Some(u) = Find(id) else { return "none"; };
+    u.name
+}
+
+record Point(x: int, y: int);
+
+fn Main() {
+    // A pattern that always matches needs no else: this destructures a record.
+    let Point(px, py) = Point(3, 4);
+    Print(px * py);
+    for id in 1..3 { Print(ManagerName(id)); }
+    Print(Parse("21"));
+    Print(Parse("x"));
+    Print(Sum([1, 2, 3, 4]));
+    Print(Radius(Shape.Ring(2.0, 1.0)));
+    mut found = 0;
+    for id in 0..3 {
+        let Some(u) = Find(id) else { continue; };
+        found += 1;
+        Print("found {u.name}");
+    }
+    Print("{found} found, {Later(2).Result}");
+}

@@ -41,6 +41,7 @@ public static class AssemblyWriter
 
         Write(name + ".dll", build.Assembly!);
         Write(name + ".pdb", build.Pdb!);
+        Write(name + ".xml", build.Documentation!);
 
         // Option, Result and the interop helpers, which every compiled Piper program references.
         var runtime = typeof(Piper.Runtime.PiperInterop).Assembly.Location;

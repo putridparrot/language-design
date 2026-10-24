@@ -1,0 +1,55 @@
+// Preconditions and invariants: `requires` says what arguments and fields must satisfy, and Piper checks it.
+using System;
+
+// A record's invariant holds for every value of it: making or copying one that breaks it fails.
+record Money(cents: long) requires cents >= 0;
+
+record Account(owner: string, balance: Money) requires owner.Length > 0;
+
+extend Money {
+    operator +(other: Money) => Money = Money(this.cents + other.cents);
+    fn Format() => string = "${this.cents / 100}.{(this.cents % 100).ToString("00")}";
+}
+
+// A function's preconditions are checked on every call, before its body runs.
+fn Withdraw(account: Account, amount: Money) => Account
+    requires amount.cents > 0
+    requires amount.cents <= account.balance.cents
+= { ...account, balance: Money(account.balance.cents - amount.cents) };
+
+fn Deposit(account: Account, amount: Money) => Account
+    requires amount.cents > 0
+= { ...account, balance: account.balance + amount };
+
+// Several conditions can share one clause.
+fn Percent(part: long, whole: long) => double requires whole > 0, part >= 0, part <= whole = (double)part / whole * 100;
+
+fn Attempt(label: string, action: () => string) {
+    try {
+        Print("{label}: {action()}");
+    } catch (e: ArgumentException) {
+        Print("{label} failed: {e.Message}");
+    }
+}
+
+fn Main() {
+    let account = Account("Ada", Money(10_000));
+    let afterRent = Withdraw(account, Money(7_500));
+    Print("{afterRent.owner} has {afterRent.balance.Format()}");
+
+    let rent = Money(7_500);
+    Attempt("withdraw rent again", () => Withdraw(afterRent, rent).balance.Format());
+    Attempt("deposit", () => Deposit(afterRent, Money(1_250)).balance.Format());
+
+    // A copy is checked like a new value.
+    let overdrawn = -1L;
+    Attempt("negative balance", () => "{{ ...account, balance: Money(overdrawn) }}");
+
+    let total = 0L;
+    Attempt("percent", () => Percent(25, 200).ToString());
+    Attempt("percent of nothing", () => Percent(1, total).ToString());
+
+    // These wouldn't compile, as their arguments are constants that break the conditions:
+    //   Money(-5)            error PIP0340: This call breaks Money's invariant 'cents >= 0'.
+    //   Percent(5, 0)        error PIP0340: This call breaks Percent's precondition 'whole > 0'.
+}

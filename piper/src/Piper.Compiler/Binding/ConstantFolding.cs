@@ -33,6 +33,68 @@ public static class ConstantFolding
         _ => null,
     };
 
+    /// <summary>
+    /// The value of a condition built from constants and variables of known value (<paramref name="values"/>): literals,
+    /// conversions, arithmetic, comparisons, equality, `!`, `&&` and `||`. Null if any part isn't known.
+    /// </summary>
+    public static object? Evaluate(BoundExpression expression, IReadOnlyDictionary<VariableSymbol, object> values)
+    {
+        switch (expression)
+        {
+            case BoundLiteralExpression literal:
+                return literal.Value;
+            case BoundVariableExpression variable:
+                return values.TryGetValue(variable.Variable, out var value) ? value : null;
+            case BoundConversionExpression conversion:
+                return Evaluate(conversion.Expression, values) is { } converted && IsNumber(converted) &&
+                       Cast(converted, conversion.Type, out var result) == Failure.None ? result : null;
+            case BoundUnaryExpression { Operator: BoundUnaryOperatorKind.LogicalNot } not:
+                return Evaluate(not.Operand, values) is bool b ? !b : null;
+            case BoundUnaryExpression { Operator: BoundUnaryOperatorKind.Negate } negate:
+                return Evaluate(negate.Operand, values) is { } operand && Negate(operand, out var negated) == Failure.None ? negated : null;
+            case BoundBinaryExpression { Operator: BoundBinaryOperatorKind.LogicalAnd } and:
+                return Evaluate(and.Left, values) switch
+                {
+                    false => false,
+                    true => Evaluate(and.Right, values) is bool right ? right : null,
+                    _ => Evaluate(and.Right, values) is false ? false : null,
+                };
+            case BoundBinaryExpression { Operator: BoundBinaryOperatorKind.LogicalOr } or:
+                return Evaluate(or.Left, values) switch
+                {
+                    true => true,
+                    false => Evaluate(or.Right, values) is bool right ? right : null,
+                    _ => Evaluate(or.Right, values) is true ? true : null,
+                };
+            case BoundBinaryExpression binary:
+            {
+                if (Evaluate(binary.Left, values) is not { } left || Evaluate(binary.Right, values) is not { } right)
+                    return null;
+                switch (binary.Operator)
+                {
+                    case BoundBinaryOperatorKind.Equals:
+                        return Equals(left, right);
+                    case BoundBinaryOperatorKind.NotEquals:
+                        return !Equals(left, right);
+                    case BoundBinaryOperatorKind.Less or BoundBinaryOperatorKind.LessOrEqual or BoundBinaryOperatorKind.Greater
+                        or BoundBinaryOperatorKind.GreaterOrEqual when left.GetType() == right.GetType() && left is IComparable comparable:
+                        int order = comparable.CompareTo(right);
+                        return binary.Operator switch
+                        {
+                            BoundBinaryOperatorKind.Less => order < 0,
+                            BoundBinaryOperatorKind.LessOrEqual => order <= 0,
+                            BoundBinaryOperatorKind.Greater => order > 0,
+                            _ => order >= 0,
+                        };
+                    default:
+                        return IsNumber(left) && IsNumber(right) && Binary(binary.Operator, left, right, out var folded) == Failure.None ? folded : null;
+                }
+            }
+            default:
+                return null;
+        }
+    }
+
     private static bool IsNumber(object? value) =>
         value is int or long or uint or ulong or double or float or decimal or byte or sbyte or short or ushort;
 
