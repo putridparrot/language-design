@@ -1,10 +1,10 @@
-fn fizzbuzz(n: int) => string {
+fn Fizzbuzz(n: int) => string {
     if n % 15 == 0 { "FizzBuzz" } else if n % 3 == 0 { "Fizz" } else if n % 5 == 0 { "Buzz" } else { "{n}" }
 }
 
-fn isPrime(n: int) => bool {
+fn IsPrime(n: int) => bool {
     if n < 2 { return false; }
-    var d = 2;
+    mut d = 2;
     while d * d <= n {
         if n % d == 0 { return false; }
         d += 1;
@@ -12,25 +12,25 @@ fn isPrime(n: int) => bool {
     true
 }
 
-fn main() {
-    for i in 1..=15 { print(fizzbuzz(i)); }
+fn Main() {
+    for i in 1..15 { Print(Fizzbuzz(i)); }
 
-    var primes = "";
-    for n in 0..30 {
-        if !isPrime(n) { continue; }
+    mut primes = "";
+    for n in 0..<30 {
+        if !IsPrime(n) { continue; }
         primes = primes + "{n} ";
     }
-    print(primes);
+    Print(primes);
 
-    var steps = 0;
+    mut steps = 0;
     while true {
         steps += 1;
         if steps == 5 { break; }
     }
-    print("stopped after {steps} steps");
+    Print("stopped after {steps} steps");
 
     let big: long = 3_000_000_000L;
-    var total = 0L;
-    for k in 0L..3L { total += big; }
-    print(total);
+    mut total = 0L;
+    for k in 0L..<3L { total += big; }
+    Print(total);
 }

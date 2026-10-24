@@ -10,7 +10,7 @@ public sealed record Grid(bool[,] cells, int rows, int columns);
 
 public static class Program_life
 {
-    public static Grid parse(string pattern)
+    public static Grid Parse(string pattern)
     {
         string[] lines = pattern.Split('\n');
         int rows = lines.Length;
@@ -26,7 +26,7 @@ public static class Program_life
         return new Grid(cells, rows, columns);
     }
 
-    public static int neighbours(Grid grid, int row, int column)
+    public static int Neighbours(Grid grid, int row, int column)
     {
         int count = 0;
         for (int dr = -1; dr <= 1; dr++)
@@ -48,7 +48,7 @@ public static class Program_life
         return count;
     }
 
-    public static Grid step(Grid grid)
+    public static Grid Step(Grid grid)
     {
         bool[,] next = new bool[grid.rows, grid.columns];
         int temp = grid.rows;
@@ -58,7 +58,7 @@ public static class Program_life
             for (int column = 0; column < temp_1; column++)
             {
                 bool temp_2;
-                (bool, int) temp_3 = (grid.cells[row, column], neighbours(grid, row, column));
+                (bool, int) temp_3 = (grid.cells[row, column], Neighbours(grid, row, column));
                 if (temp_3 is (true, 2) or (_, 3))
                 {
                     temp_2 = true;
@@ -73,7 +73,7 @@ public static class Program_life
         return new Grid(next, grid.rows, grid.columns);
     }
 
-    public static string render(Grid grid)
+    public static string Render(Grid grid)
     {
         global::System.Text.StringBuilder builder = new global::System.Text.StringBuilder();
         int temp = grid.rows;
@@ -92,7 +92,7 @@ public static class Program_life
         return builder.ToString();
     }
 
-    public static int population(Grid grid)
+    public static int Population(Grid grid)
     {
         int alive = 0;
         foreach (bool cell in grid.cells)
@@ -105,21 +105,21 @@ public static class Program_life
         return alive;
     }
 
-    public static void main()
+    public static void Main()
     {
         string glider = ".#....\n..#...\n###...\n......\n......\n......";
-        Grid grid = parse(glider);
+        Grid grid = Parse(glider);
         for (int generation = 0; generation <= 4; generation++)
         {
-            global::System.Console.WriteLine($"generation {generation}, population {population(grid)}:");
-            global::System.Console.WriteLine(render(grid));
-            grid = step(grid);
+            global::System.Console.WriteLine($"generation {generation}, population {Population(grid)}:");
+            global::System.Console.WriteLine(Render(grid));
+            grid = Step(grid);
         }
         for (int __1 = 5; __1 < 24; __1++)
         {
-            grid = step(grid);
+            grid = Step(grid);
         }
-        global::System.Console.WriteLine($"back to the start after 24: {render(grid) == glider}");
+        global::System.Console.WriteLine($"back to the start after 24: {Render(grid) == glider}");
     }
 }
 
@@ -128,6 +128,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Program_life.main();
+        Program_life.Main();
     }
 }

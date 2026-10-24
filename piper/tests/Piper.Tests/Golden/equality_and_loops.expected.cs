@@ -8,35 +8,35 @@ using Piper.Runtime;
 
 public interface Shape
 {
-    double area();
+    double Area();
 
     public interface PiperWitness<TPiperSelf>
     {
         Shape PiperBox(TPiperSelf piperSelf);
-        double area(TPiperSelf piperSelf);
+        double Area(TPiperSelf piperSelf);
     }
 
     public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Shape
     {
         Shape Shape.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
-        public double area(TPiperSelf piperSelf) => piperSelf.area();
+        public double Area(TPiperSelf piperSelf) => piperSelf.Area();
     }
 
     public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Shape, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
     {
         Shape Shape.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
-        public double area(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).area();
+        public double Area(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Area();
     }
 }
 
 public sealed record Circle(double radius) : Shape
 {
-    public double area() => 3.0 * this.radius * this.radius;
+    public double Area() => 3.0 * this.radius * this.radius;
 }
 
 public sealed record Square(double side) : Shape
 {
-    public double area() => this.side * this.side;
+    public double Area() => this.side * this.side;
 }
 
 public abstract record Event
@@ -54,7 +54,7 @@ public abstract record Event
 
 public static class Equality_and_loops
 {
-    public static int indexOf<T>(global::System.Collections.Generic.List<T> items, T wanted)
+    public static int IndexOf<T>(global::System.Collections.Generic.List<T> items, T wanted)
     {
         int temp = items.Count;
         for (int i = 0; i < temp; i++)
@@ -67,9 +67,9 @@ public static class Equality_and_loops
         return -1;
     }
 
-    public static bool same(Shape a, Shape b) => global::System.Collections.Generic.EqualityComparer<Shape>.Default.Equals(a, b);
+    public static bool Same(Shape a, Shape b) => global::System.Collections.Generic.EqualityComparer<Shape>.Default.Equals(a, b);
 
-    public static int firstSquareAbove(int limit)
+    public static int FirstSquareAbove(int limit)
     {
         int n = 1;
         while (true)
@@ -82,7 +82,7 @@ public static class Equality_and_loops
         }
     }
 
-    public static string describe(Event @event)
+    public static string Describe(Event @event)
     {
         if (@event is Event.Click(var x, var y) && x == y)
         {
@@ -110,7 +110,7 @@ public static class Equality_and_loops
         }
     }
 
-    public static string bucket((int, Option<int>) pair)
+    public static string Bucket((int, Option<int>) pair)
     {
         if (pair is (0, { IsSome: true, Value: var n }))
         {
@@ -130,24 +130,24 @@ public static class Equality_and_loops
         }
     }
 
-    public static void main()
+    public static void Main()
     {
         global::System.Collections.Generic.List<string> names = new global::System.Collections.Generic.List<string> { "ann", "bob", "cy" };
-        global::System.Console.WriteLine(indexOf<string>(names, "bob"));
-        global::System.Console.WriteLine(indexOf<Circle>(new global::System.Collections.Generic.List<Circle> { new Circle(1.0), new Circle(2.0) }, new Circle(2.0)));
-        global::System.Console.WriteLine(indexOf<int>(new global::System.Collections.Generic.List<int> { 1, 2, 3 }, 7));
-        global::System.Console.WriteLine(same(new Circle(1.0), new Circle(1.0)));
-        global::System.Console.WriteLine(same(new Circle(1.0), new Square(1.0)));
+        global::System.Console.WriteLine(IndexOf<string>(names, "bob"));
+        global::System.Console.WriteLine(IndexOf<Circle>(new global::System.Collections.Generic.List<Circle> { new Circle(1.0), new Circle(2.0) }, new Circle(2.0)));
+        global::System.Console.WriteLine(IndexOf<int>(new global::System.Collections.Generic.List<int> { 1, 2, 3 }, 7));
+        global::System.Console.WriteLine(Same(new Circle(1.0), new Circle(1.0)));
+        global::System.Console.WriteLine(Same(new Circle(1.0), new Square(1.0)));
         Shape shape = new Square(2.0);
         global::System.Console.WriteLine(global::System.Collections.Generic.EqualityComparer<Shape>.Default.Equals(shape, new Square(2.0)));
         global::System.Console.WriteLine(!global::System.Collections.Generic.EqualityComparer<Shape>.Default.Equals(shape, new Square(3.0)));
-        global::System.Console.WriteLine(firstSquareAbove(50));
-        global::System.Console.WriteLine(describe(new Event.Click(3, 3)));
-        global::System.Console.WriteLine(describe(new Event.Touch(1, 5)));
-        global::System.Console.WriteLine(describe(new Event.Key(13)));
-        global::System.Console.WriteLine(bucket((0, Option<int>.Some(9))));
-        global::System.Console.WriteLine(bucket((4, Option<int>.None)));
-        global::System.Console.WriteLine(bucket((2, Option<int>.Some(3))));
+        global::System.Console.WriteLine(FirstSquareAbove(50));
+        global::System.Console.WriteLine(Describe(new Event.Click(3, 3)));
+        global::System.Console.WriteLine(Describe(new Event.Touch(1, 5)));
+        global::System.Console.WriteLine(Describe(new Event.Key(13)));
+        global::System.Console.WriteLine(Bucket((0, Option<int>.Some(9))));
+        global::System.Console.WriteLine(Bucket((4, Option<int>.None)));
+        global::System.Console.WriteLine(Bucket((2, Option<int>.Some(3))));
     }
 }
 
@@ -156,6 +156,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Equality_and_loops.main();
+        Equality_and_loops.Main();
     }
 }

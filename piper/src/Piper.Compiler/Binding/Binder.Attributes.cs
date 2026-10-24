@@ -1,0 +1,214 @@
+using System.Collections.Immutable;
+using System.Reflection;
+using Piper.Syntax;
+
+namespace Piper.Binding;
+
+public sealed partial class Binder
+{
+    /// <summary>
+    /// Binds the attributes of every type, field, function, method and parameter. They run after all signatures are
+    /// bound, since their arguments can name any type (<c>AttributeTargets.Method</c>), and before bodies, which
+    /// report uses of <c>[Obsolete]</c> declarations.
+    /// </summary>
+    private void BindAttributes(IEnumerable<TypeSymbol> types, IEnumerable<FunctionInfo> functions)
+    {
+        foreach (var type in types)
+        {
+            var (declaration, fields) = type switch
+            {
+                RecordSymbol record => ((DeclarationSyntax?)record.Declaration, record.Declaration.Fields.Select(f => (record.Fields, f))),
+                EnumSymbol { Declaration: { } syntax } @enum => (syntax, syntax.Variants.Zip(@enum.Variants, (v, symbol) => (v, symbol))
+                    .SelectMany(pair => pair.v.Fields.Select(f => (pair.symbol.Fields, f)))),
+                TraitSymbol trait => (trait.Declaration, []),
+                _ => (null, []),
+            };
+            if (declaration is null)
+                continue;
+            InFile(FileOf(type));
+            type.Attributes = BindAttributeList(declaration.Attributes, type is TraitSymbol ? AttributeTargets.Interface : AttributeTargets.Class, "a type");
+            foreach (var (symbols, syntax) in fields)
+            {
+                if (symbols.FirstOrDefault(f => f.Name == syntax.Name.Text) is { } field)
+                    field.Attributes = BindAttributeList(syntax.Attributes, AttributeTargets.Property | AttributeTargets.Field | AttributeTargets.Parameter, "a field");
+            }
+
+            // Required trait methods have no body, so they aren't among the functions below.
+            if (type is TraitSymbol required)
+            {
+                foreach (var syntax in required.Declaration.Methods.Where(m => !m.HasBody))
+                {
+                    if (required.Methods.FirstOrDefault(m => m.Declaration == syntax) is { } method)
+                        BindFunctionAttributes(method, syntax);
+                }
+            }
+        }
+
+        foreach (var function in functions)
+        {
+            InFile(function.File);
+            BindFunctionAttributes(function.Symbol, function.Syntax);
+        }
+    }
+
+    private void BindFunctionAttributes(FunctionSymbol function, FunctionDeclarationSyntax syntax)
+    {
+        function.Attributes = BindAttributeList(syntax.Attributes, AttributeTargets.Method, "a function");
+        foreach (var (parameter, parameterSyntax) in function.Parameters.Zip(syntax.Parameters))
+            parameter.Attributes = BindAttributeList(parameterSyntax.Attributes, AttributeTargets.Parameter, "a parameter");
+    }
+
+    /// <param name="targets">
+    /// Where the attributes go in C#. A field allows several: its attribute goes on the record's property if it applies to
+    /// properties, otherwise its backing field, otherwise its constructor parameter.
+    /// </param>
+    private ImmutableArray<BoundAttribute> BindAttributeList(ImmutableArray<AttributeSyntax> syntax, AttributeTargets targets, string what)
+    {
+        var attributes = ImmutableArray.CreateBuilder<BoundAttribute>();
+        foreach (var attribute in syntax)
+        {
+            if (BindAttribute(attribute) is not { } bound)
+                continue;
+            var type = ClrTypes.ToClr(bound.Type)!;
+            var usage = type.GetCustomAttribute<AttributeUsageAttribute>(inherit: true) ?? new AttributeUsageAttribute(AttributeTargets.All);
+            var target = (usage.ValidOn & targets) switch
+            {
+                0 => (AttributeTargets?)null,
+                var valid when targets.HasFlag(AttributeTargets.Property) && valid.HasFlag(AttributeTargets.Property) => AttributeTargets.Property,
+                var valid when targets.HasFlag(AttributeTargets.Field) && valid.HasFlag(AttributeTargets.Field) => AttributeTargets.Field,
+                var valid => valid,
+            };
+            if (target is null)
+            {
+                _diagnostics.ReportAttributeTarget(attribute.Name.Span, bound.Type.Name, what, usage.ValidOn);
+                continue;
+            }
+            if (!usage.AllowMultiple && attributes.Any(a => a.Type == bound.Type))
+            {
+                _diagnostics.ReportDuplicateAttribute(attribute.Name.Span, bound.Type.Name);
+                continue;
+            }
+            attributes.Add(target switch
+            {
+                AttributeTargets.Property when targets.HasFlag(AttributeTargets.Parameter) => bound with { Target = "property" },
+                AttributeTargets.Field when targets.HasFlag(AttributeTargets.Parameter) => bound with { Target = "field" },
+                _ => bound,
+            });
+        }
+        return attributes.ToImmutable();
+    }
+
+    private BoundAttribute? BindAttribute(AttributeSyntax syntax)
+    {
+        if (syntax.Name.IsMissing)
+            return null;
+        if (ResolveAttributeType(syntax.Name) is not { } type)
+        {
+            _diagnostics.ReportUnknownAttribute(syntax.Name.Span, syntax.Name.Text);
+            BindArgumentsForDiagnostics(syntax.Arguments);
+            return null;
+        }
+        var clr = ClrTypes.ToClr(type)!;
+
+        // `[A(1, Name = 2)]`: constructor arguments, then property and field assignments.
+        static bool IsNamed(ExpressionSyntax argument) =>
+            argument is AssignmentExpressionSyntax { Target: NameExpressionSyntax, Operator.Kind: TokenKind.Equals };
+        int firstNamed = syntax.Arguments.IndexOf(syntax.Arguments.FirstOrDefault(IsNamed)!);
+        if (firstNamed < 0)
+            firstNamed = syntax.Arguments.Length;
+        var positional = syntax.Arguments[..firstNamed];
+        foreach (var misplaced in syntax.Arguments[firstNamed..].Where(a => !IsNamed(a)))
+            _diagnostics.ReportAttributeArgument(misplaced.Span, "Constructor arguments must come before 'Name = value' assignments.");
+
+        var constructors = clr.GetConstructors(BindingFlags.Public | BindingFlags.Instance);
+        if (ResolveClrOverload(constructors, type, type.Name, positional, [], syntax.Span, new Dictionary<Type, TypeSymbol>()) is not { } resolved)
+            return null;
+        foreach (var argument in resolved.Arguments.Where(a => !IsAttributeConstant(a)))
+            _diagnostics.ReportAttributeArgument(argument.SourceSpan ?? syntax.Span, "Attribute arguments must be constants: literals, .NET enum members or constant fields.");
+
+        var named = ImmutableArray.CreateBuilder<(string, BoundExpression)>();
+        foreach (var assignment in syntax.Arguments[firstNamed..].OfType<AssignmentExpressionSyntax>().Where(IsNamed))
+        {
+            var name = ((NameExpressionSyntax)assignment.Target).Identifier;
+            Type? memberType = clr.GetMember(name.Text, BindingFlags.Public | BindingFlags.Instance).FirstOrDefault() switch
+            {
+                PropertyInfo { SetMethod.IsPublic: true } property => property.PropertyType,
+                FieldInfo { IsInitOnly: false, IsLiteral: false } field => field.FieldType,
+                _ => null,
+            };
+            if (memberType is null || ClrTypes.FromClr(memberType, new Dictionary<Type, TypeSymbol>(), _option) is not { } valueType)
+            {
+                _diagnostics.ReportUnknownMember(name.Span, type, name.Text);
+                BindExpression(assignment.Value);
+                continue;
+            }
+            var value = Convert(RequireValue(BindExpression(assignment.Value, valueType), assignment.Value.Span), valueType, assignment.Value.Span);
+            if (!IsAttributeConstant(value))
+                _diagnostics.ReportAttributeArgument(assignment.Value.Span, "Attribute arguments must be constants: literals, .NET enum members or constant fields.");
+            named.Add((name.Text, value));
+        }
+        return new BoundAttribute(type, resolved.Arguments, named.ToImmutable());
+    }
+
+    /// <summary>
+    /// The attribute type <paramref name="name"/> means: <c>Obsolete</c> is <c>ObsoleteAttribute</c> (tried first) or
+    /// <c>Obsolete</c>, as in C#. It must be a non-abstract .NET type deriving from <see cref="Attribute"/>.
+    /// </summary>
+    private TypeSymbol? ResolveAttributeType(QualifiedNameSyntax name)
+    {
+        var last = name.Parts[^1];
+        foreach (var candidate in new[] { last.Text + "Attribute", last.Text })
+        {
+            Symbol? symbol;
+            if (name.Parts.Length == 1)
+            {
+                symbol = _scope.Lookup(candidate);
+            }
+            else
+            {
+                var container = _scope.Lookup(name.Parts[0].Text) as NamespaceSymbol;
+                foreach (var part in name.Parts[1..^1])
+                    container = container is null ? null : MemberOf(container, part.Text) as NamespaceSymbol;
+                symbol = container is null ? null : MemberOf(container, candidate);
+            }
+            var type = symbol switch
+            {
+                ClrTypeGroupSymbol group => NonGenericMember(group),
+                TypeSymbol t => t,
+                _ => null,
+            };
+            if (type is not null && ClrTypes.ToClr(type) is { IsAbstract: false, ContainsGenericParameters: false } clr && typeof(Attribute).IsAssignableFrom(clr))
+            {
+                Record(last, type);
+                return type;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>What C# accepts as an attribute argument: a literal, an enum member or const field, or an operator on those.</summary>
+    private static bool IsAttributeConstant(BoundExpression expression) => expression switch
+    {
+        BoundLiteralExpression => true,
+        BoundClrMemberExpression { Receiver: null, Member: FieldInfo { IsLiteral: true } } => true,
+        BoundConversionExpression conversion => IsAttributeConstant(conversion.Expression),
+        BoundUnaryExpression unary => IsAttributeConstant(unary.Operand),
+        BoundBinaryExpression binary => IsAttributeConstant(binary.Left) && IsAttributeConstant(binary.Right),
+        _ => false,
+    };
+
+    private readonly HashSet<(Piper.Text.SourceText, int)> _obsoleteReported = [];
+
+    /// <summary>Warns about a use of a declaration marked <c>[Obsolete]</c> (an error with <c>[Obsolete("…", true)]</c>), as C# does.</summary>
+    private void CheckObsolete(Token name, Symbol symbol)
+    {
+        if (symbol.Attributes.FirstOrDefault(a => ClrTypes.ToClr(a.Type) == typeof(ObsoleteAttribute)) is not { } obsolete ||
+            !_obsoleteReported.Add((_file.Source, name.Span.Start)))
+        {
+            return;
+        }
+        var message = obsolete.Arguments.FirstOrDefault() is BoundLiteralExpression { Value: string text } ? text : null;
+        bool isError = obsolete.Arguments.Length > 1 && obsolete.Arguments[1] is BoundLiteralExpression { Value: true };
+        _diagnostics.ReportObsolete(name.Span, symbol.Name, message, isError);
+    }
+}

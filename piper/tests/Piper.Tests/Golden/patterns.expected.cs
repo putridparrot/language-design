@@ -10,7 +10,7 @@ public sealed record Point(int x, int y);
 
 public static class Patterns
 {
-    public static string classify(int n)
+    public static string Classify(int n)
     {
         if (n is 0)
         {
@@ -38,7 +38,7 @@ public static class Patterns
         }
     }
 
-    public static string quadrant(Point p)
+    public static string Quadrant(Point p)
     {
         if (p is Point(0, 0))
         {
@@ -62,7 +62,7 @@ public static class Patterns
         }
     }
 
-    public static string kind(char c)
+    public static string Kind(char c)
     {
         if (c is >= 'a' and <= 'z')
         {
@@ -82,7 +82,7 @@ public static class Patterns
         }
     }
 
-    public static string bits(bool a, bool b)
+    public static string Bits(bool a, bool b)
     {
         string first;
         if (a is true)
@@ -105,7 +105,7 @@ public static class Patterns
         return first + temp;
     }
 
-    public static string greet(string language)
+    public static string Greet(string language)
     {
         if (language is "en")
         {
@@ -126,7 +126,7 @@ public static class Patterns
         }
     }
 
-    public static string size(long n)
+    public static string Size(long n)
     {
         if (n is 0L)
         {
@@ -142,24 +142,24 @@ public static class Patterns
         }
     }
 
-    public static void main()
+    public static void Main()
     {
         for (int n = -12; n < 12; n++)
         {
             if (n % 4 == 0 || n == -3 || n == 2 || n == 7)
             {
-                global::System.Console.WriteLine($"{n}: {classify(n)}");
+                global::System.Console.WriteLine($"{n}: {Classify(n)}");
             }
         }
-        global::System.Console.WriteLine(quadrant(new Point(0, 0)));
-        global::System.Console.WriteLine(quadrant(new Point(0, 5)));
-        global::System.Console.WriteLine(quadrant(new Point(3, 4)));
-        global::System.Console.WriteLine(quadrant(new Point(-3, 4)));
-        global::System.Console.WriteLine(quadrant(new Point(1, -1)));
-        global::System.Console.WriteLine($"{kind('q')} {kind('Q')} {kind('7')} {kind('?')}");
-        global::System.Console.WriteLine($"{bits(true, false)} {bits(false, true)}");
-        global::System.Console.WriteLine($"{greet("fr")} {greet("pt")} {greet("de")}");
-        global::System.Console.WriteLine($"{size(0L)} {size(500L)} {size(5000000000L)}");
+        global::System.Console.WriteLine(Quadrant(new Point(0, 0)));
+        global::System.Console.WriteLine(Quadrant(new Point(0, 5)));
+        global::System.Console.WriteLine(Quadrant(new Point(3, 4)));
+        global::System.Console.WriteLine(Quadrant(new Point(-3, 4)));
+        global::System.Console.WriteLine(Quadrant(new Point(1, -1)));
+        global::System.Console.WriteLine($"{Kind('q')} {Kind('Q')} {Kind('7')} {Kind('?')}");
+        global::System.Console.WriteLine($"{Bits(true, false)} {Bits(false, true)}");
+        global::System.Console.WriteLine($"{Greet("fr")} {Greet("pt")} {Greet("de")}");
+        global::System.Console.WriteLine($"{Size(0L)} {Size(500L)} {Size(5000000000L)}");
         int found = -1;
         for (int i = 1; i < 100; i++)
         {
@@ -206,6 +206,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Patterns.main();
+        Patterns.Main();
     }
 }

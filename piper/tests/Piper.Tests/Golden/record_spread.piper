@@ -6,39 +6,39 @@ record Line(start: Point, end: Point, label: string);
 
 record Box<T>(value: T, count: int);
 
-fn moveRight(p: Point, by: int) => Point = { ...p, x: p.x + by };
+fn MoveRight(p: Point, by: int) => Point = { ...p, x: p.x + by };
 
-fn main() {
+fn Main() {
     let p = Point(1, 2);
     let q = { ...p, y: 5 };
-    print("{p} {q}");
+    Print("{p} {q}");
 
     // Several fields, and a field written alone takes the variable of that name.
     let x = 10;
     let y = 20;
-    print({ ...p, x, y });
+    Print({ ...p, x, y });
 
     // Nested: a copy of a line whose end point is itself a copy.
     let line = Line(Point(0, 0), Point(3, 4), "diagonal");
     let longer = { ...line, end: { ...line.end, x: 9 }, label: "stretched" };
-    print(longer);
-    print(line.end);
+    Print(longer);
+    Print(line.end);
 
     // Generic records keep their type arguments.
     let box = Box("apples", 3);
     let more = { ...box, count: box.count + 1 };
-    print(more);
+    Print(more);
 
     // A copy is equal to an equal record, as C# records are.
-    print({ ...p } == p);
-    print(moveRight(p, 2) == Point(3, 2));
+    Print({ ...p } == p);
+    Print(MoveRight(p, 2) == Point(3, 2));
 
     // In lambdas and match arms.
     let points = [Point(1, 1), Point(2, 2)];
-    print(string.Join(" ", System.Linq.Enumerable.Select(points, pt => { ...pt, y: 0 })));
+    Print(string.Join(" ", System.Linq.Enumerable.Select(points, pt => { ...pt, y: 0 })));
     let flipped = match p {
         Point(a, b) if a < b => { ...p, x: b, y: a },
         _ => p,
     };
-    print(flipped);
+    Print(flipped);
 }

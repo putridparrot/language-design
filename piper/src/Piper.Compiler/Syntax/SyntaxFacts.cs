@@ -2,11 +2,22 @@ namespace Piper.Syntax;
 
 public static class SyntaxFacts
 {
+    /// <summary>
+    /// Words that aren't keywords yet but may become ones, so nothing may be named with them: planned features
+    /// (<c>const</c>, <c>operator</c>, <c>test</c>, <c>where</c>, <c>type</c>, <c>impl</c>), other languages' module words,
+    /// and C#'s modifiers and type kinds.
+    /// </summary>
+    public static readonly IReadOnlySet<string> ReservedWords = new HashSet<string>
+    {
+        "const", "operator", "test", "where", "type", "impl", "module", "import", "self",
+        "public", "internal", "protected", "sealed", "abstract", "override", "virtual", "class", "struct", "interface",
+    };
+
     public static TokenKind? GetKeywordKind(string text) => text switch
     {
         "fn" => TokenKind.FnKeyword,
         "let" => TokenKind.LetKeyword,
-        "var" => TokenKind.VarKeyword,
+        "mut" => TokenKind.MutKeyword,
         "if" => TokenKind.IfKeyword,
         "else" => TokenKind.ElseKeyword,
         "while" => TokenKind.WhileKeyword,
@@ -62,7 +73,7 @@ public static class SyntaxFacts
         TokenKind.AmpersandAmpersand => 4,
         TokenKind.PipePipe => 3,
         TokenKind.QuestionQuestion => 2,
-        TokenKind.DotDot or TokenKind.DotDotEquals => 1,
+        TokenKind.DotDot or TokenKind.DotDotLess => 1,
         _ => 0,
     };
 
@@ -97,7 +108,7 @@ public static class SyntaxFacts
     {
         TokenKind.FnKeyword => "fn",
         TokenKind.LetKeyword => "let",
-        TokenKind.VarKeyword => "var",
+        TokenKind.MutKeyword => "mut",
         TokenKind.IfKeyword => "if",
         TokenKind.ElseKeyword => "else",
         TokenKind.WhileKeyword => "while",
@@ -137,7 +148,7 @@ public static class SyntaxFacts
         TokenKind.Colon => ":",
         TokenKind.Dot => ".",
         TokenKind.DotDot => "..",
-        TokenKind.DotDotEquals => "..=",
+        TokenKind.DotDotLess => "..<",
         TokenKind.Ellipsis => "...",
         TokenKind.Arrow => "->",
         TokenKind.FatArrow => "=>",

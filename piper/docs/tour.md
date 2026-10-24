@@ -12,13 +12,13 @@ This tour takes about fifteen minutes. The full reference is [language.md](langu
 Install the compiler as a .NET tool (it needs the .NET 10 SDK), then run a file:
 
 ```
-dotnet tool install -g Piper --prerelease
+dotnet tool install -g Piper
 piper run hello.piper
 ```
 
 ```piper
-fn main() {
-    print("Hello from Piper");
+fn Main() {
+    Print("Hello from Piper");
 }
 ```
 
@@ -29,12 +29,12 @@ fn main() {
 
 ```piper
 let name = "Ada";            // immutable: C#'s `var`, but read-only
-var count = 0;               // mutable
+mut count = 0;               // mutable
 count += 1;
 
-fn square(x: int) => int = x * x;            // one-expression function
+fn Square(x: int) => int = x * x;            // one-expression function
 
-fn greet(name: string, times: int) => string {
+fn Greet(name: string, times: int) => string {
     let greeting = "Hello, {name}";           // every string interpolates: `{…}` is C#'s `$"{…}"`
     if times > 1 { "{greeting} x{times}" } else { greeting }
 }
@@ -42,10 +42,10 @@ fn greet(name: string, times: int) => string {
 
 - Types are written after names, `name: Type`, and `=> Type` gives the return type.
 - **Blocks and `if` are expressions.** A block's value is its last expression, written without `;`. That's why
-  `greet` has no `return`, and why `if … { a } else { b }` replaces C#'s `?:`.
+  `Greet` has no `return`, and why `if … { a } else { b }` replaces C#'s `?:`.
 - The types are C#'s, with C#'s names: `int`, `long`, `double`, `decimal`, `byte`, `bool`, `string`,
   `char`, …. Conversions, overflow and casts (`(int)x`) follow C#'s rules exactly.
-- `print` writes a value and a newline, using its C# `ToString`.
+- `Print` writes a value and a newline, using its C# `ToString`.
 
 ## Records and enums
 
@@ -58,7 +58,7 @@ enum Shape {                                   // a sum type: a value is exactly
     Empty,
 }
 
-fn area(shape: Shape) => double = match shape {
+fn Area(shape: Shape) => double = match shape {
     Circle(_, r) => 3.14159 * r * r,
     Rect(_, w, h) => w * h,
     Empty => 0.0,
@@ -68,8 +68,9 @@ fn area(shape: Shape) => double = match shape {
 Construct values by calling the type: `Point(1.0, 2.0)`, `Shape.Circle(origin, 2.0)` (C#'s `new` isn't needed).
 Records are immutable; to change a field, copy with a spread, as in TypeScript: `{ ...p, y: 5.0 }`.
 `match` is exhaustive: leave out the `Empty` arm and the program doesn't compile, with an error naming the missing
-case. Patterns nest, take guards (`Circle(_, r) if r > 10.0 => …`), match literals and ranges (`1..=9`), and
-combine with `|`.
+case. Patterns nest, take guards (`Circle(_, r) if r > 10.0 => …`), match literals, ranges (`1..9` includes 9, as in Swift; `1..<9` stops at 8) and comparisons
+(`< 0`), and combine with `|`. As in C#, there are list patterns, `[first, ...rest]` (Piper writes C#'s `..` as `...`,
+as in its spreads), and property patterns, `Point { x: 0 }` or `{ Length: > 5 }`.
 
 ## No null: Option and Result
 
@@ -77,7 +78,7 @@ A `string` is never null. A value that might be missing has type `string?`, whic
 `Some(value)` or `None` (also written `null`).
 
 ```piper
-fn find(names: List<string>, prefix: string) => string? {
+fn Find(names: List<string>, prefix: string) => string? {
     for name in names {
         if name.StartsWith(prefix) {
             return name;                       // a string converts to string? implicitly
@@ -86,10 +87,10 @@ fn find(names: List<string>, prefix: string) => string? {
     null
 }
 
-let found = find(names, "Gr");
-print(found ?? "nobody");                      // ?? and ?. work as in C#
-print(found?.Length ?? 0);
-if found is Some(name) { print("found {name}"); }
+let found = Find(names, "Gr");
+Print(found ?? "nobody");                      // ?? and ?. work as in C#
+Print(found?.Length ?? 0);
+if found is Some(name) { Print("found {name}"); }
 ```
 
 Where .NET returns something that may be null (it's annotated), Piper gives you a `T?`, so you can't forget to
@@ -97,15 +98,15 @@ check. Errors that callers should handle are values too: `Result<T, E>` is `Ok(v
 passes an `Err` (or `None`) straight back to the caller:
 
 ```piper
-fn parsePort(text: string) => Result<int, string> {
+fn ParsePort(text: string) => Result<int, string> {
     if !int.TryParse(text, out let port) {     // out parameters work as in C#
         return Err("'{text}' is not a number");
     }
     if port < 1 || port > 65535 { Err("{port} is out of range") } else { Ok(port) }
 }
 
-fn connect(host: string, portText: string) => Result<string, string> {
-    let port = parsePort(portText)?;           // returns the Err early, or unwraps the Ok
+fn Connect(host: string, portText: string) => Result<string, string> {
+    let port = ParsePort(portText)?;           // returns the Err early, or unwraps the Ok
     Ok("{host}:{port}")
 }
 ```
@@ -120,20 +121,20 @@ didn't write:
 
 ```piper
 trait Describe {
-    fn describe() => string;
-    fn shout() => string = this.describe().ToUpper();      // a default method
+    fn Describe() => string;
+    fn Shout() => string = this.Describe().ToUpper();      // a default method
 }
 
 extend Point: Describe {
-    fn describe() => string = "({this.x}, {this.y})";
+    fn Describe() => string = "({this.x}, {this.y})";
 }
 
 extend int {
-    fn isEven() => bool = this % 2 == 0;
+    fn IsEven() => bool = this % 2 == 0;
 }
 
-fn describeAll<T: Describe>(items: List<T>) => string =
-    string.Join(", ", items.Select(item => item.describe()));
+fn DescribeAll<T: Describe>(items: List<T>) => string =
+    string.Join(", ", items.Select(item => item.Describe()));
 ```
 
 Type arguments are inferred, and can be written as in C# when they can't be: `Enumerable.Empty<int>()`.
@@ -147,13 +148,13 @@ let numbers = [5, 3, 8, 1];                    // a List<int>; [] makes an array
 let evens = numbers.Where(n => n % 2 == 0).Select(n => n * 10).ToList();
 let squares: int[] = [1, 4, 9];
 let more = [0, ...numbers, ...squares];        // spread sequences in, as C#'s [0, ..numbers]
-let total = numbers |> Enumerable.Sum();      // x |> f(a) is f(x, a)
+let total = numbers |> Enumerable.Sum();      // x |> F(a) is F(x, a)
 let grid = double[3, 3];                       // C#'s new double[3, 3]
 
 let add = (a: int, b: int) => a + b;           // a Func<int, int, int>
 let ages: Dictionary<string, int> = Dictionary();
 ages["Ada"] = 36;
-for (name, age) in ages { print("{name} is {age}"); }
+for (name, age) in ages { Print("{name} is {age}"); }
 ```
 
 Function types are written `(int, int) => int` and are .NET delegates, so lambdas go straight into LINQ and any
@@ -167,40 +168,40 @@ As in C#: an `async fn` returns a `Task<T>` (or `Task`), and `await` waits for a
 using System.Net.Http;
 using System.Threading.Tasks;
 
-async fn pageLength(client: HttpClient, url: string) => Task<int> {
+async fn PageLength(client: HttpClient, url: string) => Task<int> {
     let body = await client.GetStringAsync(url);
     body.Length
 }
 
-async fn main() {
+async fn Main() {
     using let client = HttpClient();
-    print(await pageLength(client, "https://example.com"));
+    Print(await PageLength(client, "https://example.com"));
 }
 ```
 
-Async lambdas (`async x => await f(x)`), `await for` over an `IAsyncEnumerable` and `await using` work as their C#
+Async lambdas (`async x => await F(x)`), `await for` over an `IAsyncEnumerable` and `await using` work as their C#
 counterparts do. So do iterators: a function that `yield return`s values returns them lazily as an `IEnumerable<T>`:
 
 ```piper
-fn evens() => IEnumerable<int> {
-    var n = 0;
+fn Evens() => IEnumerable<int> {
+    mut n = 0;
     while true {
         yield return n;
         n += 2;
     }
 }
 
-print(string.Join(", ", evens().Take(5)));   // 0, 2, 4, 6, 8
+Print(string.Join(", ", Evens().Take(5)));   // 0, 2, 4, 6, 8
 ```
 
 ## Tuples
 
 ```piper
-fn divide(a: int, b: int) => (quotient: int, remainder: int) = (a / b, a % b);
+fn Divide(a: int, b: int) => (quotient: int, remainder: int) = (a / b, a % b);
 
-let (q, r) = divide(17, 5);                    // deconstruction, as C#'s var (q, r) = …
-let result = divide(9, 2);
-print(result.quotient);
+let (q, r) = Divide(17, 5);                    // deconstruction, as C#'s var (q, r) = …
+let result = Divide(9, 2);
+Print(result.quotient);
 ```
 
 ## Calling .NET
@@ -218,7 +219,19 @@ using let reader = File.OpenText("notes.txt");   // disposed at the end of the b
 while reader.ReadLine() is Some(line) {
     builder.Append(line.Length).Append(' ');
 }
-print(builder.ToString());
+Print(builder.ToString());
+```
+
+Attributes work as in C#, on declarations, fields and parameters. A record field's attribute goes on the property, so
+serializers see it:
+
+```piper
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+record Person([JsonPropertyName("first_name")] first: string, age: int);
+
+Print(JsonSerializer.Serialize(Person("Ada", 36)));   // {"first_name":"Ada","age":36}
 ```
 
 ## Modules
@@ -232,7 +245,7 @@ Reference the `Piper.Build` package and a project compiles its `.piper` files al
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Piper.Build" Version="1.0.0-preview.1" />
+  <PackageReference Include="Piper.Build" Version="1.0.0" />
 </ItemGroup>
 ```
 

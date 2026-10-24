@@ -14,19 +14,19 @@ public sealed record Person(string name, int age, bool active);
 
 public static class Records
 {
-    public static int lengthSquared(Line line)
+    public static int LengthSquared(Line line)
     {
         int dx = line.end.x - line.start.x;
         int dy = line.end.y - line.start.y;
         return dx * dx + dy * dy;
     }
 
-    public static Point origin() => new Point(0, 0);
+    public static Point Origin() => new Point(0, 0);
 
-    public static void main()
+    public static void Main()
     {
-        Line line = new Line(origin(), new Point(3, 4));
-        global::System.Console.WriteLine($"squared length: {lengthSquared(line)}");
+        Line line = new Line(Origin(), new Point(3, 4));
+        global::System.Console.WriteLine($"squared length: {LengthSquared(line)}");
         global::System.Console.WriteLine(new Point(1, 2) == new Point(1, 2));
         global::System.Console.WriteLine(new Point(1, 2) != new Point(2, 1));
         Person person = new Person("Ada", 36, true);
@@ -40,6 +40,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Records.main();
+        Records.Main();
     }
 }

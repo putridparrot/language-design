@@ -10,17 +10,17 @@ public sealed record Box(int @value);
 
 public static class Pipe
 {
-    public static int twice(int n) => n * 2;
+    public static int Twice(int n) => n * 2;
 
-    public static int add(int n, int amount) => n + amount;
+    public static int Add(int n, int amount) => n + amount;
 
-    public static string describe(int n, string what) => $"{n} {what}";
+    public static string Describe(int n, string what) => $"{n} {what}";
 
-    public static void main()
+    public static void Main()
     {
-        global::System.Console.WriteLine(twice(5));
-        global::System.Console.WriteLine(describe(twice(add(5, 10)), "apples"));
-        global::System.Console.WriteLine(twice(1 + 2) == 6);
+        global::System.Console.WriteLine(Twice(5));
+        global::System.Console.WriteLine(Describe(Twice(Add(5, 10)), "apples"));
+        global::System.Console.WriteLine(Twice(1 + 2) == 6);
         global::System.Func<int, int> triple = (int n) => n * 3;
         global::System.Console.WriteLine(triple(4));
         global::System.Console.WriteLine(new Box(7));
@@ -32,7 +32,7 @@ public static class Pipe
         string log = "";
         log += "a";
         log += "b";
-        int result = add(1, 2);
+        int result = Add(1, 2);
         global::System.Console.WriteLine($"{result} {log}");
     }
 }
@@ -42,6 +42,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Pipe.main();
+        Pipe.Main();
     }
 }

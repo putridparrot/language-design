@@ -13,7 +13,7 @@ public static class Completion
 {
     private static readonly string[] Keywords =
     [
-        "fn", "let", "var", "if", "else", "while", "for", "in", "return", "break", "continue", "record", "enum", "match",
+        "fn", "let", "mut", "if", "else", "while", "for", "in", "return", "break", "continue", "record", "enum", "match",
         "trait", "extend", "static", "this", "null", "is", "namespace", "using", "private", "try", "catch", "finally",
         "defer", "throw", "out", "true", "false", "async", "await", "yield", "ref",
     ];

@@ -1,0 +1,47 @@
+// .NET attributes on records, fields, functions, methods and parameters.
+using System;
+using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+// A field's attribute goes on the record's property, where System.Text.Json looks for it.
+record Person(
+    [JsonPropertyName("first_name")] first: string,
+    [JsonPropertyName("years")] age: int,
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] stars: int,
+);
+
+[Obsolete("Use Shape instead.")]
+enum OldShape { Dot }
+
+[Serializable]
+record Point(x: int, y: int);
+
+trait Greeter {
+    [Obsolete]
+    fn Greet() => string;
+}
+
+extend Person: Greeter {
+    fn Greet() => string = "Hello, {this.first}";
+
+    [Obsolete("Use greet.", false)]
+    fn Hello() => string = this.Greet();
+}
+
+[Obsolete("Use parse.", DiagnosticId = "PIPDEMO1")]
+fn LegacyParse(text: string) => int = int.Parse(text);
+
+fn Matches([StringSyntax(StringSyntaxAttribute.Regex)] pattern: string, text: string) => bool =
+    System.Text.RegularExpressions.Regex.IsMatch(text, pattern);
+
+fn Main() {
+    let json = JsonSerializer.Serialize(Person("Ada", 36, 0));
+    Print(json);
+    match JsonSerializer.Deserialize<Person>("""{"first_name":"Grace","years":45,"stars":5}""") {
+        Some(p) => Print("{p.first} {p.age} {p.stars}"),
+        None => Print("nothing"),
+    }
+    Print(Matches("^a+$", "aaa"));
+    Print(Person("Ada", 36, 0).Greet());
+}

@@ -1,0 +1,107 @@
+// List, property and relational patterns.
+using System.Collections.Generic;
+using System.Text;
+
+record Point(x: int, y: int);
+
+enum Shape {
+    Circle(radius: double),
+    Rect(width: double, height: double),
+}
+
+fn Describe(xs: List<int>) => string = match xs {
+    [] => "empty",
+    [only] => "just {only}",
+    [first, second] => "a pair: {first} and {second}",
+    [first, ...rest] => "{first} then {rest.Count} more",
+};
+
+fn Ends(xs: int[]) => string = match xs {
+    [] => "none",
+    [x] => "{x} alone",
+    [first, ..., last] => "{first}..{last}",
+};
+
+fn Sum(xs: int[]) => int = match xs {
+    [] => 0,
+    [head, ...tail] => head + Sum(tail),
+};
+
+fn Initials(name: string) => string = match name {
+    [first, ...rest] if rest.Length > 0 => "{first}{rest[0]}",
+    [first] => "{first}",
+    _ => "?",
+};
+
+fn Sign(n: int) => string = match n {
+    < 0 => "negative",
+    0 => "zero",
+    > 0 => "positive",
+};
+
+fn Grade(score: double) => char = match score {
+    >= 90.0 => 'A',
+    >= 75.0 => 'B',
+    _ => 'C',
+};
+
+// Relational patterns and ranges on integers and chars are checked for exhaustiveness together.
+fn Half(b: byte) => string = match b {
+    < 128 => "low",
+    128..255 => "high",
+};
+
+fn OnAxis(p: Point) => string = match p {
+    { x: 0, y: 0 } => "origin",
+    Point { x: 0 } => "on the y axis",
+    { y: 0 } => "on the x axis",
+    _ => "elsewhere",
+};
+
+fn Kind(s: Shape) => string = match s {
+    Circle { radius: < 1.0 } => "small circle",
+    Circle { radius: r } => "circle of {r}",
+    Shape.Rect { width: w, height: h } if w == h => "square of {w}",
+    Rect { } => "rectangle",
+};
+
+fn Size(text: string) => string = match text {
+    { Length: 0 } => "empty",
+    { Length: <= 3 } => "short",
+    _ => "long",
+};
+
+fn Main() {
+    Print(Describe([]));
+    Print(Describe([7]));
+    Print(Describe([1, 2]));
+    Print(Describe([1, 2, 3, 4]));
+    Print(Ends([]));
+    Print(Ends([5]));
+    Print(Ends([1, 2, 3, 9]));
+    Print(Sum([1, 2, 3, 4]));
+    Print(Initials("Ada"));
+    Print(Initials("A"));
+    Print(Initials(""));
+    Print("{Sign(-3)} {Sign(0)} {Sign(8)}");
+    Print("{Grade(95.0)} {Grade(80.0)} {Grade(10.0)}");
+    Print("{Half(3)} {Half(200)}");
+    Print(OnAxis(Point(0, 0)));
+    Print(OnAxis(Point(0, 4)));
+    Print(OnAxis(Point(3, 0)));
+    Print(OnAxis(Point(1, 1)));
+    Print(Kind(Shape.Circle(0.5)));
+    Print(Kind(Shape.Circle(2.0)));
+    Print(Kind(Shape.Rect(2.0, 2.0)));
+    Print(Kind(Shape.Rect(2.0, 3.0)));
+    Print("{Size("")} {Size("abc")} {Size("abcdef")}");
+
+    let builder = StringBuilder("hi");
+    if builder is { Length: > 1 } {
+        Print("a builder with {builder.Length} characters");
+    }
+    let words = ["alpha", "beta"];
+    if words is [first, ...] {
+        Print("starts with {first}");
+    }
+}

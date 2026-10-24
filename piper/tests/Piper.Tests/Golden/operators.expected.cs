@@ -8,7 +8,7 @@ using Piper.Runtime;
 
 public static class Operators
 {
-    public static void main()
+    public static void Main()
     {
         global::System.Console.WriteLine(1 + 2 * 3);
         global::System.Console.WriteLine((1 + 2) * 3);
@@ -55,6 +55,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Operators.main();
+        Operators.Main();
     }
 }

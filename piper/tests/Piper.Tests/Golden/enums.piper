@@ -6,13 +6,13 @@ enum Shape {
     Empty,
 }
 
-fn area(shape: Shape) => double = match shape {
+fn Area(shape: Shape) => double = match shape {
     Circle(r) => 3.0 * r * r,
     Rect(w, h) => w * h,
     Empty => 0.0,
 };
 
-fn describe(shape: Shape) => string {
+fn Describe(shape: Shape) => string {
     match shape {
         Shape.Circle(r) if r > 10.0 => "a big circle",
         Circle(_) => "a circle",
@@ -22,7 +22,7 @@ fn describe(shape: Shape) => string {
     }
 }
 
-fn initial(shape: Shape) => char {
+fn Initial(shape: Shape) => char {
     let letter = match shape {
         Circle(_) => 'C',
         Rect(_, _) => 'R',
@@ -31,23 +31,23 @@ fn initial(shape: Shape) => char {
     letter
 }
 
-fn main() {
+fn Main() {
     let shapes = Shape.Rect(2.0, 3.0);
-    print(area(Shape.Circle(2.0)));
-    print(area(shapes));
-    print(area(Shape.Empty));
-    print(describe(Shape.Circle(20.0)));
-    print(describe(Shape.Circle(1.0)));
-    print(describe(Shape.Rect(4.0, 4.0)));
-    print(describe(shapes));
-    print(describe(Shape.Empty));
-    print("{initial(shapes)}{initial(Shape.Circle(1.0))}{initial(Shape.Empty)}");
-    print(Shape.Rect(2.0, 3.0) == shapes);
-    print(shapes);
+    Print(Area(Shape.Circle(2.0)));
+    Print(Area(shapes));
+    Print(Area(Shape.Empty));
+    Print(Describe(Shape.Circle(20.0)));
+    Print(Describe(Shape.Circle(1.0)));
+    Print(Describe(Shape.Rect(4.0, 4.0)));
+    Print(Describe(shapes));
+    Print(Describe(Shape.Empty));
+    Print("{Initial(shapes)}{Initial(Shape.Circle(1.0))}{Initial(Shape.Empty)}");
+    Print(Shape.Rect(2.0, 3.0) == shapes);
+    Print(shapes);
 
     // A match used as a statement; its arms run for their effect.
     match shapes {
-        Rect(w, _) if w > 1.0 => print("wide"),
+        Rect(w, _) if w > 1.0 => Print("wide"),
         _ => {}
     }
 }

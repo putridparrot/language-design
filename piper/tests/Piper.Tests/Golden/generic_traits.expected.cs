@@ -8,85 +8,85 @@ using Piper.Runtime;
 
 public interface Convert<T>
 {
-    T convert();
+    T Convert();
 
-    string describe() => $"converts to {this.convert()}";
+    string Describe() => $"converts to {this.Convert()}";
 
     public interface PiperWitness<TPiperSelf>
     {
         Convert<T> PiperBox(TPiperSelf piperSelf);
-        T convert(TPiperSelf piperSelf);
-        string describe(TPiperSelf piperSelf);
+        T Convert(TPiperSelf piperSelf);
+        string Describe(TPiperSelf piperSelf);
     }
 
     public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Convert<T>
     {
         Convert<T> Convert<T>.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
-        public T convert(TPiperSelf piperSelf) => piperSelf.convert();
-        public string describe(TPiperSelf piperSelf) => piperSelf.describe();
+        public T Convert(TPiperSelf piperSelf) => piperSelf.Convert();
+        public string Describe(TPiperSelf piperSelf) => piperSelf.Describe();
     }
 
     public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Convert<T>, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
     {
         Convert<T> Convert<T>.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
-        public T convert(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).convert();
-        public string describe(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).describe();
+        public T Convert(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Convert();
+        public string Describe(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Describe();
     }
 }
 
 public interface Comparable<T>
 {
-    int compareTo(T other);
+    int CompareTo(T other);
 
-    bool isLessThan(T other) => this.compareTo(other) < 0;
+    bool IsLessThan(T other) => this.CompareTo(other) < 0;
 
     public interface PiperWitness<TPiperSelf>
     {
         Comparable<T> PiperBox(TPiperSelf piperSelf);
-        int compareTo(TPiperSelf piperSelf, T other);
-        bool isLessThan(TPiperSelf piperSelf, T other);
+        int CompareTo(TPiperSelf piperSelf, T other);
+        bool IsLessThan(TPiperSelf piperSelf, T other);
     }
 
     public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Comparable<T>
     {
         Comparable<T> Comparable<T>.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
-        public int compareTo(TPiperSelf piperSelf, T other) => piperSelf.compareTo(other);
-        public bool isLessThan(TPiperSelf piperSelf, T other) => piperSelf.isLessThan(other);
+        public int CompareTo(TPiperSelf piperSelf, T other) => piperSelf.CompareTo(other);
+        public bool IsLessThan(TPiperSelf piperSelf, T other) => piperSelf.IsLessThan(other);
     }
 
     public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Comparable<T>, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
     {
         Comparable<T> Comparable<T>.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
-        public int compareTo(TPiperSelf piperSelf, T other) => TPiperBox.Wrap(piperSelf).compareTo(other);
-        public bool isLessThan(TPiperSelf piperSelf, T other) => TPiperBox.Wrap(piperSelf).isLessThan(other);
+        public int CompareTo(TPiperSelf piperSelf, T other) => TPiperBox.Wrap(piperSelf).CompareTo(other);
+        public bool IsLessThan(TPiperSelf piperSelf, T other) => TPiperBox.Wrap(piperSelf).IsLessThan(other);
     }
 }
 
 public sealed record Celsius(double degrees) : Convert<string>
 {
-    public string convert() => $"{this.degrees} C";
+    public string Convert() => $"{this.degrees} C";
 }
 
 public sealed record Money(int pence) : Comparable<Money>, Convert<int>
 {
-    public int compareTo(Money other) => this.pence - other.pence;
+    public int CompareTo(Money other) => this.pence - other.pence;
 
-    public int convert() => this.pence;
+    public int Convert() => this.pence;
 }
 
 public sealed record Box<T>(T @value) : Convert<T>
 {
-    public T convert() => this.@value;
+    public T Convert() => this.@value;
 }
 
 public static class Generic_traits
 {
-    public static T largest<T>(global::System.Collections.Generic.List<T> items)
+    public static T Largest<T>(global::System.Collections.Generic.List<T> items)
     {
         T best = items[0];
         foreach (T item in items)
         {
-            if (global::Piper.Runtime.PiperTraits.Witness<Comparable<T>.PiperWitness<T>>().isLessThan(best, item))
+            if (global::Piper.Runtime.PiperTraits.Witness<Comparable<T>.PiperWitness<T>>().IsLessThan(best, item))
             {
                 best = item;
             }
@@ -94,31 +94,31 @@ public static class Generic_traits
         return best;
     }
 
-    public static int total<T>(global::System.Collections.Generic.List<T> items)
+    public static int Total<T>(global::System.Collections.Generic.List<T> items)
     {
         int sum = 0;
         foreach (T item in items)
         {
-            sum += global::Piper.Runtime.PiperTraits.Witness<Convert<int>.PiperWitness<T>>().convert(item);
+            sum += global::Piper.Runtime.PiperTraits.Witness<Convert<int>.PiperWitness<T>>().Convert(item);
         }
         return sum;
     }
 
-    public static void main()
+    public static void Main()
     {
         Celsius c = new Celsius(21.5);
-        global::System.Console.WriteLine(c.convert());
-        global::System.Console.WriteLine(((Convert<string>)c).describe());
+        global::System.Console.WriteLine(c.Convert());
+        global::System.Console.WriteLine(((Convert<string>)c).Describe());
         global::System.Collections.Generic.List<Convert<string>> converters = new global::System.Collections.Generic.List<Convert<string>> { c, new Box<string>("boxed") };
         foreach (Convert<string> converter in converters)
         {
-            global::System.Console.WriteLine(converter.describe());
+            global::System.Console.WriteLine(converter.Describe());
         }
         global::System.Collections.Generic.List<Money> wallet = new global::System.Collections.Generic.List<Money> { new Money(250), new Money(1200), new Money(75) };
-        global::System.Console.WriteLine(largest<Money>(wallet));
-        global::System.Console.WriteLine(total<Money>(wallet));
-        global::System.Console.WriteLine(total<Box<int>>(new global::System.Collections.Generic.List<Box<int>> { new Box<int>(1), new Box<int>(2), new Box<int>(3) }));
-        global::System.Console.WriteLine(((Comparable<Money>)new Money(5)).isLessThan(new Money(6)));
+        global::System.Console.WriteLine(Largest<Money>(wallet));
+        global::System.Console.WriteLine(Total<Money>(wallet));
+        global::System.Console.WriteLine(Total<Box<int>>(new global::System.Collections.Generic.List<Box<int>> { new Box<int>(1), new Box<int>(2), new Box<int>(3) }));
+        global::System.Console.WriteLine(((Comparable<Money>)new Money(5)).IsLessThan(new Money(6)));
     }
 }
 
@@ -127,6 +127,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Generic_traits.main();
+        Generic_traits.Main();
     }
 }

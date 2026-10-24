@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Reflection;
 
 namespace Piper.Binding;
 
@@ -13,6 +14,8 @@ public abstract class BoundPattern(TypeSymbol type)
         BoundConstructorPattern constructor => constructor.Arguments.Any(a => a.HasBindings),
         BoundTuplePattern tuple => tuple.Elements.Any(e => e.HasBindings),
         BoundOrPattern either => either.Alternatives.Any(a => a.HasBindings),
+        BoundListPattern list => list.Elements.Any(e => e.HasBindings) || list.Slice is { HasBindings: true },
+        BoundPropertyPattern properties => properties.Properties.Any(p => p.Pattern.HasBindings),
         _ => false,
     };
 }
@@ -58,4 +61,38 @@ public sealed class BoundTuplePattern(ImmutableArray<BoundPattern> elements, Tup
 public sealed class BoundOrPattern(ImmutableArray<BoundPattern> alternatives, TypeSymbol type) : BoundPattern(type)
 {
     public ImmutableArray<BoundPattern> Alternatives { get; } = alternatives;
+}
+
+/// <summary>
+/// <c>[a, ...rest, z]</c>: <see cref="Elements"/> are the element patterns, and when there's a <c>...</c>,
+/// <see cref="Slice"/> (a wildcard, or a binding of the matched type) stands for the elements between
+/// <see cref="Elements"/>[..<see cref="SliceIndex"/>] and the rest.
+/// </summary>
+public sealed class BoundListPattern(ImmutableArray<BoundPattern> elements, int sliceIndex, BoundPattern? slice, TypeSymbol elementType, TypeSymbol type)
+    : BoundPattern(type)
+{
+    public ImmutableArray<BoundPattern> Elements { get; } = elements;
+
+    public int SliceIndex { get; } = sliceIndex;
+
+    public BoundPattern? Slice { get; } = slice;
+
+    public TypeSymbol ElementType { get; } = elementType;
+}
+
+/// <summary><c>{ Length: &gt; 5 }</c> on a .NET type (on a Piper record it's a <see cref="BoundConstructorPattern"/>).</summary>
+public sealed class BoundPropertyPattern(ImmutableArray<BoundPropertySubpattern> properties, TypeSymbol type) : BoundPattern(type)
+{
+    public ImmutableArray<BoundPropertySubpattern> Properties { get; } = properties;
+}
+
+/// <summary>A property or field of a .NET type, and the pattern its value must match.</summary>
+public sealed record BoundPropertySubpattern(MemberInfo Member, BoundPattern Pattern);
+
+/// <summary><c>&lt; 0</c>: <see cref="Operator"/> is <c>&lt;</c>, <c>&lt;=</c>, <c>&gt;</c> or <c>&gt;=</c>, and the value is already of the matched type.</summary>
+public sealed class BoundRelationalPattern(string @operator, object value, TypeSymbol type) : BoundPattern(type)
+{
+    public string Operator { get; } = @operator;
+
+    public object Value { get; } = value;
 }

@@ -8,7 +8,7 @@ using Piper.Runtime;
 
 public static class Out_parameters
 {
-    public static int parseOr(string text, int fallback)
+    public static int ParseOr(string text, int fallback)
     {
         int n;
         if (int.TryParse(text, out n))
@@ -21,7 +21,7 @@ public static class Out_parameters
         }
     }
 
-    public static string describe(string text)
+    public static string Describe(string text)
     {
         double @value;
         if (!double.TryParse(text, out @value))
@@ -31,12 +31,12 @@ public static class Out_parameters
         return $"'{text}' is {@value * 2} doubled";
     }
 
-    public static void main()
+    public static void Main()
     {
-        global::System.Console.WriteLine(parseOr("42", 0));
-        global::System.Console.WriteLine(parseOr("forty-two", -1));
-        global::System.Console.WriteLine(describe("1.25"));
-        global::System.Console.WriteLine(describe("abc"));
+        global::System.Console.WriteLine(ParseOr("42", 0));
+        global::System.Console.WriteLine(ParseOr("forty-two", -1));
+        global::System.Console.WriteLine(Describe("1.25"));
+        global::System.Console.WriteLine(Describe("abc"));
         int count = 0;
         if (int.TryParse("7", out count))
         {
@@ -65,8 +65,8 @@ public static class Out_parameters
         {
             global::System.Console.WriteLine("starts with Ada");
         }
-        global::System.Console.WriteLine(lookup(names, "ada"));
-        global::System.Console.WriteLine(lookup(names, "bob"));
+        global::System.Console.WriteLine(Lookup(names, "ada"));
+        global::System.Console.WriteLine(Lookup(names, "bob"));
         global::System.Collections.Generic.Dictionary<string, int> ages = new global::System.Collections.Generic.Dictionary<string, int>();
         ages["Ada"] = 36;
         int age;
@@ -84,7 +84,7 @@ public static class Out_parameters
         global::System.Console.WriteLine(total);
     }
 
-    public static string lookup(global::System.Collections.Generic.Dictionary<string, string> names, string key)
+    public static string Lookup(global::System.Collections.Generic.Dictionary<string, string> names, string key)
     {
         string name;
         if (!names.TryGetValue(key, out name))
@@ -100,6 +100,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Out_parameters.main();
+        Out_parameters.Main();
     }
 }

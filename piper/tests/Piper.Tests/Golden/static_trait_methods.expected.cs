@@ -8,73 +8,73 @@ using Piper.Runtime;
 
 public interface Monoid<T>
 {
-    static abstract T empty();
+    static abstract T Empty();
 
-    T combine(T other);
+    T Combine(T other);
 
-    static virtual string describe() => "a monoid";
+    static virtual string Describe() => "a monoid";
 
     public interface PiperWitness<TPiperSelf>
     {
-        T empty();
-        T combine(TPiperSelf piperSelf, T other);
-        string describe();
+        T Empty();
+        T Combine(TPiperSelf piperSelf, T other);
+        string Describe();
     }
 
     public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Monoid<T>
     {
-        public T empty() => TPiperSelf.empty();
-        public T combine(TPiperSelf piperSelf, T other) => piperSelf.combine(other);
-        public string describe() => TPiperSelf.describe();
+        public T Empty() => TPiperSelf.Empty();
+        public T Combine(TPiperSelf piperSelf, T other) => piperSelf.Combine(other);
+        public string Describe() => TPiperSelf.Describe();
     }
 
     public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Monoid<T>, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
     {
-        public T empty() => TPiperBox.empty();
-        public T combine(TPiperSelf piperSelf, T other) => TPiperBox.Wrap(piperSelf).combine(other);
-        public string describe() => TPiperBox.describe();
+        public T Empty() => TPiperBox.Empty();
+        public T Combine(TPiperSelf piperSelf, T other) => TPiperBox.Wrap(piperSelf).Combine(other);
+        public string Describe() => TPiperBox.Describe();
     }
 }
 
 public sealed record Total(int amount) : Monoid<Total>
 {
-    public static Total empty() => new Total(0);
+    public static Total Empty() => new Total(0);
 
-    public Total combine(Total other) => new Total(this.amount + other.amount);
+    public Total Combine(Total other) => new Total(this.amount + other.amount);
 }
 
 public sealed record Text(string @value) : Monoid<Text>
 {
-    public static Text empty() => new Text("");
+    public static Text Empty() => new Text("");
 
-    public Text combine(Text other) => new Text(this.@value + other.@value);
+    public Text Combine(Text other) => new Text(this.@value + other.@value);
 
-    public static string describe() => "text, joined";
+    public static string Describe() => "text, joined";
 }
 
 public static class Static_trait_methods
 {
-    public static T concat<T>(global::System.Collections.Generic.List<T> items)
+    public static T Concat<T>(global::System.Collections.Generic.List<T> items)
     {
-        T result = global::Piper.Runtime.PiperTraits.Witness<Monoid<T>.PiperWitness<T>>().empty();
+        T result = global::Piper.Runtime.PiperTraits.Witness<Monoid<T>.PiperWitness<T>>().Empty();
         foreach (T item in items)
         {
-            result = global::Piper.Runtime.PiperTraits.Witness<Monoid<T>.PiperWitness<T>>().combine(result, item);
+            result = global::Piper.Runtime.PiperTraits.Witness<Monoid<T>.PiperWitness<T>>().Combine(result, item);
         }
         return result;
     }
 
-    public static string describe<T>() => global::Piper.Runtime.PiperTraits.Witness<Monoid<T>.PiperWitness<T>>().describe();
+    public static string Describe<T>() => global::Piper.Runtime.PiperTraits.Witness<Monoid<T>.PiperWitness<T>>().Describe();
 
-    public static void main()
+    public static void Main()
     {
-        global::System.Console.WriteLine(concat<Total>(new global::System.Collections.Generic.List<Total> { new Total(1), new Total(2), new Total(3) }));
-        global::System.Console.WriteLine(concat<Text>(new global::System.Collections.Generic.List<Text> { new Text("pi"), new Text("p"), new Text("er") }));
+        global::System.Console.WriteLine(Concat<Total>(new global::System.Collections.Generic.List<Total> { new Total(1), new Total(2), new Total(3) }));
+        global::System.Console.WriteLine(Concat<Text>(new global::System.Collections.Generic.List<Text> { new Text("pi"), new Text("p"), new Text("er") }));
         global::System.Collections.Generic.List<Total> none = new global::System.Collections.Generic.List<Total>();
-        global::System.Console.WriteLine(concat<Total>(none));
-        global::System.Console.WriteLine(Total.empty());
-        global::System.Console.WriteLine(describe<Total>());
-        global::System.Console.WriteLine(describe<Text>());
+        global::System.Console.WriteLine(Concat<Total>(none));
+        global::System.Console.WriteLine(Total.Empty());
+        global::System.Console.WriteLine(Describe<Total>());
+        global::System.Console.WriteLine(Describe<Text>());
     }
 }
 
@@ -83,6 +83,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Static_trait_methods.main();
+        Static_trait_methods.Main();
     }
 }

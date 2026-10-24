@@ -3,45 +3,45 @@
 using System.Collections.Generic;
 
 trait Monoid<T: Monoid<T>> {
-    static fn empty() => T;
-    fn combine(other: T) => T;
+    static fn Empty() => T;
+    fn Combine(other: T) => T;
     // A default static method; implementers may override it.
-    static fn describe() => string = "a monoid";
+    static fn Describe() => string = "a monoid";
 }
 
 record Total(amount: int);
 record Text(value: string);
 
 extend Total: Monoid<Total> {
-    static fn empty() => Total = Total(0);
-    fn combine(other: Total) => Total = Total(this.amount + other.amount);
+    static fn Empty() => Total = Total(0);
+    fn Combine(other: Total) => Total = Total(this.amount + other.amount);
 }
 
 extend Text: Monoid<Text> {
-    static fn empty() => Text = Text("");
-    fn combine(other: Text) => Text = Text(this.value + other.value);
-    static fn describe() => string = "text, joined";
+    static fn Empty() => Text = Text("");
+    fn Combine(other: Text) => Text = Text(this.value + other.value);
+    static fn Describe() => string = "text, joined";
 }
 
-// `T.empty()` calls the implementing type's static method.
-fn concat<T: Monoid<T>>(items: List<T>) => T {
-    var result = T.empty();
+// `T.Empty()` calls the implementing type's static method.
+fn Concat<T: Monoid<T>>(items: List<T>) => T {
+    mut result = T.Empty();
     for item in items {
-        result = result.combine(item);
+        result = result.Combine(item);
     }
     result
 }
 
-fn describe<T: Monoid<T>>() => string = T.describe();
+fn Describe<T: Monoid<T>>() => string = T.Describe();
 
-fn main() {
-    print(concat([Total(1), Total(2), Total(3)]));
-    print(concat([Text("pi"), Text("p"), Text("er")]));
+fn Main() {
+    Print(Concat([Total(1), Total(2), Total(3)]));
+    Print(Concat([Text("pi"), Text("p"), Text("er")]));
     let none: List<Total> = [];
-    print(concat(none));
+    Print(Concat(none));
 
     // A type's own static methods can be called on it directly.
-    print(Total.empty());
-    print(describe<Total>());
-    print(describe<Text>());
+    Print(Total.Empty());
+    Print(Describe<Total>());
+    Print(Describe<Text>());
 }

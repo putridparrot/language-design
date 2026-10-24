@@ -10,30 +10,30 @@ public sealed record User(int id, string name);
 
 public interface Store
 {
-    global::System.Threading.Tasks.Task<Option<User>> load(int id);
+    global::System.Threading.Tasks.Task<Option<User>> Load(int id);
 
     public interface PiperWitness<TPiperSelf>
     {
         Store PiperBox(TPiperSelf piperSelf);
-        global::System.Threading.Tasks.Task<Option<User>> load(TPiperSelf piperSelf, int id);
+        global::System.Threading.Tasks.Task<Option<User>> Load(TPiperSelf piperSelf, int id);
     }
 
     public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Store
     {
         Store Store.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
-        public global::System.Threading.Tasks.Task<Option<User>> load(TPiperSelf piperSelf, int id) => piperSelf.load(id);
+        public global::System.Threading.Tasks.Task<Option<User>> Load(TPiperSelf piperSelf, int id) => piperSelf.Load(id);
     }
 
     public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Store, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
     {
         Store Store.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
-        public global::System.Threading.Tasks.Task<Option<User>> load(TPiperSelf piperSelf, int id) => TPiperBox.Wrap(piperSelf).load(id);
+        public global::System.Threading.Tasks.Task<Option<User>> Load(TPiperSelf piperSelf, int id) => TPiperBox.Wrap(piperSelf).Load(id);
     }
 }
 
 public sealed record MemoryStore(global::System.Collections.Generic.List<User> users) : Store
 {
-    public async global::System.Threading.Tasks.Task<Option<User>> load(int id)
+    public async global::System.Threading.Tasks.Task<Option<User>> Load(int id)
     {
         await global::System.Threading.Tasks.Task.Delay(1);
         foreach (User user in this.users)
@@ -49,21 +49,21 @@ public sealed record MemoryStore(global::System.Collections.Generic.List<User> u
 
 public static class Async
 {
-    public static async global::System.Threading.Tasks.Task<int> twice(int x)
+    public static async global::System.Threading.Tasks.Task<int> Twice(int x)
     {
         await global::System.Threading.Tasks.Task.Yield();
         return x * 2;
     }
 
-    public static async global::System.Threading.Tasks.Task log(string message)
+    public static async global::System.Threading.Tasks.Task Log(string message)
     {
         await global::System.Threading.Tasks.Task.Delay(1);
         global::System.Console.WriteLine($"log: {message}");
     }
 
-    public static async global::System.Threading.Tasks.Task<Option<string>> nameOf(Store store, int id)
+    public static async global::System.Threading.Tasks.Task<Option<string>> NameOf(Store store, int id)
     {
-        Option<User> temp = await store.load(id);
+        Option<User> temp = await store.Load(id);
         if (!temp.IsSome)
         {
             return Option<string>.None;
@@ -72,47 +72,47 @@ public static class Async
         return Option<string>.Some(user.name.ToUpper());
     }
 
-    public static async global::System.Threading.Tasks.Task<int> fail()
+    public static async global::System.Threading.Tasks.Task<int> Fail()
     {
         await global::System.Threading.Tasks.Task.Delay(1);
         throw new global::System.InvalidOperationException("boom");
     }
 
-    public static int sum(int[] values) => global::System.Linq.Enumerable.Sum(values);
+    public static int Sum(int[] values) => global::System.Linq.Enumerable.Sum(values);
 
-    public static async global::System.Threading.Tasks.Task main()
+    public static async global::System.Threading.Tasks.Task Main()
     {
-        global::System.Console.WriteLine(await twice(21));
-        await log("started");
+        global::System.Console.WriteLine(await Twice(21));
+        await Log("started");
         MemoryStore store = new MemoryStore(new global::System.Collections.Generic.List<User> { new User(1, "ada"), new User(2, "grace") });
-        Option<string> temp = await nameOf(store, 2);
+        Option<string> temp = await NameOf(store, 2);
         global::System.Console.WriteLine(temp.IsSome ? temp.Value : "?");
-        Option<string> temp_1 = await nameOf(store, 9);
+        Option<string> temp_1 = await NameOf(store, 9);
         global::System.Console.WriteLine(temp_1.IsSome ? temp_1.Value : "nobody");
-        int[] doubled = await global::System.Threading.Tasks.Task.WhenAll<int>(global::System.Linq.Enumerable.Select<int, global::System.Threading.Tasks.Task<int>>(new global::System.Collections.Generic.List<int> { 1, 2, 3 }, async (int n) => await twice(n)));
+        int[] doubled = await global::System.Threading.Tasks.Task.WhenAll<int>(global::System.Linq.Enumerable.Select<int, global::System.Threading.Tasks.Task<int>>(new global::System.Collections.Generic.List<int> { 1, 2, 3 }, async (int n) => await Twice(n)));
         global::System.Console.WriteLine(string.Join<int>(",", doubled));
-        global::System.Console.WriteLine(sum(await global::System.Threading.Tasks.Task.WhenAll<int>(global::System.Threading.Tasks.Task.FromResult<int>(4), twice(5))));
+        global::System.Console.WriteLine(Sum(await global::System.Threading.Tasks.Task.WhenAll<int>(global::System.Threading.Tasks.Task.FromResult<int>(4), Twice(5))));
         int squared = await global::System.Threading.Tasks.Task.Run<int>(async () => {
             await global::System.Threading.Tasks.Task.Delay(1);
             return 7 * 7;
         });
         global::System.Console.WriteLine(squared);
         global::System.Threading.Tasks.ValueTask<int> ready = new global::System.Threading.Tasks.ValueTask<int>(5);
-        global::System.Console.WriteLine(await ready + await twice(1).ConfigureAwait(false));
-        if (await twice(2) > 3)
+        global::System.Console.WriteLine(await ready + await Twice(1).ConfigureAwait(false));
+        if (await Twice(2) > 3)
         {
             global::System.Console.WriteLine("big enough");
         }
-        global::System.Console.WriteLine($"in a string: {await twice(10)}");
+        global::System.Console.WriteLine($"in a string: {await Twice(10)}");
         try
         {
-            global::System.Console.WriteLine(await fail());
+            global::System.Console.WriteLine(await Fail());
         }
         catch (global::System.InvalidOperationException e)
         {
             global::System.Console.WriteLine($"caught {e.Message}");
         }
-        global::System.Func<int, global::System.Threading.Tasks.Task<int>> fetch = async (int n_1) => await twice(n_1) + 100;
+        global::System.Func<int, global::System.Threading.Tasks.Task<int>> fetch = async (int n_1) => await Twice(n_1) + 100;
         global::System.Console.WriteLine(await fetch(1));
         global::System.Threading.Channels.Channel<int> channel = global::System.Threading.Channels.Channel.CreateUnbounded<int>();
         for (int n_2 = 1; n_2 <= 3; n_2++)
@@ -140,6 +140,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Async.main().GetAwaiter().GetResult();
+        Async.Main().GetAwaiter().GetResult();
     }
 }

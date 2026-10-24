@@ -8,14 +8,14 @@ using System.Threading.Tasks;
 record User(id: int, name: string);
 
 trait Store {
-    fn load(id: int) => Task<User?>;
+    fn Load(id: int) => Task<User?>;
 }
 
 record MemoryStore(users: List<User>);
 
 // A trait method can be implemented by an async one.
 extend MemoryStore: Store {
-    async fn load(id: int) => Task<User?> {
+    async fn Load(id: int) => Task<User?> {
         await Task.Delay(1);
         for user in this.users {
             if user.id == id {
@@ -26,84 +26,84 @@ extend MemoryStore: Store {
     }
 }
 
-async fn twice(x: int) => Task<int> {
+async fn Twice(x: int) => Task<int> {
     await Task.Yield();
     x * 2
 }
 
 // No return type: an async function returns a plain Task.
-async fn log(message: string) {
+async fn Log(message: string) {
     await Task.Delay(1);
-    print("log: {message}");
+    Print("log: {message}");
 }
 
 // `?` works inside async functions too.
-async fn nameOf(store: Store, id: int) => Task<string?> {
-    let user = (await store.load(id))?;
+async fn NameOf(store: Store, id: int) => Task<string?> {
+    let user = (await store.Load(id))?;
     user.name.ToUpper()
 }
 
-async fn fail() => Task<int> {
+async fn Fail() => Task<int> {
     await Task.Delay(1);
     throw InvalidOperationException("boom")
 }
 
-fn sum(values: int[]) => int = values.Sum();
+fn Sum(values: int[]) => int = values.Sum();
 
-async fn main() {
-    print(await twice(21));
-    await log("started");
+async fn Main() {
+    Print(await Twice(21));
+    await Log("started");
 
     let store = MemoryStore([User(1, "ada"), User(2, "grace")]);
-    print(await nameOf(store, 2) ?? "?");
-    print(await nameOf(store, 9) ?? "nobody");
+    Print(await NameOf(store, 2) ?? "?");
+    Print(await NameOf(store, 9) ?? "nobody");
 
     // Async lambdas, Task.WhenAll and LINQ.
-    let doubled = await Task.WhenAll([1, 2, 3].Select(async n => await twice(n)));
-    print(string.Join(",", doubled));
-    print(sum(await Task.WhenAll(Task.FromResult(4), twice(5))));
+    let doubled = await Task.WhenAll([1, 2, 3].Select(async n => await Twice(n)));
+    Print(string.Join(",", doubled));
+    Print(Sum(await Task.WhenAll(Task.FromResult(4), Twice(5))));
     let squared = await Task.Run(async () => {
         await Task.Delay(1);
         7 * 7
     });
-    print(squared);
+    Print(squared);
 
     // ValueTask, ConfigureAwait, and awaiting in expressions and conditions.
     let ready = ValueTask<int>(5);
-    print(await ready + await twice(1).ConfigureAwait(false));
-    if await twice(2) > 3 {
-        print("big enough");
+    Print(await ready + await Twice(1).ConfigureAwait(false));
+    if await Twice(2) > 3 {
+        Print("big enough");
     }
-    print("in a string: {await twice(10)}");
+    Print("in a string: {await Twice(10)}");
 
     // Exceptions come through await unchanged.
     try {
-        print(await fail());
+        Print(await Fail());
     } catch (e: InvalidOperationException) {
-        print("caught {e.Message}");
+        Print("caught {e.Message}");
     }
 
     // An async function value.
-    let fetch: (int) => Task<int> = async n => await twice(n) + 100;
-    print(await fetch(1));
+    let fetch: (int) => Task<int> = async n => await Twice(n) + 100;
+    Print(await fetch(1));
 
     // `await for` over an IAsyncEnumerable (C#'s await foreach), here a channel's items.
     let channel = System.Threading.Channels.Channel.CreateUnbounded<int>();
-    for n in 1..=3 {
+    for n in 1..3 {
         channel.Writer.TryWrite(n * n);
     }
     channel.Writer.Complete();
-    var total = 0;
+    mut total = 0;
     await for square in channel.Reader.ReadAllAsync() {
         total += square;
     }
-    print("squares total {total}");
+    Print("squares total {total}");
 
     // `await using` disposes with DisposeAsync.
     let stream = System.IO.MemoryStream();
     {
         await using let resource = stream;
-        print("open: {resource.CanRead}");
+        Print("open: {resource.CanRead}");
     }
-    print("after await using: {stream.CanRead}");
+    Print("after await using: {stream.CanRead}");
 }

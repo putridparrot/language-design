@@ -10,13 +10,13 @@ public sealed record Point(int x, int y);
 
 public static class Interop
 {
-    public static string describe(string path)
+    public static string Describe(string path)
     {
         Option<string> extension = global::Piper.Runtime.PiperInterop.FromNullableReference(global::System.IO.Path.GetExtension(path));
         return $"{path}: {(extension.IsSome ? extension.Value : "no extension")}";
     }
 
-    public static void main()
+    public static void Main()
     {
         global::System.Console.WriteLine(global::System.Math.Sqrt(16));
         global::System.Console.WriteLine(global::System.Math.Max(3, 7));
@@ -53,7 +53,7 @@ public static class Interop
         global::System.Collections.Generic.Dictionary<string, int> ages = new global::System.Collections.Generic.Dictionary<string, int>();
         ages.Add("Ada", 36);
         global::System.Console.WriteLine(ages.ContainsKey("Ada"));
-        global::System.Console.WriteLine(describe("notes.txt"));
+        global::System.Console.WriteLine(Describe("notes.txt"));
         Option<string> temp = global::Piper.Runtime.PiperInterop.FromNullableReference(global::System.Environment.GetEnvironmentVariable("PIPER_SURELY_UNSET_VARIABLE"));
         global::System.Console.WriteLine(temp.IsSome ? temp.Value : "unset");
         Option<string> missing = Option<string>.None;
@@ -68,6 +68,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Interop.main();
+        Interop.Main();
     }
 }

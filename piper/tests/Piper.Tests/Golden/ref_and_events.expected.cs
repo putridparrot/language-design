@@ -8,12 +8,12 @@ using Piper.Runtime;
 
 public static class Ref_and_events
 {
-    public static void onChange(object sender, global::System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    public static void OnChange(object sender, global::System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
         global::System.Console.WriteLine($"changed: {e.Action}");
     }
 
-    public static void main()
+    public static void Main()
     {
         int counter = 0;
         global::System.Threading.Interlocked.Increment(ref counter);
@@ -27,11 +27,11 @@ public static class Ref_and_events
         global::System.Threading.Interlocked.Increment(ref items[0]);
         global::System.Console.WriteLine(items[0]);
         global::System.Collections.ObjectModel.ObservableCollection<string> names = new global::System.Collections.ObjectModel.ObservableCollection<string>();
-        names.CollectionChanged += onChange;
+        names.CollectionChanged += OnChange;
         names.Add("Ada");
         names.CollectionChanged += (object sender, global::System.Collections.Specialized.NotifyCollectionChangedEventArgs e) => global::System.Console.WriteLine($"now {names.Count} names");
         names.Add("Bob");
-        names.CollectionChanged -= onChange;
+        names.CollectionChanged -= OnChange;
         names.Remove("Ada");
     }
 }
@@ -41,6 +41,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Ref_and_events.main();
+        Ref_and_events.Main();
     }
 }

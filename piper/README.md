@@ -12,7 +12,7 @@ C#'s types, numeric rules and the whole of .NET underneath.
 Piper needs the .NET 10 SDK.
 
 ```
-dotnet tool install -g Piper --prerelease
+dotnet tool install -g Piper
 piper run hello.piper         # transpile, compile and run
 piper build src/ -o out/      # write the C# (one .cs per .piper file; it references the Piper.Runtime package)
 piper build app.piper --exe   # compile to bin/app.exe (plus app.dll, its .pdb and Piper.Runtime.dll)
@@ -20,13 +20,22 @@ piper build src/ --library    # compile to bin/src.dll; --name and -o choose the
 piper emit hello.piper        # print the C#
 ```
 
+A program folder can say what it builds into with a `piper.json`, which `piper build src/` then follows (flags override it):
+
+```json
+{ "name": "app", "output": "exe" }
+```
+
+`output` is `"exe"` or `"library"`, and both keys are optional; an empty file is fine. Any other key is an error, so
+future versions can add keys without changing what today's files mean.
+
 `--exe` makes a native launcher from the .NET SDK's apphost, as `dotnet build` does; with only a runtime installed you get
 the DLL, which runs with `dotnet app.dll`. For NuGet packages, publishing (single-file, AOT) or mixing with C#, use a project:
 to compile `.piper` files as part of a .NET project, alongside its C#, reference the `Piper.Build` package:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Piper.Build" Version="1.0.0-preview.1" />
+  <PackageReference Include="Piper.Build" Version="1.0.0" />
 </ItemGroup>
 ```
 
@@ -45,12 +54,17 @@ following, from the compiler's own parser and binder, so it works on incomplete 
 - find references and highlights
 - rename
 - completion, including members after a dot
+- signature help
+- inlay hints for inferred types
+- semantic highlighting
+- a quick fix that adds missing match arms
 - an outline
 
-[editors/vscode](editors/vscode) is a VS Code extension that starts it and adds syntax highlighting.
+[editors/vscode](editors/vscode) is a VS Code extension that starts it, adds syntax highlighting, and runs and debugs programs
+(debugging uses the .NET debugger from Microsoft's C# extension, with breakpoints in `.piper` files).
 
 The server needs to know which files make up a program. A file is analyzed together with every `.piper` file under the
-nearest folder above it that has a `piper.json` file (its contents aren't read yet) or a `.csproj` using Piper.Build.
+nearest folder above it that has a `piper.json` file or a `.csproj` using Piper.Build.
 A file outside any such folder is a program on its own.
 
 ## Compatibility

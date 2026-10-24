@@ -11,19 +11,19 @@ file sealed record Totals(int count, double area);
 
 public static class MainModule
 {
-    public static void main()
+    public static void Main()
     {
         global::Geometry.Shape circle = new global::Geometry.Shape.Circle(new global::Geometry.Point(0.0, 0.0), 1.0);
         global::Geometry.Shape rect = new global::Geometry.Shape.Rect(new global::Geometry.Point(1.0, 2.0), 3.0, 4.0);
-        global::System.Console.WriteLine(circle.describe());
-        global::System.Console.WriteLine(rect.describe());
-        global::System.Console.WriteLine(((global::Geometry.Describe)circle).shout());
+        global::System.Console.WriteLine(circle.Describe());
+        global::System.Console.WriteLine(rect.Describe());
+        global::System.Console.WriteLine(((global::Geometry.Describe)circle).Shout());
         global::System.Collections.Generic.List<global::Geometry.Shape> shapes = new global::System.Collections.Generic.List<global::Geometry.Shape>();
         shapes.Add(circle);
         shapes.Add(rect);
-        Totals totals = new Totals(shapes.Count, global::Geometry.Shapes.area(circle) + global::Geometry.Shapes.area(rect));
+        Totals totals = new Totals(shapes.Count, global::Geometry.Shapes.Area(circle) + global::Geometry.Shapes.Area(rect));
         global::System.Console.WriteLine(totals);
-        global::System.Console.WriteLine(global::Geometry.TextExtensions.rounded(totals.area));
+        global::System.Console.WriteLine(global::Geometry.TextExtensions.Rounded(totals.area));
     }
 }
 
@@ -31,7 +31,7 @@ namespace Geometry
 {
     partial interface Describe
     {
-        string shout() => this.describe().ToUpper();
+        string Shout() => this.Describe().ToUpper();
     }
 }
 
@@ -40,7 +40,7 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        MainModule.main();
+        MainModule.Main();
     }
 }
 // ==== shapes.cs ====
@@ -69,11 +69,11 @@ namespace Geometry
 
     public static class Shapes
     {
-        public static double area(Shape shape)
+        public static double Area(Shape shape)
         {
             if (shape is Shape.Circle(_, var r))
             {
-                return 3.0 * square(r);
+                return 3.0 * Square(r);
             }
             else if (shape is Shape.Rect(_, var w, var h))
             {
@@ -85,7 +85,7 @@ namespace Geometry
             }
         }
 
-        internal static double square(double x) => x * x;
+        internal static double Square(double x) => x * x;
     }
 }
 // ==== text.cs ====
@@ -101,51 +101,51 @@ namespace Geometry
 {
     public partial interface Describe
     {
-        string describe();
+        string Describe();
 
         public interface PiperWitness<TPiperSelf>
         {
             Describe PiperBox(TPiperSelf piperSelf);
-            string describe(TPiperSelf piperSelf);
-            string shout(TPiperSelf piperSelf);
+            string Describe(TPiperSelf piperSelf);
+            string Shout(TPiperSelf piperSelf);
         }
 
         public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Describe
         {
             Describe Describe.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
-            public string describe(TPiperSelf piperSelf) => piperSelf.describe();
-            public string shout(TPiperSelf piperSelf) => piperSelf.shout();
+            public string Describe(TPiperSelf piperSelf) => piperSelf.Describe();
+            public string Shout(TPiperSelf piperSelf) => piperSelf.Shout();
         }
 
         public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Describe, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
         {
             Describe Describe.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
-            public string describe(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).describe();
-            public string shout(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).shout();
+            public string Describe(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Describe();
+            public string Shout(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Shout();
         }
     }
 
     partial record Point
     {
-        public string label() => $"({this.x}, {this.y})";
+        public string Label() => $"({this.x}, {this.y})";
     }
 
     partial record Shape : Describe
     {
-        public string describe()
+        public string Describe()
         {
             global::System.Text.StringBuilder text = new global::System.Text.StringBuilder();
             if (this is Shape.Circle(var center, var r))
             {
                 text.Append("circle at ");
-                text.Append(center.label());
+                text.Append(center.Label());
                 text.Append(" radius ");
                 text.Append(r);
             }
             else if (this is Shape.Rect(var corner, var w, var h))
             {
                 text.Append($"{w}x{h} rectangle at ");
-                text.Append(corner.label());
+                text.Append(corner.Label());
             }
             else
             {
@@ -159,7 +159,7 @@ namespace Geometry
     {
         extension(double self)
         {
-            public long rounded() => (long)global::System.Math.Round(self);
+            public long Rounded() => (long)global::System.Math.Round(self);
         }
     }
 }

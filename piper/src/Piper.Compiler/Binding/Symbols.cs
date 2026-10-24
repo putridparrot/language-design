@@ -17,6 +17,9 @@ public abstract class Symbol(string name)
     /// <summary>Declared <c>private</c>: visible only in <see cref="DeclaringFile"/>.</summary>
     public bool IsPrivate { get; internal set; }
 
+    /// <summary>The .NET attributes written on the declaration, field or parameter.</summary>
+    public ImmutableArray<BoundAttribute> Attributes { get; internal set; } = [];
+
     public override string ToString() => Name;
 }
 
@@ -120,9 +123,9 @@ public sealed class MethodSymbol(
 
 public static class BuiltinFunctions
 {
-    /// <summary><c>print(value)</c> accepts a single argument of any type, so its parameter is typed as Error (accepts anything).</summary>
+    /// <summary><c>Print(value)</c> accepts a single argument of any type, so its parameter is typed as Error (accepts anything).</summary>
     public static readonly FunctionSymbol Print = new(
-        "print",
+        "Print",
         [],
         [new VariableSymbol("value", TypeSymbol.Error, isMutable: false, VariableKind.Parameter)],
         TypeSymbol.Unit,

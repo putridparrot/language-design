@@ -4,44 +4,44 @@ using System.Collections.Generic;
 
 // A trait method with type parameters of its own; implementers may rename them.
 trait Container<T> {
-    fn items() => List<T>;
-    fn mapAll<U>(f: (T) => U) => List<U>;
-    fn pick<S: Named>(a: S, b: S) => S = if a.name().Length >= b.name().Length { a } else { b };
+    fn Items() => List<T>;
+    fn MapAll<U>(f: (T) => U) => List<U>;
+    fn Pick<S: Named>(a: S, b: S) => S = if a.Name().Length >= b.Name().Length { a } else { b };
 }
 
 trait Named {
-    fn name() => string;
-    fn greet() => string = "Hello, {this.name()}";
+    fn Name() => string;
+    fn Greet() => string = "Hello, {this.Name()}";
 }
 
 // Overriding an inherited default, and giving an inherited required method a default.
 trait Formal: Named {
-    fn title() => string;
-    fn greet() => string = "Good day, {this.title()} {this.name()}";
+    fn Title() => string;
+    fn Greet() => string = "Good day, {this.Title()} {this.Name()}";
 }
 
 trait Anonymous: Named {
-    fn name() => string = "anonymous";
+    fn Name() => string = "anonymous";
 }
 
 // Overriding through a generic parent.
 trait Equatable<T> {
-    fn same(other: T) => bool;
+    fn Same(other: T) => bool;
 }
 
 trait Ordered<T>: Equatable<T> {
-    fn compare(other: T) => int;
-    fn same(other: T) => bool = this.compare(other) == 0;
+    fn Compare(other: T) => int;
+    fn Same(other: T) => bool = this.Compare(other) == 0;
 }
 
 // Two parents override `greet`, so this trait must pick.
 trait Polite: Formal, Anonymous {
-    fn greet() => string = "Welcome, {this.title()}";
+    fn Greet() => string = "Welcome, {this.Title()}";
 }
 
 // Methods added to a trait after its declaration are defaults for every implementer.
 extend Named {
-    fn shout() => string = this.greet().ToUpper();
+    fn Shout() => string = this.Greet().ToUpper();
 }
 
 record Bag(values: List<int>);
@@ -52,9 +52,9 @@ record Num(v: int);
 record Butler(id: int);
 
 extend Bag: Container<int> {
-    fn items() => List<int> = this.values;
-    fn mapAll<R>(f: (int) => R) => List<R> {
-        var result = List<R>();
+    fn Items() => List<int> = this.values;
+    fn MapAll<R>(f: (int) => R) => List<R> {
+        mut result = List<R>();
         for v in this.values {
             result.Add(f(v));
         }
@@ -62,31 +62,31 @@ extend Bag: Container<int> {
     }
 }
 
-extend Person: Named { fn name() => string = this.n; }
-extend Judge: Formal { fn name() => string = this.n; fn title() => string = "Judge"; }
+extend Person: Named { fn Name() => string = this.n; }
+extend Judge: Formal { fn Name() => string = this.n; fn Title() => string = "Judge"; }
 extend Ghost: Anonymous { }
-extend Num: Ordered<Num> { fn compare(other: Num) => int = this.v - other.v; }
-extend Butler: Polite { fn title() => string = "sir"; }
+extend Num: Ordered<Num> { fn Compare(other: Num) => int = this.v - other.v; }
+extend Butler: Polite { fn Title() => string = "sir"; }
 
-fn labels<C: Container<int>>(c: C) => List<string> = c.mapAll((x) => "#{x}");
+fn Labels<C: Container<int>>(c: C) => List<string> = c.MapAll((x) => "#{x}");
 
-fn welcome(n: Named) => string = n.greet();
+fn Welcome(n: Named) => string = n.Greet();
 
-fn main() {
+fn Main() {
     let bag = Bag([1, 2, 3]);
-    print(bag.mapAll((x) => x * 10)[2]);
+    Print(bag.MapAll((x) => x * 10)[2]);
     let c: Container<int> = bag;
-    print(c.mapAll((x) => x % 2 == 0)[1]);
-    print(labels(bag)[0]);
-    print(bag.pick(Person("Ann"), Person("Bartholomew")).name());
+    Print(c.MapAll((x) => x % 2 == 0)[1]);
+    Print(Labels(bag)[0]);
+    Print(bag.Pick(Person("Ann"), Person("Bartholomew")).Name());
 
-    print(Person("Ann").greet());
-    print(Judge("Dredd").greet());
-    print(welcome(Judge("Rinder")));
-    print(Ghost(1).greet());
-    print(Butler(1).greet());
-    print(Butler(1).name());
-    print(Num(3).same(Num(3)));
-    print(Num(3).same(Num(4)));
-    print(Judge("Dredd").shout());
+    Print(Person("Ann").Greet());
+    Print(Judge("Dredd").Greet());
+    Print(Welcome(Judge("Rinder")));
+    Print(Ghost(1).Greet());
+    Print(Butler(1).Greet());
+    Print(Butler(1).Name());
+    Print(Num(3).Same(Num(3)));
+    Print(Num(3).Same(Num(4)));
+    Print(Judge("Dredd").Shout());
 }

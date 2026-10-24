@@ -8,14 +8,14 @@ using Piper.Runtime;
 
 public static class Defer
 {
-    public static void log(string message)
+    public static void Log(string message)
     {
         global::System.Console.WriteLine(message);
     }
 
-    public static int compute(int n)
+    public static int Compute(int n)
     {
-        log($"compute {n}");
+        Log($"compute {n}");
         int result;
         try
         {
@@ -27,12 +27,12 @@ public static class Defer
         }
         finally
         {
-            log($"leaving compute {n}");
+            Log($"leaving compute {n}");
         }
         return result;
     }
 
-    public static void risky(bool fail)
+    public static void Risky(bool fail)
     {
         try
         {
@@ -40,15 +40,15 @@ public static class Defer
             {
                 throw new global::System.InvalidOperationException("boom");
             }
-            log("worked");
+            Log("worked");
         }
         finally
         {
-            log("cleanup");
+            Log("cleanup");
         }
     }
 
-    public static global::System.Collections.Generic.IEnumerable<int> numbers()
+    public static global::System.Collections.Generic.IEnumerable<int> Numbers()
     {
         try
         {
@@ -57,40 +57,40 @@ public static class Defer
         }
         finally
         {
-            log("iterator done");
+            Log("iterator done");
         }
     }
 
-    public static void main()
+    public static void Main()
     {
         {
             try
             {
                 try
                 {
-                    log("body");
+                    Log("body");
                 }
                 finally
                 {
-                    log("second deferred");
+                    Log("second deferred");
                 }
             }
             finally
             {
-                log("first deferred");
+                Log("first deferred");
             }
         }
-        global::System.Console.WriteLine(compute(5));
-        global::System.Console.WriteLine(compute(-1));
+        global::System.Console.WriteLine(Compute(5));
+        global::System.Console.WriteLine(Compute(-1));
         try
         {
-            risky(true);
+            Risky(true);
         }
         catch (global::System.Exception e)
         {
-            log($"caught {e.Message}");
+            Log($"caught {e.Message}");
         }
-        risky(false);
+        Risky(false);
         for (int i = 0; i < 3; i++)
         {
             try
@@ -99,11 +99,11 @@ public static class Defer
                 {
                     continue;
                 }
-                log($"iteration {i}");
+                Log($"iteration {i}");
             }
             finally
             {
-                log($"end of iteration {i}");
+                Log($"end of iteration {i}");
             }
         }
         int counter = 0;
@@ -128,7 +128,7 @@ public static class Defer
         }
         finally
         {
-            log("a");
+            Log("a");
         }
         result_1 = result_2;
         int other;
@@ -139,11 +139,11 @@ public static class Defer
         }
         finally
         {
-            log("b");
+            Log("b");
         }
         other = result_3;
         global::System.Console.WriteLine(result_1 + other);
-        foreach (int n in numbers())
+        foreach (int n in Numbers())
         {
             global::System.Console.WriteLine(n);
         }
@@ -155,6 +155,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Defer.main();
+        Defer.Main();
     }
 }

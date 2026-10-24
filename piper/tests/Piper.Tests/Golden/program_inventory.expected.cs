@@ -9,27 +9,27 @@ using Piper.Runtime;
 
 public static class MainModule
 {
-    public static void main()
+    public static void Main()
     {
-        global::Shop.Store.Inventory inventory = global::Shop.Store.Store.create(new global::System.Collections.Generic.List<global::Shop.Model.Item> { new global::Shop.Model.Item("F-1", "Apples", new global::Shop.Model.Category.Food(), new global::Shop.Model.Money(45), 20), new global::Shop.Model.Item("F-2", "Bread", new global::Shop.Model.Category.Food(), new global::Shop.Model.Money(120), 4), new global::Shop.Model.Item("T-1", "Hammer", new global::Shop.Model.Category.Tools(), new global::Shop.Model.Money(1299), 2), new global::Shop.Model.Item("B-1", "SICP", new global::Shop.Model.Category.Books(), new global::Shop.Model.Money(4500), 1) });
+        global::Shop.Store.Inventory inventory = global::Shop.Store.Store.Create(new global::System.Collections.Generic.List<global::Shop.Model.Item> { new global::Shop.Model.Item("F-1", "Apples", new global::Shop.Model.Category.Food(), new global::Shop.Model.Money(45), 20), new global::Shop.Model.Item("F-2", "Bread", new global::Shop.Model.Category.Food(), new global::Shop.Model.Money(120), 4), new global::Shop.Model.Item("T-1", "Hammer", new global::Shop.Model.Category.Tools(), new global::Shop.Model.Money(1299), 2), new global::Shop.Model.Item("B-1", "SICP", new global::Shop.Model.Category.Books(), new global::Shop.Model.Money(4500), 1) });
         global::System.Collections.Generic.List<global::Shop.Model.Item> everything = new global::System.Collections.Generic.List<global::Shop.Model.Item>(inventory.items.Values);
-        global::System.Console.WriteLine($"{everything.Count} items worth {(global::Shop.Model.Model.total<global::Shop.Model.Item>(everything).pence)}p at one of each");
-        Option<global::Shop.Model.Item> temp = global::Shop.Store.Store.find(inventory, "T-1");
-        Option<string> temp_1 = temp.IsSome ? Option<string>.Some(((global::Shop.Model.Priced)temp.Value).priceText()) : Option<string>.None;
+        global::System.Console.WriteLine($"{everything.Count} items worth {(global::Shop.Model.Model.Total<global::Shop.Model.Item>(everything).pence)}p at one of each");
+        Option<global::Shop.Model.Item> temp = global::Shop.Store.Store.Find(inventory, "T-1");
+        Option<string> temp_1 = temp.IsSome ? Option<string>.Some(((global::Shop.Model.Priced)temp.Value).PriceText()) : Option<string>.None;
         global::System.Console.WriteLine($"a hammer costs {(temp_1.IsSome ? temp_1.Value : "?")}");
         global::System.Collections.Generic.List<(string, int)> orders = new global::System.Collections.Generic.List<(string, int)> { ("F-1", 5), ("T-1", 3), ("X-9", 1), ("F-2", 0), ("B-1", 1), ("T-1", 2) };
-        global::Shop.Model.Money spent = global::Shop.Model.Money.zero();
+        global::Shop.Model.Money spent = global::Shop.Model.Money.Zero();
         foreach (var (sku, quantity) in orders)
         {
-            Result<global::Shop.Model.Money, global::Shop.Store.OrderError> temp_2 = global::Shop.Store.Store.order(inventory, sku, quantity);
+            Result<global::Shop.Model.Money, global::Shop.Store.OrderError> temp_2 = global::Shop.Store.Store.Order(inventory, sku, quantity);
             if (temp_2 is { IsOk: true, Value: var cost })
             {
-                spent = spent.plus(cost);
+                spent = spent.Plus(cost);
                 global::System.Console.WriteLine($"ordered {quantity} x {sku} for {cost.pence}p");
             }
             else if (temp_2 is { IsOk: false, Error: var error })
             {
-                global::System.Console.WriteLine($"order {sku} x {quantity} failed: {(global::Shop.Store.Store.explain(error))}");
+                global::System.Console.WriteLine($"order {sku} x {quantity} failed: {(global::Shop.Store.Store.Explain(error))}");
             }
             else
             {
@@ -37,14 +37,14 @@ public static class MainModule
             }
         }
         global::System.Console.WriteLine($"spent {spent.pence}p");
-        foreach (var (category, items, units) in global::Shop.Store.Store.stockByCategory(inventory))
+        foreach (var (category, items, units) in global::Shop.Store.Store.StockByCategory(inventory))
         {
             global::System.Console.WriteLine($"{category}: {items} items, {units} units");
         }
-        global::System.Console.WriteLine($"low stock: {(string.Join(", ", global::Shop.Store.Store.lowStock(inventory).ConvertAll<string>((global::Shop.Model.Item item) => $"{item.name} ({item.stock})")))}");
+        global::System.Console.WriteLine($"low stock: {(string.Join(", ", global::Shop.Store.Store.LowStock(inventory).ConvertAll<string>((global::Shop.Model.Item item) => $"{item.name} ({item.stock})")))}");
         try
         {
-            global::Shop.Store.Store.create(new global::System.Collections.Generic.List<global::Shop.Model.Item> { new global::Shop.Model.Item("A", "One", new global::Shop.Model.Category.Food(), new global::Shop.Model.Money(1), 1), new global::Shop.Model.Item("A", "Two", new global::Shop.Model.Category.Food(), new global::Shop.Model.Money(2), 1) });
+            global::Shop.Store.Store.Create(new global::System.Collections.Generic.List<global::Shop.Model.Item> { new global::Shop.Model.Item("A", "One", new global::Shop.Model.Category.Food(), new global::Shop.Model.Money(1), 1), new global::Shop.Model.Item("A", "Two", new global::Shop.Model.Category.Food(), new global::Shop.Model.Money(2), 1) });
         }
         catch (global::System.ArgumentException e)
         {
@@ -58,7 +58,7 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        MainModule.main();
+        MainModule.Main();
     }
 }
 // ==== model.cs ====
@@ -74,11 +74,11 @@ namespace Shop.Model
 {
     public sealed record Money(long pence)
     {
-        public Money plus(Money other) => new Money(this.pence + other.pence);
+        public Money Plus(Money other) => new Money(this.pence + other.pence);
 
-        public Money times(int count) => new Money(this.pence * count);
+        public Money Times(int count) => new Money(this.pence * count);
 
-        public static Money zero() => new Money(0);
+        public static Money Zero() => new Money(0);
     }
 
     public abstract record Category
@@ -96,50 +96,50 @@ namespace Shop.Model
 
     public sealed record Item(string sku, string name, Category category, Money price, int stock) : Priced
     {
-        public Money unitPrice() => this.price;
+        public Money UnitPrice() => this.price;
     }
 
     public interface Priced
     {
-        Money unitPrice();
+        Money UnitPrice();
 
-        string priceText()
+        string PriceText()
         {
-            long pounds = this.unitPrice().pence / 100;
-            long pence = this.unitPrice().pence % 100;
+            long pounds = this.UnitPrice().pence / 100;
+            long pence = this.UnitPrice().pence % 100;
             return $"£{pounds}.{pence.ToString().PadLeft(2, '0')}";
         }
 
         public interface PiperWitness<TPiperSelf>
         {
             Priced PiperBox(TPiperSelf piperSelf);
-            Money unitPrice(TPiperSelf piperSelf);
-            string priceText(TPiperSelf piperSelf);
+            Money UnitPrice(TPiperSelf piperSelf);
+            string PriceText(TPiperSelf piperSelf);
         }
 
         public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Priced
         {
             Priced Priced.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
-            public Money unitPrice(TPiperSelf piperSelf) => piperSelf.unitPrice();
-            public string priceText(TPiperSelf piperSelf) => piperSelf.priceText();
+            public Money UnitPrice(TPiperSelf piperSelf) => piperSelf.UnitPrice();
+            public string PriceText(TPiperSelf piperSelf) => piperSelf.PriceText();
         }
 
         public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Priced, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
         {
             Priced Priced.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
-            public Money unitPrice(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).unitPrice();
-            public string priceText(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).priceText();
+            public Money UnitPrice(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).UnitPrice();
+            public string PriceText(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).PriceText();
         }
     }
 
     public static class Model
     {
-        public static Money total<T>(global::System.Collections.Generic.List<T> items)
+        public static Money Total<T>(global::System.Collections.Generic.List<T> items)
         {
-            Money sum = Money.zero();
+            Money sum = Money.Zero();
             foreach (T item in items)
             {
-                sum = sum.plus(global::Piper.Runtime.PiperTraits.Witness<Priced.PiperWitness<T>>().unitPrice(item));
+                sum = sum.Plus(global::Piper.Runtime.PiperTraits.Witness<Priced.PiperWitness<T>>().UnitPrice(item));
             }
             return sum;
         }
@@ -173,7 +173,7 @@ namespace Shop.Store
 
     public static class Store
     {
-        public static Inventory create(global::System.Collections.Generic.List<global::Shop.Model.Item> items)
+        public static Inventory Create(global::System.Collections.Generic.List<global::Shop.Model.Item> items)
         {
             global::System.Collections.Generic.Dictionary<string, global::Shop.Model.Item> bySku = new global::System.Collections.Generic.Dictionary<string, global::Shop.Model.Item>();
             foreach (global::Shop.Model.Item item in items)
@@ -187,7 +187,7 @@ namespace Shop.Store
             return new Inventory(bySku);
         }
 
-        public static Option<global::Shop.Model.Item> find(Inventory inventory, string sku)
+        public static Option<global::Shop.Model.Item> Find(Inventory inventory, string sku)
         {
             global::Shop.Model.Item item;
             if (inventory.items.TryGetValue(sku, out item))
@@ -200,14 +200,14 @@ namespace Shop.Store
             }
         }
 
-        public static Result<global::Shop.Model.Money, OrderError> order(Inventory inventory, string sku, int quantity)
+        public static Result<global::Shop.Model.Money, OrderError> Order(Inventory inventory, string sku, int quantity)
         {
             if (quantity <= 0)
             {
                 return Result<global::Shop.Model.Money, OrderError>.Err(new OrderError.InvalidQuantity(quantity));
             }
             global::Shop.Model.Item item;
-            Option<global::Shop.Model.Item> temp = find(inventory, sku);
+            Option<global::Shop.Model.Item> temp = Find(inventory, sku);
             if (temp is { IsSome: true, Value: var found })
             {
                 item = found;
@@ -221,10 +221,10 @@ namespace Shop.Store
                 return Result<global::Shop.Model.Money, OrderError>.Err(new OrderError.OutOfStock(sku, quantity, item.stock));
             }
             inventory.items[sku] = item with { stock = item.stock - quantity };
-            return Result<global::Shop.Model.Money, OrderError>.Ok(item.price.times(quantity));
+            return Result<global::Shop.Model.Money, OrderError>.Ok(item.price.Times(quantity));
         }
 
-        public static string explain(OrderError error)
+        public static string Explain(OrderError error)
         {
             if (error is OrderError.UnknownItem(var sku))
             {
@@ -244,10 +244,10 @@ namespace Shop.Store
             }
         }
 
-        public static global::System.Collections.Generic.List<(global::Shop.Model.Category category, int items, int units)> stockByCategory(Inventory inventory) => global::System.Linq.Enumerable.ToList<(global::Shop.Model.Category Key, int, int)>(global::System.Linq.Enumerable.OrderByDescending<(global::Shop.Model.Category Key, int, int), int>(global::System.Linq.Enumerable.Select<global::System.Linq.IGrouping<global::Shop.Model.Category, global::Shop.Model.Item>, (global::Shop.Model.Category Key, int, int)>(global::System.Linq.Enumerable.GroupBy<global::Shop.Model.Item, global::Shop.Model.Category>(inventory.items.Values, (global::Shop.Model.Item item) => item.category), (global::System.Linq.IGrouping<global::Shop.Model.Category, global::Shop.Model.Item> group) => (group.Key, global::System.Linq.Enumerable.Count<global::Shop.Model.Item>(group), global::System.Linq.Enumerable.Sum<global::Shop.Model.Item>(group, (global::Shop.Model.Item item_1) => item_1.stock))), ((global::Shop.Model.Category Key, int, int) entry) => entry.Item3));
+        public static global::System.Collections.Generic.List<(global::Shop.Model.Category category, int items, int units)> StockByCategory(Inventory inventory) => global::System.Linq.Enumerable.ToList<(global::Shop.Model.Category Key, int, int)>(global::System.Linq.Enumerable.OrderByDescending<(global::Shop.Model.Category Key, int, int), int>(global::System.Linq.Enumerable.Select<global::System.Linq.IGrouping<global::Shop.Model.Category, global::Shop.Model.Item>, (global::Shop.Model.Category Key, int, int)>(global::System.Linq.Enumerable.GroupBy<global::Shop.Model.Item, global::Shop.Model.Category>(inventory.items.Values, (global::Shop.Model.Item item) => item.category), (global::System.Linq.IGrouping<global::Shop.Model.Category, global::Shop.Model.Item> group) => (group.Key, global::System.Linq.Enumerable.Count<global::Shop.Model.Item>(group), global::System.Linq.Enumerable.Sum<global::Shop.Model.Item>(group, (global::Shop.Model.Item item_1) => item_1.stock))), ((global::Shop.Model.Category Key, int, int) entry) => entry.Item3));
 
-        internal static int lowStockThreshold() => 3;
+        internal static int LowStockThreshold() => 3;
 
-        public static global::System.Collections.Generic.List<global::Shop.Model.Item> lowStock(Inventory inventory) => global::System.Linq.Enumerable.ToList<global::Shop.Model.Item>(global::System.Linq.Enumerable.OrderBy<global::Shop.Model.Item, string>(global::System.Linq.Enumerable.Where<global::Shop.Model.Item>(inventory.items.Values, (global::Shop.Model.Item item) => item.stock <= lowStockThreshold()), (global::Shop.Model.Item item_1) => item_1.sku));
+        public static global::System.Collections.Generic.List<global::Shop.Model.Item> LowStock(Inventory inventory) => global::System.Linq.Enumerable.ToList<global::Shop.Model.Item>(global::System.Linq.Enumerable.OrderBy<global::Shop.Model.Item, string>(global::System.Linq.Enumerable.Where<global::Shop.Model.Item>(inventory.items.Values, (global::Shop.Model.Item item) => item.stock <= LowStockThreshold()), (global::Shop.Model.Item item_1) => item_1.sku));
     }
 }

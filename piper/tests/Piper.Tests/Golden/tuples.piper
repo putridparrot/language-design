@@ -6,89 +6,89 @@ using System.Collections.Generic;
 record Point(x: int, y: int);
 
 // Several results at once.
-fn divide(a: int, b: int) => (quotient: int, remainder: int) = (a / b, a % b);
+fn Divide(a: int, b: int) => (quotient: int, remainder: int) = (a / b, a % b);
 
-fn swap<A, B>(pair: (A, B)) => (B, A) = (pair.Item2, pair.Item1);
+fn Swap<A, B>(pair: (A, B)) => (B, A) = (pair.Item2, pair.Item1);
 
-fn describe(cell: (bool, bool)) => string = match cell {
+fn Describe(cell: (bool, bool)) => string = match cell {
     (true, true) => "both",
     (true, false) | (false, true) => "one",
     (false, false) => "neither",
 };
 
-fn classify(point: (int, int)) => string = match point {
+fn Classify(point: (int, int)) => string = match point {
     (0, 0) => "origin",
     (0, _) | (_, 0) => "axis",
     (x, y) if x == y => "diagonal",
     _ => "elsewhere",
 };
 
-fn main() {
+fn Main() {
     // Literals, element names and positional access.
     let pair = (1, "one");
-    print(pair);
-    print(pair.Item1 + 1);
-    let result = divide(17, 5);
-    print("{result.quotient} r {result.remainder}");
-    print(result.Item2);
+    Print(pair);
+    Print(pair.Item1 + 1);
+    let result = Divide(17, 5);
+    Print("{result.quotient} r {result.remainder}");
+    Print(result.Item2);
 
     // Names are inferred from variables and members, as in C#.
     let p = Point(3, 4);
     let name = "p";
     let labelled = (name, p.x);
-    print("{labelled.name} {labelled.x}");
+    Print("{labelled.name} {labelled.x}");
 
     // Deconstruction: tuples, records (by field), and .NET types with Deconstruct.
-    let (q, r) = divide(7, 2);
-    print("{q} {r}");
+    let (q, r) = Divide(7, 2);
+    Print("{q} {r}");
     let (px, py) = p;
-    print(px * py);
+    Print(px * py);
     let (first, (_, third)) = (1, (2, 3));
-    print(first + third);
+    Print(first + third);
 
-    var a = 1;
-    var b = 2;
+    mut a = 1;
+    mut b = 2;
     (a, b) = (b, a);
-    print("{a} {b}");
+    Print("{a} {b}");
 
     let ages: Dictionary<string, int> = Dictionary();
     ages["Ada"] = 36;
     ages["Grace"] = 45;
     for (who, age) in ages {
-        print("{who}: {age}");
+        Print("{who}: {age}");
     }
     for (index, word) in [(1, "a"), (2, "b")] {
-        print("{index}{word}");
+        Print("{index}{word}");
     }
 
     // Generic functions, conversions and equality.
-    print(swap((1, "x")));
+    Print(Swap((1, "x")));
     let widened: (long, int?) = (1, 2);
-    print(widened.Item1 + 3_000_000_000L);
-    print((1, 2) == (1, 2));
-    print(result == (3, 2));
-    print((1, "a") != (1, "b"));
+    Print(widened.Item1 + 3_000_000_000L);
+    Print((1, 2) == (1, 2));
+    Print(result == (3, 2));
+    Print((1, "a") != (1, "b"));
 
     // Matching: tuple patterns, checked for exhaustiveness.
-    print(describe((true, false)));
-    print(describe((false, false)));
-    print(classify((0, 5)));
-    print(classify((2, 2)));
-    print(classify((1, 2)));
+    Print(Describe((true, false)));
+    Print(Describe((false, false)));
+    Print(Classify((0, 5)));
+    Print(Classify((2, 2)));
+    Print(Classify((1, 2)));
 
     // .NET methods returning tuples.
     let (quotient, remainder) = Math.DivRem(20, 6);
-    print("{quotient} {remainder}");
+    Print("{quotient} {remainder}");
 
     // Their element names come with them, even inside other types.
     let division = Math.DivRem(20, 6);
-    print("{division.Quotient} r {division.Remainder}");
+    Print("{division.Quotient} r {division.Remainder}");
     let unnamed: (int, int) = division;
-    print(unnamed.Item1);
+    Print(unnamed.Item1);
     for entry in System.Linq.Enumerable.Index(["a", "b"]) {
-        print("{entry.Index}:{entry.Item}");
+        Print("{entry.Index}:{entry.Item}");
     }
 
     let pairs: List<(string, int)> = [("x", 1), ("y", 2)];
-    print(string.Join(";", System.Linq.Enumerable.Select(pairs, entry => "{entry.Item1}={entry.Item2 * 10}")));
+    Print(string.Join(";", System.Linq.Enumerable.Select(pairs, entry => "{entry.Item1}={entry.Item2 * 10}")));
 }

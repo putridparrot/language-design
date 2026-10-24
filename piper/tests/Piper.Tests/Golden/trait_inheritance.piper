@@ -3,27 +3,27 @@
 using System.Collections.Generic;
 
 trait Named {
-    fn name() => string;
-    fn shout() => string = this.name().ToUpper();
+    fn Name() => string;
+    fn Shout() => string = this.Name().ToUpper();
 }
 
 trait Aged {
-    fn age() => int;
+    fn Age() => int;
 }
 
 // A child trait can call its parents' methods in its own defaults.
 trait Person: Named, Aged {
-    fn introduce() => string = "I'm {this.name()}, {this.age()}";
+    fn Introduce() => string = "I'm {this.Name()}, {this.Age()}";
 }
 
 // Generic traits inherit with their type arguments.
 trait Equatable<T> {
-    fn sameAs(other: T) => bool;
+    fn SameAs(other: T) => bool;
 }
 
 trait Ordered<T>: Equatable<T> {
-    fn before(other: T) => bool;
-    fn notAfter(other: T) => bool = this.before(other) || this.sameAs(other);
+    fn Before(other: T) => bool;
+    fn NotAfter(other: T) => bool = this.Before(other) || this.SameAs(other);
 }
 
 record Employee(first: string, years: int);
@@ -31,51 +31,51 @@ record Version(major: int, minor: int);
 
 // The parents' methods can go in the same extend block, or in their own.
 extend Employee: Person {
-    fn age() => int = this.years;
+    fn Age() => int = this.years;
 }
 
 extend Employee: Named {
-    fn name() => string = this.first;
+    fn Name() => string = this.first;
 }
 
 extend Version: Ordered<Version> {
-    fn sameAs(other: Version) => bool = this == other;
-    fn before(other: Version) => bool = this.major < other.major || (this.major == other.major && this.minor < other.minor);
+    fn SameAs(other: Version) => bool = this == other;
+    fn Before(other: Version) => bool = this.major < other.major || (this.major == other.major && this.minor < other.minor);
 }
 
-fn greetAll(people: List<Person>) {
+fn GreetAll(people: List<Person>) {
     for p in people {
-        print(p.introduce());
+        Print(p.Introduce());
     }
 }
 
 // A bound by a child trait gives its parents' methods too.
-fn label<T: Person>(p: T) => string = "{p.shout()} ({p.age()})";
+fn Label<T: Person>(p: T) => string = "{p.Shout()} ({p.Age()})";
 
-fn earliest<T: Ordered<T>>(items: List<T>) => T {
-    var best = items[0];
+fn Earliest<T: Ordered<T>>(items: List<T>) => T {
+    mut best = items[0];
     for item in items {
-        if item.before(best) {
+        if item.Before(best) {
             best = item;
         }
     }
     best
 }
 
-fn main() {
+fn Main() {
     let ada = Employee("Ada", 36);
-    print(ada.introduce());
-    print(ada.shout());
-    print(label(ada));
+    Print(ada.Introduce());
+    Print(ada.Shout());
+    Print(Label(ada));
 
     // A Person converts to each of its parents.
     let named: Named = ada;
     let person: Person = ada;
     let aged: Aged = person;
-    print("{named.name()} {aged.age()}");
-    greetAll([ada, Employee("Grace", 45)]);
+    Print("{named.Name()} {aged.Age()}");
+    GreetAll([ada, Employee("Grace", 45)]);
 
     let versions = [Version(2, 1), Version(1, 9), Version(1, 10)];
-    print(earliest(versions));
-    print(Version(1, 0).notAfter(Version(1, 0)));
+    Print(Earliest(versions));
+    Print(Version(1, 0).NotAfter(Version(1, 0)));
 }

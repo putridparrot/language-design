@@ -46,7 +46,7 @@ public sealed record ByLength() : global::System.Collections.Generic.IComparer<s
 
 public static class Clr_interfaces
 {
-    public static T largest<T>(global::System.Collections.Generic.List<T> items) where T : global::System.IComparable<T>
+    public static T Largest<T>(global::System.Collections.Generic.List<T> items) where T : global::System.IComparable<T>
     {
         T best = items[0];
         foreach (T item in items)
@@ -59,14 +59,14 @@ public static class Clr_interfaces
         return best;
     }
 
-    public static void main()
+    public static void Main()
     {
         global::System.Collections.Generic.List<Money> wallet = new global::System.Collections.Generic.List<Money> { new Money(250), new Money(1200), new Money(75) };
         wallet.Sort();
         global::System.Console.WriteLine(string.Join<Money>(", ", wallet));
-        global::System.Console.WriteLine(largest<Money>(wallet));
-        global::System.Console.WriteLine(largest<int>(new global::System.Collections.Generic.List<int> { 3, 9, 4 }));
-        global::System.Console.WriteLine(largest<string>(new global::System.Collections.Generic.List<string> { "pear", "fig" }));
+        global::System.Console.WriteLine(Largest<Money>(wallet));
+        global::System.Console.WriteLine(Largest<int>(new global::System.Collections.Generic.List<int> { 3, 9, 4 }));
+        global::System.Console.WriteLine(Largest<string>(new global::System.Collections.Generic.List<string> { "pear", "fig" }));
         {
             using Connection c = new Connection("db");
             global::System.Console.WriteLine($"using {c.name}");
@@ -87,6 +87,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Clr_interfaces.main();
+        Clr_interfaces.Main();
     }
 }

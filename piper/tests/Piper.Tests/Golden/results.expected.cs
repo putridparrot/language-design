@@ -19,9 +19,9 @@ public abstract record MathError
 
 public static class Results
 {
-    public static Result<int, MathError> divide(int a, int b) => b == 0 ? Result<int, MathError>.Err(new MathError.DivideByZero()) : Result<int, MathError>.Ok(a / b);
+    public static Result<int, MathError> Divide(int a, int b) => b == 0 ? Result<int, MathError>.Err(new MathError.DivideByZero()) : Result<int, MathError>.Ok(a / b);
 
-    public static Result<int, MathError> root(int n)
+    public static Result<int, MathError> Root(int n)
     {
         if (n < 0)
         {
@@ -35,15 +35,15 @@ public static class Results
         return Result<int, MathError>.Ok(r);
     }
 
-    public static Result<int, MathError> compute(int a, int b)
+    public static Result<int, MathError> Compute(int a, int b)
     {
-        Result<int, MathError> temp = divide(a, b);
+        Result<int, MathError> temp = Divide(a, b);
         if (!temp.IsOk)
         {
             return Result<int, MathError>.Err(temp.Error);
         }
         int quotient = temp.Value;
-        Result<int, MathError> temp_1 = root(quotient);
+        Result<int, MathError> temp_1 = Root(quotient);
         if (!temp_1.IsOk)
         {
             return Result<int, MathError>.Err(temp_1.Error);
@@ -52,16 +52,16 @@ public static class Results
         return Result<int, MathError>.Ok(r * 10);
     }
 
-    public static Result<int, MathError> digits(int a, int b)
+    public static Result<int, MathError> Digits(int a, int b)
     {
-        Result<int, MathError> temp = divide(a, b);
+        Result<int, MathError> temp = Divide(a, b);
         if (!temp.IsOk)
         {
             return Result<int, MathError>.Err(temp.Error);
         }
         string text = temp.Value.ToString();
         int temp_1 = text.Length;
-        Result<int, MathError> temp_2 = compute(a, b);
+        Result<int, MathError> temp_2 = Compute(a, b);
         if (!temp_2.IsOk)
         {
             return Result<int, MathError>.Err(temp_2.Error);
@@ -69,7 +69,7 @@ public static class Results
         return Result<int, MathError>.Ok(temp_1 + temp_2.Value.CompareTo(0));
     }
 
-    public static string show(Result<int, MathError> result)
+    public static string Show(Result<int, MathError> result)
     {
         if (result is { IsOk: true, Value: var v })
         {
@@ -89,19 +89,19 @@ public static class Results
         }
     }
 
-    public static void main()
+    public static void Main()
     {
-        global::System.Console.WriteLine(show(compute(100, 4)));
-        global::System.Console.WriteLine(show(compute(1, 0)));
-        global::System.Console.WriteLine(show(compute(-50, 2)));
-        global::System.Console.WriteLine(divide(7, 2));
-        global::System.Console.WriteLine(root(-1));
-        if (compute(64, 1) is { IsOk: true, Value: var v })
+        global::System.Console.WriteLine(Show(Compute(100, 4)));
+        global::System.Console.WriteLine(Show(Compute(1, 0)));
+        global::System.Console.WriteLine(Show(Compute(-50, 2)));
+        global::System.Console.WriteLine(Divide(7, 2));
+        global::System.Console.WriteLine(Root(-1));
+        if (Compute(64, 1) is { IsOk: true, Value: var v })
         {
             global::System.Console.WriteLine($"64 -> {v}");
         }
-        global::System.Console.WriteLine(show(digits(12345, 1)));
-        global::System.Console.WriteLine(show(digits(1, 0)));
+        global::System.Console.WriteLine(Show(Digits(12345, 1)));
+        global::System.Console.WriteLine(Show(Digits(1, 0)));
     }
 }
 
@@ -110,6 +110,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Results.main();
+        Results.Main();
     }
 }

@@ -15,7 +15,9 @@ const string Usage = """
       piper --version                      Show the compiler's version
 
     Inputs are .piper files or directories (searched recursively for .piper files);
-    all of them are compiled together as one program.
+    all of them are compiled together as one program. A single directory may have a piper.json,
+    { "name": "app", "output": "exe" | "library" }, which 'piper build' follows when given no --exe,
+    --library or --name.
     """;
 
 if (args is ["--version" or "-v"])
@@ -82,7 +84,29 @@ if (files.Count == 0)
     return 2;
 }
 
-var sources = files.Select(path => new SourceText(File.ReadAllText(path), path)).ToList();
+// A folder's piper.json says what to build it into; --exe, --library and --name override it.
+if (inputs is [var folder] && Directory.Exists(folder) && File.Exists(Path.Combine(folder, PiperProject.FileName)))
+{
+    var (project, errors) = PiperProject.Load(Path.Combine(folder, PiperProject.FileName));
+    foreach (var error in errors)
+        Console.Error.WriteLine(error.Format());
+    if (project is null)
+        return 2;
+    if (command == "run" && project.Output == PiperOutput.Library)
+    {
+        Console.Error.WriteLine($"{PiperProject.FileName} says this program is a library, which can't be run; build it with 'piper build'.");
+        return 2;
+    }
+    if (command == "build" && !executable && !library)
+    {
+        executable = project.Output == PiperOutput.Exe;
+        library = project.Output == PiperOutput.Library;
+    }
+    assemblyName ??= project.Name;
+}
+
+// An assembly's PDB names its source files, which debuggers find breakpoints' files by, so those need full paths.
+var sources = files.Select(path => new SourceText(File.ReadAllText(path), executable || library ? Path.GetFullPath(path) : path)).ToList();
 // `emit` is for reading the C#; `build` and `run` map it back to the Piper source for errors and debugging.
 var result = Compilation.Compile(sources, new CompilationOptions(LineDirectives: command != "emit"));
 foreach (var diagnostic in result.FormattedDiagnostics)
@@ -106,7 +130,7 @@ switch (command)
         }
         if (executable && !result.HasMain)
         {
-            Console.Error.WriteLine("An executable needs a 'main' function; use --library to build a library instead.");
+            Console.Error.WriteLine("An executable needs a 'Main' function; use --library to build a library instead.");
             return 1;
         }
 

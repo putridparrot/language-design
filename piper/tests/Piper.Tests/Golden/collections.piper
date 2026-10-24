@@ -5,97 +5,97 @@ using System.Collections.Generic;
 
 record Point(x: int, y: int);
 
-fn sum(values: List<int>) => int {
-    var total = 0;
+fn Sum(values: List<int>) => int {
+    mut total = 0;
     for value in values {
         total += value;
     }
     total
 }
 
-fn sumX(points: Point[]) => int {
-    var total = 0;
+fn SumX(points: Point[]) => int {
+    mut total = 0;
     for p in points {
         total += p.x;
     }
     total
 }
 
-fn main() {
+fn Main() {
     // A collection literal is a List<T> unless an array is expected.
     let primes = [2, 3, 5, 7];
-    print(sum(primes));
-    print(primes[2]);
+    Print(Sum(primes));
+    Print(primes[2]);
     primes.Add(11);
-    print(primes.Count);
+    Print(primes.Count);
 
     // Arrays: from literals where an array is expected, from .NET, or created with a size like C#'s `new int[5]`.
     let squares: int[] = [1, 4, 9];
     squares[0] = 100;
-    print(squares[0] + squares[2]);
-    print(squares.Length);
+    Print(squares[0] + squares[2]);
+    Print(squares.Length);
 
     let words = "one two three".Split(' ');
     words[0] = "uno";
-    print(string.Join("-", words));
-    print(words[2].Length);
+    Print(string.Join("-", words));
+    Print(words[2].Length);
 
     let counts = int[3];
     counts[1] += 5;
-    print(string.Join(",", counts));
+    Print(string.Join(",", counts));
 
     let grid = double[2, 3];
     grid[1, 2] = 1.5;
-    print("{grid.Length} {grid[1, 2]}");
+    Print("{grid.Length} {grid[1, 2]}");
 
     let slots = string?[2];
     slots[1] = "full";
-    print("{slots[0] ?? "empty"} {slots[1] ?? "empty"}");
+    Print("{slots[0] ?? "empty"} {slots[1] ?? "empty"}");
 
     let points: Point[] = [Point(1, 2), Point(3, 4)];
-    print(sumX(points));
+    Print(SumX(points));
     let jagged: int[][] = [[1], [2, 3]];
-    print(jagged[1].Length);
-    print(string.Join(" ", System.Linq.Enumerable.ToArray(primes)));
+    Print(jagged[1].Length);
+    Print(string.Join(" ", System.Linq.Enumerable.ToArray(primes)));
 
     // The element type is the common type of the elements.
     let mixed = [1, 2L, 3];
-    print(mixed[1]);
+    Print(mixed[1]);
 
     let empty: List<string> = [];
-    print(empty.Count);
+    Print(empty.Count);
 
     // Anything enumerable can be looped over: lists, arrays, strings, records in a list.
     for c in "abc" {
-        print(c);
+        Print(c);
     }
     for point in [Point(1, 2), Point(3, 4)] {
-        print(point.x + point.y);
+        Print(point.x + point.y);
     }
     for row in [[1, 2], [3]] {
-        print(row.Count);
+        Print(row.Count);
     }
 
     // Indexers, and assigning through them and through properties.
     let ages: Dictionary<string, int> = Dictionary();
     ages["Ada"] = 36;
     ages["Ada"] += 1;
-    print(ages["Ada"]);
+    Print(ages["Ada"]);
 
     for pair in ages {
-        print("{pair.Key} is {pair.Value}, at most {Math.Max(pair.Value, 40)}");
+        Print("{pair.Key} is {pair.Value}, at most {Math.Max(pair.Value, 40)}");
     }
 
     // A generic .NET member returning T gives the element type itself; one returning T? gives an Option.
     let names = ["Ada", "Grace"];
-    print(names[1].Length);
-    print(System.Linq.Enumerable.First(names).Length);
-    print(System.Linq.Enumerable.FirstOrDefault(empty) ?? "none");
+    Print(names[1].Length);
+    Print(System.Linq.Enumerable.First(names).Length);
+    Print(System.Linq.Enumerable.FirstOrDefault(empty) ?? "none");
 
     let text = "Piper";
-    print(text[0]);
+    Print(text[0]);
 
     let builder = System.Text.StringBuilder("hello");
     builder.Length = 4;
-    print(builder.ToString());
+    Print(builder.ToString());
 }

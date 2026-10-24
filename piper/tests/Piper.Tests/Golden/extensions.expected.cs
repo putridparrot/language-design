@@ -8,31 +8,31 @@ using Piper.Runtime;
 
 public sealed record Point(int x, int y)
 {
-    public static Point origin() => new Point(0, 0);
+    public static Point Origin() => new Point(0, 0);
 
-    public Point plus(Point other) => new Point(this.x + other.x, this.y + other.y);
+    public Point Plus(Point other) => new Point(this.x + other.x, this.y + other.y);
 
-    public int lengthSquared() => this.x.squared() + this.y.squared();
+    public int LengthSquared() => this.x.Squared() + this.y.Squared();
 }
 
 public static class Extensions
 {
-    public static void main()
+    public static void Main()
     {
-        global::System.Console.WriteLine(7.squared());
-        global::System.Console.WriteLine((-3).squared());
-        global::System.Console.WriteLine(4.isEven());
-        global::System.Console.WriteLine(15.clamp(0, 10));
-        global::System.Console.WriteLine(int.zero());
-        global::System.Console.WriteLine("hey".shout());
-        global::System.Console.WriteLine("ab".repeat(3));
-        global::System.Console.WriteLine(3.0.half());
-        Point p = Point.origin().plus(new Point(2, 3)).plus(new Point(1, 1));
-        global::System.Console.WriteLine($"{p.x},{p.y} -> {p.lengthSquared()}");
-        Option<string> o = Option<string>.none();
-        global::System.Console.WriteLine(o.isSome());
-        global::System.Console.WriteLine(o.getOr("default"));
-        global::System.Console.WriteLine(Option<int>.Some(5).getOr(0));
+        global::System.Console.WriteLine(7.Squared());
+        global::System.Console.WriteLine((-3).Squared());
+        global::System.Console.WriteLine(4.IsEven());
+        global::System.Console.WriteLine(15.ClampTo(0, 10));
+        global::System.Console.WriteLine(int.Zero());
+        global::System.Console.WriteLine("hey".Shout());
+        global::System.Console.WriteLine("ab".Repeat(3));
+        global::System.Console.WriteLine(3.0.Half());
+        Point p = Point.Origin().Plus(new Point(2, 3)).Plus(new Point(1, 1));
+        global::System.Console.WriteLine($"{p.x},{p.y} -> {p.LengthSquared()}");
+        Option<string> o = Option<string>.Nothing();
+        global::System.Console.WriteLine(o.HasValue());
+        global::System.Console.WriteLine(o.GetOr("default"));
+        global::System.Console.WriteLine(Option<int>.Some(5).GetOr(0));
     }
 }
 
@@ -40,23 +40,23 @@ public static class ExtensionsExtensions
 {
     extension(int self)
     {
-        public int squared() => self * self;
+        public int Squared() => self * self;
 
-        public bool isEven() => self % 2 == 0;
+        public bool IsEven() => self % 2 == 0;
 
-        public int clamp(int low, int high) => self < low ? low : self > high ? high : self;
+        public int ClampTo(int low, int high) => self < low ? low : self > high ? high : self;
     }
 
     extension(int)
     {
-        public static int zero() => 0;
+        public static int Zero() => 0;
     }
 
     extension(string self)
     {
-        public string shout() => self + "!";
+        public string Shout() => self + "!";
 
-        public string repeat(int times)
+        public string Repeat(int times)
         {
             string result = "";
             for (int i = 0; i < times; i++)
@@ -69,12 +69,12 @@ public static class ExtensionsExtensions
 
     extension(double self)
     {
-        public double half() => self / 2.0;
+        public double Half() => self / 2.0;
     }
 
     extension<T>(Option<T> self)
     {
-        public bool isSome()
+        public bool HasValue()
         {
             if (self is { IsSome: true })
             {
@@ -86,7 +86,7 @@ public static class ExtensionsExtensions
             }
         }
 
-        public T getOr(T fallback)
+        public T GetOr(T fallback)
         {
             if (self is { IsSome: true, Value: var v })
             {
@@ -101,7 +101,7 @@ public static class ExtensionsExtensions
 
     extension<T>(Option<T>)
     {
-        public static Option<T> none() => Option<T>.None;
+        public static Option<T> Nothing() => Option<T>.None;
     }
 }
 
@@ -110,6 +110,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Extensions.main();
+        Extensions.Main();
     }
 }

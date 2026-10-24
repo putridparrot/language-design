@@ -34,7 +34,15 @@ public sealed record UsingDirectiveSyntax(TextSpan Span, QualifiedNameSyntax Nam
 public abstract record DeclarationSyntax(TextSpan Span, Token Name) : SyntaxNode(Span)
 {
     public Token? Private { get; init; }
+
+    public ImmutableArray<AttributeSyntax> Attributes { get; init; } = [];
 }
+
+/// <summary>
+/// <c>[Obsolete("Use area")]</c>: a .NET attribute, with constant <see cref="Arguments"/> for its constructor followed
+/// by any <c>Name = value</c> assignments to its properties, as in C#.
+/// </summary>
+public sealed record AttributeSyntax(TextSpan Span, QualifiedNameSyntax Name, ImmutableArray<ExpressionSyntax> Arguments) : SyntaxNode(Span);
 
 /// <summary>
 /// A function or method. At most one of <see cref="BlockBody"/> and <see cref="ExpressionBody"/> is set;
@@ -97,7 +105,11 @@ public sealed record TypeParameterSyntax(TextSpan Span, Token Name, ImmutableArr
 /// <summary>A variant of an enum; <see cref="Fields"/> is empty for a fieldless variant such as <c>Empty</c>.</summary>
 public sealed record VariantSyntax(TextSpan Span, Token Name, ImmutableArray<ParameterSyntax> Fields) : SyntaxNode(Span);
 
-public sealed record ParameterSyntax(TextSpan Span, Token Name, TypeSyntax Type) : SyntaxNode(Span);
+/// <summary>A function's parameter, or a record's or variant's field.</summary>
+public sealed record ParameterSyntax(TextSpan Span, Token Name, TypeSyntax Type) : SyntaxNode(Span)
+{
+    public ImmutableArray<AttributeSyntax> Attributes { get; init; } = [];
+}
 
 // Types
 
@@ -142,7 +154,7 @@ public sealed record VariableDeclarationSyntax(
     /// <summary>`await using let r = …;`: disposed with DisposeAsync (an IAsyncDisposable).</summary>
     public Token? Await { get; init; }
 
-    public bool IsMutable => Keyword.Kind == TokenKind.VarKeyword && Using is null;
+    public bool IsMutable => Keyword.Kind == TokenKind.MutKeyword && Using is null;
 }
 
 /// <summary>
@@ -168,7 +180,7 @@ public sealed record DeconstructionDeclarationSyntax(
     ParenthesizedDesignationSyntax Designation,
     ExpressionSyntax Initializer) : StatementSyntax(Span)
 {
-    public bool IsMutable => Keyword.Kind == TokenKind.VarKeyword;
+    public bool IsMutable => Keyword.Kind == TokenKind.MutKeyword;
 }
 
 /// <summary>What a deconstruction declares: a name (<c>_</c> discards), or a parenthesized list of designations.</summary>
@@ -253,10 +265,11 @@ public sealed record BinaryExpressionSyntax(TextSpan Span, ExpressionSyntax Left
 /// <summary><c>x |> f(a)</c>: calls <see cref="Right"/> with <see cref="Left"/> as its first argument, <c>f(x, a)</c>.</summary>
 public sealed record PipeExpressionSyntax(TextSpan Span, ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Span);
 
+/// <summary><c>1..10</c> includes its end, as in Swift; <c>1..&lt;10</c> stops before it.</summary>
 public sealed record RangeExpressionSyntax(TextSpan Span, ExpressionSyntax Start, Token Operator, ExpressionSyntax End)
     : ExpressionSyntax(Span)
 {
-    public bool IsInclusive => Operator.Kind == TokenKind.DotDotEquals;
+    public bool IsInclusive => Operator.Kind == TokenKind.DotDot;
 }
 
 public sealed record AssignmentExpressionSyntax(TextSpan Span, ExpressionSyntax Target, Token Operator, ExpressionSyntax Value)
@@ -336,7 +349,7 @@ public sealed record SpreadElementSyntax(TextSpan Span, ExpressionSyntax Source)
 public sealed record ThrowExpressionSyntax(TextSpan Span, Token Keyword, ExpressionSyntax Exception) : ExpressionSyntax(Span);
 
 /// <summary>
-/// An argument for a .NET <c>out</c> parameter: <c>out let n</c> or <c>out var n</c> (declaring n, as C#'s <c>out var n</c>),
+/// An argument for a .NET <c>out</c> parameter: <c>out let n</c> or <c>out mut n</c> (declaring n, as C#'s <c>out var n</c>),
 /// <c>out n</c> (an existing mutable variable) or <c>out _</c>. Only valid in an argument list.
 /// </summary>
 public sealed record OutArgumentSyntax(TextSpan Span, Token Keyword, Token? Declaration, Token Name) : ExpressionSyntax(Span)
@@ -392,16 +405,36 @@ public sealed record ConstructorPatternSyntax(
 /// <summary><see cref="Value"/> already includes a leading minus sign, if any.</summary>
 public sealed record LiteralPatternSyntax(TextSpan Span, Token Literal, object? Value) : PatternSyntax(Span);
 
+/// <summary><c>1..10</c> includes its end, as in Swift; <c>1..&lt;10</c> stops before it.</summary>
 public sealed record RangePatternSyntax(TextSpan Span, LiteralPatternSyntax Start, Token Operator, LiteralPatternSyntax End)
     : PatternSyntax(Span)
 {
-    public bool IsInclusive => Operator.Kind == TokenKind.DotDotEquals;
+    public bool IsInclusive => Operator.Kind == TokenKind.DotDot;
 }
 
 public sealed record OrPatternSyntax(TextSpan Span, ImmutableArray<PatternSyntax> Alternatives) : PatternSyntax(Span);
 
 /// <summary><c>(0, _)</c>: matches a tuple element by element (C#'s positional pattern).</summary>
 public sealed record TuplePatternSyntax(TextSpan Span, ImmutableArray<PatternSyntax> Elements) : PatternSyntax(Span);
+
+/// <summary><c>[]</c>, <c>[first, ...rest]</c>, <c>[_, ..., last]</c>: matches an array, string or list by its elements (C#'s list pattern).</summary>
+public sealed record ListPatternSyntax(TextSpan Span, ImmutableArray<PatternSyntax> Elements) : PatternSyntax(Span);
+
+/// <summary><c>...rest</c> or <c>...</c> in a list pattern: any number of elements, bound to <see cref="Name"/> when there is one.</summary>
+public sealed record SlicePatternSyntax(TextSpan Span, Token? Name) : PatternSyntax(Span);
+
+/// <summary>
+/// <c>Point { x: 0 }</c>, <c>Shape.Rect { w: 1.0 }</c> or <c>{ Length: &gt; 5 }</c>: tests fields or properties by name
+/// (C#'s property pattern). <see cref="Name"/> is null for the last form, which matches the value's own type.
+/// </summary>
+public sealed record PropertyPatternSyntax(TextSpan Span, Token? Qualifier, Token? Name, ImmutableArray<PropertySubpatternSyntax> Properties)
+    : PatternSyntax(Span);
+
+/// <summary><c>x: 0</c> in a property pattern.</summary>
+public sealed record PropertySubpatternSyntax(TextSpan Span, Token Name, PatternSyntax Pattern) : SyntaxNode(Span);
+
+/// <summary><c>&lt; 0</c>, <c>&gt;= 'a'</c>: compares the value with a constant (C#'s relational pattern).</summary>
+public sealed record RelationalPatternSyntax(TextSpan Span, Token Operator, LiteralPatternSyntax Value) : PatternSyntax(Span);
 
 /// <summary><c>null</c> in a pattern: the same as <c>None</c>.</summary>
 public sealed record NullPatternSyntax(TextSpan Span) : PatternSyntax(Span);

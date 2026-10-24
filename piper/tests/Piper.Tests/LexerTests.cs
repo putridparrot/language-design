@@ -37,20 +37,20 @@ public class LexerTests
             [
                 TokenKind.Identifier, TokenKind.PlusEquals, TokenKind.Identifier, TokenKind.EqualsEquals,
                 TokenKind.Identifier, TokenKind.Arrow, TokenKind.Identifier, TokenKind.FatArrow,
-                TokenKind.Identifier, TokenKind.DotDotEquals, TokenKind.Identifier, TokenKind.DotDot,
+                TokenKind.Identifier, TokenKind.DotDotLess, TokenKind.Identifier, TokenKind.DotDot,
                 TokenKind.Identifier, TokenKind.BangEquals, TokenKind.Identifier, TokenKind.LessEquals,
                 TokenKind.Identifier, TokenKind.GreaterEquals, TokenKind.Identifier, TokenKind.AmpersandAmpersand,
                 TokenKind.Identifier, TokenKind.PipePipe, TokenKind.Identifier, TokenKind.EndOfFile,
             ],
-            Kinds("a += b == c -> d => e ..= f .. g != h <= i >= j && k || l"));
+            Kinds("a += b == c -> d => e ..< f .. g != h <= i >= j && k || l"));
     }
 
     [Fact]
     public void Keywords_and_identifiers()
     {
         Assert.Equal(
-            [TokenKind.FnKeyword, TokenKind.LetKeyword, TokenKind.VarKeyword, TokenKind.Identifier, TokenKind.Identifier, TokenKind.EndOfFile],
-            Kinds("fn let var foo _bar1"));
+            [TokenKind.FnKeyword, TokenKind.LetKeyword, TokenKind.MutKeyword, TokenKind.Identifier, TokenKind.Identifier, TokenKind.EndOfFile],
+            Kinds("fn let mut foo _bar1"));
     }
 
     [Theory]
@@ -73,6 +73,10 @@ public class LexerTests
         Assert.Equal(
             [TokenKind.IntegerLiteral, TokenKind.DotDot, TokenKind.IntegerLiteral, TokenKind.EndOfFile],
             Kinds("0..10"));
+        Assert.Equal(
+            [TokenKind.IntegerLiteral, TokenKind.DotDotLess, TokenKind.IntegerLiteral, TokenKind.EndOfFile],
+            Kinds("0..<10"));
+        Assert.Equal([TokenKind.Ellipsis, TokenKind.Identifier, TokenKind.EndOfFile], Kinds("...xs"));
     }
 
     [Fact]

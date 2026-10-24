@@ -2,20 +2,20 @@ record Point(x: int, y: int);
 record Line(start: Point, end: Point);
 record Person(name: string, age: int, active: bool);
 
-fn lengthSquared(line: Line) => int {
+fn LengthSquared(line: Line) => int {
     let dx = line.end.x - line.start.x;
     let dy = line.end.y - line.start.y;
     dx * dx + dy * dy
 }
 
-fn origin() => Point = Point(0, 0);
+fn Origin() => Point = Point(0, 0);
 
-fn main() {
-    let line = Line(origin(), Point(3, 4));
-    print("squared length: {lengthSquared(line)}");
-    print(Point(1, 2) == Point(1, 2));
-    print(Point(1, 2) != Point(2, 1));
+fn Main() {
+    let line = Line(Origin(), Point(3, 4));
+    Print("squared length: {LengthSquared(line)}");
+    Print(Point(1, 2) == Point(1, 2));
+    Print(Point(1, 2) != Point(2, 1));
     let person = Person("Ada", 36, true);
-    print("{person.name} is {person.age}, active: {person.active}");
-    print(person);
+    Print("{person.name} is {person.age}, active: {person.active}");
+    Print(person);
 }

@@ -28,15 +28,15 @@ public class BinderTests
     [InlineData("PIP0284", "fn f(x: int?) => int? { defer { let y = x?; } x }")]
     [InlineData("PIP0284", "fn f(x: int?) => int? { try { } finally { let y = x?; } x }")]
     [InlineData("PIP0306", "using System.Collections.Generic; fn f() => IEnumerable<int> { defer { yield return 1; } }")]
-    [InlineData("PIP0200", "fn f() { defer print(x); let x = 1; }")]
+    [InlineData("PIP0200", "fn f() { defer Print(x); let x = 1; }")]
     [InlineData("PIP0263", "fn f(r: Result<int, string>) => int = r?.CompareTo(0);")]
-    [InlineData("PIP0200", "using System.Collections.Generic; fn f(d: Dictionary<string, string>) { if !d.TryGetValue(\"k\", out let v) { print(v); return; } }")]
-    [InlineData("PIP0261", "using System.Collections.Generic; fn f(d: Dictionary<string, string>) { if d.TryGetValue(\"k\", out let v) { print(v ?? \"\"); } }")]
-    [InlineData("PIP0212", "using System.Collections.Generic; fn f(d: Dictionary<string, string>) { if !d.TryGetValue(\"k\", out let v) { print(1); } print(v.Length); }")]
+    [InlineData("PIP0200", "using System.Collections.Generic; fn f(d: Dictionary<string, string>) { if !d.TryGetValue(\"k\", out let v) { Print(v); return; } }")]
+    [InlineData("PIP0261", "using System.Collections.Generic; fn f(d: Dictionary<string, string>) { if d.TryGetValue(\"k\", out let v) { Print(v ?? \"\"); } }")]
+    [InlineData("PIP0212", "using System.Collections.Generic; fn f(d: Dictionary<string, string>) { if !d.TryGetValue(\"k\", out let v) { Print(1); } Print(v.Length); }")]
     [InlineData("PIP0312", "fn f() { let n = 0; System.Threading.Interlocked.Increment(ref n); }")]
-    [InlineData("PIP0311", "fn g(x: int) { } fn f() { var n = 0; g(ref n); }")]
+    [InlineData("PIP0311", "fn g(x: int) { } fn f() { mut n = 0; g(ref n); }")]
     [InlineData("PIP0313", "fn f(c: System.Collections.ObjectModel.ObservableCollection<int>) { let h = c.CollectionChanged; }")]
-    [InlineData("PIP0313", "fn f(c: System.Collections.ObjectModel.ObservableCollection<int>) { c.CollectionChanged = (s, e) => print(1); }")]
+    [InlineData("PIP0313", "fn f(c: System.Collections.ObjectModel.ObservableCollection<int>) { c.CollectionChanged = (s, e) => Print(1); }")]
     [InlineData("PIP0309", "fn f() { let xs = [1, ...5]; }")]
     [InlineData("PIP0310", "fn f(xs: string[]) { let ys: int[] = [...xs]; }")]
     [InlineData("PIP0310", "fn f(xs: int[]) { let ys: int?[] = [...xs]; }")]
@@ -51,12 +51,12 @@ public class BinderTests
     [InlineData("PIP0306", "using System.Collections.Generic; fn f() => IEnumerable<int> { try { yield return 1; } catch (e) { } }")]
     [InlineData("PIP0306", "using System.Collections.Generic; fn f() => IEnumerable<int> { try { } finally { yield break; } }")]
     [InlineData("PIP0202", "using System.Collections.Generic; fn f() => IEnumerable<int> { yield return \"x\"; }")]
-    [InlineData("PIP0219", "using System.Collections.Generic; fn main() => IEnumerable<int> { yield return 1; }")]
+    [InlineData("PIP0219", "using System.Collections.Generic; fn Main() => IEnumerable<int> { yield return 1; }")]
     [InlineData("PIP0302", "async fn f() { await for x in [1, 2] { } }")]
     [InlineData("PIP0299", "fn f(s: System.Collections.Generic.IAsyncEnumerable<int>) { await for x in s { } }")]
     [InlineData("PIP0294", "async fn f() { await using let s = System.Text.StringBuilder(); }")]
     [InlineData("PIP0301", "using System.Threading.Tasks; trait T { async fn m() => Task; }")]
-    [InlineData("PIP0219", "async fn main() => System.Threading.Tasks.Task<int> = await System.Threading.Tasks.Task.FromResult(1);")]
+    [InlineData("PIP0219", "async fn Main() => System.Threading.Tasks.Task<int> = await System.Threading.Tasks.Task.FromResult(1);")]
     [InlineData("PIP0247", "extend Option: System.IComparable<int> { fn CompareTo(other: int) => int = 0; }")]
     public void Async_and_runtime_type_errors_are_reported(string code, string program)
     {
@@ -65,11 +65,11 @@ public class BinderTests
 
     [Theory]
     // `async` and `await` are contextual, as in C#: still usable as names.
-    [InlineData("fn f() { let async = 1; let await = async + 1; print(await); }")]
-    [InlineData("fn f() { let yield = 1; print(yield); }")]
+    [InlineData("fn f() { let async = 1; let await = async + 1; Print(await); }")]
+    [InlineData("fn f() { let yield = 1; Print(yield); }")]
     [InlineData("fn await(x: int) => int = x; fn f() => int = await(2) + 1;")]
     // An async main.
-    [InlineData("using System.Threading.Tasks; async fn main() { await Task.Delay(1); }")]
+    [InlineData("using System.Threading.Tasks; async fn Main() { await Task.Delay(1); }")]
     public void Async_keywords_are_contextual(string program)
     {
         AssertNoErrors(program);
@@ -92,79 +92,79 @@ public class BinderTests
     }
 
     [Theory]
-    [InlineData("PIP0200", "fn main() { print(y); }")]
-    [InlineData("PIP0201", "fn main() { let a = 1; let a = 2; }")]
+    [InlineData("PIP0200", "fn Main() { Print(y); }")]
+    [InlineData("PIP0201", "fn Main() { let a = 1; let a = 2; }")]
     [InlineData("PIP0201", "fn f() {} fn f() {}")]
     [InlineData("PIP0201", "record P(x: int, x: int);")]
-    [InlineData("PIP0202", "fn main() { let a: int = \"s\"; }")]
-    [InlineData("PIP0202", "fn main() { let a: int = 1.5; }")]
-    [InlineData("PIP0202", "fn f(a: long) {} fn main() { f(1.5); }")]
-    [InlineData("PIP0203", "fn main() { let a = 1 + true; }")]
-    [InlineData("PIP0203", "fn main() { let a = \"a\" < \"b\"; }")]
-    [InlineData("PIP0204", "fn main() { let a = -true; }")]
-    [InlineData("PIP0205", "fn f(a: int) {} fn main() { f(); }")]
-    [InlineData("PIP0205", "record P(x: int); fn main() { let p = P(1, 2); }")]
-    [InlineData("PIP0206", "fn main() { let a = 1; a(); }")]
-    [InlineData("PIP0207", "fn main() { let a = 1; a = 2; }")]
+    [InlineData("PIP0202", "fn Main() { let a: int = \"s\"; }")]
+    [InlineData("PIP0202", "fn Main() { let a: int = 1.5; }")]
+    [InlineData("PIP0202", "fn f(a: long) {} fn Main() { f(1.5); }")]
+    [InlineData("PIP0203", "fn Main() { let a = 1 + true; }")]
+    [InlineData("PIP0203", "fn Main() { let a = \"a\" < \"b\"; }")]
+    [InlineData("PIP0204", "fn Main() { let a = -true; }")]
+    [InlineData("PIP0205", "fn f(a: int) {} fn Main() { f(); }")]
+    [InlineData("PIP0205", "record P(x: int); fn Main() { let p = P(1, 2); }")]
+    [InlineData("PIP0206", "fn Main() { let a = 1; a(); }")]
+    [InlineData("PIP0207", "fn Main() { let a = 1; a = 2; }")]
     [InlineData("PIP0207", "fn f(a: int) { a = 2; }")]
-    [InlineData("PIP0207", "fn main() { for i in 0..3 { i = 1; } }")]
-    [InlineData("PIP0208", "record P(x: int); fn main() { let p = P(1); p.x = 2; }")]
+    [InlineData("PIP0207", "fn Main() { for i in 0..<3 { i = 1; } }")]
+    [InlineData("PIP0208", "record P(x: int); fn Main() { let p = P(1); p.x = 2; }")]
     [InlineData("PIP0209", "fn f(a: int) => int { if a > 0 { return 1; } }")]
     [InlineData("PIP0209", "fn f() => int { let a = 1; }")]
-    [InlineData("PIP0210", "fn main() { if 1 { } }")]
-    [InlineData("PIP0210", "fn main() { while \"yes\" { } }")]
+    [InlineData("PIP0210", "fn Main() { if 1 { } }")]
+    [InlineData("PIP0210", "fn Main() { while \"yes\" { } }")]
     [InlineData("PIP0211", "fn f(a: Foo) {}")]
-    [InlineData("PIP0212", "record P(x: int); fn main() { let p = P(1); print(p.y); }")]
-    [InlineData("PIP0213", "fn main() { break; }")]
-    [InlineData("PIP0214", "fn main() { let a = print(1); }")]
+    [InlineData("PIP0212", "record P(x: int); fn Main() { let p = P(1); Print(p.y); }")]
+    [InlineData("PIP0213", "fn Main() { break; }")]
+    [InlineData("PIP0214", "fn Main() { let a = Print(1); }")]
     [InlineData("PIP0214", "fn f(a: unit) {}")]
-    [InlineData("PIP0215", "fn main() { return 1; }")]
+    [InlineData("PIP0215", "fn Main() { return 1; }")]
     [InlineData("PIP0215", "fn f() => int { return; }")]
-    [InlineData("PIP0216", "fn main() { let r = 0..3; }")]
-    [InlineData("PIP0282", "fn main() { for i in 3 { } }")]
-    [InlineData("PIP0007", "fn main() { let x = 2147483648; }")]
-    [InlineData("PIP0288", "fn main() { let names = string[3]; }")]
-    [InlineData("PIP0107", "fn main() { let t: (int) = 1; }")]
-    [InlineData("PIP0292", "fn main() { let b = (byte)300; }")]
-    [InlineData("PIP0292", "fn main() { let i = (int)1e20; }")]
-    [InlineData("PIP0202", "fn main() { let b: byte = 300; }")]
-    [InlineData("PIP0202", "fn main() { let i = 1; let b: byte = i; }")]
-    [InlineData("PIP0202", "fn main() { var b: byte = 1; let i = 2; b += i; }")]
-    [InlineData("PIP0203", "fn main() { let x = 1UL + 1; }")]
-    [InlineData("PIP0203", "fn main() { let x = 1.5m + 1.5; }")]
-    [InlineData("PIP0204", "fn main() { let x = -1UL; }")]
-    [InlineData("PIP0295", "fn main() { let x = (int)\"1\"; }")]
-    [InlineData("PIP0294", "fn main() { using let s = \"text\"; }")]
-    [InlineData("PIP0294", "fn main() { using (1) { } }")]
-    [InlineData("PIP0207", "fn main() { using var s = System.IO.MemoryStream(); s = System.IO.MemoryStream(); }")]
-    [InlineData("PIP0108", "fn main() { using let (a, b) = (1, 2); }")]
-    [InlineData("PIP0292", "fn main() { let x = int.MaxValue + 1; }")]
-    [InlineData("PIP0292", "fn main() { let x = 2_000_000_000 * 2; }")]
-    [InlineData("PIP0292", "fn main() { let x = -(-2147483648); }")]
-    [InlineData("PIP0292", "fn main() { let x = long.MinValue / -1L; }")]
-    [InlineData("PIP0293", "fn main() { let x = 10 / (5 - 5); }")]
-    [InlineData("PIP0293", "fn main() { let x = 7L % 0; }")]
-    [InlineData("PIP0291", "fn f(x: int) {} fn main() { f(out let n); }")]
-    [InlineData("PIP0207", "fn main() { let n = 0; int.TryParse(\"1\", out n); }")]
-    [InlineData("PIP0274", "fn main() { var n = \"\"; int.TryParse(\"1\", out n); }")]
-    [InlineData("PIP0274", "fn main() { int.TryParse(out let n, \"1\"); }")]
-    [InlineData("PIP0201", "fn main() { let n = 1; int.TryParse(\"1\", out let n); }")]
-    [InlineData("PIP0200", "fn main() { while int.TryParse(\"1\", out let n) { break; } let m = n; }")]
-    [InlineData("PIP0289", "fn main() { let (a, b) = 1; }")]
-    [InlineData("PIP0289", "fn main() { let (a, b) = (1, 2, 3); }")]
-    [InlineData("PIP0290", "fn main() { let t = (x: 1, x: 2); }")]
-    [InlineData("PIP0290", "fn main() { let t = (Item2: 1, b: 2); }")]
-    [InlineData("PIP0207", "fn main() { let a = 1; var b = 2; (a, b) = (b, a); }")]
-    [InlineData("PIP0202", "fn main() { var a = 1; var b = 2; (a, b) = (1L, 2); }")]
+    [InlineData("PIP0216", "fn Main() { let r = 0..<3; }")]
+    [InlineData("PIP0282", "fn Main() { for i in 3 { } }")]
+    [InlineData("PIP0007", "fn Main() { let x = 2147483648; }")]
+    [InlineData("PIP0288", "fn Main() { let names = string[3]; }")]
+    [InlineData("PIP0107", "fn Main() { let t: (int) = 1; }")]
+    [InlineData("PIP0292", "fn Main() { let b = (byte)300; }")]
+    [InlineData("PIP0292", "fn Main() { let i = (int)1e20; }")]
+    [InlineData("PIP0202", "fn Main() { let b: byte = 300; }")]
+    [InlineData("PIP0202", "fn Main() { let i = 1; let b: byte = i; }")]
+    [InlineData("PIP0202", "fn Main() { mut b: byte = 1; let i = 2; b += i; }")]
+    [InlineData("PIP0203", "fn Main() { let x = 1UL + 1; }")]
+    [InlineData("PIP0203", "fn Main() { let x = 1.5m + 1.5; }")]
+    [InlineData("PIP0204", "fn Main() { let x = -1UL; }")]
+    [InlineData("PIP0295", "fn Main() { let x = (int)\"1\"; }")]
+    [InlineData("PIP0294", "fn Main() { using let s = \"text\"; }")]
+    [InlineData("PIP0294", "fn Main() { using (1) { } }")]
+    [InlineData("PIP0207", "fn Main() { using mut s = System.IO.MemoryStream(); s = System.IO.MemoryStream(); }")]
+    [InlineData("PIP0108", "fn Main() { using let (a, b) = (1, 2); }")]
+    [InlineData("PIP0292", "fn Main() { let x = int.MaxValue + 1; }")]
+    [InlineData("PIP0292", "fn Main() { let x = 2_000_000_000 * 2; }")]
+    [InlineData("PIP0292", "fn Main() { let x = -(-2147483648); }")]
+    [InlineData("PIP0292", "fn Main() { let x = long.MinValue / -1L; }")]
+    [InlineData("PIP0293", "fn Main() { let x = 10 / (5 - 5); }")]
+    [InlineData("PIP0293", "fn Main() { let x = 7L % 0; }")]
+    [InlineData("PIP0291", "fn f(x: int) {} fn Main() { f(out let n); }")]
+    [InlineData("PIP0207", "fn Main() { let n = 0; int.TryParse(\"1\", out n); }")]
+    [InlineData("PIP0274", "fn Main() { mut n = \"\"; int.TryParse(\"1\", out n); }")]
+    [InlineData("PIP0274", "fn Main() { int.TryParse(out let n, \"1\"); }")]
+    [InlineData("PIP0201", "fn Main() { let n = 1; int.TryParse(\"1\", out let n); }")]
+    [InlineData("PIP0200", "fn Main() { while int.TryParse(\"1\", out let n) { break; } let m = n; }")]
+    [InlineData("PIP0289", "fn Main() { let (a, b) = 1; }")]
+    [InlineData("PIP0289", "fn Main() { let (a, b) = (1, 2, 3); }")]
+    [InlineData("PIP0290", "fn Main() { let t = (x: 1, x: 2); }")]
+    [InlineData("PIP0290", "fn Main() { let t = (Item2: 1, b: 2); }")]
+    [InlineData("PIP0207", "fn Main() { let a = 1; mut b = 2; (a, b) = (b, a); }")]
+    [InlineData("PIP0202", "fn Main() { mut a = 1; mut b = 2; (a, b) = (1L, 2); }")]
     [InlineData("PIP0230", "fn f(t: (bool, int)) => int = match t { (true, _) => 1, (false, 0) => 2 };")]
     [InlineData("PIP0236", "fn f(t: (int, int)) => int = match t { (a, b, c) => 1 };")]
-    [InlineData("PIP0202", "fn main() { let xs: int[] = [1]; let s: string[] = xs; }")]
-    [InlineData("PIP0007", "fn main() { let x = 3 - 2147483648; }")]
-    [InlineData("PIP0240", "fn f<T>(x: T) {} fn main() { let a = f; }")]
-    [InlineData("PIP0217", "fn main() { let a = print; }")]
-    [InlineData("PIP0219", "fn main(a: int) {}")]
+    [InlineData("PIP0202", "fn Main() { let xs: int[] = [1]; let s: string[] = xs; }")]
+    [InlineData("PIP0007", "fn Main() { let x = 3 - 2147483648; }")]
+    [InlineData("PIP0240", "fn f<T>(x: T) {} fn Main() { let a = f; }")]
+    [InlineData("PIP0217", "fn Main() { let a = Print; }")]
+    [InlineData("PIP0219", "fn Main(a: int) {}")]
     [InlineData("PIP0220", "record P(P: int);")]
-    [InlineData("PIP0221", "fn main() { let a = if true { 1 } else { \"s\" }; }")]
+    [InlineData("PIP0221", "fn Main() { let a = if true { 1 } else { \"s\" }; }")]
     public void Semantic_errors_are_reported(string code, string program)
     {
         AssertSingleError(code, program);
@@ -194,7 +194,7 @@ public class BinderTests
     [InlineData("PIP0238", "enum E {}")]
     [InlineData("PIP0238", "enum E { E }")]
     [InlineData("PIP0239", "fn f(t: string) => int = match t { \"a\"..\"z\" => 1, _ => 2 };")]
-    [InlineData("PIP0239", "fn f(n: int) => int = match n { 5..=1 => 1, _ => 2 };")]
+    [InlineData("PIP0239", "fn f(n: int) => int = match n { 5..1 => 1, _ => 2 };")]
     public void Pattern_matching_errors_are_reported(string code, string program)
     {
         AssertSingleError(code, Shapes + program);
@@ -206,9 +206,9 @@ public class BinderTests
     [InlineData("match s { A => 1, B(0) => 2 }", "S.B(_)")]
     [InlineData("match s { A => 1, B(x) if x > 0 => 2 }", "S.B(_)")]
     [InlineData("match flag { true => 1 }", "false")]
-    [InlineData("match n { 0 => 1, 1..=9 => 2 }", "_")]
-    [InlineData("match n { -2147483648..=0 => 1, 2..=2147483647 => 2 }", "1")]
-    [InlineData("match n { -2147483648..=0 => 1, 5..=2147483647 => 2 }", "1..=4")]
+    [InlineData("match n { 0 => 1, 1..9 => 2 }", "_")]
+    [InlineData("match n { -2147483648..0 => 1, 2..2147483647 => 2 }", "1")]
+    [InlineData("match n { -2147483648..0 => 1, 5..2147483647 => 2 }", "1..4")]
     [InlineData("match p { P(0, _) => 1, P(_, 0) => 2 }", "P(_, _)")]
     [InlineData("match pair { Pair(true, true) => 1, Pair(false, _) => 2 }", "Pair(true, false)")]
     public void Non_exhaustive_matches_name_a_missing_case(string match, string missing)
@@ -225,10 +225,10 @@ public class BinderTests
     [InlineData("match s { A => 1, A => 2, B(_) => 3 }")]
     [InlineData("match s { B(_) => 1, B(5) => 2, A => 3 }")]
     [InlineData("match flag { true | false => 1, true => 2 }")]
-    [InlineData("match n { 1..=5 => 1, 3 => 2, _ => 3 }")]
-    [InlineData("match n { 0..10 => 1, 5..=9 => 2, _ => 3 }")]
-    [InlineData("match n { 1 | 2 | 3 => 1, 2..=3 => 2, _ => 3 }")]
-    [InlineData("match n { 0..=4 => 1, 5..=9 => 2, 3..=7 => 3, _ => 4 }")]
+    [InlineData("match n { 1..5 => 1, 3 => 2, _ => 3 }")]
+    [InlineData("match n { 0..<10 => 1, 5..9 => 2, _ => 3 }")]
+    [InlineData("match n { 1 | 2 | 3 => 1, 2..3 => 2, _ => 3 }")]
+    [InlineData("match n { 0..4 => 1, 5..9 => 2, 3..7 => 3, _ => 4 }")]
     [InlineData("match s { Typo => 1, A => 2 }")]
     public void Unreachable_arms_are_warnings(string match)
     {
@@ -237,6 +237,137 @@ public class BinderTests
         var warning = Assert.Single(result.Diagnostics);
         Assert.Equal(("PIP0231", Diagnostics.DiagnosticSeverity.Warning), (warning.Code, warning.Severity));
     }
+
+    private const string ListPatterns = "using System.Collections.Generic; ";
+
+    [Theory]
+    [InlineData("match xs { [] => 0, [x] => x }", "[_, _, ...]")]
+    [InlineData("match xs { [x, ...rest] => x }", "[]")]
+    [InlineData("match xs { [] => 0, [x, y] => x, [x, y, z, ...] => z }", "[_]")]
+    [InlineData("match xs { [] => 0, [0, ...] => 1 }", "[_]")]
+    [InlineData("match n { < 0 => 1, > 0 => 2 }", "0")]
+    [InlineData("match n { <= 10 => 1, 12..20 => 2, > 20 => 3 }", "11")]
+    [InlineData("match p { { a: 0 } => 1, P { b: 0 } => 2 }", "P(_, _)")]
+    [InlineData("match s { B { x: < 0 } => 1, A => 2 }", "S.B(_)")]
+    [InlineData("match text { { Length: 0 } => 1 }", "_")]
+    public void Non_exhaustive_new_patterns_name_a_missing_case(string match, string missing)
+    {
+        var program = ListPatterns + Shapes + $"fn f(xs: List<int>, n: int, p: P, s: S, text: string) => int = {match};";
+        var diagnostic = Assert.Single(Compilation.Compile(program).Diagnostics);
+        Assert.Equal("PIP0230", diagnostic.Code);
+        Assert.Contains($"'{missing}' is not covered", diagnostic.Message);
+    }
+
+    [Theory]
+    [InlineData("match xs { [] => 0, [x, ...] => x }")]
+    [InlineData("match xs { [x, y, ...] => 1, [x] => 2, [] => 3 }")]
+    [InlineData("match xs { [..., last] => last, [] => 0 }")]
+    [InlineData("match n { < 0 => 1, 0 => 2, > 0 => 3 }")]
+    [InlineData("match n { < 5 => 1, >= 5 => 2 }")]
+    [InlineData("match p { { a: 0 } => 1, P { a: _, b: _ } => 2 }")]
+    [InlineData("match text { { Length: 0 } => 1, { } => 2 }")]
+    public void New_patterns_can_be_exhaustive(string match)
+    {
+        var program = ListPatterns + Shapes + $"fn f(xs: List<int>, n: int, p: P, s: S, text: string) => int = {match};";
+        AssertNoErrors(program);
+        Assert.Empty(Compilation.Compile(program).Diagnostics);
+    }
+
+    [Theory]
+    [InlineData("match xs { [...] => 1, [x] => 2 }")]
+    [InlineData("match xs { [x, ...] => 1, [y, z] => 2, _ => 3 }")]
+    [InlineData("match n { < 10 => 1, 5 => 2, _ => 3 }")]
+    [InlineData("match p { P(_, _) => 1, { a: 1 } => 2 }")]
+    public void New_patterns_make_later_arms_unreachable(string match)
+    {
+        var result = Compilation.Compile(ListPatterns + Shapes + $"fn f(xs: List<int>, n: int, p: P) => int = {match};");
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        Assert.Equal("PIP0231", Assert.Single(result.Diagnostics).Code);
+    }
+
+    [Theory]
+    [InlineData("PIP0322", "fn f(n: int) => bool = n is [x];")]
+    [InlineData("PIP0323", "fn f(xs: int[]) => bool = xs is [..., ...];")]
+    [InlineData("PIP0323", "using System.Collections.Generic; fn f(xs: IReadOnlyList<int>) => int = match xs { [x, ...rest] => x, _ => 0 };")]
+    [InlineData("PIP0324", "enum E { A } fn f(e: E) => bool = e is { x: 1 };")]
+    [InlineData("PIP0324", "fn f(o: int?) => bool = o is { Value: 1 };")]
+    [InlineData("PIP0325", "record P(a: int); fn f(p: P) => bool = p is { a: 1, a: 2 };")]
+    [InlineData("PIP0212", "record P(a: int); fn f(p: P) => bool = p is P { b: 1 };")]
+    [InlineData("PIP0212", "fn f(s: string) => bool = s is { Size: 1 };")]
+    [InlineData("PIP0327", "fn f(s: string) => bool = s is < \"m\";")]
+    [InlineData("PIP0328", "fn f(n: uint) => bool = n is < 0;")]
+    [InlineData("PIP0234", "fn f(n: int) => bool = n is < 'a';")]
+    public void Invalid_new_patterns_are_errors(string code, string program) => AssertSingleError(code, program);
+
+    [Fact]
+    public void A_property_pattern_on_a_member_that_can_be_null_is_an_error()
+    {
+        // Exception.InnerException is Exception?, which Piper reads as an optional.
+        AssertSingleError("PIP0326", "fn f(e: System.Exception) => bool = e is { InnerException: _ };");
+    }
+
+    [Theory]
+    [InlineData("PIP0329", "[Nonexistent] fn f() { }")]
+    [InlineData("PIP0329", "[System.String] fn f() { }")]
+    [InlineData("PIP0330", "fn g() => string = \"x\"; [System.Obsolete(g())] fn f() { }")]
+    [InlineData("PIP0330", "[System.Obsolete(DiagnosticId = \"A\", \"x\")] fn f() { }")]
+    [InlineData("PIP0274", "[System.Obsolete(1, 2, 3)] fn f() { }")]
+    [InlineData("PIP0212", "[System.Obsolete(Nope = 1)] fn f() { }")]
+    [InlineData("PIP0331", "[System.Serializable] fn f() { }")]
+    [InlineData("PIP0331", "[System.Flags] record R(x: int);")]
+    [InlineData("PIP0332", "[System.Obsolete] [System.Obsolete] fn f() { }")]
+    [InlineData("PIP0334", "[System.Obsolete(\"gone\", true)] fn old() { } fn f() { old(); }")]
+    public void Invalid_attributes_are_errors(string code, string program) => AssertSingleError(code, program);
+
+    [Fact]
+    public void Using_an_obsolete_declaration_is_a_warning()
+    {
+        var result = Compilation.Compile("""
+            [System.Obsolete("Use area.")]
+            fn size() => int = 1;
+
+            [System.Obsolete]
+            record Old(x: int);
+
+            fn Main() {
+                Print(size());
+                Print(Old(1).x);
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        Assert.Equal(
+            ["'size' is obsolete: Use area.", "'Old' is obsolete."],
+            result.Diagnostics.Select(d => d.Message));
+        Assert.All(result.Diagnostics, d => Assert.Equal(("PIP0333", DiagnosticSeverity.Warning), (d.Code, d.Severity)));
+    }
+
+    [Fact]
+    public void Attributes_are_emitted_on_their_declarations()
+    {
+        var result = Compilation.Compile("""
+            using System.Text.Json.Serialization;
+            [System.Obsolete("old")]
+            record P([JsonPropertyName("id")] x: int);
+            fn f([System.Diagnostics.CodeAnalysis.StringSyntax("Regex")] p: string) { }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        Assert.Contains("[global::System.ObsoleteAttribute(\"old\")]", result.CSharp);
+        Assert.Contains("[property: global::System.Text.Json.Serialization.JsonPropertyNameAttribute(\"id\")] int x", result.CSharp);
+        Assert.Contains("[global::System.Diagnostics.CodeAnalysis.StringSyntaxAttribute(\"Regex\")] string p", result.CSharp);
+    }
+
+    [Theory]
+    [InlineData("fn Main() { let type = 1; }")]
+    [InlineData("fn Main() { mut class = 1; }")]
+    [InlineData("fn test() { }")]
+    [InlineData("fn F(self: int) { }")]
+    [InlineData("record Event(type: string);")]
+    [InlineData("record impl(x: int);")]
+    [InlineData("enum E { A(const: int) }")]
+    [InlineData("trait T { fn F<where>(); }")]
+    [InlineData("fn Main() { let f = (module: int) => module; }")]
+    [InlineData("fn F(x: int?) => int = match x { Some(public) => 1, None => 0 };")]
+    public void Reserved_words_cant_be_names(string program) => AssertSingleError("PIP0335", program);
 
     private const string GenericTraits = "trait Convert<T> { fn convert() => T; } trait Ord<T: Ord<T>> { fn cmp(other: T) => int; } record M(x: int); ";
 
@@ -288,8 +419,8 @@ public class BinderTests
             fn c(t: Tree) => int = match t { Leaf => 0, Node(Leaf, _) => 1, Node(Node(_, _), r) => 2 };
             fn d(flag: bool) => int = match flag { true => 1, false => 0 };
             fn e(s: S) => int = match s { S.A | S.B(_) => 1 };
-            fn g(b: byte) => int = match b { 0..=127 => 1, 128..=255 => 2 };
-            fn h(c: char, n: sbyte) => int = match (c, n) { (_, -128..0) => 1, (_, 0) => 2, (_, 1..=127) => 3 };
+            fn g(b: byte) => int = match b { 0..127 => 1, 128..255 => 2 };
+            fn h(c: char, n: sbyte) => int = match (c, n) { (_, -128..<0) => 1, (_, 0) => 2, (_, 1..127) => 3 };
             """);
     }
 
@@ -345,14 +476,14 @@ public class BinderTests
             }
             extend R: T { fn m() => int = this.x; }
             fn useBound<Y: T>(b: B<Y>) => int = b.x.m();
-            fn main() {
+            fn Main() {
                 let p: Pair<O<int>, long> = Pair(O.N, 1);
                 let d: double = id(1);
                 let n: O<string> = none();
                 let e: O<bool> = O.empty();
                 let s = O.S(R(1)).either("yes", "no");
                 let t: T = if d > 0.0 { R(1) } else { R(2) };
-                print(useBound(B(R(3))) + t.m());
+                Print(useBound(B(R(3))) + t.m());
             }
             """);
     }
@@ -413,7 +544,7 @@ public class BinderTests
             fn q(x: int?) => int = match x { Some(v) if v is 1 | 2 => v, _ => 0 };
             fn r(flag: bool) => long? = if flag { 1 } else { null };
             fn s() => Result<int, string> = if true { Ok(1) } else { Err("no") };
-            fn t(x: int?) => int { var total = 0; var y = x; while y is Some(v) && v > 0 { total += v; y = v - 1; } total }
+            fn t(x: int?) => int { mut total = 0; mut y = x; while y is Some(v) && v > 0 { total += v; y = v - 1; } total }
             """);
     }
 
@@ -466,7 +597,7 @@ public class BinderTests
     [Fact]
     public void A_program_has_one_main()
     {
-        AssertSingleErrorInFiles("PIP0276", "fn main() {}", "namespace Other; fn main() {}");
+        AssertSingleErrorInFiles("PIP0276", "fn Main() {}", "namespace Other; fn Main() {}");
     }
 
     [Fact]
@@ -475,7 +606,7 @@ public class BinderTests
         var diagnostics = CompileFiles(
             "namespace Geo.Shapes; record Point(x: int, y: int); private fn secret() => int = 1; fn origin() => Point = Point(secret(), 0);",
             "namespace Geo.Shapes; fn far() => Point = Point(100, 100);",
-            "namespace App; using Geo.Shapes; fn main() { let a: Geo.Shapes.Point = origin(); let b = Geo.Shapes.far(); print(a == b); }");
+            "namespace App; using Geo.Shapes; fn Main() { let a: Geo.Shapes.Point = origin(); let b = Geo.Shapes.far(); Print(a == b); }");
         Assert.Empty(diagnostics);
     }
 
@@ -491,7 +622,7 @@ public class BinderTests
             fn b() => double = Math.Max(1, 2.5) + Math.Sqrt(2);
             fn c() => int = "abc".IndexOf('b') + "x".Length;
             fn d() => string = TimeSpan.FromSeconds(90).ToString();
-            fn e() { let sb = StringBuilder(); sb.line("hi"); let xs: List<int> = List(); xs.Add(1); print(xs.Count); }
+            fn e() { let sb = StringBuilder(); sb.line("hi"); let xs: List<int> = List(); xs.Add(1); Print(xs.Count); }
             fn g() => string? = Environment.GetEnvironmentVariable("HOME");
             fn h() => long = Math.Abs(-3L) + int.MaxValue;
             """);
@@ -500,14 +631,14 @@ public class BinderTests
     [Fact]
     public void Errors_do_not_cascade()
     {
-        AssertSingleError("PIP0200", "fn main() { let a = missing + 1; let b = a * 2; print(b); }");
+        AssertSingleError("PIP0200", "fn Main() { let a = missing + 1; let b = a * 2; Print(b); }");
     }
 
     [Fact]
     public void Declarations_can_appear_in_any_order()
     {
         AssertNoErrors("""
-            fn main() { print(isEven(10)); let l = Line(Point(0, 0), Point(1, 1)); }
+            fn Main() { Print(isEven(10)); let l = Line(Point(0, 0), Point(1, 1)); }
             fn isEven(n: int) => bool = if n == 0 { true } else { isOdd(n - 1) };
             fn isOdd(n: int) => bool = if n == 0 { false } else { isEven(n - 1) };
             record Line(start: Point, end: Point);
@@ -526,7 +657,7 @@ public class BinderTests
     {
         AssertNoErrors("""
             fn f(a: double) => double = a;
-            fn main() { let l: long = 1; let d: double = l; var x = 1L; x += 1; print(f(2) + d); let m = if true { 1 } else { 2.5 }; }
+            fn Main() { let l: long = 1; let d: double = l; mut x = 1L; x += 1; Print(f(2) + d); let m = if true { 1 } else { 2.5 }; }
             """);
     }
 
@@ -544,7 +675,7 @@ public class BinderTests
     [Fact]
     public void Diagnostics_are_formatted_with_file_line_and_column()
     {
-        var result = Compilation.Compile("fn main() {\n    print(y);\n}", "test.piper");
+        var result = Compilation.Compile("fn Main() {\n    Print(y);\n}", "test.piper");
         Assert.Equal(
             "test.piper(2,11): error PIP0200: The name 'y' does not exist in the current scope.",
             Assert.Single(result.FormattedDiagnostics));

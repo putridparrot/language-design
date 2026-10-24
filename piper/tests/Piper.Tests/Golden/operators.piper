@@ -1,34 +1,34 @@
-fn main() {
-    print(1 + 2 * 3);
-    print((1 + 2) * 3);
-    print(10 - 4 - 3);
-    print(-7 / 2);
-    print(-7 % 3);
-    print(- -5);
-    print(2147483647L + 1);
-    print(1 < 2 && 2 < 3);
-    print(!(1 == 1) || false);
-    print('a' < 'b');
-    print(1 == 1.0);
+fn Main() {
+    Print(1 + 2 * 3);
+    Print((1 + 2) * 3);
+    Print(10 - 4 - 3);
+    Print(-7 / 2);
+    Print(-7 % 3);
+    Print(- -5);
+    Print(2147483647L + 1);
+    Print(1 < 2 && 2 < 3);
+    Print(!(1 == 1) || false);
+    Print('a' < 'b');
+    Print(1 == 1.0);
     let flag = !true;
-    print(flag);
-    var n = 10;
+    Print(flag);
+    mut n = 10;
     n *= 3;
     n /= 4;
     n %= 4;
     n -= 1;
-    print(n);
+    Print(n);
 
     // The minimum values can be written as literals, as in C#; arithmetic wraps on overflow (unchecked).
     let min = -2147483648;
-    print(min == int.MinValue);
-    print(-9223372036854775808L == long.MinValue);
+    Print(min == int.MinValue);
+    Print(-9223372036854775808L == long.MinValue);
     let max = int.MaxValue;
-    print(max + 1 == min);
-    print(match min { -2147483648 => "min", _ => "other" });
+    Print(max + 1 == min);
+    Print(match min { -2147483648 => "min", _ => "other" });
 
     // Constant arithmetic is checked, as in C#, so only these overflow-free forms compile.
-    print(int.MaxValue + 1L);
-    print(int.MaxValue - 1);
-    print(1.0 / 0);
+    Print(int.MaxValue + 1L);
+    Print(int.MaxValue - 1);
+    Print(1.0 / 0);
 }

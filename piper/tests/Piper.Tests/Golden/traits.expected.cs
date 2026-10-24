@@ -8,51 +8,51 @@ using Piper.Runtime;
 
 public interface Shape
 {
-    double area();
+    double Area();
 
-    string name();
+    string Name();
 
-    string describe() => $"{this.name()} with area {this.area()}";
+    string Describe() => $"{this.Name()} with area {this.Area()}";
 
     public interface PiperWitness<TPiperSelf>
     {
         Shape PiperBox(TPiperSelf piperSelf);
-        double area(TPiperSelf piperSelf);
-        string name(TPiperSelf piperSelf);
-        string describe(TPiperSelf piperSelf);
+        double Area(TPiperSelf piperSelf);
+        string Name(TPiperSelf piperSelf);
+        string Describe(TPiperSelf piperSelf);
     }
 
     public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Shape
     {
         Shape Shape.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
-        public double area(TPiperSelf piperSelf) => piperSelf.area();
-        public string name(TPiperSelf piperSelf) => piperSelf.name();
-        public string describe(TPiperSelf piperSelf) => piperSelf.describe();
+        public double Area(TPiperSelf piperSelf) => piperSelf.Area();
+        public string Name(TPiperSelf piperSelf) => piperSelf.Name();
+        public string Describe(TPiperSelf piperSelf) => piperSelf.Describe();
     }
 
     public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Shape, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
     {
         Shape Shape.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
-        public double area(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).area();
-        public string name(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).name();
-        public string describe(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).describe();
+        public double Area(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Area();
+        public string Name(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Name();
+        public string Describe(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Describe();
     }
 }
 
 public sealed record Circle(double radius) : Shape
 {
-    public double area() => 3.0 * this.radius * this.radius;
+    public double Area() => 3.0 * this.radius * this.radius;
 
-    public string name() => "circle";
+    public string Name() => "circle";
 }
 
 public sealed record Rect(double width, double height) : Shape
 {
-    public double area() => this.width * this.height;
+    public double Area() => this.width * this.height;
 
-    public string name() => this.width == this.height ? "square" : "rectangle";
+    public string Name() => this.width == this.height ? "square" : "rectangle";
 
-    public string describe() => $"a {this.width}x{this.height} {this.name()}";
+    public string Describe() => $"a {this.width}x{this.height} {this.Name()}";
 }
 
 public abstract record List<T>
@@ -68,29 +68,29 @@ public abstract record List<T>
 
 public interface Speak
 {
-    string sound();
+    string Sound();
 
-    string speak() => $"says {this.sound()}";
+    string Speak() => $"says {this.Sound()}";
 
     public interface PiperWitness<TPiperSelf>
     {
         Speak PiperBox(TPiperSelf piperSelf);
-        string sound(TPiperSelf piperSelf);
-        string speak(TPiperSelf piperSelf);
+        string Sound(TPiperSelf piperSelf);
+        string Speak(TPiperSelf piperSelf);
     }
 
     public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Speak
     {
         Speak Speak.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
-        public string sound(TPiperSelf piperSelf) => piperSelf.sound();
-        public string speak(TPiperSelf piperSelf) => piperSelf.speak();
+        public string Sound(TPiperSelf piperSelf) => piperSelf.Sound();
+        public string Speak(TPiperSelf piperSelf) => piperSelf.Speak();
     }
 
     public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Speak, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
     {
         Speak Speak.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
-        public string sound(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).sound();
-        public string speak(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).speak();
+        public string Sound(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Sound();
+        public string Speak(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Speak();
     }
 }
 
@@ -104,7 +104,7 @@ public abstract record Animal : Speak
 
     public sealed record Cat(string name, int lives) : Animal;
 
-    public string sound()
+    public string Sound()
     {
         if (this is Animal.Dog(_))
         {
@@ -116,7 +116,7 @@ public abstract record Animal : Speak
         }
     }
 
-    public string nickname()
+    public string Nickname()
     {
         if (this is Animal.Dog(var n))
         {
@@ -135,15 +135,15 @@ public abstract record Animal : Speak
 
 public static class Traits
 {
-    public static T largest<T>(T a, T b) => global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().area(a) >= global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().area(b) ? a : b;
+    public static T Largest<T>(T a, T b) => global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().Area(a) >= global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().Area(b) ? a : b;
 
-    public static string summary<T>(T shape) => global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().describe(shape);
+    public static string Summary<T>(T shape) => global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().Describe(shape);
 
-    public static double totalArea(List<Shape> shapes)
+    public static double TotalArea(List<Shape> shapes)
     {
         if (shapes is List<Shape>.Cons(var s, var rest))
         {
-            return s.area() + totalArea(rest);
+            return s.Area() + TotalArea(rest);
         }
         else
         {
@@ -151,21 +151,21 @@ public static class Traits
         }
     }
 
-    public static void main()
+    public static void Main()
     {
         Circle c = new Circle(1.0);
         Rect r = new Rect(2.0, 3.0);
-        global::System.Console.WriteLine(((Shape)c).describe());
-        global::System.Console.WriteLine(r.describe());
-        global::System.Console.WriteLine(summary<Rect>(new Rect(2.0, 2.0)));
-        global::System.Console.WriteLine(largest<Circle>(c, new Circle(2.0)).radius);
-        Shape s = r.area() > c.area() ? (Shape)r : (Shape)c;
-        global::System.Console.WriteLine(s.name());
+        global::System.Console.WriteLine(((Shape)c).Describe());
+        global::System.Console.WriteLine(r.Describe());
+        global::System.Console.WriteLine(Summary<Rect>(new Rect(2.0, 2.0)));
+        global::System.Console.WriteLine(Largest<Circle>(c, new Circle(2.0)).radius);
+        Shape s = r.Area() > c.Area() ? (Shape)r : (Shape)c;
+        global::System.Console.WriteLine(s.Name());
         List<Shape> shapes = new List<Shape>.Cons(c, new List<Shape>.Cons(r, new List<Shape>.Cons(new Rect(1.0, 1.0), new List<Shape>.Nil())));
-        global::System.Console.WriteLine(totalArea(shapes));
+        global::System.Console.WriteLine(TotalArea(shapes));
         Animal tom = new Animal.Cat("Tom", 9);
-        global::System.Console.WriteLine($"{tom.nickname()} {((Speak)tom).speak()}");
-        global::System.Console.WriteLine($"{new Animal.Dog("Rex").nickname()} {((Speak)new Animal.Dog("Rex")).speak()}");
+        global::System.Console.WriteLine($"{tom.Nickname()} {((Speak)tom).Speak()}");
+        global::System.Console.WriteLine($"{new Animal.Dog("Rex").Nickname()} {((Speak)new Animal.Dog("Rex")).Speak()}");
     }
 }
 
@@ -174,6 +174,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Traits.main();
+        Traits.Main();
     }
 }

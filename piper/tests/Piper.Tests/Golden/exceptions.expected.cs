@@ -8,7 +8,7 @@ using Piper.Runtime;
 
 public static class Exceptions
 {
-    public static int divide(int a, int b)
+    public static int Divide(int a, int b)
     {
         if (b == 0)
         {
@@ -17,7 +17,7 @@ public static class Exceptions
         return a / b;
     }
 
-    public static int parse(string text)
+    public static int Parse(string text)
     {
         try
         {
@@ -30,14 +30,14 @@ public static class Exceptions
         return -1;
     }
 
-    public static int check(int @value) => @value >= 0 ? @value : throw new global::System.InvalidOperationException("negative");
+    public static int Check(int @value) => @value >= 0 ? @value : throw new global::System.InvalidOperationException("negative");
 
-    public static void main()
+    public static void Main()
     {
-        global::System.Console.WriteLine(divide(10, 2));
+        global::System.Console.WriteLine(Divide(10, 2));
         try
         {
-            global::System.Console.WriteLine(divide(1, 0));
+            global::System.Console.WriteLine(Divide(1, 0));
         }
         catch (global::System.ArgumentException e)
         {
@@ -47,11 +47,11 @@ public static class Exceptions
         {
             global::System.Console.WriteLine("finally runs");
         }
-        global::System.Console.WriteLine(parse("12"));
-        global::System.Console.WriteLine(parse("twelve"));
+        global::System.Console.WriteLine(Parse("12"));
+        global::System.Console.WriteLine(Parse("twelve"));
         try
         {
-            global::System.Console.WriteLine(check(-1));
+            global::System.Console.WriteLine(Check(-1));
         }
         catch (global::System.Exception)
         {
@@ -74,6 +74,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Exceptions.main();
+        Exceptions.Main();
     }
 }

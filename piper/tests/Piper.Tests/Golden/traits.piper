@@ -2,23 +2,23 @@
 // Traits work both as generic constraints (static dispatch) and as types (dynamic dispatch).
 
 trait Shape {
-    fn area() => double;
-    fn name() => string;
-    fn describe() => string = "{this.name()} with area {this.area()}";
+    fn Area() => double;
+    fn Name() => string;
+    fn Describe() => string = "{this.Name()} with area {this.Area()}";
 }
 
 record Circle(radius: double);
 record Rect(width: double, height: double);
 
 extend Circle: Shape {
-    fn area() => double = 3.0 * this.radius * this.radius;
-    fn name() => string = "circle";
+    fn Area() => double = 3.0 * this.radius * this.radius;
+    fn Name() => string = "circle";
 }
 
 extend Rect: Shape {
-    fn area() => double = this.width * this.height;
-    fn name() => string = if this.width == this.height { "square" } else { "rectangle" };
-    fn describe() => string = "a {this.width}x{this.height} {this.name()}";
+    fn Area() => double = this.width * this.height;
+    fn Name() => string = if this.width == this.height { "square" } else { "rectangle" };
+    fn Describe() => string = "a {this.width}x{this.height} {this.Name()}";
 }
 
 enum List<T> {
@@ -26,18 +26,18 @@ enum List<T> {
     Nil,
 }
 
-fn largest<T: Shape>(a: T, b: T) => T = if a.area() >= b.area() { a } else { b };
+fn Largest<T: Shape>(a: T, b: T) => T = if a.Area() >= b.Area() { a } else { b };
 
-fn summary<T: Shape>(shape: T) => string = shape.describe();
+fn Summary<T: Shape>(shape: T) => string = shape.Describe();
 
-fn totalArea(shapes: List<Shape>) => double = match shapes {
-    Cons(s, rest) => s.area() + totalArea(rest),
+fn TotalArea(shapes: List<Shape>) => double = match shapes {
+    Cons(s, rest) => s.Area() + TotalArea(rest),
     Nil => 0.0,
 };
 
 trait Speak {
-    fn sound() => string;
-    fn speak() => string = "says {this.sound()}";
+    fn Sound() => string;
+    fn Speak() => string = "says {this.Sound()}";
 }
 
 enum Animal {
@@ -46,32 +46,32 @@ enum Animal {
 }
 
 extend Animal: Speak {
-    fn sound() => string = match this {
+    fn Sound() => string = match this {
         Dog(_) => "woof",
         Cat(_, _) => "meow",
     };
 
-    fn nickname() => string = match this {
+    fn Nickname() => string = match this {
         Dog(n) => n,
         Cat(n, _) => n,
     };
 }
 
-fn main() {
+fn Main() {
     let c = Circle(1.0);
     let r = Rect(2.0, 3.0);
-    print(c.describe());
-    print(r.describe());
-    print(summary(Rect(2.0, 2.0)));
-    print(largest(c, Circle(2.0)).radius);
+    Print(c.Describe());
+    Print(r.Describe());
+    Print(Summary(Rect(2.0, 2.0)));
+    Print(Largest(c, Circle(2.0)).radius);
 
-    let s: Shape = if r.area() > c.area() { r } else { c };
-    print(s.name());
+    let s: Shape = if r.Area() > c.Area() { r } else { c };
+    Print(s.Name());
 
     let shapes: List<Shape> = List.Cons(c, List.Cons(r, List.Cons(Rect(1.0, 1.0), List.Nil)));
-    print(totalArea(shapes));
+    Print(TotalArea(shapes));
 
     let tom = Animal.Cat("Tom", 9);
-    print("{tom.nickname()} {tom.speak()}");
-    print("{Animal.Dog("Rex").nickname()} {Animal.Dog("Rex").speak()}");
+    Print("{tom.Nickname()} {tom.Speak()}");
+    Print("{Animal.Dog("Rex").Nickname()} {Animal.Dog("Rex").Speak()}");
 }

@@ -109,7 +109,7 @@ public sealed class Parser
         kind is TokenKind.Dot or TokenKind.QuestionDot or TokenKind.OpenParen or TokenKind.OpenBracket or TokenKind.Question;
 
     /// <summary>
-    /// compilationUnit = { using } [ "namespace" qualifiedName ";" ] { using } { [ "private" ] declaration } EOF ;
+    /// compilationUnit = { using } [ "namespace" qualifiedName ";" ] { using } { attributes [ "private" ] declaration } EOF ;
     /// using           = "using" qualifiedName ";" ;
     /// </summary>
     private CompilationUnitSyntax ParseCompilationUnit()
@@ -158,9 +158,15 @@ public sealed class Parser
             new TextSpan(0, _source.Length), _source, @namespace, usings.ToImmutable(), declarations.ToImmutable());
     }
 
-    /// <summary>declaration = function | record | enum | trait | extend ;  optionally preceded by "private".</summary>
+    /// <summary>declaration = function | record | enum | trait | extend ;  optionally preceded by attributes and "private".</summary>
     private DeclarationSyntax? ParseDeclaration()
     {
+        if (Current.Kind == TokenKind.OpenBracket)
+        {
+            var attributes = ParseAttributes();
+            return ParseDeclaration() is { } declaration ? declaration with { Attributes = attributes } : null;
+        }
+
         if (Current.Kind == TokenKind.PrivateKeyword)
         {
             var @private = NextToken();
@@ -187,6 +193,33 @@ public sealed class Parser
                     NextToken();
                 return null;
         }
+    }
+
+    /// <summary>
+    /// attributes = { "[" attribute { "," attribute } [ "," ] "]" } ;
+    /// attribute  = qualifiedName [ "(" [ expression { "," expression } [ "," ] ] ")" ] ;
+    /// </summary>
+    private ImmutableArray<AttributeSyntax> ParseAttributes()
+    {
+        var attributes = ImmutableArray.CreateBuilder<AttributeSyntax>();
+        while (Current.Kind == TokenKind.OpenBracket)
+        {
+            NextToken();
+            attributes.AddRange(ParseSeparatedList(() =>
+            {
+                var name = ParseQualifiedName();
+                var arguments = ImmutableArray<ExpressionSyntax>.Empty;
+                if (Current.Kind == TokenKind.OpenParen)
+                {
+                    NextToken();
+                    arguments = ParseSeparatedList(ParseExpression, TokenKind.CloseParen);
+                    Expect(TokenKind.CloseParen);
+                }
+                return new AttributeSyntax(TextSpan.FromBounds(name.Span.Start, Previous.Span.End), name, arguments);
+            }, TokenKind.CloseBracket));
+            Expect(TokenKind.CloseBracket);
+        }
+        return attributes.ToImmutable();
     }
 
     private static bool IsDeclarationStart(TokenKind kind) => kind is
@@ -379,6 +412,17 @@ public sealed class Parser
         var methods = ImmutableArray.CreateBuilder<FunctionDeclarationSyntax>();
         while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
         {
+            if (Current.Kind == TokenKind.OpenBracket)
+            {
+                var attributes = ParseAttributes();
+                var @private = Current.Kind == TokenKind.PrivateKeyword && AtFunctionStart(1) ? NextToken() : (Token?)null;
+                if (AtFunctionStart())
+                    methods.Add(ParseFunction() with { Attributes = attributes, Private = @private });
+                else
+                    ReportOnce(Current.Span, () => _diagnostics.ReportExpectedToken(Current.Span, TokenKind.FnKeyword, Current));
+                continue;
+            }
+
             if (AtFunctionStart())
             {
                 methods.Add(ParseFunction());
@@ -415,13 +459,14 @@ public sealed class Parser
         return new VariantSyntax(SpanFrom(name), name, fields);
     }
 
-    /// <summary>parameter = IDENT ":" type ;</summary>
+    /// <summary>parameter = attributes IDENT ":" type ;</summary>
     private ParameterSyntax ParseParameter()
     {
+        var attributes = ParseAttributes();
         var name = Expect(TokenKind.Identifier);
         Expect(TokenKind.Colon);
         var type = ParseType();
-        return new ParameterSyntax(Span(name, type), name, type);
+        return new ParameterSyntax(Span(name, type), name, type) { Attributes = attributes };
     }
 
     /// <summary>
@@ -579,7 +624,7 @@ public sealed class Parser
     private static bool IsListTerminator(TokenKind kind) => kind is
         TokenKind.Semicolon or TokenKind.OpenBrace or TokenKind.CloseBrace or TokenKind.EndOfFile or
         TokenKind.FnKeyword or TokenKind.RecordKeyword or TokenKind.EnumKeyword or TokenKind.TraitKeyword or
-        TokenKind.ExtendKeyword or TokenKind.LetKeyword or TokenKind.VarKeyword or TokenKind.FatArrow;
+        TokenKind.ExtendKeyword or TokenKind.LetKeyword or TokenKind.MutKeyword or TokenKind.FatArrow;
 
     /// <summary>
     /// block = "{" { statement } [ expression ] "}" ;
@@ -595,7 +640,7 @@ public sealed class Parser
         {
             // A declaration keyword inside a block almost always means a missing '}' (but `using let`/`using (` is a statement).
             if (IsDeclarationStart(Current.Kind) &&
-                !(Current.Kind == TokenKind.UsingKeyword && Peek(1).Kind is TokenKind.LetKeyword or TokenKind.VarKeyword or TokenKind.OpenParen))
+                !(Current.Kind == TokenKind.UsingKeyword && Peek(1).Kind is TokenKind.LetKeyword or TokenKind.MutKeyword or TokenKind.OpenParen))
                 break;
 
             int start = _position;
@@ -604,7 +649,7 @@ public sealed class Parser
                 case TokenKind.Semicolon:
                     NextToken();
                     break;
-                case TokenKind.LetKeyword or TokenKind.VarKeyword:
+                case TokenKind.LetKeyword or TokenKind.MutKeyword:
                     statements.Add(ParseVariableDeclaration());
                     break;
                 case TokenKind.WhileKeyword:
@@ -716,7 +761,7 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// variableDeclaration = ( "let" | "var" ) ( IDENT [ ":" type ] | parenthesizedDesignation ) "=" expression ";" ;
+    /// variableDeclaration = ( "let" | "mut" ) ( IDENT [ ":" type ] | parenthesizedDesignation ) "=" expression ";" ;
     /// </summary>
     private StatementSyntax ParseVariableDeclaration()
     {
@@ -746,13 +791,13 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// using = "using" ( "let" | "var" ) IDENT [ ":" type ] "=" expression ";"
-    ///       | "using" "(" [ ( "let" | "var" ) IDENT [ ":" type ] "=" ] expression ")" block ;
+    /// using = "using" ( "let" | "mut" ) IDENT [ ":" type ] "=" expression ";"
+    ///       | "using" "(" [ ( "let" | "mut" ) IDENT [ ":" type ] "=" ] expression ")" block ;
     /// </summary>
     private StatementSyntax ParseUsing()
     {
         var keyword = NextToken();
-        if (Current.Kind is TokenKind.LetKeyword or TokenKind.VarKeyword)
+        if (Current.Kind is TokenKind.LetKeyword or TokenKind.MutKeyword)
         {
             var statement = ParseVariableDeclaration();
             if (statement is VariableDeclarationSyntax declaration)
@@ -764,7 +809,7 @@ public sealed class Parser
         Expect(TokenKind.OpenParen);
         Token? name = null;
         TypeSyntax? type = null;
-        if (Current.Kind is TokenKind.LetKeyword or TokenKind.VarKeyword)
+        if (Current.Kind is TokenKind.LetKeyword or TokenKind.MutKeyword)
         {
             NextToken();
             name = Expect(TokenKind.Identifier);
@@ -929,7 +974,7 @@ public sealed class Parser
             left = op.Kind switch
             {
                 TokenKind.PipeGreater => new PipeExpressionSyntax(Span(left, right), left, op, right),
-                TokenKind.DotDot or TokenKind.DotDotEquals => new RangeExpressionSyntax(Span(left, right), left, op, right),
+                TokenKind.DotDot or TokenKind.DotDotLess => new RangeExpressionSyntax(Span(left, right), left, op, right),
                 _ => new BinaryExpressionSyntax(Span(left, right), left, op, right),
             };
         }
@@ -1138,7 +1183,7 @@ public sealed class Parser
         }
     }
 
-    /// <summary>argument = expression | "out" [ "let" | "var" ] IDENT | "ref" expression ;</summary>
+    /// <summary>argument = expression | "out" [ "let" | "mut" ] IDENT | "ref" expression ;</summary>
     private ExpressionSyntax ParseArgument()
     {
         // `ref x`: `ref` is a keyword only before a name, so it can still be one itself.
@@ -1151,7 +1196,7 @@ public sealed class Parser
         if (Current.Kind != TokenKind.OutKeyword)
             return ParseExpression();
         var keyword = NextToken();
-        Token? declaration = Current.Kind is TokenKind.LetKeyword or TokenKind.VarKeyword ? NextToken() : null;
+        Token? declaration = Current.Kind is TokenKind.LetKeyword or TokenKind.MutKeyword ? NextToken() : null;
         var name = Expect(TokenKind.Identifier);
         return new OutArgumentSyntax(SpanFrom(keyword), keyword, declaration, name);
     }
@@ -1461,14 +1506,38 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// primaryPattern = "_" | IDENT | [ IDENT "." ] IDENT [ "(" [ pattern { "," pattern } [ "," ] ] ")" ]
-    ///                | literalPattern [ ( ".." | "..=" ) literalPattern ] ;
+    /// primaryPattern = "_" | IDENT | [ IDENT "." ] IDENT [ "(" [ pattern { "," pattern } [ "," ] ] ")" | properties ]
+    ///                | properties | "[" [ listElement { "," listElement } [ "," ] ] "]"
+    ///                | ( "<" | "<=" | ">" | ">=" ) literalPattern
+    ///                | literalPattern [ ( ".." | "..<" ) literalPattern ] ;
+    /// properties     = "{" [ IDENT ":" pattern { "," IDENT ":" pattern } [ "," ] ] "}" ;
+    /// listElement    = pattern | "..." [ IDENT ] ;
     /// literalPattern = [ "-" ] ( INT | DOUBLE ) | CHAR | STRING | "true" | "false" ;
     /// </summary>
     private PatternSyntax ParsePrimaryPattern()
     {
         if (Current.Kind == TokenKind.NullKeyword)
             return new NullPatternSyntax(NextToken().Span);
+
+        if (Current.Kind == TokenKind.OpenBracket)
+        {
+            var open = NextToken();
+            var elements = ParseSeparatedList(ParseListPatternElement, TokenKind.CloseBracket);
+            Expect(TokenKind.CloseBracket);
+            return new ListPatternSyntax(SpanFrom(open), elements);
+        }
+
+        if (IsPropertyPatternStart())
+            return ParsePropertyPattern(Current, null, null);
+
+        if (Current.Kind is TokenKind.Less or TokenKind.LessEquals or TokenKind.Greater or TokenKind.GreaterEquals)
+        {
+            var comparison = NextToken();
+            if (ParseLiteralPattern() is { } value)
+                return new RelationalPatternSyntax(SpanFrom(comparison), comparison, value);
+            ReportOnce(Current.Span, () => _diagnostics.ReportExpectedPattern(Current.Span, Current));
+            return new ErrorPatternSyntax(comparison.Span);
+        }
 
         if (Current.Kind == TokenKind.OpenParen)
         {
@@ -1504,6 +1573,9 @@ public sealed class Parser
                 return new ConstructorPatternSyntax(SpanFrom(qualifier ?? name), qualifier, name, arguments, HasArgumentList: true);
             }
 
+            if (IsPropertyPatternStart())
+                return ParsePropertyPattern(qualifier ?? name, qualifier, name);
+
             return qualifier is null
                 ? new IdentifierPatternSyntax(name.Span, name)
                 : new ConstructorPatternSyntax(SpanFrom(qualifier), qualifier, name, [], HasArgumentList: false);
@@ -1515,7 +1587,7 @@ public sealed class Parser
             return new ErrorPatternSyntax(new TextSpan(Current.Span.Start, 0));
         }
 
-        if (Current.Kind is not (TokenKind.DotDot or TokenKind.DotDotEquals))
+        if (Current.Kind is not (TokenKind.DotDot or TokenKind.DotDotLess))
             return literal;
 
         var op = NextToken();
@@ -1525,6 +1597,38 @@ public sealed class Parser
             return new ErrorPatternSyntax(TextSpan.FromBounds(literal.Span.Start, op.Span.End));
         }
         return new RangePatternSyntax(Span(literal, end), literal, op, end);
+    }
+
+    /// <summary>
+    /// A `{` that starts a property pattern rather than a block (`if p is Point { … }` has both): one followed by
+    /// `name:`, or an empty `{}` that isn't followed by a block.
+    /// </summary>
+    private bool IsPropertyPatternStart() =>
+        Current.Kind == TokenKind.OpenBrace &&
+        ((Peek(1).Kind == TokenKind.Identifier && Peek(2).Kind == TokenKind.Colon) ||
+         (Peek(1).Kind == TokenKind.CloseBrace && Peek(2).Kind != TokenKind.OpenBrace));
+
+    private PropertyPatternSyntax ParsePropertyPattern(Token first, Token? qualifier, Token? name)
+    {
+        Expect(TokenKind.OpenBrace);
+        var properties = ParseSeparatedList(() =>
+        {
+            var property = Expect(TokenKind.Identifier);
+            Expect(TokenKind.Colon);
+            var pattern = ParsePattern();
+            return new PropertySubpatternSyntax(TextSpan.FromBounds(property.Span.Start, pattern.Span.End), property, pattern);
+        }, TokenKind.CloseBrace);
+        Expect(TokenKind.CloseBrace);
+        return new PropertyPatternSyntax(SpanFrom(first), qualifier, name, properties);
+    }
+
+    private PatternSyntax ParseListPatternElement()
+    {
+        if (Current.Kind != TokenKind.Ellipsis)
+            return ParsePattern();
+        var ellipsis = NextToken();
+        Token? name = Current.Kind == TokenKind.Identifier ? NextToken() : null;
+        return new SlicePatternSyntax(SpanFrom(ellipsis), name);
     }
 
     private LiteralPatternSyntax? ParseLiteralPattern()

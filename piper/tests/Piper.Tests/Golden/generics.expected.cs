@@ -21,9 +21,9 @@ public abstract record List<T>
 
 public static class Generics
 {
-    public static Pair<B, A> swap<A, B>(Pair<A, B> p) => new Pair<B, A>(p.second, p.first);
+    public static Pair<B, A> Swap<A, B>(Pair<A, B> p) => new Pair<B, A>(p.second, p.first);
 
-    public static T unwrapOr<T>(Option<T> o, T fallback)
+    public static T UnwrapOr<T>(Option<T> o, T fallback)
     {
         if (o is { IsSome: true, Value: var v })
         {
@@ -35,11 +35,11 @@ public static class Generics
         }
     }
 
-    public static int length<T>(List<T> items)
+    public static int Length<T>(List<T> items)
     {
         if (items is List<T>.Cons(_, var tail))
         {
-            return 1 + length<T>(tail);
+            return 1 + Length<T>(tail);
         }
         else
         {
@@ -47,7 +47,7 @@ public static class Generics
         }
     }
 
-    public static Option<int> indexOf(List<string> items, string target, int start)
+    public static Option<int> IndexOf(List<string> items, string target, int start)
     {
         if (items is List<string>.Cons(var head, _) && head == target)
         {
@@ -55,7 +55,7 @@ public static class Generics
         }
         else if (items is List<string>.Cons(_, var tail))
         {
-            return indexOf(tail, target, start + 1);
+            return IndexOf(tail, target, start + 1);
         }
         else
         {
@@ -63,11 +63,11 @@ public static class Generics
         }
     }
 
-    public static T identity<T>(T @value) => @value;
+    public static T Identity<T>(T @value) => @value;
 
-    public static List<T> empty<T>() => new List<T>.Nil();
+    public static List<T> Empty<T>() => new List<T>.Nil();
 
-    public static string describe(Option<int> found)
+    public static string Describe(Option<int> found)
     {
         if (found is { IsSome: true, Value: var i })
         {
@@ -79,19 +79,19 @@ public static class Generics
         }
     }
 
-    public static void main()
+    public static void Main()
     {
         Pair<int, string> p = new Pair<int, string>(1, "one");
-        Pair<string, int> q = swap<int, string>(p);
+        Pair<string, int> q = Swap<int, string>(p);
         global::System.Console.WriteLine($"{q.first} {q.second}");
         Option<int> some = Option<int>.Some(42);
         Option<int> none = Option<int>.None;
-        global::System.Console.WriteLine(unwrapOr<int>(some, 0));
-        global::System.Console.WriteLine(unwrapOr<int>(none, -1));
+        global::System.Console.WriteLine(UnwrapOr<int>(some, 0));
+        global::System.Console.WriteLine(UnwrapOr<int>(none, -1));
         List<string> words = new List<string>.Cons("piper", new List<string>.Cons("is", new List<string>.Cons("generic", new List<string>.Nil())));
-        global::System.Console.WriteLine(length<string>(words));
-        global::System.Console.WriteLine(describe(indexOf(words, "generic", 0)));
-        global::System.Console.WriteLine(describe(indexOf(words, "rust", 0)));
+        global::System.Console.WriteLine(Length<string>(words));
+        global::System.Console.WriteLine(Describe(IndexOf(words, "generic", 0)));
+        global::System.Console.WriteLine(Describe(IndexOf(words, "rust", 0)));
         Option<bool> flag = Option<bool>.Some(true);
         string temp;
         if (flag is { IsSome: true, Value: true })
@@ -109,16 +109,16 @@ public static class Generics
         global::System.Console.WriteLine(temp);
         Pair<long, double> widened = new Pair<long, double>(1, 2);
         global::System.Console.WriteLine($"{widened.first} {widened.second}");
-        List<string> nothing = empty<string>();
-        global::System.Console.WriteLine(length<string>(nothing));
-        long big = identity<long>(3) * 1000000000;
+        List<string> nothing = Empty<string>();
+        global::System.Console.WriteLine(Length<string>(nothing));
+        long big = Identity<long>(3) * 1000000000;
         global::System.Console.WriteLine(big);
         Pair<long, string> pair = new Pair<long, string>(1, "x");
         global::System.Console.WriteLine(pair.first + 2147483647);
-        global::System.Console.WriteLine(unwrapOr<int>(Option<int>.None, 7));
-        global::System.Func<int, int> twice = identity<int>;
+        global::System.Console.WriteLine(UnwrapOr<int>(Option<int>.None, 7));
+        global::System.Func<int, int> twice = Identity<int>;
         global::System.Console.WriteLine(twice(5));
-        global::System.Func<string, string> echo = identity<string>;
+        global::System.Func<string, string> echo = Identity<string>;
         global::System.Console.WriteLine(echo("echo"));
         int a = 1;
         int b = 2;
@@ -132,6 +132,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Generics.main();
+        Generics.Main();
     }
 }

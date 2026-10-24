@@ -10,7 +10,7 @@ public sealed record WordCount(string word, int count);
 
 public static class Program_word_count
 {
-    public static string normalize(string word)
+    public static string Normalize(string word)
     {
         global::System.Text.StringBuilder builder = new global::System.Text.StringBuilder();
         foreach (char c in word)
@@ -23,13 +23,13 @@ public static class Program_word_count
         return builder.ToString();
     }
 
-    public static global::System.Collections.Generic.Dictionary<string, int> countWords(string text)
+    public static global::System.Collections.Generic.Dictionary<string, int> CountWords(string text)
     {
         global::System.Collections.Generic.Dictionary<string, int> counts = new global::System.Collections.Generic.Dictionary<string, int>();
         global::System.Collections.Generic.List<char> separators = new global::System.Collections.Generic.List<char> { ' ', '\n', '\t', ',', '.', ';', '!', '?' };
         foreach (string raw in text.Split(separators.ToArray(), global::System.StringSplitOptions.RemoveEmptyEntries))
         {
-            string word = normalize(raw);
+            string word = Normalize(raw);
             if (word.Length == 0)
             {
                 continue;
@@ -47,11 +47,11 @@ public static class Program_word_count
         return counts;
     }
 
-    public static global::System.Collections.Generic.List<WordCount> top(global::System.Collections.Generic.Dictionary<string, int> counts, int n) => global::System.Linq.Enumerable.ToList<WordCount>(global::System.Linq.Enumerable.Take<WordCount>(global::System.Linq.Enumerable.ThenBy<WordCount, string>(global::System.Linq.Enumerable.OrderByDescending<WordCount, int>(global::System.Linq.Enumerable.Select<global::System.Collections.Generic.KeyValuePair<string, int>, WordCount>(counts, (global::System.Collections.Generic.KeyValuePair<string, int> pair) => new WordCount(pair.Key, pair.Value)), (WordCount w) => w.count), (WordCount w_1) => w_1.word), n));
+    public static global::System.Collections.Generic.List<WordCount> Top(global::System.Collections.Generic.Dictionary<string, int> counts, int n) => global::System.Linq.Enumerable.ToList<WordCount>(global::System.Linq.Enumerable.Take<WordCount>(global::System.Linq.Enumerable.ThenBy<WordCount, string>(global::System.Linq.Enumerable.OrderByDescending<WordCount, int>(global::System.Linq.Enumerable.Select<global::System.Collections.Generic.KeyValuePair<string, int>, WordCount>(counts, (global::System.Collections.Generic.KeyValuePair<string, int> pair) => new WordCount(pair.Key, pair.Value)), (WordCount w) => w.count), (WordCount w_1) => w_1.word), n));
 
-    public static string bar(int count, int scale) => new string('#', count * scale);
+    public static string Bar(int count, int scale) => new string('#', count * scale);
 
-    public static Option<string> longest(global::System.Collections.Generic.IEnumerable<string> words)
+    public static Option<string> Longest(global::System.Collections.Generic.IEnumerable<string> words)
     {
         Option<string> best = Option<string>.None;
         foreach (string word in words)
@@ -65,18 +65,18 @@ public static class Program_word_count
         return best;
     }
 
-    public static void main()
+    public static void Main()
     {
         string text = "The quick brown fox jumps over the lazy dog. The dog sleeps;\nthe fox doesn't. Quick, quick! The fox is quick and the dog is lazy.";
-        global::System.Collections.Generic.Dictionary<string, int> counts = countWords(text);
+        global::System.Collections.Generic.Dictionary<string, int> counts = CountWords(text);
         global::System.Console.WriteLine($"{counts.Count} distinct words, {(global::System.Linq.Enumerable.Sum(counts.Values))} in total");
-        foreach (var (index, entry) in global::System.Linq.Enumerable.Select<WordCount, (int, WordCount w)>(top(counts, 5), (WordCount w, int i) => (i + 1, w)))
+        foreach (var (index, entry) in global::System.Linq.Enumerable.Select<WordCount, (int, WordCount w)>(Top(counts, 5), (WordCount w, int i) => (i + 1, w)))
         {
-            global::System.Console.WriteLine($"{index}. {entry.word.PadRight(6)} {entry.count} {bar(entry.count, 2)}");
+            global::System.Console.WriteLine($"{index}. {entry.word.PadRight(6)} {entry.count} {Bar(entry.count, 2)}");
         }
         var (shortWords, longWords) = global::System.Linq.Enumerable.Aggregate<string, (int, int)>(counts.Keys, (0, 0), ((int, int) acc, string word) => word.Length <= 3 ? (acc.Item1 + 1, acc.Item2) : (acc.Item1, acc.Item2 + 1));
         global::System.Console.WriteLine($"short: {shortWords}, long: {longWords}");
-        Option<string> temp = longest(counts.Keys);
+        Option<string> temp = Longest(counts.Keys);
         if (temp is { IsSome: true, Value: var word_1 })
         {
             global::System.Console.WriteLine($"longest: {word_1} ({word_1.Length} letters)");
@@ -95,6 +95,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Program_word_count.main();
+        Program_word_count.Main();
     }
 }

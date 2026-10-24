@@ -8,63 +8,63 @@ using Piper.Runtime;
 
 public interface Shape
 {
-    double area();
+    double Area();
 
-    string describe() => $"area {this.area()}";
+    string Describe() => $"area {this.Area()}";
 
     public interface PiperWitness<TPiperSelf>
     {
         Shape PiperBox(TPiperSelf piperSelf);
-        double area(TPiperSelf piperSelf);
-        string describe(TPiperSelf piperSelf);
+        double Area(TPiperSelf piperSelf);
+        string Describe(TPiperSelf piperSelf);
     }
 
     public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Shape
     {
         Shape Shape.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
-        public double area(TPiperSelf piperSelf) => piperSelf.area();
-        public string describe(TPiperSelf piperSelf) => piperSelf.describe();
+        public double Area(TPiperSelf piperSelf) => piperSelf.Area();
+        public string Describe(TPiperSelf piperSelf) => piperSelf.Describe();
     }
 
     public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Shape, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
     {
         Shape Shape.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
-        public double area(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).area();
-        public string describe(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).describe();
+        public double Area(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Area();
+        public string Describe(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Describe();
     }
 }
 
 public interface Named
 {
-    string name();
+    string Name();
 
-    string greet() => $"Hello, {this.name()}";
+    string Greet() => $"Hello, {this.Name()}";
 
     public interface PiperWitness<TPiperSelf>
     {
         Named PiperBox(TPiperSelf piperSelf);
-        string name(TPiperSelf piperSelf);
-        string greet(TPiperSelf piperSelf);
+        string Name(TPiperSelf piperSelf);
+        string Greet(TPiperSelf piperSelf);
     }
 
     public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Named
     {
         Named Named.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
-        public string name(TPiperSelf piperSelf) => piperSelf.name();
-        public string greet(TPiperSelf piperSelf) => piperSelf.greet();
+        public string Name(TPiperSelf piperSelf) => piperSelf.Name();
+        public string Greet(TPiperSelf piperSelf) => piperSelf.Greet();
     }
 
     public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Named, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
     {
         Named Named.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
-        public string name(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).name();
-        public string greet(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).greet();
+        public string Name(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Name();
+        public string Greet(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Greet();
     }
 }
 
 public interface Formal : Named
 {
-    string Named.greet() => $"Good day, {this.name()}";
+    string Named.Greet() => $"Good day, {this.Name()}";
 
     public interface PiperWitness<TPiperSelf> : Named.PiperWitness<TPiperSelf>
     {
@@ -75,142 +75,142 @@ public interface Formal : Named
     {
         Formal Formal.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
         Named Named.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
-        public string name(TPiperSelf piperSelf) => piperSelf.name();
-        public string greet(TPiperSelf piperSelf) => piperSelf.greet();
+        public string Name(TPiperSelf piperSelf) => piperSelf.Name();
+        public string Greet(TPiperSelf piperSelf) => piperSelf.Greet();
     }
 
     public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Formal, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
     {
         Formal Formal.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
         Named Named.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
-        public string name(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).name();
-        public string greet(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).greet();
+        public string Name(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Name();
+        public string Greet(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Greet();
     }
 }
 
 public interface Monoid<T>
 {
-    static abstract T empty();
+    static abstract T Identity();
 
-    T combine(T other);
+    T Combine(T other);
 
-    static virtual string label() => "monoid";
+    static virtual string Label() => "monoid";
 
     public interface PiperWitness<TPiperSelf>
     {
-        T empty();
-        T combine(TPiperSelf piperSelf, T other);
-        string label();
+        T Identity();
+        T Combine(TPiperSelf piperSelf, T other);
+        string Label();
     }
 
     public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Monoid<T>
     {
-        public T empty() => TPiperSelf.empty();
-        public T combine(TPiperSelf piperSelf, T other) => piperSelf.combine(other);
-        public string label() => TPiperSelf.label();
+        public T Identity() => TPiperSelf.Identity();
+        public T Combine(TPiperSelf piperSelf, T other) => piperSelf.Combine(other);
+        public string Label() => TPiperSelf.Label();
     }
 
     public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Monoid<T>, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
     {
-        public T empty() => TPiperBox.empty();
-        public T combine(TPiperSelf piperSelf, T other) => TPiperBox.Wrap(piperSelf).combine(other);
-        public string label() => TPiperBox.label();
+        public T Identity() => TPiperBox.Identity();
+        public T Combine(TPiperSelf piperSelf, T other) => TPiperBox.Wrap(piperSelf).Combine(other);
+        public string Label() => TPiperBox.Label();
     }
 }
 
 public interface Convert<T>
 {
-    T convert();
+    T Convert();
 
-    U mapTo<U>(global::System.Func<T, U> f) => f(this.convert());
+    U MapTo<U>(global::System.Func<T, U> f) => f(this.Convert());
 
     public interface PiperWitness<TPiperSelf>
     {
         Convert<T> PiperBox(TPiperSelf piperSelf);
-        T convert(TPiperSelf piperSelf);
-        U mapTo<U>(TPiperSelf piperSelf, global::System.Func<T, U> f);
+        T Convert(TPiperSelf piperSelf);
+        U MapTo<U>(TPiperSelf piperSelf, global::System.Func<T, U> f);
     }
 
     public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Convert<T>
     {
         Convert<T> Convert<T>.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
-        public T convert(TPiperSelf piperSelf) => piperSelf.convert();
-        public U mapTo<U>(TPiperSelf piperSelf, global::System.Func<T, U> f) => piperSelf.mapTo<U>(f);
+        public T Convert(TPiperSelf piperSelf) => piperSelf.Convert();
+        public U MapTo<U>(TPiperSelf piperSelf, global::System.Func<T, U> f) => piperSelf.MapTo<U>(f);
     }
 
     public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Convert<T>, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
     {
         Convert<T> Convert<T>.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
-        public T convert(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).convert();
-        public U mapTo<U>(TPiperSelf piperSelf, global::System.Func<T, U> f) => TPiperBox.Wrap(piperSelf).mapTo<U>(f);
+        public T Convert(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Convert();
+        public U MapTo<U>(TPiperSelf piperSelf, global::System.Func<T, U> f) => TPiperBox.Wrap(piperSelf).MapTo<U>(f);
     }
 }
 
 public sealed record Circle(double r) : Shape
 {
-    public double area() => 3.0 * this.r * this.r;
+    public double Area() => 3.0 * this.r * this.r;
 }
 
 public sealed record Holder<T>(T item)
 {
-    public double area() => global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().area(this.item);
+    public double Area() => global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().Area(this.item);
 }
 
 public static class Builtin_traits
 {
-    public static double total<T>(global::System.Collections.Generic.List<T> items)
+    public static double Total<T>(global::System.Collections.Generic.List<T> items)
     {
         double sum = 0.0;
         foreach (T i in items)
         {
-            sum += global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().area(i);
+            sum += global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().Area(i);
         }
         return sum;
     }
 
-    public static T concat<T>(global::System.Collections.Generic.List<T> items)
+    public static T Concat<T>(global::System.Collections.Generic.List<T> items)
     {
-        T result = global::Piper.Runtime.PiperTraits.Witness<Monoid<T>.PiperWitness<T>>().empty();
+        T result = global::Piper.Runtime.PiperTraits.Witness<Monoid<T>.PiperWitness<T>>().Identity();
         foreach (T i in items)
         {
-            result = global::Piper.Runtime.PiperTraits.Witness<Monoid<T>.PiperWitness<T>>().combine(result, i);
+            result = global::Piper.Runtime.PiperTraits.Witness<Monoid<T>.PiperWitness<T>>().Combine(result, i);
         }
         return result;
     }
 
-    public static string welcome<T>(T x) => global::Piper.Runtime.PiperTraits.Witness<Named.PiperWitness<T>>().greet(x);
+    public static string Welcome<T>(T x) => global::Piper.Runtime.PiperTraits.Witness<Named.PiperWitness<T>>().Greet(x);
 
-    public static Shape asShape<T>(T x) => global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().PiperBox(x);
+    public static Shape AsShape<T>(T x) => global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().PiperBox(x);
 
-    public static void main()
+    public static void Main()
     {
-        global::System.Console.WriteLine(3.area());
-        global::System.Console.WriteLine(global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<int>>().describe(3));
+        global::System.Console.WriteLine(3.Area());
+        global::System.Console.WriteLine(global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<int>>().Describe(3));
         global::System.Collections.Generic.List<Shape> shapes = new global::System.Collections.Generic.List<Shape> { new Circle(1.0), global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<int>>().PiperBox(2), global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<int>>().PiperBox(3) };
         foreach (Shape s in shapes)
         {
-            global::System.Console.WriteLine(s.describe());
+            global::System.Console.WriteLine(s.Describe());
         }
-        global::System.Console.WriteLine(total<int>(new global::System.Collections.Generic.List<int> { 1, 2, 3 }));
-        global::System.Console.WriteLine(total<Shape>(shapes));
-        global::System.Console.WriteLine(concat<int>(new global::System.Collections.Generic.List<int> { 1, 2, 3 }));
-        global::System.Console.WriteLine(concat<string>(new global::System.Collections.Generic.List<string> { "a", "b", "c" }));
-        global::System.Console.WriteLine(global::Piper.Runtime.PiperTraits.Witness<Monoid<int>.PiperWitness<int>>().label());
-        global::System.Console.WriteLine(global::Piper.Runtime.PiperTraits.Witness<Named.PiperWitness<string>>().greet("Ann"));
-        global::System.Console.WriteLine(welcome<string>("Bob"));
-        global::System.Console.WriteLine(welcome<global::System.Text.StringBuilder>(new global::System.Text.StringBuilder("sb")));
+        global::System.Console.WriteLine(Total<int>(new global::System.Collections.Generic.List<int> { 1, 2, 3 }));
+        global::System.Console.WriteLine(Total<Shape>(shapes));
+        global::System.Console.WriteLine(Concat<int>(new global::System.Collections.Generic.List<int> { 1, 2, 3 }));
+        global::System.Console.WriteLine(Concat<string>(new global::System.Collections.Generic.List<string> { "a", "b", "c" }));
+        global::System.Console.WriteLine(global::Piper.Runtime.PiperTraits.Witness<Monoid<int>.PiperWitness<int>>().Label());
+        global::System.Console.WriteLine(global::Piper.Runtime.PiperTraits.Witness<Named.PiperWitness<string>>().Greet("Ann"));
+        global::System.Console.WriteLine(Welcome<string>("Bob"));
+        global::System.Console.WriteLine(Welcome<global::System.Text.StringBuilder>(new global::System.Text.StringBuilder("sb")));
         Named n = global::Piper.Runtime.PiperTraits.Witness<Named.PiperWitness<string>>().PiperBox("Cy");
-        global::System.Console.WriteLine(n.greet());
-        global::System.Console.WriteLine(Option<int>.Some(4).convert());
+        global::System.Console.WriteLine(n.Greet());
+        global::System.Console.WriteLine(Option<int>.Some(4).Convert());
         Option<int> o = Option<int>.None;
-        global::System.Console.WriteLine(global::Piper.Runtime.PiperTraits.Witness<Convert<string>.PiperWitness<Option<int>>>().mapTo<int>(o, (string s_1) => s_1.Length));
-        global::System.Console.WriteLine(new Holder<int>(5).area());
+        global::System.Console.WriteLine(global::Piper.Runtime.PiperTraits.Witness<Convert<string>.PiperWitness<Option<int>>>().MapTo<int>(o, (string s_1) => s_1.Length));
+        global::System.Console.WriteLine(new Holder<int>(5).Area());
         Shape s_2 = global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<int>>().PiperBox(7);
         global::System.Console.WriteLine(s_2);
         int back = global::Piper.Runtime.PiperTraits.Unbox<int>(s_2);
         global::System.Console.WriteLine(back + 1);
-        global::System.Console.WriteLine(asShape<int>(9).area());
-        global::System.Console.WriteLine(global::System.Collections.Generic.EqualityComparer<Shape>.Default.Equals(s_2, asShape<int>(7)));
+        global::System.Console.WriteLine(AsShape<int>(9).Area());
+        global::System.Console.WriteLine(global::System.Collections.Generic.EqualityComparer<Shape>.Default.Equals(s_2, AsShape<int>(7)));
     }
 }
 
@@ -219,9 +219,9 @@ file readonly record struct PiperBox_int(int Value) : Shape, Monoid<int>, global
     public static PiperBox_int Wrap(int value) => new(value);
 
     public override string ToString() => $"{Value}";
-    public double area() => Value.area();
-    public static int empty() => int.empty();
-    public int combine(int other) => Value.combine(other);
+    public double Area() => Value.Area();
+    public static int Identity() => int.Identity();
+    public int Combine(int other) => Value.Combine(other);
 }
 
 file readonly record struct PiperBox_string(string Value) : Formal, Monoid<string>, global::Piper.Runtime.IPiperBox<string, PiperBox_string>
@@ -229,9 +229,9 @@ file readonly record struct PiperBox_string(string Value) : Formal, Monoid<strin
     public static PiperBox_string Wrap(string value) => new(value);
 
     public override string ToString() => $"{Value}";
-    public string name() => Value.name();
-    public static string empty() => string.empty();
-    public string combine(string other) => Value.combine(other);
+    public string Name() => Value.Name();
+    public static string Identity() => string.Identity();
+    public string Combine(string other) => Value.Combine(other);
 }
 
 file readonly record struct PiperBox_StringBuilder(global::System.Text.StringBuilder Value) : Named, global::Piper.Runtime.IPiperBox<global::System.Text.StringBuilder, PiperBox_StringBuilder>
@@ -239,7 +239,7 @@ file readonly record struct PiperBox_StringBuilder(global::System.Text.StringBui
     public static PiperBox_StringBuilder Wrap(global::System.Text.StringBuilder value) => new(value);
 
     public override string ToString() => $"{Value}";
-    public string name() => Value.name();
+    public string Name() => Value.Name();
 }
 
 file readonly record struct PiperBox_Option<T>(Option<T> Value) : Convert<string>, global::Piper.Runtime.IPiperBox<Option<T>, PiperBox_Option<T>>
@@ -247,7 +247,7 @@ file readonly record struct PiperBox_Option<T>(Option<T> Value) : Convert<string
     public static PiperBox_Option<T> Wrap(Option<T> value) => new(value);
 
     public override string ToString() => $"{Value}";
-    public string convert() => Value.convert();
+    public string Convert() => Value.Convert();
 }
 
 file static class PiperWitnesses
@@ -269,24 +269,24 @@ public static class Builtin_traitsExtensions
 {
     extension(int self)
     {
-        public double area() => (double)(self * self);
+        public double Area() => (double)(self * self);
 
-        public int combine(int other) => self + other;
+        public int Combine(int other) => self + other;
     }
 
     extension(int)
     {
-        public static int empty() => 0;
+        public static int Identity() => 0;
     }
 
     extension(global::System.Text.StringBuilder self)
     {
-        public string name() => self.ToString();
+        public string Name() => self.ToString();
     }
 
     extension<T>(Option<T> self)
     {
-        public string convert()
+        public string Convert()
         {
             if (self is { IsSome: true, Value: var v })
             {
@@ -304,14 +304,14 @@ public static class Builtin_traitsExtensions_string
 {
     extension(string self)
     {
-        public string name() => self;
+        public string Name() => self;
 
-        public string combine(string other) => self + other;
+        public string Combine(string other) => self + other;
     }
 
     extension(string)
     {
-        public static string empty() => "";
+        public static string Identity() => "";
     }
 }
 
@@ -320,6 +320,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Builtin_traits.main();
+        Builtin_traits.Main();
     }
 }

@@ -2,68 +2,68 @@
 
 record User(name: string, nickname: string?);
 
-fn lookup(id: int) => User? =
+fn Lookup(id: int) => User? =
     if id == 1 { Some(User("Ada", Some("ada"))) } else if id == 2 { Some(User("Bob", None)) } else { None };
 
-fn parse(text: string) => int? = if int.TryParse(text, out let n) { Some(n) } else { None };
+fn Parse(text: string) => int? = if int.TryParse(text, out let n) { Some(n) } else { None };
 
-fn count(log: System.Collections.Generic.List<int>, n: int) => int {
+fn Count(log: System.Collections.Generic.List<int>, n: int) => int {
     log.Add(n);
     n
 }
 
 // A guard with statements, which run only for values the pattern matched.
-fn describe(n: int?, log: System.Collections.Generic.List<int>) => string = match n {
-    Some(x) if { let doubled = count(log, x) * 2; doubled > 10 } => "big {x}",
+fn Describe(n: int?, log: System.Collections.Generic.List<int>) => string = match n {
+    Some(x) if { let doubled = Count(log, x) * 2; doubled > 10 } => "big {x}",
     Some(x) if x < 0 => "negative {x}",
     Some(x) => "small {x}",
     None => "none",
 };
 
 // `?` in a guard returns from the function.
-fn firstBig(texts: string, limit: string) => int? {
-    let label = match parse(texts) {
-        Some(n) if n > parse(limit)? => "over",
+fn FirstBig(texts: string, limit: string) => int? {
+    let label = match Parse(texts) {
+        Some(n) if n > Parse(limit)? => "over",
         Some(_) => "under",
         None => "not a number",
     };
-    print(label);
+    Print(label);
     Some(label.Length)
 }
 
 // `?.` and `??` on calls, after an `is` that binds.
-fn greet(id: int, fallback: User?) => string {
-    if fallback is Some(f) && (lookup(id)?.nickname ?? f.name) == "Ada" {
+fn Greet(id: int, fallback: User?) => string {
+    if fallback is Some(f) && (Lookup(id)?.nickname ?? f.name) == "Ada" {
         return "hello Ada";
     }
-    if lookup(id) is Some(u) && { let n = u.nickname ?? "?"; n.Length > 1 } {
+    if Lookup(id) is Some(u) && { let n = u.nickname ?? "?"; n.Length > 1 } {
         "hi {u.name}"
     } else {
         "who?"
     }
 }
 
-fn main() {
+fn Main() {
     let log: System.Collections.Generic.List<int> = [];
-    print(describe(Some(7), log));
-    print(describe(Some(3), log));
-    print(describe(Some(-4), log));
-    print(describe(None, log));
-    print("the guard ran for {string.Join(",", log)}");
+    Print(Describe(Some(7), log));
+    Print(Describe(Some(3), log));
+    Print(Describe(Some(-4), log));
+    Print(Describe(None, log));
+    Print("the guard ran for {string.Join(",", log)}");
 
-    print(firstBig("12", "10"));
-    print(firstBig("5", "10"));
-    print(firstBig("12", "x"));
+    Print(FirstBig("12", "10"));
+    Print(FirstBig("5", "10"));
+    Print(FirstBig("12", "x"));
 
-    print(greet(1, Some(User("Ada", None))));
-    print(greet(2, None));
-    print(greet(3, None));
+    Print(Greet(1, Some(User("Ada", None))));
+    Print(Greet(2, None));
+    Print(Greet(3, None));
 
     // A while loop whose condition binds and then needs statements.
-    var queue = ["3", "4", "x", "5"];
-    var total = 0;
-    while queue.Count > 0 && parse(queue[0]) is Some(n) && { queue.RemoveAt(0); n < 10 } {
+    mut queue = ["3", "4", "x", "5"];
+    mut total = 0;
+    while queue.Count > 0 && Parse(queue[0]) is Some(n) && { queue.RemoveAt(0); n < 10 } {
         total += n;
     }
-    print("{total} {queue.Count}");
+    Print("{total} {queue.Count}");
 }

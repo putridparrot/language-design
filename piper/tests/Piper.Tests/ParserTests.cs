@@ -61,8 +61,8 @@ public class ParserTests
     [InlineData("a += 1 + 2", "(a += (1 + 2))")]
     [InlineData("f(1, g(2)).x.y", "f(1, g(2)).x.y")]
     [InlineData("-p.x", "(-p.x)")]
-    [InlineData("0..n + 1", "(0 .. (n + 1))")]
-    [InlineData("0..=n", "(0 ..= n)")]
+    [InlineData("0..<n + 1", "(0 ..< (n + 1))")]
+    [InlineData("0..n", "(0 .. n)")]
     [InlineData("(1 + 2) * 3", "((1 + 2) * 3)")]
     [InlineData("a ?? b ?? c", "(a ?? (b ?? c))")]
     [InlineData("a || b ?? c", "((a || b) ?? c)")]
@@ -133,7 +133,7 @@ public class ParserTests
     [Fact]
     public void Block_like_statements_need_no_semicolon()
     {
-        var body = Body(ParseClean("fn main() { if a { b(); } { c(); } while x { } d(); }"));
+        var body = Body(ParseClean("fn Main() { if a { b(); } { c(); } while x { } d(); }"));
         Assert.Equal(4, body.Statements.Length);
         Assert.Null(body.Trailing);
     }
@@ -189,7 +189,7 @@ public class ParserTests
     [Fact]
     public void Pattern_forms()
     {
-        var body = Body(ParseClean("fn f() { match x { 1 | 2 => 0, -9..=-1 => 0, Shape.Rect(Num(0), _) => 0, Shape.Empty => 0, y => 0, _ => 0 } }"));
+        var body = Body(ParseClean("fn f() { match x { 1 | 2 => 0, -9..-1 => 0, Shape.Rect(Num(0), _) => 0, Shape.Empty => 0, y => 0, _ => 0 } }"));
         var arms = Assert.IsType<MatchExpressionSyntax>(body.Trailing).Arms;
         Assert.Equal(2, Assert.IsType<OrPatternSyntax>(arms[0].Pattern).Alternatives.Length);
         var range = Assert.IsType<RangePatternSyntax>(arms[1].Pattern);
@@ -277,7 +277,7 @@ public class ParserTests
     [Fact]
     public void Missing_semicolon_reports_one_error_and_recovers()
     {
-        var unit = Parse("fn main() { let a = 1 let b = 2; }\nfn other() {}", out var diagnostics);
+        var unit = Parse("fn Main() { let a = 1 let b = 2; }\nfn other() {}", out var diagnostics);
         var diagnostic = Assert.Single(diagnostics);
         Assert.Equal("PIP0100", diagnostic.Code);
         Assert.Contains("';'", diagnostic.Message);
@@ -326,7 +326,7 @@ public class ParserTests
     [Fact]
     public void Garbage_at_top_level_is_reported_once_and_skipped()
     {
-        var unit = Parse("123 + ; ) fn main() {}", out var diagnostics);
+        var unit = Parse("123 + ; ) fn Main() {}", out var diagnostics);
         Assert.Equal("PIP0102", Assert.Single(diagnostics).Code);
         Assert.Single(unit.Declarations);
     }
@@ -334,7 +334,7 @@ public class ParserTests
     [Fact]
     public void Missing_expression_is_reported()
     {
-        Parse("fn main() { let a = ; }", out var diagnostics);
+        Parse("fn Main() { let a = ; }", out var diagnostics);
         Assert.Equal("PIP0101", Assert.Single(diagnostics).Code);
     }
 

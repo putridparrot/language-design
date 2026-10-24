@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Text.Json.Nodes;
 using Piper.Binding;
 using Piper.Diagnostics;
@@ -8,7 +9,7 @@ namespace Piper.LanguageServer;
 
 /// <summary>
 /// A Language Server Protocol server for Piper: diagnostics as you type, hover, go to definition, find references,
-/// rename, completion and an outline. Every edit re-analyzes the document's program (see <see cref="Workspace"/>) with the
+/// rename, completion, signature help, inlay hints, semantic highlighting, quick fixes and an outline. Every edit re-analyzes the document's program (see <see cref="Workspace"/>) with the
 /// compiler's parser and binder, which recover from errors, so incomplete code still gets answers.
 /// </summary>
 public sealed class PiperLanguageServer
@@ -107,6 +108,21 @@ public sealed class PiperLanguageServer
                     await SendDiagnosticsAsync(path, []);
                 return null;
             }
+            case "workspace/didChangeWatchedFiles":
+            {
+                // piper.json isn't a document the client opens, so its changes arrive as file events.
+                foreach (var change in parameters!["changes"]!.AsArray().OfType<JsonObject>())
+                {
+                    var path = PathOf(change["uri"]!.GetValue<string>());
+                    if (!string.Equals(Path.GetFileName(path), PiperProject.FileName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (change["type"]?.GetValue<int>() == 3)
+                        await SendDiagnosticsAsync(path, []);
+                    else
+                        await PublishProjectAsync(Path.GetDirectoryName(path));
+                }
+                return null;
+            }
             case "textDocument/hover":
                 return At(parameters!, Hover);
             case "textDocument/definition":
@@ -122,6 +138,15 @@ public sealed class PiperLanguageServer
                 return At(parameters!, (analysis, source, position) => Rename(analysis, source, position, parameters!["newName"]!.GetValue<string>()));
             case "textDocument/completion":
                 return At(parameters!, (analysis, source, position) => Completion.Items(analysis, source, position));
+            case "textDocument/signatureHelp":
+                return At(parameters!, SignatureHelp.Help);
+            case "textDocument/inlayHint":
+                return InDocument(parameters!, (analysis, source) => InlayHints.Hints(analysis, source, SpanOf(source, parameters!["range"]!)));
+            case "textDocument/semanticTokens/full":
+                return InDocument(parameters!, SemanticTokens.Tokens);
+            case "textDocument/codeAction":
+                return InDocument(parameters!, (analysis, source) =>
+                    CodeActions.Actions(analysis, source, SpanOf(source, parameters!["range"]!), parameters!["context"]?["diagnostics"] as JsonArray ?? []));
             case "textDocument/documentSymbol":
             {
                 var path = PathOf(parameters!["textDocument"]!["uri"]!.GetValue<string>());
@@ -148,6 +173,10 @@ public sealed class PiperLanguageServer
             ["renameProvider"] = new JsonObject { ["prepareProvider"] = true },
             ["documentSymbolProvider"] = true,
             ["completionProvider"] = new JsonObject { ["triggerCharacters"] = new JsonArray(".") },
+            ["signatureHelpProvider"] = new JsonObject { ["triggerCharacters"] = new JsonArray("(", ","), ["retriggerCharacters"] = new JsonArray(")") },
+            ["inlayHintProvider"] = true,
+            ["semanticTokensProvider"] = new JsonObject { ["legend"] = SemanticTokens.Legend(), ["full"] = true },
+            ["codeActionProvider"] = new JsonObject { ["codeActionKinds"] = new JsonArray("quickfix") },
         },
         ["serverInfo"] = new JsonObject { ["name"] = "piper", ["version"] = typeof(Compilation).Assembly.GetName().Version?.ToString() },
     };
@@ -165,6 +194,28 @@ public sealed class PiperLanguageServer
             if (_workspace.IsOpen(source.FileName) || diagnostics.Count > 0 || _published.Contains(source.FileName))
                 await SendDiagnosticsAsync(source.FileName, diagnostics);
         }
+        await PublishProjectAsync(Workspace.ProgramRoot(path));
+    }
+
+    /// <summary>Publishes the errors in the piper.json of the program in <paramref name="root"/>, if it has one.</summary>
+    private async Task PublishProjectAsync(string? root)
+    {
+        if (root is null)
+            return;
+        var path = Path.Combine(root, PiperProject.FileName);
+        ImmutableArray<Diagnostic> errors;
+        try
+        {
+            if (!File.Exists(path))
+                return;
+            errors = PiperProject.Load(path).Errors;
+        }
+        catch (IOException)
+        {
+            return;
+        }
+        if (errors.Length > 0 || _published.Contains(path))
+            await SendDiagnosticsAsync(path, errors);
     }
 
     private async Task SendDiagnosticsAsync(string path, IReadOnlyList<Diagnostic> diagnostics)
@@ -206,6 +257,19 @@ public sealed class PiperLanguageServer
         var position = parameters["position"]!;
         var offset = source.GetPosition(position["line"]!.GetValue<int>(), position["character"]!.GetValue<int>());
         return handler(analysis, source, offset);
+    }
+
+    private JsonNode? InDocument(JsonObject parameters, Func<AnalysisResult, SourceText, JsonNode?> handler)
+    {
+        var path = PathOf(parameters["textDocument"]!["uri"]!.GetValue<string>());
+        var analysis = _workspace.AnalysisOf(path);
+        return Workspace.SourceOf(analysis, path) is { } source ? handler(analysis, source) : null;
+    }
+
+    private static TextSpan SpanOf(SourceText source, JsonNode range)
+    {
+        int Offset(JsonNode position) => source.GetPosition(position["line"]!.GetValue<int>(), position["character"]!.GetValue<int>());
+        return TextSpan.FromBounds(Offset(range["start"]!), Offset(range["end"]!));
     }
 
     private static JsonNode? Hover(AnalysisResult analysis, SourceText source, int position)

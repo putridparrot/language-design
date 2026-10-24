@@ -8,7 +8,7 @@ using Piper.Runtime;
 
 public sealed record User(string name, Option<string> email, int age)
 {
-    public void greet()
+    public void Greet()
     {
         global::System.Console.WriteLine($"Hello, {this.name}!");
     }
@@ -16,7 +16,7 @@ public sealed record User(string name, Option<string> email, int age)
 
 public static class Null_safety
 {
-    public static Option<User> find(int id)
+    public static Option<User> Find(int id)
     {
         if (id == 1)
         {
@@ -29,9 +29,9 @@ public static class Null_safety
         return Option<User>.None;
     }
 
-    public static string contact(int id)
+    public static string Contact(int id)
     {
-        Option<User> user = find(id);
+        Option<User> user = Find(id);
         Option<string> temp = user.IsSome ? Option<string>.Some(user.Value.name) : Option<string>.None;
         string name = temp.IsSome ? temp.Value : "nobody";
         Option<string> temp_1 = user.IsSome ? user.Value.email : Option<string>.None;
@@ -39,9 +39,9 @@ public static class Null_safety
         return $"{name} <{email}>";
     }
 
-    public static Option<int> ageNextYear(int id)
+    public static Option<int> AgeNextYear(int id)
     {
-        Option<User> temp = find(id);
+        Option<User> temp = Find(id);
         if (!temp.IsSome)
         {
             return Option<int>.None;
@@ -50,7 +50,7 @@ public static class Null_safety
         return Option<int>.Some(user.age + 1);
     }
 
-    public static string describe(Option<int> @value)
+    public static string Describe(Option<int> @value)
     {
         if (@value is { IsSome: false })
         {
@@ -70,13 +70,13 @@ public static class Null_safety
         }
     }
 
-    public static void main()
+    public static void Main()
     {
-        global::System.Console.WriteLine(contact(1));
-        global::System.Console.WriteLine(contact(2));
-        global::System.Console.WriteLine(contact(3));
-        global::System.Console.WriteLine(ageNextYear(1));
-        global::System.Console.WriteLine(ageNextYear(3));
+        global::System.Console.WriteLine(Contact(1));
+        global::System.Console.WriteLine(Contact(2));
+        global::System.Console.WriteLine(Contact(3));
+        global::System.Console.WriteLine(AgeNextYear(1));
+        global::System.Console.WriteLine(AgeNextYear(3));
         Option<int> maybe = Option<int>.Some(5);
         if (maybe is { IsSome: true, Value: var n } && n > 3)
         {
@@ -89,17 +89,17 @@ public static class Null_safety
         global::System.Console.WriteLine(maybe == Option<int>.Some(5));
         Option<int> nothing = Option<int>.None;
         global::System.Console.WriteLine(nothing == Option<int>.None);
-        global::System.Console.WriteLine(nothing.isNone());
-        global::System.Console.WriteLine($"{describe(maybe)}, {describe(nothing)}, {describe(Option<int>.Some(-2))}");
-        Option<User> temp = find(1);
+        global::System.Console.WriteLine(nothing.IsNone());
+        global::System.Console.WriteLine($"{Describe(maybe)}, {Describe(nothing)}, {Describe(Option<int>.Some(-2))}");
+        Option<User> temp = Find(1);
         if (temp.IsSome)
         {
-            temp.Value.greet();
+            temp.Value.Greet();
         }
-        Option<User> temp_1 = find(9);
+        Option<User> temp_1 = Find(9);
         if (temp_1.IsSome)
         {
-            temp_1.Value.greet();
+            temp_1.Value.Greet();
         }
         Option<string> first = Option<string>.None;
         Option<string> second = Option<string>.Some("second");
@@ -117,7 +117,7 @@ public static class Null_safetyExtensions
 {
     extension<T>(Option<T> self)
     {
-        public bool isNone() => self is { IsSome: false };
+        public bool IsNone() => self is { IsSome: false };
     }
 }
 
@@ -126,6 +126,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Null_safety.main();
+        Null_safety.Main();
     }
 }

@@ -4,23 +4,23 @@ using System;
 using System.Text;
 
 trait Describe {
-    fn describe() => string;
+    fn Describe() => string;
 }
 
 // Extending types declared in another file of the namespace.
 extend Shape: Describe {
-    fn describe() => string {
+    fn Describe() => string {
         let text = StringBuilder();
         match this {
             Circle(center, r) => {
                 text.Append("circle at ");
-                text.Append(center.label());
+                text.Append(center.Label());
                 text.Append(" radius ");
                 text.Append(r);
             }
             Rect(corner, w, h) => {
                 text.Append("{w}x{h} rectangle at ");
-                text.Append(corner.label());
+                text.Append(corner.Label());
             }
         }
         text.ToString()
@@ -28,9 +28,9 @@ extend Shape: Describe {
 }
 
 extend double {
-    fn rounded() => long = (long)Math.Round(this);
+    fn Rounded() => long = (long)Math.Round(this);
 }
 
 extend Point {
-    fn label() => string = "({this.x}, {this.y})";
+    fn Label() => string = "({this.x}, {this.y})";
 }

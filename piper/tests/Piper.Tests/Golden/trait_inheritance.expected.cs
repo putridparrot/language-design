@@ -8,63 +8,63 @@ using Piper.Runtime;
 
 public interface Named
 {
-    string name();
+    string Name();
 
-    string shout() => this.name().ToUpper();
+    string Shout() => this.Name().ToUpper();
 
     public interface PiperWitness<TPiperSelf>
     {
         Named PiperBox(TPiperSelf piperSelf);
-        string name(TPiperSelf piperSelf);
-        string shout(TPiperSelf piperSelf);
+        string Name(TPiperSelf piperSelf);
+        string Shout(TPiperSelf piperSelf);
     }
 
     public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Named
     {
         Named Named.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
-        public string name(TPiperSelf piperSelf) => piperSelf.name();
-        public string shout(TPiperSelf piperSelf) => piperSelf.shout();
+        public string Name(TPiperSelf piperSelf) => piperSelf.Name();
+        public string Shout(TPiperSelf piperSelf) => piperSelf.Shout();
     }
 
     public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Named, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
     {
         Named Named.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
-        public string name(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).name();
-        public string shout(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).shout();
+        public string Name(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Name();
+        public string Shout(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Shout();
     }
 }
 
 public interface Aged
 {
-    int age();
+    int Age();
 
     public interface PiperWitness<TPiperSelf>
     {
         Aged PiperBox(TPiperSelf piperSelf);
-        int age(TPiperSelf piperSelf);
+        int Age(TPiperSelf piperSelf);
     }
 
     public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Aged
     {
         Aged Aged.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
-        public int age(TPiperSelf piperSelf) => piperSelf.age();
+        public int Age(TPiperSelf piperSelf) => piperSelf.Age();
     }
 
     public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Aged, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
     {
         Aged Aged.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
-        public int age(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).age();
+        public int Age(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Age();
     }
 }
 
 public interface Person : Named, Aged
 {
-    string introduce() => $"I'm {this.name()}, {this.age()}";
+    string Introduce() => $"I'm {this.Name()}, {this.Age()}";
 
     public interface PiperWitness<TPiperSelf> : Named.PiperWitness<TPiperSelf>, Aged.PiperWitness<TPiperSelf>
     {
         new Person PiperBox(TPiperSelf piperSelf);
-        string introduce(TPiperSelf piperSelf);
+        string Introduce(TPiperSelf piperSelf);
     }
 
     public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Person
@@ -72,10 +72,10 @@ public interface Person : Named, Aged
         Person Person.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
         Named Named.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
         Aged Aged.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
-        public string introduce(TPiperSelf piperSelf) => piperSelf.introduce();
-        public string name(TPiperSelf piperSelf) => piperSelf.name();
-        public string shout(TPiperSelf piperSelf) => piperSelf.shout();
-        public int age(TPiperSelf piperSelf) => piperSelf.age();
+        public string Introduce(TPiperSelf piperSelf) => piperSelf.Introduce();
+        public string Name(TPiperSelf piperSelf) => piperSelf.Name();
+        public string Shout(TPiperSelf piperSelf) => piperSelf.Shout();
+        public int Age(TPiperSelf piperSelf) => piperSelf.Age();
     }
 
     public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Person, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
@@ -83,100 +83,100 @@ public interface Person : Named, Aged
         Person Person.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
         Named Named.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
         Aged Aged.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
-        public string introduce(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).introduce();
-        public string name(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).name();
-        public string shout(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).shout();
-        public int age(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).age();
+        public string Introduce(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Introduce();
+        public string Name(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Name();
+        public string Shout(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Shout();
+        public int Age(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Age();
     }
 }
 
 public interface Equatable<T>
 {
-    bool sameAs(T other);
+    bool SameAs(T other);
 
     public interface PiperWitness<TPiperSelf>
     {
         Equatable<T> PiperBox(TPiperSelf piperSelf);
-        bool sameAs(TPiperSelf piperSelf, T other);
+        bool SameAs(TPiperSelf piperSelf, T other);
     }
 
     public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Equatable<T>
     {
         Equatable<T> Equatable<T>.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
-        public bool sameAs(TPiperSelf piperSelf, T other) => piperSelf.sameAs(other);
+        public bool SameAs(TPiperSelf piperSelf, T other) => piperSelf.SameAs(other);
     }
 
     public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Equatable<T>, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
     {
         Equatable<T> Equatable<T>.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
-        public bool sameAs(TPiperSelf piperSelf, T other) => TPiperBox.Wrap(piperSelf).sameAs(other);
+        public bool SameAs(TPiperSelf piperSelf, T other) => TPiperBox.Wrap(piperSelf).SameAs(other);
     }
 }
 
 public interface Ordered<T> : Equatable<T>
 {
-    bool before(T other);
+    bool Before(T other);
 
-    bool notAfter(T other) => this.before(other) || this.sameAs(other);
+    bool NotAfter(T other) => this.Before(other) || this.SameAs(other);
 
     public interface PiperWitness<TPiperSelf> : Equatable<T>.PiperWitness<TPiperSelf>
     {
         new Ordered<T> PiperBox(TPiperSelf piperSelf);
-        bool before(TPiperSelf piperSelf, T other);
-        bool notAfter(TPiperSelf piperSelf, T other);
+        bool Before(TPiperSelf piperSelf, T other);
+        bool NotAfter(TPiperSelf piperSelf, T other);
     }
 
     public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Ordered<T>
     {
         Ordered<T> Ordered<T>.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
         Equatable<T> Equatable<T>.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
-        public bool before(TPiperSelf piperSelf, T other) => piperSelf.before(other);
-        public bool notAfter(TPiperSelf piperSelf, T other) => piperSelf.notAfter(other);
-        public bool sameAs(TPiperSelf piperSelf, T other) => piperSelf.sameAs(other);
+        public bool Before(TPiperSelf piperSelf, T other) => piperSelf.Before(other);
+        public bool NotAfter(TPiperSelf piperSelf, T other) => piperSelf.NotAfter(other);
+        public bool SameAs(TPiperSelf piperSelf, T other) => piperSelf.SameAs(other);
     }
 
     public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Ordered<T>, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
     {
         Ordered<T> Ordered<T>.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
         Equatable<T> Equatable<T>.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
-        public bool before(TPiperSelf piperSelf, T other) => TPiperBox.Wrap(piperSelf).before(other);
-        public bool notAfter(TPiperSelf piperSelf, T other) => TPiperBox.Wrap(piperSelf).notAfter(other);
-        public bool sameAs(TPiperSelf piperSelf, T other) => TPiperBox.Wrap(piperSelf).sameAs(other);
+        public bool Before(TPiperSelf piperSelf, T other) => TPiperBox.Wrap(piperSelf).Before(other);
+        public bool NotAfter(TPiperSelf piperSelf, T other) => TPiperBox.Wrap(piperSelf).NotAfter(other);
+        public bool SameAs(TPiperSelf piperSelf, T other) => TPiperBox.Wrap(piperSelf).SameAs(other);
     }
 }
 
 public sealed record Employee(string first, int years) : Person, Named
 {
-    public int age() => this.years;
+    public int Age() => this.years;
 
-    public string name() => this.first;
+    public string Name() => this.first;
 }
 
 public sealed record Version(int major, int minor) : Ordered<Version>
 {
-    public bool sameAs(Version other) => this == other;
+    public bool SameAs(Version other) => this == other;
 
-    public bool before(Version other) => this.major < other.major || this.major == other.major && this.minor < other.minor;
+    public bool Before(Version other) => this.major < other.major || this.major == other.major && this.minor < other.minor;
 }
 
 public static class Trait_inheritance
 {
-    public static void greetAll(global::System.Collections.Generic.List<Person> people)
+    public static void GreetAll(global::System.Collections.Generic.List<Person> people)
     {
         foreach (Person p in people)
         {
-            global::System.Console.WriteLine(p.introduce());
+            global::System.Console.WriteLine(p.Introduce());
         }
     }
 
-    public static string label<T>(T p) => $"{(global::Piper.Runtime.PiperTraits.Witness<Named.PiperWitness<T>>().shout(p))} ({(global::Piper.Runtime.PiperTraits.Witness<Aged.PiperWitness<T>>().age(p))})";
+    public static string Label<T>(T p) => $"{(global::Piper.Runtime.PiperTraits.Witness<Named.PiperWitness<T>>().Shout(p))} ({(global::Piper.Runtime.PiperTraits.Witness<Aged.PiperWitness<T>>().Age(p))})";
 
-    public static T earliest<T>(global::System.Collections.Generic.List<T> items)
+    public static T Earliest<T>(global::System.Collections.Generic.List<T> items)
     {
         T best = items[0];
         foreach (T item in items)
         {
-            if (global::Piper.Runtime.PiperTraits.Witness<Ordered<T>.PiperWitness<T>>().before(item, best))
+            if (global::Piper.Runtime.PiperTraits.Witness<Ordered<T>.PiperWitness<T>>().Before(item, best))
             {
                 best = item;
             }
@@ -184,20 +184,20 @@ public static class Trait_inheritance
         return best;
     }
 
-    public static void main()
+    public static void Main()
     {
         Employee ada = new Employee("Ada", 36);
-        global::System.Console.WriteLine(((Person)ada).introduce());
-        global::System.Console.WriteLine(((Named)ada).shout());
-        global::System.Console.WriteLine(label<Employee>(ada));
+        global::System.Console.WriteLine(((Person)ada).Introduce());
+        global::System.Console.WriteLine(((Named)ada).Shout());
+        global::System.Console.WriteLine(Label<Employee>(ada));
         Named named = ada;
         Person person = ada;
         Aged aged = person;
-        global::System.Console.WriteLine($"{named.name()} {aged.age()}");
-        greetAll(new global::System.Collections.Generic.List<Person> { ada, new Employee("Grace", 45) });
+        global::System.Console.WriteLine($"{named.Name()} {aged.Age()}");
+        GreetAll(new global::System.Collections.Generic.List<Person> { ada, new Employee("Grace", 45) });
         global::System.Collections.Generic.List<Version> versions = new global::System.Collections.Generic.List<Version> { new Version(2, 1), new Version(1, 9), new Version(1, 10) };
-        global::System.Console.WriteLine(earliest<Version>(versions));
-        global::System.Console.WriteLine(((Ordered<Version>)new Version(1, 0)).notAfter(new Version(1, 0)));
+        global::System.Console.WriteLine(Earliest<Version>(versions));
+        global::System.Console.WriteLine(((Ordered<Version>)new Version(1, 0)).NotAfter(new Version(1, 0)));
     }
 }
 
@@ -206,6 +206,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Trait_inheritance.main();
+        Trait_inheritance.Main();
     }
 }

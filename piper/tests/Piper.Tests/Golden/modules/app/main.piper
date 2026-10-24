@@ -6,20 +6,20 @@ private record Totals(count: int, area: double);
 
 // Adding a default method to a trait declared in another file and namespace.
 extend Describe {
-    fn shout() => string = this.describe().ToUpper();
+    fn Shout() => string = this.Describe().ToUpper();
 }
 
-fn main() {
+fn Main() {
     let circle = Shape.Circle(Point(0.0, 0.0), 1.0);
     let rect = Geometry.Shape.Rect(Geometry.Point(1.0, 2.0), 3.0, 4.0);   // fully qualified also works
-    print(circle.describe());
-    print(rect.describe());
-    print(circle.shout());
+    Print(circle.Describe());
+    Print(rect.Describe());
+    Print(circle.Shout());
 
     let shapes: List<Shape> = List();
     shapes.Add(circle);
     shapes.Add(rect);
-    let totals = Totals(shapes.Count, area(circle) + Geometry.area(rect));
-    print(totals);
-    print(totals.area.rounded());        // an extend method on a builtin, from another namespace
+    let totals = Totals(shapes.Count, Area(circle) + Geometry.Area(rect));
+    Print(totals);
+    Print(totals.area.Rounded());        // an extend method on a builtin, from another namespace
 }

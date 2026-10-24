@@ -1,12 +1,12 @@
-// .NET out parameters, as in C#: `out let n` declares n (`out var n` declares it mutable),
+// .NET out parameters, as in C#: `out let n` declares n (`out mut n` declares it mutable),
 // `out n` assigns an existing var, and `out _` discards.
 
 using System;
 using System.Collections.Generic;
 
-fn parseOr(text: string, fallback: int) => int = if int.TryParse(text, out let n) { n } else { fallback };
+fn ParseOr(text: string, fallback: int) => int = if int.TryParse(text, out let n) { n } else { fallback };
 
-fn describe(text: string) => string {
+fn Describe(text: string) => string {
     // As in C#, a variable declared in an if condition is still in scope after the if.
     if !double.TryParse(text, out let value) {
         return "'{text}' is not a number";
@@ -14,59 +14,59 @@ fn describe(text: string) => string {
     "'{text}' is {value * 2} doubled"
 }
 
-fn main() {
-    print(parseOr("42", 0));
-    print(parseOr("forty-two", -1));
-    print(describe("1.25"));
-    print(describe("abc"));
+fn Main() {
+    Print(ParseOr("42", 0));
+    Print(ParseOr("forty-two", -1));
+    Print(Describe("1.25"));
+    Print(Describe("abc"));
 
     // An existing var, and a discard.
-    var count = 0;
+    mut count = 0;
     if int.TryParse("7", out count) {
         count += 1;
     }
-    print(count);
-    print(int.TryParse("8", out _));
+    Print(count);
+    Print(int.TryParse("8", out _));
 
     // `out var` declares a mutable variable.
-    if long.TryParse("10", out var big) {
+    if long.TryParse("10", out mut big) {
         big *= 3;
-        print(big);
+        Print(big);
     }
 
     // TryGetValue writes null only when it returns false: where it returned true, the variable is a plain value.
     let names: Dictionary<string, string> = Dictionary();
     names["ada"] = "Ada Lovelace";
     if names.TryGetValue("ada", out let full) {
-        print(full.Length);
+        Print(full.Length);
     }
     // Anywhere else it is optional, since the call may have returned false.
     let found = names.TryGetValue("bob", out let missing);
-    print("{found} {missing ?? "none"}");
+    Print("{found} {missing ?? "none"}");
     if names.TryGetValue("ada", out let first) && first.StartsWith("Ada") {
-        print("starts with Ada");
+        Print("starts with Ada");
     }
-    print(lookup(names, "ada"));
-    print(lookup(names, "bob"));
+    Print(Lookup(names, "ada"));
+    Print(Lookup(names, "bob"));
 
     // A value type comes back as itself.
     let ages: Dictionary<string, int> = Dictionary();
     ages["Ada"] = 36;
-    print(ages.TryGetValue("Ada", out let age) && age > 30);
+    Print(ages.TryGetValue("Ada", out let age) && age > 30);
 
     // In a loop condition.
     let inputs = ["1", "x", "3"];
-    var total = 0;
+    mut total = 0;
     for input in inputs {
         if int.TryParse(input, out let n) {
             total += n;
         }
     }
-    print(total);
+    Print(total);
 }
 
 // A guard: after `if !…TryGetValue(…) { return …; }` the value is there.
-fn lookup(names: Dictionary<string, string>, key: string) => string {
+fn Lookup(names: Dictionary<string, string>, key: string) => string {
     if !names.TryGetValue(key, out let name) {
         return "no {key}";
     }

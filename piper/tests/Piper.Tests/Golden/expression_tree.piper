@@ -7,43 +7,43 @@ enum Expr {
     Neg(operand: Expr),
 }
 
-fn eval(e: Expr) => int = match e {
+fn Eval(e: Expr) => int = match e {
     Num(n) => n,
-    Add(l, r) => eval(l) + eval(r),
-    Mul(l, r) => eval(l) * eval(r),
-    Neg(x) => -eval(x),
+    Add(l, r) => Eval(l) + Eval(r),
+    Mul(l, r) => Eval(l) * Eval(r),
+    Neg(x) => -Eval(x),
 };
 
-fn show(e: Expr) => string = match e {
+fn Show(e: Expr) => string = match e {
     Num(n) if n < 0 => "({n})",
     Num(n) => "{n}",
-    Add(l, r) => "({show(l)} + {show(r)})",
-    Mul(l, r) => "{show(l)} * {show(r)}",
-    Neg(x) => "-{show(x)}",
+    Add(l, r) => "({Show(l)} + {Show(r)})",
+    Mul(l, r) => "{Show(l)} * {Show(r)}",
+    Neg(x) => "-{Show(x)}",
 };
 
-fn simplify(e: Expr) => Expr = match e {
-    Add(Num(0), x) => simplify(x),
-    Add(x, Num(0)) => simplify(x),
+fn Simplify(e: Expr) => Expr = match e {
+    Add(Num(0), x) => Simplify(x),
+    Add(x, Num(0)) => Simplify(x),
     Mul(Num(0), _) | Mul(_, Num(0)) => Expr.Num(0),
-    Mul(Num(1), x) => simplify(x),
-    Mul(x, Num(1)) => simplify(x),
-    Neg(Neg(x)) => simplify(x),
-    Add(l, r) => Expr.Add(simplify(l), simplify(r)),
-    Mul(l, r) => Expr.Mul(simplify(l), simplify(r)),
-    Neg(x) => Expr.Neg(simplify(x)),
+    Mul(Num(1), x) => Simplify(x),
+    Mul(x, Num(1)) => Simplify(x),
+    Neg(Neg(x)) => Simplify(x),
+    Add(l, r) => Expr.Add(Simplify(l), Simplify(r)),
+    Mul(l, r) => Expr.Mul(Simplify(l), Simplify(r)),
+    Neg(x) => Expr.Neg(Simplify(x)),
     Num(_) => e,
 };
 
-fn main() {
+fn Main() {
     // (2 + 3) * -(-4) + 0 * 7
     let e = Expr.Add(
         Expr.Mul(Expr.Add(Expr.Num(2), Expr.Num(3)), Expr.Neg(Expr.Neg(Expr.Num(4)))),
         Expr.Mul(Expr.Num(0), Expr.Num(7)));
-    print(show(e));
-    print(eval(e));
-    let simple = simplify(e);
-    print(show(simple));
-    print(eval(simple));
-    print(show(simplify(Expr.Mul(Expr.Num(1), Expr.Num(-5)))));
+    Print(Show(e));
+    Print(Eval(e));
+    let simple = Simplify(e);
+    Print(Show(simple));
+    Print(Eval(simple));
+    Print(Show(Simplify(Expr.Mul(Expr.Num(1), Expr.Num(-5)))));
 }

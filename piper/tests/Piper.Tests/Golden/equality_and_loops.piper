@@ -3,7 +3,7 @@
 using System.Collections.Generic;
 
 trait Shape {
-    fn area() => double;
+    fn Area() => double;
 }
 
 record Circle(radius: double);
@@ -11,11 +11,11 @@ record Circle(radius: double);
 record Square(side: double);
 
 extend Circle: Shape {
-    fn area() => double = 3.0 * this.radius * this.radius;
+    fn Area() => double = 3.0 * this.radius * this.radius;
 }
 
 extend Square: Shape {
-    fn area() => double = this.side * this.side;
+    fn Area() => double = this.side * this.side;
 }
 
 enum Event {
@@ -25,8 +25,8 @@ enum Event {
 }
 
 // == on a type parameter compares by value, as Equals does.
-fn indexOf<T>(items: List<T>, wanted: T) => int {
-    for i in 0..items.Count {
+fn IndexOf<T>(items: List<T>, wanted: T) => int {
+    for i in 0..<items.Count {
         if items[i] == wanted {
             return i;
         }
@@ -34,11 +34,11 @@ fn indexOf<T>(items: List<T>, wanted: T) => int {
     -1
 }
 
-fn same(a: Shape, b: Shape) => bool = a == b;
+fn Same(a: Shape, b: Shape) => bool = a == b;
 
 // No `break`, so the loop never ends normally: no "not all paths return" error.
-fn firstSquareAbove(limit: int) => int {
-    var n = 1;
+fn FirstSquareAbove(limit: int) => int {
+    mut n = 1;
     while true {
         if n * n > limit {
             return n * n;
@@ -47,36 +47,36 @@ fn firstSquareAbove(limit: int) => int {
     }
 }
 
-fn describe(event: Event) => string = match event {
+fn Describe(event: Event) => string = match event {
     Click(x, y) | Touch(x, y) if x == y => "on the diagonal at {x}",
     Click(x, y) | Touch(x, y) => "pointer at ({x}, {y})",
     Key(code) => "key {code}",
 };
 
-fn bucket(pair: (int, int?)) => string = match pair {
+fn Bucket(pair: (int, int?)) => string = match pair {
     (0, Some(n)) | (n, None) => "one number: {n}",
     (a, Some(b)) => "two numbers: {a}, {b}",
 };
 
-fn main() {
+fn Main() {
     let names: List<string> = ["ann", "bob", "cy"];
-    print(indexOf(names, "bob"));
-    print(indexOf([Circle(1.0), Circle(2.0)], Circle(2.0)));
-    print(indexOf([1, 2, 3], 7));
+    Print(IndexOf(names, "bob"));
+    Print(IndexOf([Circle(1.0), Circle(2.0)], Circle(2.0)));
+    Print(IndexOf([1, 2, 3], 7));
 
-    print(same(Circle(1.0), Circle(1.0)));
-    print(same(Circle(1.0), Square(1.0)));
+    Print(Same(Circle(1.0), Circle(1.0)));
+    Print(Same(Circle(1.0), Square(1.0)));
     let shape: Shape = Square(2.0);
-    print(shape == Square(2.0));
-    print(shape != Square(3.0));
+    Print(shape == Square(2.0));
+    Print(shape != Square(3.0));
 
-    print(firstSquareAbove(50));
+    Print(FirstSquareAbove(50));
 
-    print(describe(Event.Click(3, 3)));
-    print(describe(Event.Touch(1, 5)));
-    print(describe(Event.Key(13)));
+    Print(Describe(Event.Click(3, 3)));
+    Print(Describe(Event.Touch(1, 5)));
+    Print(Describe(Event.Key(13)));
 
-    print(bucket((0, 9)));
-    print(bucket((4, null)));
-    print(bucket((2, 3)));
+    Print(Bucket((0, 9)));
+    Print(Bucket((4, null)));
+    Print(Bucket((2, 3)));
 }

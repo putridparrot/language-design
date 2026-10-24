@@ -8,7 +8,7 @@ using Piper.Runtime;
 
 public static class Strings
 {
-    public static void main()
+    public static void Main()
     {
         string name = "Piper";
         double version = 1.5;
@@ -34,6 +34,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Strings.main();
+        Strings.Main();
     }
 }

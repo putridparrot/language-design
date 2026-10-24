@@ -30,10 +30,10 @@ public sealed class LanguageServerTests : IDisposable
 
         fn scale(p: Point, by: double) => Point = Point(p.x * by, p.y * by);
 
-        fn main() {
+        fn Main() {
             let p = Point(3.0, 4.0);
             let q = scale(p, 2.0);
-            print(q.length());
+            Print(q.length());
         }
         """;
 
@@ -65,7 +65,7 @@ public sealed class LanguageServerTests : IDisposable
     [Fact]
     public async Task Publishes_diagnostics_as_documents_change()
     {
-        var uri = await OpenAsync("fn main() { let x: int = \"text\"; }");
+        var uri = await OpenAsync("fn Main() { let x: int = \"text\"; }");
         var published = Assert.Single(_notifications);
         Assert.Equal("textDocument/publishDiagnostics", published["method"]!.GetValue<string>());
         var diagnostic = Assert.Single(published["params"]!["diagnostics"]!.AsArray());
@@ -75,7 +75,7 @@ public sealed class LanguageServerTests : IDisposable
         await _server.HandleAsync("textDocument/didChange", new JsonObject
         {
             ["textDocument"] = new JsonObject { ["uri"] = uri, ["version"] = 2 },
-            ["contentChanges"] = new JsonArray(new JsonObject { ["text"] = "fn main() { let x: int = 1; }" }),
+            ["contentChanges"] = new JsonArray(new JsonObject { ["text"] = "fn Main() { let x: int = 1; }" }),
         });
         Assert.Empty(_notifications[^1]["params"]!["diagnostics"]!.AsArray());
     }
@@ -120,14 +120,14 @@ public sealed class LanguageServerTests : IDisposable
     [Fact]
     public async Task Completes_members_after_a_dot_and_names_elsewhere()
     {
-        var text = Program.Replace("print(q.length());", "print(q.);");
+        var text = Program.Replace("Print(q.length());", "Print(q.);");
         var uri = await OpenAsync(text);
         var items = await _server.HandleAsync("textDocument/completion", At(uri, text, "q.)", 2));
         var labels = items!.AsArray().Select(i => i!["label"]!.GetValue<string>()).ToList();
         Assert.Contains("x", labels);
         Assert.Contains("length", labels);
 
-        items = await _server.HandleAsync("textDocument/completion", At(uri, text, "print(q.)", 6));
+        items = await _server.HandleAsync("textDocument/completion", At(uri, text, "Print(q.)", 6));
         labels = [.. items!.AsArray().Select(i => i!["label"]!.GetValue<string>())];
         Assert.Contains("p", labels);
         Assert.Contains("scale", labels);
@@ -141,7 +141,7 @@ public sealed class LanguageServerTests : IDisposable
         var uri = await OpenAsync(Program);
         var symbols = await _server.HandleAsync("textDocument/documentSymbol", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = uri } });
         var names = symbols!.AsArray().Select(s => s!["name"]!.GetValue<string>()).ToList();
-        Assert.Equal(["Point", "extend Point", "scale", "main"], names);
+        Assert.Equal(["Point", "extend Point", "scale", "Main"], names);
     }
 
     [Fact]
@@ -149,9 +149,30 @@ public sealed class LanguageServerTests : IDisposable
     {
         await File.WriteAllTextAsync(Path.Combine(_directory, "piper.json"), "{}");
         await File.WriteAllTextAsync(Path.Combine(_directory, "shapes.piper"), "record Square(side: double);");
-        var text = "fn main() { let s = Square(2.0); print(s.side); }";
+        var text = "fn Main() { let s = Square(2.0); Print(s.side); }";
         await OpenAsync(text);
         Assert.All(_notifications, n => Assert.Empty(n["params"]!["diagnostics"]!.AsArray()));
+    }
+
+    [Fact]
+    public async Task Publishes_piper_json_errors_and_clears_them_when_fixed()
+    {
+        var project = Path.Combine(_directory, "piper.json");
+        await File.WriteAllTextAsync(project, "{ \"output\": \"dll\" }");
+        await OpenAsync("fn Main() { }");
+
+        var published = _notifications.Last(n => n["params"]!["uri"]!.GetValue<string>() == PiperLanguageServer.UriOf(project));
+        var error = Assert.Single(published["params"]!["diagnostics"]!.AsArray())!;
+        Assert.Equal("PIP0400", error["code"]!.GetValue<string>());
+        Assert.Equal(2, error["range"]!["start"]!["character"]!.GetValue<int>());
+
+        await File.WriteAllTextAsync(project, "{ \"output\": \"exe\" }");
+        await _server.HandleAsync("workspace/didChangeWatchedFiles", new JsonObject
+        {
+            ["changes"] = new JsonArray(new JsonObject { ["uri"] = PiperLanguageServer.UriOf(project), ["type"] = 2 }),
+        });
+        Assert.Empty(_notifications[^1]["params"]!["diagnostics"]!.AsArray());
+        Assert.Equal(PiperLanguageServer.UriOf(project), _notifications[^1]["params"]!["uri"]!.GetValue<string>());
     }
 
     [Fact]
@@ -173,5 +194,127 @@ public sealed class LanguageServerTests : IDisposable
         Assert.True(initialized["result"]!["capabilities"]!["hoverProvider"]!.GetValue<bool>());
         var shutdown = await connection.ReadAsync();
         Assert.Equal(2, shutdown!["id"]!.GetValue<int>());
+    }
+    private static JsonObject WholeDocument(string uri, string text) => new()
+    {
+        ["textDocument"] = new JsonObject { ["uri"] = uri },
+        ["range"] = new JsonObject
+        {
+            ["start"] = new JsonObject { ["line"] = 0, ["character"] = 0 },
+            ["end"] = new JsonObject { ["line"] = text.Count(c => c == '\n') + 1, ["character"] = 0 },
+        },
+    };
+
+    [Fact]
+    public async Task Signature_help_shows_the_parameter_being_written()
+    {
+        var text = Program.Replace("let q = scale(p, 2.0);", "let q = scale(p, ");
+        var uri = await OpenAsync(text);
+
+        var help = await _server.HandleAsync("textDocument/signatureHelp", At(uri, text, "scale(p, ", "scale(p, ".Length));
+
+        var signature = Assert.Single(help!["signatures"]!.AsArray());
+        Assert.Equal("fn scale(p: Point, by: double) => Point", signature!["label"]!.GetValue<string>());
+        Assert.Equal(1, help["activeParameter"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task Signature_help_lists_records_and_dotnet_overloads()
+    {
+        var text = "fn Main() {\n    let p = Point(1.0, 2.0);\n    System.Console.WriteLine(\"{p.x}\");\n}\nrecord Point(x: double, y: double);";
+        var uri = await OpenAsync(text);
+
+        var record = await _server.HandleAsync("textDocument/signatureHelp", At(uri, text, "1.0, 2.0", "1.0, ".Length));
+        Assert.Equal("Point(x: double, y: double)", record!["signatures"]![0]!["label"]!.GetValue<string>());
+        Assert.Equal(1, record["activeParameter"]!.GetValue<int>());
+
+        var overloads = await _server.HandleAsync("textDocument/signatureHelp", At(uri, text, "\"{p.x}\""));
+        var labels = overloads!["signatures"]!.AsArray().Select(s => s!["label"]!.GetValue<string>()).ToList();
+        Assert.Contains("fn Console.WriteLine(value: string)", labels);
+        Assert.Contains("fn Console.WriteLine()", labels);
+        // The comma inside the interpolated string isn't an argument separator.
+        Assert.Equal(0, overloads["activeParameter"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task Inlay_hints_show_inferred_types()
+    {
+        var uri = await OpenAsync(Program);
+
+        var hints = (JsonArray)(await _server.HandleAsync("textDocument/inlayHint", WholeDocument(uri, Program)))!;
+
+        var labels = hints.Select(h => h!["label"]!.GetValue<string>()).ToList();
+        Assert.Equal([": Point", ": Point"], labels);
+        var position = hints[0]!["position"]!;
+        Assert.Equal((9, 9), (position["line"]!.GetValue<int>(), position["character"]!.GetValue<int>()));
+    }
+
+    [Fact]
+    public async Task Semantic_tokens_classify_names()
+    {
+        var text = "enum Shape { Circle(r: double), Empty }\nfn area(s: Shape) => double = match s { Circle(r) => r * r, Empty => 0.0 };";
+        var uri = await OpenAsync(text);
+
+        var tokens = await _server.HandleAsync("textDocument/semanticTokens/full", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = uri } });
+
+        // Decode the relative groups of five into (line, column, length, type).
+        var data = tokens!["data"]!.AsArray().Select(d => d!.GetValue<int>()).ToList();
+        var decoded = new List<(int Line, int Column, string Text, string Type)>();
+        int line = 0, column = 0;
+        var lines = text.Split('\n');
+        for (int i = 0; i < data.Count; i += 5)
+        {
+            column = data[i] == 0 ? column + data[i + 1] : data[i + 1];
+            line += data[i];
+            decoded.Add((line, column, lines[line].Substring(column, data[i + 2]), SemanticTokens.TokenTypes[data[i + 3]]));
+        }
+        Assert.Contains((0, 5, "Shape", "enum"), decoded);
+        Assert.Contains((0, 13, "Circle", "enumMember"), decoded);
+        Assert.Contains((1, 3, "area", "function"), decoded);
+        Assert.Contains((1, 8, "s", "parameter"), decoded);
+        Assert.Contains(decoded, t => t is { Line: 1, Text: "Empty", Type: "enumMember" });
+    }
+
+    [Fact]
+    public async Task A_quick_fix_adds_missing_match_arms()
+    {
+        var text = """
+            enum Shape { Circle(r: double), Rect(w: double, h: double), Empty }
+
+            fn area(s: Shape) => double = match s {
+                Circle(r) => r * r
+            };
+            """.ReplaceLineEndings("\n");
+        var uri = await OpenAsync(text);
+        var diagnostics = _notifications[^1]["params"]!["diagnostics"]!.AsArray();
+        Assert.Equal("PIP0230", Assert.Single(diagnostics)!["code"]!.GetValue<string>());
+
+        var request = WholeDocument(uri, text);
+        request["context"] = new JsonObject { ["diagnostics"] = diagnostics.DeepClone() };
+        var actions = (JsonArray)(await _server.HandleAsync("textDocument/codeAction", request))!;
+
+        var action = Assert.Single(actions)!;
+        Assert.Equal("Add the missing match arms", action["title"]!.GetValue<string>());
+        var edit = Assert.Single(action["edit"]!["changes"]![uri]!.AsArray())!;
+        var source = new Piper.Text.SourceText(text);
+        int Offset(JsonNode position) => source.GetPosition(position["line"]!.GetValue<int>(), position["character"]!.GetValue<int>());
+        var start = Offset(edit["range"]!["start"]!);
+        var fixedText = text[..start] + edit["newText"]!.GetValue<string>() + text[Offset(edit["range"]!["end"]!)..];
+        Assert.Equal("""
+            enum Shape { Circle(r: double), Rect(w: double, h: double), Empty }
+
+            fn area(s: Shape) => double = match s {
+                Circle(r) => r * r,
+                Rect(_, _) => throw System.NotImplementedException(),
+                Empty => throw System.NotImplementedException(),
+            };
+            """.ReplaceLineEndings("\n"), fixedText);
+
+        await _server.HandleAsync("textDocument/didChange", new JsonObject
+        {
+            ["textDocument"] = new JsonObject { ["uri"] = uri, ["version"] = 2 },
+            ["contentChanges"] = new JsonArray(new JsonObject { ["text"] = fixedText }),
+        });
+        Assert.Empty(_notifications[^1]["params"]!["diagnostics"]!.AsArray());
     }
 }

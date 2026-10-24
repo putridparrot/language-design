@@ -10,11 +10,11 @@ public sealed record Point(int x, int y);
 
 public static class Tuples
 {
-    public static (int quotient, int remainder) divide(int a, int b) => (a / b, a % b);
+    public static (int quotient, int remainder) Divide(int a, int b) => (a / b, a % b);
 
-    public static (B, A) swap<A, B>((A, B) pair) => (pair.Item2, pair.Item1);
+    public static (B, A) Swap<A, B>((A, B) pair) => (pair.Item2, pair.Item1);
 
-    public static string describe((bool, bool) cell)
+    public static string Describe((bool, bool) cell)
     {
         if (cell is (true, true))
         {
@@ -30,7 +30,7 @@ public static class Tuples
         }
     }
 
-    public static string classify((int, int) point)
+    public static string Classify((int, int) point)
     {
         if (point is (0, 0))
         {
@@ -50,19 +50,19 @@ public static class Tuples
         }
     }
 
-    public static void main()
+    public static void Main()
     {
         (int, string) pair = (1, "one");
         global::System.Console.WriteLine(pair);
         global::System.Console.WriteLine(pair.Item1 + 1);
-        (int quotient, int remainder) result = divide(17, 5);
+        (int quotient, int remainder) result = Divide(17, 5);
         global::System.Console.WriteLine($"{result.Item1} r {result.Item2}");
         global::System.Console.WriteLine(result.Item2);
         Point p = new Point(3, 4);
         string name = "p";
         (string name, int x) labelled = (name, p.x);
         global::System.Console.WriteLine($"{labelled.Item1} {labelled.Item2}");
-        var (q, r) = divide(7, 2);
+        var (q, r) = Divide(7, 2);
         global::System.Console.WriteLine($"{q} {r}");
         var (px, py) = p;
         global::System.Console.WriteLine(px * py);
@@ -83,17 +83,17 @@ public static class Tuples
         {
             global::System.Console.WriteLine($"{index}{word}");
         }
-        global::System.Console.WriteLine(swap<int, string>((1, "x")));
+        global::System.Console.WriteLine(Swap<int, string>((1, "x")));
         (long, Option<int>) widened = (1, Option<int>.Some(2));
         global::System.Console.WriteLine(widened.Item1 + 3000000000L);
         global::System.Console.WriteLine((1, 2) == (1, 2));
         global::System.Console.WriteLine(result == (3, 2));
         global::System.Console.WriteLine((1, "a") != (1, "b"));
-        global::System.Console.WriteLine(describe((true, false)));
-        global::System.Console.WriteLine(describe((false, false)));
-        global::System.Console.WriteLine(classify((0, 5)));
-        global::System.Console.WriteLine(classify((2, 2)));
-        global::System.Console.WriteLine(classify((1, 2)));
+        global::System.Console.WriteLine(Describe((true, false)));
+        global::System.Console.WriteLine(Describe((false, false)));
+        global::System.Console.WriteLine(Classify((0, 5)));
+        global::System.Console.WriteLine(Classify((2, 2)));
+        global::System.Console.WriteLine(Classify((1, 2)));
         var (quotient, remainder) = global::System.Math.DivRem(20, 6);
         global::System.Console.WriteLine($"{quotient} {remainder}");
         (int Quotient, int Remainder) division = global::System.Math.DivRem(20, 6);
@@ -114,6 +114,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Tuples.main();
+        Tuples.Main();
     }
 }

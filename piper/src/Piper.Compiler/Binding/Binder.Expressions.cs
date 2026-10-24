@@ -431,8 +431,7 @@ public sealed partial class Binder
                     : null;
 
             case NameExpressionSyntax { Identifier: { IsMissing: false } name }:
-                if (_scope.Lookup(name.Text) is TypeSymbol or NamespaceSymbol)
-                    Record(name, _scope.Lookup(name.Text));
+                RecordContainer(name, _scope.Lookup(name.Text));
                 return _scope.Lookup(name.Text) switch
                 {
                     (NamespaceSymbol or ClrTypeGroupSymbol or ErrorSymbol) and var symbol => symbol,
@@ -443,6 +442,8 @@ public sealed partial class Binder
 
             case MemberAccessExpressionSyntax { Member: { IsMissing: false } member } access
                 when ResolveContainer(access.Target) is NamespaceSymbol @namespace:
+                if (access.TypeArguments.IsEmpty)
+                    RecordContainer(member, MemberOf(@namespace, member.Text));
                 return MemberOf(@namespace, member.Text) switch
                 {
                     (TypeSymbol or ClrTypeGroupSymbol) and var symbol when !access.TypeArguments.IsEmpty =>
@@ -459,6 +460,15 @@ public sealed partial class Binder
                 return null;
         }
     }
+
+    /// <summary>Records a name that resolved to a namespace or type (for a .NET type, the non-generic one of that name).</summary>
+    private void RecordContainer(Token name, Symbol? symbol) =>
+        Record(name, symbol switch
+        {
+            NamespaceSymbol or TypeSymbol => symbol,
+            ClrTypeGroupSymbol group => NonGenericMember(group),
+            _ => null,
+        });
 
     /// <summary>A generic type named in an expression with its type arguments, or <see cref="ErrorSymbol"/> once reported.</summary>
     private Symbol Constructed(Symbol symbol, Token name, string displayName, ImmutableArray<TypeSyntax> arguments, TextSpan span, bool isQualified) =>

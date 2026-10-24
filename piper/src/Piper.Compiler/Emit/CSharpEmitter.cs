@@ -290,6 +290,7 @@ public sealed partial class CSharpEmitter
         var header = $"{Visibility(record)} sealed {partial}record {Escape(record.Name)}{TypeParameterList(record.TypeParameters)}" +
                      $"({Fields(record.Fields)}){BaseList(TraitsFrom(record, file))}{Constraints(record.TypeParameters)}";
         var methods = MethodsFrom(record, file).ToList();
+        EmitAttributes(record);
         if (methods.Count == 0)
         {
             _writer.WriteLine(header + ";");
@@ -314,6 +315,7 @@ public sealed partial class CSharpEmitter
         var variantNames = @enum.Variants.Select(v => v.Name).ToHashSet();
         var partial = IsPartial(@enum) ? "partial " : "";
 
+        EmitAttributes(@enum);
         _writer.WriteLine($"{Visibility(@enum)} abstract {partial}record {name}{TypeParameterList(@enum.TypeParameters)}" +
                           $"{BaseList(TraitsFrom(@enum, file))}{Constraints(@enum.TypeParameters)}");
         _writer.OpenBrace();
@@ -360,6 +362,7 @@ public sealed partial class CSharpEmitter
     private void EmitTrait(TraitSymbol trait, SourceText file)
     {
         var partial = IsPartial(trait) ? "partial " : "";
+        EmitAttributes(trait);
         _writer.WriteLine($"{Visibility(trait)} {partial}interface {Escape(trait.Name)}{TypeParameterList(trait.TypeParameters)}{BaseList(trait.Parents)}{Constraints(trait.TypeParameters)}");
         _writer.OpenBrace();
         var methods = MethodsFrom(trait, file).ToList();
@@ -386,6 +389,7 @@ public sealed partial class CSharpEmitter
             else
             {
                 _names = NewNameAllocator(method);
+                EmitAttributes(method);
                 _writer.WriteLine($"{Signature(method, method.IsStatic ? "static abstract " : "")};");
             }
         }
@@ -506,7 +510,7 @@ public sealed partial class CSharpEmitter
             _writer.OpenBrace();
             // Piper output must not depend on the machine's locale (e.g. "1,5" vs "1.5").
             _writer.WriteLine("global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;");
-            // An async main is waited for: `main().GetAwaiter().GetResult()` (so exceptions keep their own type).
+            // An async Main is waited for: `Main().GetAwaiter().GetResult()` (so exceptions keep their own type).
             _writer.WriteLine(main.IsAsync
                 ? $"{FunctionContainer(main)}.{Escape(main.Name)}().GetAwaiter().GetResult();"
                 : $"{FunctionContainer(main)}.{Escape(main.Name)}();");
@@ -524,7 +528,26 @@ public sealed partial class CSharpEmitter
     }
 
     private string Fields(IEnumerable<FieldSymbol> fields, ISet<string>? shadowedNames = null) =>
-        string.Join(", ", fields.Select(f => $"{TypeName(f.Type, shadowedNames)} {Escape(f.Name)}"));
+        string.Join(", ", fields.Select(f => $"{InlineAttributes(f)}{TypeName(f.Type, shadowedNames)} {Escape(f.Name)}"));
+
+    /// <summary>A declaration's attributes, one per line: <c>[global::System.ObsoleteAttribute("Use area")]</c>.</summary>
+    private void EmitAttributes(Symbol symbol)
+    {
+        foreach (var attribute in symbol.Attributes)
+            _writer.WriteLine($"[{Attribute(attribute)}]");
+    }
+
+    /// <summary>A field's or parameter's attributes, before its type: <c>[property: global::…JsonPropertyNameAttribute("id")] </c>.</summary>
+    private string InlineAttributes(Symbol symbol) => string.Concat(symbol.Attributes.Select(a => $"[{Attribute(a)}] "));
+
+    private string Attribute(BoundAttribute attribute)
+    {
+        var arguments = attribute.Arguments.Select(a => Expr(a, AssignmentPrecedence))
+            .Concat(attribute.NamedArguments.Select(n => $"{Escape(n.Name)} = {Expr(n.Value, AssignmentPrecedence)}"))
+            .ToList();
+        var target = attribute.Target is null ? "" : attribute.Target + ": ";
+        return $"{target}{TypeName(attribute.Type)}{(arguments.Count == 0 ? "" : $"({string.Join(", ", arguments)})")}";
+    }
 
     private static string TypeParameterList(IEnumerable<TypeParameterSymbol> parameters) =>
         parameters.Any() ? $"<{string.Join(", ", parameters.Select(p => Escape(p.Name)))}>" : "";
@@ -561,7 +584,7 @@ public sealed partial class CSharpEmitter
     /// <summary>e.g. <c>public static T first&lt;T&gt;(Pair&lt;T, T&gt; pair) where T : Show</c>; declares the parameter names.</summary>
     private string Signature(FunctionSymbol symbol, string modifiers)
     {
-        var parameters = string.Join(", ", symbol.Parameters.Select(p => $"{TypeName(p.Type)} {Escape(_names.Declare(p))}"));
+        var parameters = string.Join(", ", symbol.Parameters.Select(p => $"{InlineAttributes(p)}{TypeName(p.Type)} {Escape(_names.Declare(p))}"));
         // `async` belongs to a body, so a required trait (interface) method never has it.
         var @async = symbol.IsAsync && symbol.Declaration?.HasBody == true ? "async " : "";
         // A trait's override is an explicit implementation of the parent's method, which inherits its constraints.
@@ -601,6 +624,7 @@ public sealed partial class CSharpEmitter
 
         var signature = Signature(symbol, modifiers);
         var body = (BoundBlockStatement)function.Body;
+        EmitAttributes(symbol);
 
         if (function.IsExpressionBodied && ExpressionBody(body) is { } expression)
         {
@@ -1198,7 +1222,8 @@ public sealed partial class CSharpEmitter
 
     /// <summary>
     /// Piper patterns map onto C# patterns: variants and records become positional patterns (or type
-    /// patterns when fieldless), ranges become relational patterns and '|' becomes 'or'.
+    /// patterns when fieldless), ranges become relational patterns, '|' becomes 'or', and list, property and relational
+    /// patterns are C#'s own (`...rest` becoming `.. var rest`).
     /// </summary>
     private string Pattern(BoundPattern pattern) => pattern switch
     {
@@ -1212,10 +1237,22 @@ public sealed partial class CSharpEmitter
         BoundConstructorPattern constructor =>
             $"{ConstructorName(constructor.Constructor, constructor.Type)}({string.Join(", ", constructor.Arguments.Select(Pattern))})",
         BoundTuplePattern tuple => $"({string.Join(", ", tuple.Elements.Select(Pattern))})",
+        BoundListPattern list => ListPattern(list),
+        BoundPropertyPattern properties =>
+            $"{{ {string.Join(", ", properties.Properties.Select(p => $"{Escape(p.Member.Name)}: {Pattern(p.Pattern)}"))} }}",
+        BoundRelationalPattern relational => $"{relational.Operator} {Literal(relational.Value)}",
         BoundOrPattern alternatives => string.Join(" or ", alternatives.Alternatives.Select(a =>
             a is BoundRangePattern ? $"({Pattern(a)})" : Pattern(a))),
         _ => throw new InvalidOperationException($"Unexpected pattern {pattern.GetType().Name}"),
     };
+
+    private string ListPattern(BoundListPattern list)
+    {
+        var elements = list.Elements.Select(Pattern).ToList();
+        if (list.Slice is { } slice)
+            elements.Insert(list.SliceIndex, slice is BoundWildcardPattern ? ".." : $".. {Pattern(slice)}");
+        return $"[{string.Join(", ", elements)}]";
+    }
 
     /// <summary>
     /// Property patterns over the Option/Result structs: <c>Some(p)</c> → <c>{ IsSome: true, Value: p }</c>,

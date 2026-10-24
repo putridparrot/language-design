@@ -9,7 +9,7 @@ enum Shape {
     Dot,
 }
 
-fn size(s: Shape) => string {
+fn Size(s: Shape) => string {
     // Every alternative binds the same names, with the same types.
     if s is Circle(r) | Ring(r, _) {
         return "round, {r}";
@@ -20,16 +20,16 @@ fn size(s: Shape) => string {
     "other"
 }
 
-fn main() {
+fn Main() {
     let shapes = [Shape.Circle(1.5), Shape.Ring(3.0, 1.0), Shape.Square(20.0), Shape.Square(2.0), Shape.Dot];
     for s in shapes {
-        print(size(s));
+        Print(Size(s));
     }
 
     // With an else, a value, and more conditions after.
     for s in shapes {
         let label = if s is Circle(d) | Square(d) && d > 1.75 { "large {d}" } else { "-" };
-        print(label);
+        Print(label);
     }
 
     // Nested inside other patterns, and in a match guard.
@@ -39,16 +39,16 @@ fn main() {
             (n, Some(shape)) if shape is Square(v) | Ring(v, _) && v > 4.5 => "{n}: over 4.5",
             (n, _) => "{n}: no",
         };
-        print(text);
+        Print(text);
         if pair is (_, Some(Square(w) | Circle(w))) {
-            print("width {w}");
+            Print("width {w}");
         }
     }
 
     // In a while condition.
-    var index = 0;
+    mut index = 0;
     while index < shapes.Count && shapes[index] is Circle(r) | Ring(r, _) {
-        print("round {r}");
+        Print("round {r}");
         index += 1;
     }
 }

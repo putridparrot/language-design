@@ -1,17 +1,21 @@
 {
   "name": "piper-language",
   "displayName": "Piper",
-  "description": "Piper language support: syntax highlighting, and diagnostics, hover, go to definition, references, rename, completion and an outline from the Piper language server.",
-  "version": "1.0.0-preview.1",
+  "description": "Piper language support: syntax highlighting, running and debugging, and diagnostics, hover, go to definition, references, rename, completion and an outline from the Piper language server.",
+  "version": "1.0.0",
   "publisher": "putridparrot",
   "license": "MIT",
   "engines": {
     "vscode": "^1.90.0"
   },
   "categories": [
-    "Programming Languages"
+    "Programming Languages",
+    "Debuggers"
   ],
   "main": "./extension.js",
+  "activationEvents": [
+    "onDebugResolve:piper"
+  ],
   "contributes": {
     "languages": [
       {
@@ -31,6 +35,81 @@
         "language": "piper",
         "scopeName": "source.piper",
         "path": "./syntaxes/piper.tmLanguage.json"
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "piper"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "piper",
+        "label": "Piper",
+        "languages": [
+          "piper"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "properties": {
+              "program": {
+                "type": "string",
+                "default": "${file}",
+                "description": "The program to debug: a .piper file (with every file of its program) or a folder of .piper files."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": [],
+                "description": "Command-line arguments for the program."
+              },
+              "cwd": {
+                "type": "string",
+                "description": "The working directory (default: the program's folder)."
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "default": {},
+                "description": "Environment variables for the program."
+              },
+              "console": {
+                "type": "string",
+                "enum": [
+                  "internalConsole",
+                  "integratedTerminal",
+                  "externalTerminal"
+                ],
+                "default": "internalConsole",
+                "description": "Where the program's output goes. Use integratedTerminal for a program that reads input."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "piper",
+            "request": "launch",
+            "name": "Debug Piper program",
+            "program": "${file}"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Piper: Debug",
+            "description": "Debug a Piper program",
+            "body": {
+              "type": "piper",
+              "request": "launch",
+              "name": "Debug Piper program",
+              "program": "^\"\\${file}\""
+            }
+          }
+        ]
       }
     ],
     "configuration": {
@@ -72,6 +151,11 @@
         "command": "piper.run",
         "title": "Piper: Run",
         "icon": "$(play)"
+      },
+      {
+        "command": "piper.debug",
+        "title": "Piper: Debug",
+        "icon": "$(debug-alt)"
       }
     ],
     "menus": {
@@ -80,11 +164,20 @@
           "command": "piper.run",
           "when": "resourceLangId == piper",
           "group": "navigation"
+        },
+        {
+          "command": "piper.debug",
+          "when": "resourceLangId == piper",
+          "group": "navigation"
         }
       ],
       "commandPalette": [
         {
           "command": "piper.run",
+          "when": "editorLangId == piper"
+        },
+        {
+          "command": "piper.debug",
           "when": "editorLangId == piper"
         }
       ]

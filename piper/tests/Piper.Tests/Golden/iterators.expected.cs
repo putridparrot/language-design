@@ -8,12 +8,12 @@ using Piper.Runtime;
 
 public sealed record Tree(int @value, global::System.Collections.Generic.List<Tree> children)
 {
-    public global::System.Collections.Generic.IEnumerable<int> walk()
+    public global::System.Collections.Generic.IEnumerable<int> Walk()
     {
         yield return this.@value;
         foreach (Tree child in this.children)
         {
-            foreach (int @value in child.walk())
+            foreach (int @value in child.Walk())
             {
                 yield return @value;
             }
@@ -23,7 +23,7 @@ public sealed record Tree(int @value, global::System.Collections.Generic.List<Tr
 
 public static class Iterators
 {
-    public static global::System.Collections.Generic.IEnumerable<long> fibonacci()
+    public static global::System.Collections.Generic.IEnumerable<long> Fibonacci()
     {
         var (a, b) = (0L, 1L);
         while (true)
@@ -33,7 +33,7 @@ public static class Iterators
         }
     }
 
-    public static global::System.Collections.Generic.IEnumerable<int> countdown(int from)
+    public static global::System.Collections.Generic.IEnumerable<int> Countdown(int from)
     {
         for (int i = 0; i <= from; i++)
         {
@@ -45,7 +45,7 @@ public static class Iterators
         }
     }
 
-    public static global::System.Collections.Generic.IEnumerable<T> takeWhileSmall<T>(global::System.Collections.Generic.IEnumerable<T> items, int limit, global::System.Func<T, int> size)
+    public static global::System.Collections.Generic.IEnumerable<T> TakeWhileSmall<T>(global::System.Collections.Generic.IEnumerable<T> items, int limit, global::System.Func<T, int> size)
     {
         foreach (T item in items)
         {
@@ -57,7 +57,7 @@ public static class Iterators
         }
     }
 
-    public static global::System.Collections.Generic.IEnumerable<string> noisy(string name)
+    public static global::System.Collections.Generic.IEnumerable<string> Noisy(string name)
     {
         global::System.Console.WriteLine($"start {name}");
         yield return $"{name}1";
@@ -66,7 +66,7 @@ public static class Iterators
         global::System.Console.WriteLine($"end {name}");
     }
 
-    public static global::System.Collections.Generic.IEnumerable<int> guarded()
+    public static global::System.Collections.Generic.IEnumerable<int> Guarded()
     {
         try
         {
@@ -79,7 +79,7 @@ public static class Iterators
         }
     }
 
-    public static async global::System.Collections.Generic.IAsyncEnumerable<int> ticks(int count)
+    public static async global::System.Collections.Generic.IAsyncEnumerable<int> Ticks(int count)
     {
         for (int i = 1; i <= count; i++)
         {
@@ -88,19 +88,19 @@ public static class Iterators
         }
     }
 
-    public static async global::System.Threading.Tasks.Task main()
+    public static async global::System.Threading.Tasks.Task Main()
     {
-        global::System.Console.WriteLine(string.Join<long>(", ", global::System.Linq.Enumerable.Take<long>(fibonacci(), 10)));
-        global::System.Console.WriteLine(string.Join<int>(", ", countdown(3)));
-        global::System.Console.WriteLine(string.Join(", ", takeWhileSmall<string>(new global::System.Collections.Generic.List<string> { "a", "bb", "ccc", "d" }, 2, (string s) => s.Length)));
-        global::System.Collections.Generic.IEnumerable<string> lazy = noisy("x");
+        global::System.Console.WriteLine(string.Join<long>(", ", global::System.Linq.Enumerable.Take<long>(Fibonacci(), 10)));
+        global::System.Console.WriteLine(string.Join<int>(", ", Countdown(3)));
+        global::System.Console.WriteLine(string.Join(", ", TakeWhileSmall<string>(new global::System.Collections.Generic.List<string> { "a", "bb", "ccc", "d" }, 2, (string s) => s.Length)));
+        global::System.Collections.Generic.IEnumerable<string> lazy = Noisy("x");
         global::System.Console.WriteLine("created");
         global::System.Console.WriteLine(global::System.Linq.Enumerable.First<string>(lazy));
         Tree tree = new Tree(1, new global::System.Collections.Generic.List<Tree> { new Tree(2, new global::System.Collections.Generic.List<Tree> { new Tree(3, new global::System.Collections.Generic.List<Tree>()) }), new Tree(4, new global::System.Collections.Generic.List<Tree>()) });
-        global::System.Console.WriteLine(string.Join<int>(" ", tree.walk()));
-        global::System.Console.WriteLine(global::System.Linq.Enumerable.First<int>(guarded()));
+        global::System.Console.WriteLine(string.Join<int>(" ", tree.Walk()));
+        global::System.Console.WriteLine(global::System.Linq.Enumerable.First<int>(Guarded()));
         int total = 0;
-        await foreach (int tick in ticks(3))
+        await foreach (int tick in Ticks(3))
         {
             total += tick;
         }
@@ -113,6 +113,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Iterators.main().GetAwaiter().GetResult();
+        Iterators.Main().GetAwaiter().GetResult();
     }
 }

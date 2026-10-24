@@ -21,11 +21,11 @@ enum Expr {
 }
 
 trait Describe {
-    fn describe() => string;
+    fn Describe() => string;
 }
 
 extend Token: Describe {
-    fn describe() => string = match this {
+    fn Describe() => string = match this {
         Number(v) => "number {v}",
         Name(t) => "name '{t}'",
         Op(c) => "'{c}'",
@@ -34,9 +34,9 @@ extend Token: Describe {
     };
 }
 
-fn tokenize(source: string) => Result<List<Token>, string> {
+fn Tokenize(source: string) => Result<List<Token>, string> {
     let tokens: List<Token> = [];
-    var i = 0;
+    mut i = 0;
     while i < source.Length {
         let c = source[i];
         if char.IsWhiteSpace(c) {
@@ -76,88 +76,88 @@ fn tokenize(source: string) => Result<List<Token>, string> {
 // Precedence climbing over the token list; `position` is the parser's cursor.
 record Parser(tokens: List<Token>, position: int[]);
 
-fn peek(p: Parser) => Token? = if p.position[0] < p.tokens.Count { p.tokens[p.position[0]] } else { null };
+fn Peek(p: Parser) => Token? = if p.position[0] < p.tokens.Count { p.tokens[p.position[0]] } else { null };
 
-fn advance(p: Parser) {
+fn Advance(p: Parser) {
     p.position[0] += 1;
 }
 
-fn precedence(op: char) => int = match op {
+fn Precedence(op: char) => int = match op {
     '+' | '-' => 1,
     '*' | '/' => 2,
     '^' => 3,
     _ => 0,
 };
 
-fn parseExpression(p: Parser, minPrecedence: int) => Result<Expr, string> {
-    var left = parseUnary(p)?;
+fn ParseExpression(p: Parser, minPrecedence: int) => Result<Expr, string> {
+    mut left = ParseUnary(p)?;
     while true {
-        let next = peek(p);
+        let next = Peek(p);
         let (op, level) = match next {
-            Some(Token.Op(c)) => (c, precedence(c)),
+            Some(Token.Op(c)) => (c, Precedence(c)),
             _ => ('\0', 0),
         };
         if level == 0 || level < minPrecedence {
             break;
         }
-        advance(p);
+        Advance(p);
         // '^' is right-associative; the others are left-associative.
-        let right = parseExpression(p, if op == '^' { level } else { level + 1 })?;
+        let right = ParseExpression(p, if op == '^' { level } else { level + 1 })?;
         left = Expr.Bin(op, left, right);
     }
     Ok(left)
 }
 
-fn parseUnary(p: Parser) => Result<Expr, string> {
-    match peek(p) {
+fn ParseUnary(p: Parser) => Result<Expr, string> {
+    match Peek(p) {
         Some(Token.Op('-')) => {
-            advance(p);
-            Ok(Expr.Neg(parseUnary(p)?))
+            Advance(p);
+            Ok(Expr.Neg(ParseUnary(p)?))
         }
-        _ => parsePrimary(p),
+        _ => ParsePrimary(p),
     }
 }
 
-fn parsePrimary(p: Parser) => Result<Expr, string> {
-    let token = peek(p);
-    advance(p);
+fn ParsePrimary(p: Parser) => Result<Expr, string> {
+    let token = Peek(p);
+    Advance(p);
     match token {
         Some(Token.Number(v)) => Ok(Expr.Num(v)),
         Some(Token.Name(name)) => {
-            if peek(p) is Some(Token.Open) {
-                advance(p);
-                let argument = parseExpression(p, 1)?;
-                expect(p, Token.Close)?;
+            if Peek(p) is Some(Token.Open) {
+                Advance(p);
+                let argument = ParseExpression(p, 1)?;
+                Expect(p, Token.Close)?;
                 Ok(Expr.Call(name, argument))
             } else {
                 Ok(Expr.Var(name))
             }
         }
         Some(Token.Open) => {
-            let inner = parseExpression(p, 1)?;
-            expect(p, Token.Close)?;
+            let inner = ParseExpression(p, 1)?;
+            Expect(p, Token.Close)?;
             Ok(inner)
         }
-        Some(other) => Err("unexpected {other.describe()}"),
+        Some(other) => Err("unexpected {other.Describe()}"),
         None => Err("unexpected end of input"),
     }
 }
 
-fn expect(p: Parser, wanted: Token) => Result<int, string> {
-    let found = peek(p);
+fn Expect(p: Parser, wanted: Token) => Result<int, string> {
+    let found = Peek(p);
     if found == wanted {
-        advance(p);
+        Advance(p);
         return Ok(0);
     }
-    Err("expected {wanted.describe()} but found {found?.describe() ?? "end of input"}")
+    Err("expected {wanted.Describe()} but found {found?.Describe() ?? "end of input"}")
 }
 
-fn evaluate(e: Expr, variables: Dictionary<string, double>) => Result<double, string> = match e {
+fn Evaluate(e: Expr, variables: Dictionary<string, double>) => Result<double, string> = match e {
     Num(v) => Ok(v),
     Var(name) => if variables.TryGetValue(name, out let value) { Ok(value) } else { Err("unknown variable '{name}'") },
-    Neg(operand) => Ok(-evaluate(operand, variables)?),
+    Neg(operand) => Ok(-Evaluate(operand, variables)?),
     Bin(op, left, right) => {
-        let (a, b) = (evaluate(left, variables)?, evaluate(right, variables)?);
+        let (a, b) = (Evaluate(left, variables)?, Evaluate(right, variables)?);
         match op {
             '+' => Ok(a + b),
             '-' => Ok(a - b),
@@ -167,7 +167,7 @@ fn evaluate(e: Expr, variables: Dictionary<string, double>) => Result<double, st
         }
     }
     Call(function, argument) => {
-        let x = evaluate(argument, variables)?;
+        let x = Evaluate(argument, variables)?;
         match function {
             "sqrt" => Ok(Math.Sqrt(x)),
             "abs" => Ok(Math.Abs(x)),
@@ -176,26 +176,26 @@ fn evaluate(e: Expr, variables: Dictionary<string, double>) => Result<double, st
     }
 };
 
-fn show(e: Expr) => string = match e {
+fn Show(e: Expr) => string = match e {
     Num(v) => "{v}",
     Var(name) => name,
-    Neg(operand) => "(-{show(operand)})",
-    Bin(op, left, right) => "({show(left)} {op} {show(right)})",
-    Call(function, argument) => "{function}({show(argument)})",
+    Neg(operand) => "(-{Show(operand)})",
+    Bin(op, left, right) => "({Show(left)} {op} {Show(right)})",
+    Call(function, argument) => "{function}({Show(argument)})",
 };
 
-fn calculate(source: string, variables: Dictionary<string, double>) => Result<string, string> {
-    let tokens = tokenize(source)?;
+fn Calculate(source: string, variables: Dictionary<string, double>) => Result<string, string> {
+    let tokens = Tokenize(source)?;
     let parser = Parser(tokens, int[1]);
-    let tree = parseExpression(parser, 1)?;
-    if peek(parser) is Some(extra) {
-        return Err("unexpected {extra.describe()} after the expression");
+    let tree = ParseExpression(parser, 1)?;
+    if Peek(parser) is Some(extra) {
+        return Err("unexpected {extra.Describe()} after the expression");
     }
-    let value = evaluate(tree, variables)?;
-    Ok("{show(tree)} = {value}")
+    let value = Evaluate(tree, variables)?;
+    Ok("{Show(tree)} = {value}")
 }
 
-fn main() {
+fn Main() {
     let variables: Dictionary<string, double> = Dictionary();
     variables["x"] = 3;
     variables["pi"] = Math.PI;
@@ -213,9 +213,9 @@ fn main() {
         "1 2",
     ];
     for input in inputs {
-        match calculate(input, variables) {
-            Ok(result) => print("{input.PadRight(22)} → {result}"),
-            Err(message) => print("{input.PadRight(22)} ✗ {message}"),
+        match Calculate(input, variables) {
+            Ok(result) => Print("{input.PadRight(22)} → {result}"),
+            Err(message) => Print("{input.PadRight(22)} ✗ {message}"),
         }
     }
 }

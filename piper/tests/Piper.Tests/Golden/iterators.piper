@@ -6,16 +6,16 @@ using System.Linq;
 using System.Threading.Tasks;
 
 // An endless sequence: only as much is computed as the caller takes.
-fn fibonacci() => IEnumerable<long> {
-    var (a, b) = (0L, 1L);
+fn Fibonacci() => IEnumerable<long> {
+    mut (a, b) = (0L, 1L);
     while true {
         yield return a;
         (a, b) = (b, a + b);
     }
 }
 
-fn countdown(from: int) => IEnumerable<int> {
-    for i in 0..=from {
+fn Countdown(from: int) => IEnumerable<int> {
+    for i in 0..from {
         if from - i < 0 {
             yield break;
         }
@@ -24,7 +24,7 @@ fn countdown(from: int) => IEnumerable<int> {
 }
 
 // Generic, and stopping early with `yield break`.
-fn takeWhileSmall<T>(items: IEnumerable<T>, limit: int, size: (T) => int) => IEnumerable<T> {
+fn TakeWhileSmall<T>(items: IEnumerable<T>, limit: int, size: (T) => int) => IEnumerable<T> {
     for item in items {
         if size(item) > limit {
             yield break;
@@ -33,22 +33,22 @@ fn takeWhileSmall<T>(items: IEnumerable<T>, limit: int, size: (T) => int) => IEn
     }
 }
 
-fn noisy(name: string) => IEnumerable<string> {
-    print("start {name}");
+fn Noisy(name: string) => IEnumerable<string> {
+    Print("start {name}");
     yield return "{name}1";
-    print("middle {name}");
+    Print("middle {name}");
     yield return "{name}2";
-    print("end {name}");
+    Print("end {name}");
 }
 
 record Tree(value: int, children: List<Tree>);
 
 extend Tree {
     // An iterator method, walking the tree depth-first.
-    fn walk() => IEnumerable<int> {
+    fn Walk() => IEnumerable<int> {
         yield return this.value;
         for child in this.children {
-            for value in child.walk() {
+            for value in child.Walk() {
                 yield return value;
             }
         }
@@ -56,41 +56,41 @@ extend Tree {
 }
 
 // `try`/`finally` around `yield return` is allowed (the finally runs when iteration stops).
-fn guarded() => IEnumerable<int> {
+fn Guarded() => IEnumerable<int> {
     try {
         yield return 1;
         yield return 2;
     } finally {
-        print("cleaned up");
+        Print("cleaned up");
     }
 }
 
 // An async iterator, consumed with `await for`.
-async fn ticks(count: int) => IAsyncEnumerable<int> {
-    for i in 1..=count {
+async fn Ticks(count: int) => IAsyncEnumerable<int> {
+    for i in 1..count {
         await Task.Yield();
         yield return i * 10;
     }
 }
 
-async fn main() {
-    print(string.Join(", ", fibonacci().Take(10)));
-    print(string.Join(", ", countdown(3)));
-    print(string.Join(", ", takeWhileSmall(["a", "bb", "ccc", "d"], 2, s => s.Length)));
+async fn Main() {
+    Print(string.Join(", ", Fibonacci().Take(10)));
+    Print(string.Join(", ", Countdown(3)));
+    Print(string.Join(", ", TakeWhileSmall(["a", "bb", "ccc", "d"], 2, s => s.Length)));
 
     // Lazy: nothing runs until iteration, and only as far as needed.
-    let lazy = noisy("x");
-    print("created");
-    print(lazy.First());
+    let lazy = Noisy("x");
+    Print("created");
+    Print(lazy.First());
 
     let tree = Tree(1, [Tree(2, [Tree(3, [])]), Tree(4, [])]);
-    print(string.Join(" ", tree.walk()));
+    Print(string.Join(" ", tree.Walk()));
 
-    print(guarded().First());
+    Print(Guarded().First());
 
-    var total = 0;
-    await for tick in ticks(3) {
+    mut total = 0;
+    await for tick in Ticks(3) {
         total += tick;
     }
-    print("ticks total {total}");
+    Print("ticks total {total}");
 }

@@ -8,7 +8,7 @@ using Piper.Runtime;
 
 public static class Using
 {
-    public static int lines(string text)
+    public static int Lines(string text)
     {
         using global::System.IO.StringReader reader = new global::System.IO.StringReader(text);
         int count = 0;
@@ -23,7 +23,7 @@ public static class Using
         return count;
     }
 
-    public static long size(global::System.IO.MemoryStream stream)
+    public static long Size(global::System.IO.MemoryStream stream)
     {
         using (stream)
         {
@@ -31,10 +31,10 @@ public static class Using
         }
     }
 
-    public static void main()
+    public static void Main()
     {
-        global::System.Console.WriteLine(lines("a\nb\nc"));
-        global::System.Console.WriteLine(lines("a\nstop\nc"));
+        global::System.Console.WriteLine(Lines("a\nb\nc"));
+        global::System.Console.WriteLine(Lines("a\nstop\nc"));
         global::System.IO.MemoryStream first = new global::System.IO.MemoryStream();
         {
             using global::System.IO.MemoryStream stream = first;
@@ -59,7 +59,7 @@ public static class Using
         }
         global::System.IO.MemoryStream third = new global::System.IO.MemoryStream();
         third.SetLength(5);
-        global::System.Console.WriteLine(size(third));
+        global::System.Console.WriteLine(Size(third));
         global::System.Console.WriteLine($"after using (third): {third.CanRead}");
     }
 }
@@ -69,6 +69,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Using.main();
+        Using.Main();
     }
 }

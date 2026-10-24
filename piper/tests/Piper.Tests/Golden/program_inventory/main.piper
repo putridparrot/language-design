@@ -4,8 +4,8 @@ using System.Collections.Generic;
 using Shop.Model;
 using Shop.Store;
 
-fn main() {
-    let inventory = create([
+fn Main() {
+    let inventory = Create([
         Item("F-1", "Apples", Category.Food, Money(45), 20),
         Item("F-2", "Bread", Category.Food, Money(120), 4),
         Item("T-1", "Hammer", Category.Tools, Money(1299), 2),
@@ -13,30 +13,30 @@ fn main() {
     ]);
 
     let everything = List<Item>(inventory.items.Values);
-    print("{everything.Count} items worth {total(everything).pence}p at one of each");
-    print("a hammer costs {find(inventory, "T-1")?.priceText() ?? "?"}");
+    Print("{everything.Count} items worth {Total(everything).pence}p at one of each");
+    Print("a hammer costs {Find(inventory, "T-1")?.PriceText() ?? "?"}");
 
     let orders = [("F-1", 5), ("T-1", 3), ("X-9", 1), ("F-2", 0), ("B-1", 1), ("T-1", 2)];
-    var spent = Money.zero();
+    mut spent = Money.Zero();
     for (sku, quantity) in orders {
-        match order(inventory, sku, quantity) {
+        match Order(inventory, sku, quantity) {
             Ok(cost) => {
-                spent = spent.plus(cost);
-                print("ordered {quantity} x {sku} for {cost.pence}p");
+                spent = spent.Plus(cost);
+                Print("ordered {quantity} x {sku} for {cost.pence}p");
             }
-            Err(error) => print("order {sku} x {quantity} failed: {explain(error)}"),
+            Err(error) => Print("order {sku} x {quantity} failed: {Explain(error)}"),
         }
     }
-    print("spent {spent.pence}p");
+    Print("spent {spent.pence}p");
 
-    for (category, items, units) in stockByCategory(inventory) {
-        print("{category}: {items} items, {units} units");
+    for (category, items, units) in StockByCategory(inventory) {
+        Print("{category}: {items} items, {units} units");
     }
-    print("low stock: {string.Join(", ", lowStock(inventory).ConvertAll(item => "{item.name} ({item.stock})"))}");
+    Print("low stock: {string.Join(", ", LowStock(inventory).ConvertAll(item => "{item.name} ({item.stock})"))}");
 
     try {
-        create([Item("A", "One", Category.Food, Money(1), 1), Item("A", "Two", Category.Food, Money(2), 1)]);
+        Create([Item("A", "One", Category.Food, Money(1), 1), Item("A", "Two", Category.Food, Money(2), 1)]);
     } catch (e: ArgumentException) {
-        print("rejected: {e.Message}");
+        Print("rejected: {e.Message}");
     }
 }

@@ -8,73 +8,73 @@ enum List<T> {
     Nil,
 }
 
-fn swap<A, B>(p: Pair<A, B>) => Pair<B, A> = Pair(p.second, p.first);
+fn Swap<A, B>(p: Pair<A, B>) => Pair<B, A> = Pair(p.second, p.first);
 
-fn unwrapOr<T>(o: Option<T>, fallback: T) => T = match o {
+fn UnwrapOr<T>(o: Option<T>, fallback: T) => T = match o {
     Some(v) => v,
     None => fallback,
 };
 
-fn length<T>(items: List<T>) => int = match items {
-    Cons(_, tail) => 1 + length(tail),
+fn Length<T>(items: List<T>) => int = match items {
+    Cons(_, tail) => 1 + Length(tail),
     Nil => 0,
 };
 
-fn indexOf(items: List<string>, target: string, start: int) => Option<int> = match items {
+fn IndexOf(items: List<string>, target: string, start: int) => Option<int> = match items {
     Cons(head, _) if head == target => Option.Some(start),
-    Cons(_, tail) => indexOf(tail, target, start + 1),
+    Cons(_, tail) => IndexOf(tail, target, start + 1),
     Nil => Option.None,
 };
 
-fn identity<T>(value: T) => T = value;
+fn Identity<T>(value: T) => T = value;
 
-fn empty<T>() => List<T> = List.Nil;
+fn Empty<T>() => List<T> = List.Nil;
 
-fn describe(found: Option<int>) => string = match found {
+fn Describe(found: Option<int>) => string = match found {
     Some(i) => "found at {i}",
     None => "missing",
 };
 
-fn main() {
+fn Main() {
     let p = Pair(1, "one");
-    let q = swap(p);
-    print("{q.first} {q.second}");
+    let q = Swap(p);
+    Print("{q.first} {q.second}");
 
     let some: Option<int> = Option.Some(42);
     let none: Option<int> = Option.None;
-    print(unwrapOr(some, 0));
-    print(unwrapOr(none, -1));
+    Print(UnwrapOr(some, 0));
+    Print(UnwrapOr(none, -1));
 
     let words = List.Cons("piper", List.Cons("is", List.Cons("generic", List.Nil)));
-    print(length(words));
-    print(describe(indexOf(words, "generic", 0)));
-    print(describe(indexOf(words, "rust", 0)));
+    Print(Length(words));
+    Print(Describe(IndexOf(words, "generic", 0)));
+    Print(Describe(IndexOf(words, "rust", 0)));
 
     // Exhaustiveness looks through type arguments: Option<bool> has exactly three cases.
     let flag: Option<bool> = Option.Some(true);
-    print(match flag { Some(true) => "yes", Some(false) => "no", None => "unknown" });
+    Print(match flag { Some(true) => "yes", Some(false) => "no", None => "unknown" });
 
     let widened: Pair<long, double> = Pair(1, 2);
-    print("{widened.first} {widened.second}");
+    Print("{widened.first} {widened.second}");
 
     // Explicit type arguments, as in C#: where nothing can be inferred, or to choose the type.
-    let nothing = empty<string>();
-    print(length(nothing));
-    let big = identity<long>(3) * 1_000_000_000;
-    print(big);
+    let nothing = Empty<string>();
+    Print(Length(nothing));
+    let big = Identity<long>(3) * 1_000_000_000;
+    Print(big);
     let pair = Pair<long, string>(1, "x");
-    print(pair.first + 2_147_483_647);
-    print(unwrapOr(Option<int>.None, 7));
+    Print(pair.first + 2_147_483_647);
+    Print(UnwrapOr(Option<int>.None, 7));
 
     // Generic functions as values: type arguments written, or inferred from the expected function type.
-    let twice: (int) => int = identity;
-    print(twice(5));
-    let echo = identity<string>;
-    print(echo("echo"));
+    let twice: (int) => int = Identity;
+    Print(twice(5));
+    let echo = Identity<string>;
+    Print(echo("echo"));
 
     // `<` and `>` stay comparisons unless the C# rule says otherwise.
     let a = 1;
     let b = 2;
     let c = 3;
-    print(a < b == b > c);
+    Print(a < b == b > c);
 }

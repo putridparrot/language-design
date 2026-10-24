@@ -8,7 +8,7 @@ using Piper.Runtime;
 
 public static class Collection_spread
 {
-    public static global::System.Collections.Generic.IEnumerable<int> evens(int limit)
+    public static global::System.Collections.Generic.IEnumerable<int> Evens(int limit)
     {
         for (int i = 0; i < limit; i++)
         {
@@ -19,13 +19,13 @@ public static class Collection_spread
         }
     }
 
-    public static void main()
+    public static void Main()
     {
         global::System.Collections.Generic.List<int> xs = new global::System.Collections.Generic.List<int> { 1, 2, 3 };
         global::System.Collections.Generic.List<int> more = (global::System.Collections.Generic.List<int>)[0, .. xs, 4];
         global::System.Console.WriteLine(string.Join<int>(",", more));
         int[] arr = new int[] { 10, 20 };
-        global::System.Collections.Generic.List<int> all = (global::System.Collections.Generic.List<int>)[.. xs, .. arr, .. global::System.Linq.Enumerable.Select<int, int>(xs, (int x) => x * 100), .. evens(5)];
+        global::System.Collections.Generic.List<int> all = (global::System.Collections.Generic.List<int>)[.. xs, .. arr, .. global::System.Linq.Enumerable.Select<int, int>(xs, (int x) => x * 100), .. Evens(5)];
         global::System.Console.WriteLine(string.Join<int>(",", all));
         long[] longs = (long[])[.. xs, 99];
         global::System.Console.WriteLine($"{longs.GetType().Name} {string.Join<long>(",", longs)}");
@@ -45,6 +45,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Collection_spread.main();
+        Collection_spread.Main();
     }
 }

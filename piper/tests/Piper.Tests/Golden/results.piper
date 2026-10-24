@@ -5,43 +5,43 @@ enum MathError {
     Negative(value: int),
 }
 
-fn divide(a: int, b: int) => Result<int, MathError> =
+fn Divide(a: int, b: int) => Result<int, MathError> =
     if b == 0 { Err(MathError.DivideByZero) } else { Ok(a / b) };
 
-fn root(n: int) => Result<int, MathError> {
+fn Root(n: int) => Result<int, MathError> {
     if n < 0 { return Err(MathError.Negative(n)); }
-    var r = 0;
+    mut r = 0;
     while (r + 1) * (r + 1) <= n { r += 1; }
     Ok(r)
 }
 
 // Each `?` either unwraps the Ok value or returns the Err immediately.
-fn compute(a: int, b: int) => Result<int, MathError> {
-    let quotient = divide(a, b)?;
-    let r = root(quotient)?;
+fn Compute(a: int, b: int) => Result<int, MathError> {
+    let quotient = Divide(a, b)?;
+    let r = Root(quotient)?;
     Ok(r * 10)
 }
 
 
 // On a Result, `?.` is `?` then member access: there's no conditional access on a Result.
-fn digits(a: int, b: int) => Result<int, MathError> {
-    let text = divide(a, b)?.ToString();
-    Ok(text.Length + compute(a, b)?.CompareTo(0))
+fn Digits(a: int, b: int) => Result<int, MathError> {
+    let text = Divide(a, b)?.ToString();
+    Ok(text.Length + Compute(a, b)?.CompareTo(0))
 }
-fn show(result: Result<int, MathError>) => string = match result {
+fn Show(result: Result<int, MathError>) => string = match result {
     Ok(v) => "ok: {v}",
     Err(MathError.DivideByZero) => "error: divide by zero",
     Err(Negative(n)) => "error: {n} is negative",
 };
 
-fn main() {
-    print(show(compute(100, 4)));
-    print(show(compute(1, 0)));
-    print(show(compute(-50, 2)));
-    print(divide(7, 2));
-    print(root(-1));
+fn Main() {
+    Print(Show(Compute(100, 4)));
+    Print(Show(Compute(1, 0)));
+    Print(Show(Compute(-50, 2)));
+    Print(Divide(7, 2));
+    Print(Root(-1));
 
-    if compute(64, 1) is Ok(v) { print("64 -> {v}"); }
-    print(show(digits(12345, 1)));
-    print(show(digits(1, 0)));
+    if Compute(64, 1) is Ok(v) { Print("64 -> {v}"); }
+    Print(Show(Digits(12345, 1)));
+    Print(Show(Digits(1, 0)));
 }

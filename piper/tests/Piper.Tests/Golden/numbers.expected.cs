@@ -8,35 +8,35 @@ using Piper.Runtime;
 
 public interface Shape
 {
-    double area();
+    double Area();
 
     public interface PiperWitness<TPiperSelf>
     {
         Shape PiperBox(TPiperSelf piperSelf);
-        double area(TPiperSelf piperSelf);
+        double Area(TPiperSelf piperSelf);
     }
 
     public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Shape
     {
         Shape Shape.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
-        public double area(TPiperSelf piperSelf) => piperSelf.area();
+        public double Area(TPiperSelf piperSelf) => piperSelf.Area();
     }
 
     public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Shape, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
     {
         Shape Shape.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
-        public double area(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).area();
+        public double Area(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).Area();
     }
 }
 
 public sealed record Square(double side) : Shape
 {
-    public double area() => this.side * this.side;
+    public double Area() => this.side * this.side;
 }
 
 public static class Numbers
 {
-    public static string describe(byte b)
+    public static string Describe(byte b)
     {
         if (b is 0)
         {
@@ -56,7 +56,7 @@ public static class Numbers
         }
     }
 
-    public static void main()
+    public static void Main()
     {
         float f = 1.5f;
         double d = 2.5;
@@ -80,7 +80,7 @@ public static class Numbers
         stream.WriteByte(7);
         stream.WriteByte(255);
         byte[] bytes = stream.ToArray();
-        global::System.Console.WriteLine($"{bytes.Length} bytes, last {bytes[1]}, {describe(bytes[1])}, {describe(bytes[0])}");
+        global::System.Console.WriteLine($"{bytes.Length} bytes, last {bytes[1]}, {Describe(bytes[1])}, {Describe(bytes[0])}");
         byte[] buffer = new byte[4];
         buffer[0] = 1;
         global::System.Console.WriteLine(string.Join<byte>(",", buffer));
@@ -120,6 +120,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Numbers.main();
+        Numbers.Main();
     }
 }

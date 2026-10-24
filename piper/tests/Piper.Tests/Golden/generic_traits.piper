@@ -3,13 +3,13 @@
 using System.Collections.Generic;
 
 trait Convert<T> {
-    fn convert() => T;
-    fn describe() => string = "converts to {this.convert()}";
+    fn Convert() => T;
+    fn Describe() => string = "converts to {this.Convert()}";
 }
 
 trait Comparable<T: Comparable<T>> {
-    fn compareTo(other: T) => int;
-    fn isLessThan(other: T) => bool = this.compareTo(other) < 0;
+    fn CompareTo(other: T) => int;
+    fn IsLessThan(other: T) => bool = this.CompareTo(other) < 0;
 }
 
 record Celsius(degrees: double);
@@ -17,51 +17,51 @@ record Money(pence: int);
 record Box<T>(value: T);
 
 extend Celsius: Convert<string> {
-    fn convert() => string = "{this.degrees} C";
+    fn Convert() => string = "{this.degrees} C";
 }
 
 extend Money: Comparable<Money>, Convert<int> {
-    fn compareTo(other: Money) => int = this.pence - other.pence;
-    fn convert() => int = this.pence;
+    fn CompareTo(other: Money) => int = this.pence - other.pence;
+    fn Convert() => int = this.pence;
 }
 
 // A generic type can implement a trait in terms of its own type parameter.
 extend Box: Convert<T> {
-    fn convert() => T = this.value;
+    fn Convert() => T = this.value;
 }
 
-fn largest<T: Comparable<T>>(items: List<T>) => T {
-    var best = items[0];
+fn Largest<T: Comparable<T>>(items: List<T>) => T {
+    mut best = items[0];
     for item in items {
-        if best.isLessThan(item) {
+        if best.IsLessThan(item) {
             best = item;
         }
     }
     best
 }
 
-fn total<T: Convert<int>>(items: List<T>) => int {
-    var sum = 0;
+fn Total<T: Convert<int>>(items: List<T>) => int {
+    mut sum = 0;
     for item in items {
-        sum += item.convert();
+        sum += item.Convert();
     }
     sum
 }
 
-fn main() {
+fn Main() {
     let c = Celsius(21.5);
-    print(c.convert());
-    print(c.describe());
+    Print(c.Convert());
+    Print(c.Describe());
 
     // A generic trait is a type too.
     let converters: List<Convert<string>> = [c, Box("boxed")];
     for converter in converters {
-        print(converter.describe());
+        Print(converter.Describe());
     }
 
     let wallet = [Money(250), Money(1200), Money(75)];
-    print(largest(wallet));
-    print(total(wallet));
-    print(total([Box(1), Box(2), Box(3)]));
-    print(Money(5).isLessThan(Money(6)));
+    Print(Largest(wallet));
+    Print(Total(wallet));
+    Print(Total([Box(1), Box(2), Box(3)]));
+    Print(Money(5).IsLessThan(Money(6)));
 }

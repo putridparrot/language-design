@@ -8,19 +8,19 @@ using Piper.Runtime;
 
 public static class Evaluation_order
 {
-    public static int log(string label, int @value)
+    public static int Log(string label, int @value)
     {
         global::System.Console.WriteLine($"eval {label}");
         return @value;
     }
 
-    public static int sum3(int a, int b, int c) => a + b + c;
+    public static int Sum3(int a, int b, int c) => a + b + c;
 
-    public static void main()
+    public static void Main()
     {
-        int temp = log("a", 1);
-        int t = log("b", 2);
-        int total = sum3(temp, t * 10, log("c", 3));
+        int temp = Log("a", 1);
+        int t = Log("b", 2);
+        int total = Sum3(temp, t * 10, Log("c", 3));
         global::System.Console.WriteLine($"total = {total}");
         bool temp_1 = false;
         if (temp_1)
@@ -52,7 +52,7 @@ public static class Evaluation_order
         x = temp_4 + 5;
         global::System.Console.WriteLine($"x = {x}");
         int count = 0;
-        int temp_5 = log("bound", 3);
+        int temp_5 = Log("bound", 3);
         for (int i = 0; i < temp_5; i++)
         {
             count += 1;
@@ -66,6 +66,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Evaluation_order.main();
+        Evaluation_order.Main();
     }
 }

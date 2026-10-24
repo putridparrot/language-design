@@ -10,8 +10,13 @@ namespace Piper.Binding;
 /// Constructors are enum variants, record types (a record has exactly one), tuple types (likewise) and true/false.
 /// Integers and chars are intervals instead: a column's values are split, at the bounds of the literals and ranges in
 /// it, into pieces that each pattern either covers completely or not at all, and each piece is checked like a
-/// constructor. So `1..=5` makes a later `3` unreachable, and `0..=127, 128..=255` exhausts a byte. Any other
+/// constructor. So `1..5` makes a later `3` unreachable, and `0..127, 128..255` exhausts a byte. Any other
 /// literal (strings, doubles) is one constructor of an infinite type, never exhausted without a wildcard or binding.
+/// Relational patterns (`< 0`) are intervals too on integers and chars, and opaque tests elsewhere, as are property
+/// patterns on .NET types.
+///
+/// A list pattern's constructors are lengths: with L the most elements any list pattern in the column names, each length
+/// from 0 to L, and "more than L" (checked as L + 1, which every pattern with a `...` matches and none without does).
 /// </summary>
 public static class Exhaustiveness
 {
@@ -21,6 +26,40 @@ public static class Exhaustiveness
         var rows = patterns.Select(p => new[] { p }).ToList();
         return FindWitness(rows, [type])?[0];
     }
+
+    /// <summary>
+    /// Patterns for arms that would make a match on <paramref name="type"/> exhaustive, for an editor to add: each variant
+    /// (or true/false) that isn't fully covered, as <c>Rect(_, _)</c>, then <c>_</c> if anything is still missing.
+    /// </summary>
+    public static IReadOnlyList<string> MissingArms(TypeSymbol type, IEnumerable<BoundPattern> patterns)
+    {
+        var covering = patterns.ToList();
+        var arms = new List<string>();
+        foreach (var constructor in AllConstructors(type) ?? [])
+        {
+            BoundPattern? pattern = constructor switch
+            {
+                VariantSymbol variant => new BoundConstructorPattern(variant, [.. FieldTypes(variant, type).Select(Wildcard)], type),
+                bool value => new BoundLiteralPattern(value, type),
+                _ => null,
+            };
+            if (pattern is null || !IsUseful(covering, pattern))
+                continue;
+            arms.Add(constructor switch
+            {
+                VariantSymbol { Fields.IsEmpty: true } variant => variant.Name,
+                VariantSymbol variant => $"{variant.Name}({string.Join(", ", variant.Fields.Select(_ => "_"))})",
+                _ => Format(constructor, []),
+            });
+            covering.Add(pattern);
+        }
+        if (FindMissingPattern(type, covering) is not null)
+            arms.Add("_");
+        return arms;
+    }
+
+    /// <summary>True for a relational pattern no value of its type matches, such as `< 0` on a uint.</summary>
+    public static bool IsEmpty(BoundRelationalPattern pattern) => IntervalOf(pattern) is { } interval && interval.Low > interval.High;
 
     /// <summary>True if some value matches <paramref name="pattern"/> but none of <paramref name="previous"/>.</summary>
     public static bool IsUseful(IEnumerable<BoundPattern> previous, BoundPattern pattern)
@@ -43,6 +82,14 @@ public static class Exhaustiveness
         // An interval (or, for a wildcard, the type's whole range) is useful if any piece of it is.
         if ((IntervalOf(head) ?? (IsWildcard(head) && HasIntervalHeads(rows) ? Domain(head.Type) : null)) is { } interval)
             return Split(interval, rows).Any(piece => IsUseful(SpecializeInterval(rows, piece), rest));
+
+        if (head is BoundListPattern || (IsWildcard(head) && HasListHeads(rows)))
+        {
+            var element = ElementTypeOf(head, rows);
+            int longest = LongestList(rows, head);
+            return Lengths(head, longest).Any(length =>
+                IsUseful(SpecializeList(rows, length, element), [.. ExpandList(head, length, element), .. rest]));
+        }
 
         if (!IsWildcard(head))
         {
@@ -70,9 +117,23 @@ public static class Exhaustiveness
         var type = types[0];
         var rest = types[1..];
 
+        if (HasListHeads(rows))
+        {
+            var element = ElementTypeOf(null, rows);
+            int longest = LongestList(rows, null);
+            for (int length = 0; length <= longest + 1; length++)
+            {
+                if (FindWitness(SpecializeList(rows, length, element), [.. Enumerable.Repeat(element, length), .. rest]) is not { } witness)
+                    continue;
+                var elements = witness[..length].Append(length > longest ? "..." : null).OfType<string>();
+                return [$"[{string.Join(", ", elements)}]", .. witness[length..]];
+            }
+            return null;
+        }
+
         if (HasIntervalHeads(rows) && Domain(type) is { } domain)
         {
-            // Prefer a piece we can name ('5' or '3..=4') over one that runs to the end of the type ('_').
+            // Prefer a piece we can name ('5' or '3..4') over one that runs to the end of the type ('_').
             string[]? found = null;
             foreach (var piece in Split(domain, rows))
             {
@@ -151,6 +212,46 @@ public static class Exhaustiveness
     private static List<object> HeadConstructors(List<BoundPattern[]> rows) =>
         ExpandOrHeads(rows).Select(row => KeyOf(row[0])).OfType<object>().Distinct().ToList();
 
+    private static bool HasListHeads(List<BoundPattern[]> rows) => ExpandOrHeads(rows).Any(row => row[0] is BoundListPattern);
+
+    private static TypeSymbol ElementTypeOf(BoundPattern? head, List<BoundPattern[]> rows) =>
+        (head as BoundListPattern ?? ExpandOrHeads(rows).Select(row => row[0]).OfType<BoundListPattern>().First()).ElementType;
+
+    /// <summary>The most elements any list pattern among the rows' heads (and <paramref name="head"/>) names.</summary>
+    private static int LongestList(List<BoundPattern[]> rows, BoundPattern? head) =>
+        ExpandOrHeads(rows).Select(row => row[0]).Append(head).OfType<BoundListPattern>().Max(list => list.Elements.Length);
+
+    /// <summary>The lengths <paramref name="head"/> matches, up to the "longer than <paramref name="longest"/>" one.</summary>
+    private static IEnumerable<int> Lengths(BoundPattern head, int longest) => head switch
+    {
+        BoundListPattern { Slice: null } list => [list.Elements.Length],
+        BoundListPattern list => Enumerable.Range(list.Elements.Length, longest + 2 - list.Elements.Length),
+        _ => Enumerable.Range(0, longest + 2),
+    };
+
+    private static bool MatchesLength(BoundListPattern list, int length) =>
+        list.Slice is null ? list.Elements.Length == length : list.Elements.Length <= length;
+
+    /// <summary>A pattern matching lists of <paramref name="length"/> as one pattern per element.</summary>
+    private static BoundPattern[] ExpandList(BoundPattern pattern, int length, TypeSymbol element) => pattern switch
+    {
+        BoundListPattern { Slice: null } list => [.. list.Elements],
+        BoundListPattern list =>
+        [
+            .. list.Elements[..list.SliceIndex],
+            .. Enumerable.Repeat(Wildcard(element), length - list.Elements.Length),
+            .. list.Elements[list.SliceIndex..],
+        ],
+        _ => [.. Enumerable.Repeat(Wildcard(element), length)],
+    };
+
+    /// <summary>Rows that can match a list of <paramref name="length"/>, with its elements expanded into columns.</summary>
+    private static List<BoundPattern[]> SpecializeList(List<BoundPattern[]> rows, int length, TypeSymbol element) =>
+        ExpandOrHeads(rows)
+            .Where(row => row[0] is not BoundListPattern list || MatchesLength(list, length))
+            .Select(row => (BoundPattern[])[.. ExpandList(row[0], length, element), .. row[1..]])
+            .ToList();
+
     /// <summary>An inclusive range of integer or char values.</summary>
     private readonly record struct Interval(Int128 Low, Int128 High)
     {
@@ -161,6 +262,13 @@ public static class Exhaustiveness
     {
         BoundLiteralPattern literal when Domain(literal.Type) is not null => new(ToInt128(literal.Value), ToInt128(literal.Value)),
         BoundRangePattern range => new(ToInt128(range.Lower), ToInt128(range.Upper) - (range.IsInclusive ? 0 : 1)),
+        BoundRelationalPattern relational when Domain(relational.Type) is { } domain => relational.Operator switch
+        {
+            "<" => new(domain.Low, ToInt128(relational.Value) - 1),
+            "<=" => new(domain.Low, ToInt128(relational.Value)),
+            ">" => new(ToInt128(relational.Value) + 1, domain.High),
+            _ => new(ToInt128(relational.Value), domain.High),
+        },
         _ => null,
     };
 
@@ -217,14 +325,25 @@ public static class Exhaustiveness
     private static string Format(Interval piece, TypeSymbol type)
     {
         string Value(Int128 value) => type == TypeSymbol.Char ? $"'{(char)value}'" : value.ToString();
-        return piece.Low == piece.High ? Value(piece.Low) : $"{Value(piece.Low)}..={Value(piece.High)}";
+        return piece.Low == piece.High ? Value(piece.Low) : $"{Value(piece.Low)}..{Value(piece.High)}";
     }
 
-    private static bool IsWildcard(BoundPattern pattern) => pattern is BoundWildcardPattern or BoundBindingPattern;
+    /// <summary>Patterns every value matches: a property pattern only tests what it contains, since values aren't null.</summary>
+    private static bool IsWildcard(BoundPattern pattern) => pattern switch
+    {
+        BoundWildcardPattern or BoundBindingPattern => true,
+        BoundPropertyPattern properties => properties.Properties.All(p => IsWildcard(p.Pattern)),
+        _ => false,
+    };
 
-    /// <summary>The constructor a pattern tests for: a variant or record symbol, a boxed literal, or the range pattern itself.</summary>
+    /// <summary>
+    /// The constructor a pattern tests for: a variant or record symbol, a boxed literal, or the pattern itself for a range
+    /// or a test the analysis can't see into (a relational pattern on a double, a property pattern).
+    /// </summary>
     private static object? KeyOf(BoundPattern pattern) => pattern switch
     {
+        _ when IsWildcard(pattern) => null,
+        BoundRelationalPattern or BoundPropertyPattern => pattern,
         BoundConstructorPattern constructor => constructor.Constructor,
         BoundTuplePattern tuple => tuple.Type,
         BoundLiteralPattern literal => literal.Value,

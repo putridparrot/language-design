@@ -8,12 +8,12 @@ using Piper.Runtime;
 
 public static class Control_flow
 {
-    public static string fizzbuzz(int n)
+    public static string Fizzbuzz(int n)
     {
         return n % 15 == 0 ? "FizzBuzz" : n % 3 == 0 ? "Fizz" : n % 5 == 0 ? "Buzz" : $"{n}";
     }
 
-    public static bool isPrime(int n)
+    public static bool IsPrime(int n)
     {
         if (n < 2)
         {
@@ -31,16 +31,16 @@ public static class Control_flow
         return true;
     }
 
-    public static void main()
+    public static void Main()
     {
         for (int i = 1; i <= 15; i++)
         {
-            global::System.Console.WriteLine(fizzbuzz(i));
+            global::System.Console.WriteLine(Fizzbuzz(i));
         }
         string primes = "";
         for (int n = 0; n < 30; n++)
         {
-            if (!isPrime(n))
+            if (!IsPrime(n))
             {
                 continue;
             }
@@ -72,6 +72,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Control_flow.main();
+        Control_flow.Main();
     }
 }

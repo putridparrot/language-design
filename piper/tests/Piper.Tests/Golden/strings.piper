@@ -1,18 +1,18 @@
-fn main() {
+fn Main() {
     let name = "Piper";
     let version = 1.5;
-    print("Hello, {name}! Version {version}.");
-    print("Braces: \{ and \}, quote: \", backslash: \\, tab:[\t]");
-    print("Nested: {"inner {name}"}");
-    print("Math: {1 + 2 * 3}, conditional: {if version > 1.0 { "new" } else { "old" }}");
+    Print("Hello, {name}! Version {version}.");
+    Print("Braces: \{ and \}, quote: \", backslash: \\, tab:[\t]");
+    Print("Nested: {"inner {name}"}");
+    Print("Math: {1 + 2 * 3}, conditional: {if version > 1.0 { "new" } else { "old" }}");
     let c = 'P';
-    print("char: {c}, newline escape: [\n]");
-    print("Unicode: \u{1F99C}");
-    print(true);
-    print("bool in string: {1 < 2}");
-    print("con" + "cat" + "enation");
-    print(0.1 + 0.2);
-    print(10 / 4);
-    print(10.0 / 4.0);
-    print('\'');
+    Print("char: {c}, newline escape: [\n]");
+    Print("Unicode: \u{1F99C}");
+    Print(true);
+    Print("bool in string: {1 < 2}");
+    Print("con" + "cat" + "enation");
+    Print(0.1 + 0.2);
+    Print(10 / 4);
+    Print(10.0 / 4.0);
+    Print('\'');
 }

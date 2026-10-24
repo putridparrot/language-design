@@ -8,12 +8,12 @@ using Piper.Runtime;
 
 public static class If_expressions
 {
-    public static int sign(int n)
+    public static int Sign(int n)
     {
         return n < 0 ? -1 : n == 0 ? 0 : 1;
     }
 
-    public static string describe(int n)
+    public static string Describe(int n)
     {
         string parity;
         if (n % 2 == 0)
@@ -28,7 +28,7 @@ public static class If_expressions
         return parity;
     }
 
-    public static int firstPositive(int a, int b)
+    public static int FirstPositive(int a, int b)
     {
         int chosen;
         if (a > 0)
@@ -46,9 +46,9 @@ public static class If_expressions
         return chosen * 100;
     }
 
-    public static double mixed(bool flag) => flag ? 1 : 2.5;
+    public static double Mixed(bool flag) => flag ? 1 : 2.5;
 
-    public static int absolute(int n)
+    public static int Absolute(int n)
     {
         if (n < 0)
         {
@@ -60,25 +60,25 @@ public static class If_expressions
         }
     }
 
-    public static void main()
+    public static void Main()
     {
-        global::System.Console.WriteLine(sign(-5));
-        global::System.Console.WriteLine(sign(0));
-        global::System.Console.WriteLine(sign(7));
-        global::System.Console.WriteLine(describe(10));
-        global::System.Console.WriteLine(describe(7));
-        global::System.Console.WriteLine(firstPositive(3, 4));
-        global::System.Console.WriteLine(firstPositive(-3, 4));
-        global::System.Console.WriteLine(firstPositive(-3, -4));
-        global::System.Console.WriteLine(mixed(true));
-        global::System.Console.WriteLine(mixed(false));
-        global::System.Console.WriteLine(absolute(-9));
+        global::System.Console.WriteLine(Sign(-5));
+        global::System.Console.WriteLine(Sign(0));
+        global::System.Console.WriteLine(Sign(7));
+        global::System.Console.WriteLine(Describe(10));
+        global::System.Console.WriteLine(Describe(7));
+        global::System.Console.WriteLine(FirstPositive(3, 4));
+        global::System.Console.WriteLine(FirstPositive(-3, 4));
+        global::System.Console.WriteLine(FirstPositive(-3, -4));
+        global::System.Console.WriteLine(Mixed(true));
+        global::System.Console.WriteLine(Mixed(false));
+        global::System.Console.WriteLine(Absolute(-9));
         string label;
         int a = 2;
         int b = 3;
         label = $"block value {a * b}";
         global::System.Console.WriteLine(label);
-        if (sign(1) == 1)
+        if (Sign(1) == 1)
         {
             global::System.Console.WriteLine("statement if");
         }
@@ -90,6 +90,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        If_expressions.main();
+        If_expressions.Main();
     }
 }

@@ -1,6 +1,10 @@
+using Piper.Syntax;
 using Piper.Text;
 
 namespace Piper.Binding;
+
+/// <summary>A match that isn't exhaustive, with the patterns of the arms that would make it so (see <see cref="Exhaustiveness.MissingArms"/>).</summary>
+public sealed record IncompleteMatch(SourceText File, MatchExpressionSyntax Syntax, IReadOnlyList<string> MissingArms);
 
 /// <summary>A name in the source that declares or refers to <paramref name="Symbol"/> (a definition, never an instantiation).</summary>
 public sealed record SymbolOccurrence(SourceText File, TextSpan Span, Symbol Symbol, bool IsDeclaration);
@@ -16,10 +20,15 @@ public sealed class SemanticModel
 {
     private readonly List<SymbolOccurrence> _occurrences = [];
     private readonly List<ExpressionInfo> _expressions = [];
+    private readonly List<IncompleteMatch> _incompleteMatches = [];
 
     public IReadOnlyList<SymbolOccurrence> Occurrences => _occurrences;
 
     public IReadOnlyList<ExpressionInfo> Expressions => _expressions;
+
+    public IReadOnlyList<IncompleteMatch> IncompleteMatches => _incompleteMatches;
+
+    internal void AddIncompleteMatch(IncompleteMatch match) => _incompleteMatches.Add(match);
 
     internal void AddOccurrence(SourceText file, TextSpan span, Symbol symbol, bool isDeclaration)
     {

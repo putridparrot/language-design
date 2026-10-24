@@ -158,18 +158,32 @@ public sealed partial class Binder
 
     private sealed record FunctionInfo(FunctionSymbol Symbol, FunctionDeclarationSyntax Syntax, FileContext File, Scope SignatureScope);
 
-    /// <summary>Records that <paramref name="name"/> refers to (or declares) <paramref name="symbol"/>, for editor tooling.</summary>
+    /// <summary>
+    /// Records that <paramref name="name"/> refers to (or declares) <paramref name="symbol"/>, for editor tooling, and
+    /// reports a use of an obsolete declaration.
+    /// </summary>
     private void Record(Token name, Symbol? symbol, bool declaration = false)
     {
-        if (_semantic is not null && symbol is not (null or ErrorSymbol) && !name.IsMissing)
-            _semantic.AddOccurrence(_file.Source, name.Span, symbol, declaration);
+        if (symbol is null or ErrorSymbol || name.IsMissing)
+            return;
+        _semantic?.AddOccurrence(_file.Source, name.Span, symbol, declaration);
+        if (!declaration)
+            CheckObsolete(name, symbol);
     }
 
     /// <summary>Records <paramref name="symbol"/>'s declaration at <paramref name="name"/>, and returns it.</summary>
     private T Declared<T>(T symbol, Token name) where T : Symbol
     {
         Record(name, symbol, declaration: true);
+        CheckReservedName(name);
         return symbol;
+    }
+
+    /// <summary>Words kept free for future keywords can't name anything, though they can still follow a dot (`json.type`).</summary>
+    private void CheckReservedName(Token name)
+    {
+        if (!name.IsMissing && SyntaxFacts.ReservedWords.Contains(name.Text))
+            _diagnostics.ReportReservedName(name.Span, name.Text);
     }
 
     private void InFile(FileContext file)
@@ -261,19 +275,20 @@ public sealed partial class Binder
             }
         }
 
+        BindAttributes(types, functions.Concat(methods));
         CheckExposure(types, functions, methods);
 
         var boundFunctions = functions.Select(BindFunctionBody).OfType<BoundFunction>().ToImmutableArray();
         var boundMethods = methods.Select(BindFunctionBody).OfType<BoundFunction>().ToImmutableArray();
 
-        var mains = functions.Select(f => f.Symbol).Where(f => f.Name == "main").ToList();
+        var mains = functions.Select(f => f.Symbol).Where(f => f.Name == "Main").ToList();
         foreach (var extra in mains.Skip(1))
         {
             InFile(FileOf(extra));
             _diagnostics.ReportDuplicateMain(extra.Declaration!.Name.Span);
         }
         var main = mains.FirstOrDefault();
-        // `fn main()`, or `async fn main()` (returning a plain Task).
+        // `fn Main()`, or `async fn Main()` (returning a plain Task).
         if (main is not null && (main.Parameters.Length != 0 || main.BodyReturnType != TypeSymbol.Unit || main.TypeParameters.Length != 0 ||
                                  main.IteratorElementType is not null))
         {
@@ -382,6 +397,7 @@ public sealed partial class Binder
         symbol.IsPrivate = declaration.Private is not null;
         if (_semantic is not null && !declaration.Name.IsMissing)
             _semantic.AddOccurrence(file.Source, declaration.Name.Span, symbol, isDeclaration: true);
+        CheckReservedName(declaration.Name);
 
         var name = symbol.Name;
         bool clash = file.Private.LookupLocal(name) is not null || file.Namespace.Members.LookupLocal(name) is not null;

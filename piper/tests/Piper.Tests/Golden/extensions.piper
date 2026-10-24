@@ -2,55 +2,55 @@
 // and user records and enums (as members of the generated C# type).
 
 extend int {
-    fn squared() => int = this * this;
-    fn isEven() => bool = this % 2 == 0;
-    fn clamp(low: int, high: int) => int = if this < low { low } else if this > high { high } else { this };
-    static fn zero() => int = 0;
+    fn Squared() => int = this * this;
+    fn IsEven() => bool = this % 2 == 0;
+    fn ClampTo(low: int, high: int) => int = if this < low { low } else if this > high { high } else { this };
+    static fn Zero() => int = 0;
 }
 
 extend string {
-    fn shout() => string = this + "!";
+    fn Shout() => string = this + "!";
 
-    fn repeat(times: int) => string {
-        var result = "";
-        for i in 0..times { result = result + this; }
+    fn Repeat(times: int) => string {
+        mut result = "";
+        for i in 0..<times { result = result + this; }
         result
     }
 }
 
 extend double {
-    fn half() => double = this / 2.0;
+    fn Half() => double = this / 2.0;
 }
 
 record Point(x: int, y: int);
 
 extend Point {
-    static fn origin() => Point = Point(0, 0);
-    fn plus(other: Point) => Point = Point(this.x + other.x, this.y + other.y);
-    fn lengthSquared() => int = this.x.squared() + this.y.squared();
+    static fn Origin() => Point = Point(0, 0);
+    fn Plus(other: Point) => Point = Point(this.x + other.x, this.y + other.y);
+    fn LengthSquared() => int = this.x.Squared() + this.y.Squared();
 }
 
 extend Option {
-    fn isSome() => bool = match this { Some(_) => true, None => false };
-    fn getOr(fallback: T) => T = match this { Some(v) => v, None => fallback };
-    static fn none() => Option<T> = Option.None;
+    fn HasValue() => bool = match this { Some(_) => true, None => false };
+    fn GetOr(fallback: T) => T = match this { Some(v) => v, None => fallback };
+    static fn Nothing() => Option<T> = Option.None;
 }
 
-fn main() {
-    print(7.squared());
-    print((-3).squared());
-    print(4.isEven());
-    print(15.clamp(0, 10));
-    print(int.zero());
-    print("hey".shout());
-    print("ab".repeat(3));
-    print(3.0.half());
+fn Main() {
+    Print(7.Squared());
+    Print((-3).Squared());
+    Print(4.IsEven());
+    Print(15.ClampTo(0, 10));
+    Print(int.Zero());
+    Print("hey".Shout());
+    Print("ab".Repeat(3));
+    Print(3.0.Half());
 
-    let p = Point.origin().plus(Point(2, 3)).plus(Point(1, 1));
-    print("{p.x},{p.y} -> {p.lengthSquared()}");
+    let p = Point.Origin().Plus(Point(2, 3)).Plus(Point(1, 1));
+    Print("{p.x},{p.y} -> {p.LengthSquared()}");
 
-    let o: Option<string> = Option.none();
-    print(o.isSome());
-    print(o.getOr("default"));
-    print(Option.Some(5).getOr(0));
+    let o: Option<string> = Option.Nothing();
+    Print(o.HasValue());
+    Print(o.GetOr("default"));
+    Print(Option.Some(5).GetOr(0));
 }

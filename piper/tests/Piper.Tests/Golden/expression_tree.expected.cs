@@ -23,7 +23,7 @@ public abstract record Expr
 
 public static class Expression_tree
 {
-    public static int eval(Expr e)
+    public static int Eval(Expr e)
     {
         if (e is Expr.Num(var n))
         {
@@ -31,15 +31,15 @@ public static class Expression_tree
         }
         else if (e is Expr.Add(var l, var r))
         {
-            return eval(l) + eval(r);
+            return Eval(l) + Eval(r);
         }
         else if (e is Expr.Mul(var l_1, var r_1))
         {
-            return eval(l_1) * eval(r_1);
+            return Eval(l_1) * Eval(r_1);
         }
         else if (e is Expr.Neg(var x))
         {
-            return -eval(x);
+            return -Eval(x);
         }
         else
         {
@@ -47,7 +47,7 @@ public static class Expression_tree
         }
     }
 
-    public static string show(Expr e)
+    public static string Show(Expr e)
     {
         if (e is Expr.Num(var n) && n < 0)
         {
@@ -59,15 +59,15 @@ public static class Expression_tree
         }
         else if (e is Expr.Add(var l, var r))
         {
-            return $"({show(l)} + {show(r)})";
+            return $"({Show(l)} + {Show(r)})";
         }
         else if (e is Expr.Mul(var l_1, var r_1))
         {
-            return $"{show(l_1)} * {show(r_1)}";
+            return $"{Show(l_1)} * {Show(r_1)}";
         }
         else if (e is Expr.Neg(var x))
         {
-            return $"-{show(x)}";
+            return $"-{Show(x)}";
         }
         else
         {
@@ -75,15 +75,15 @@ public static class Expression_tree
         }
     }
 
-    public static Expr simplify(Expr e)
+    public static Expr Simplify(Expr e)
     {
         if (e is Expr.Add(Expr.Num(0), var x))
         {
-            return simplify(x);
+            return Simplify(x);
         }
         else if (e is Expr.Add(var x_1, Expr.Num(0)))
         {
-            return simplify(x_1);
+            return Simplify(x_1);
         }
         else if (e is Expr.Mul(Expr.Num(0), _) or Expr.Mul(_, Expr.Num(0)))
         {
@@ -91,27 +91,27 @@ public static class Expression_tree
         }
         else if (e is Expr.Mul(Expr.Num(1), var x_2))
         {
-            return simplify(x_2);
+            return Simplify(x_2);
         }
         else if (e is Expr.Mul(var x_3, Expr.Num(1)))
         {
-            return simplify(x_3);
+            return Simplify(x_3);
         }
         else if (e is Expr.Neg(Expr.Neg(var x_4)))
         {
-            return simplify(x_4);
+            return Simplify(x_4);
         }
         else if (e is Expr.Add(var l, var r))
         {
-            return new Expr.Add(simplify(l), simplify(r));
+            return new Expr.Add(Simplify(l), Simplify(r));
         }
         else if (e is Expr.Mul(var l_1, var r_1))
         {
-            return new Expr.Mul(simplify(l_1), simplify(r_1));
+            return new Expr.Mul(Simplify(l_1), Simplify(r_1));
         }
         else if (e is Expr.Neg(var x_5))
         {
-            return new Expr.Neg(simplify(x_5));
+            return new Expr.Neg(Simplify(x_5));
         }
         else
         {
@@ -119,15 +119,15 @@ public static class Expression_tree
         }
     }
 
-    public static void main()
+    public static void Main()
     {
         Expr e = new Expr.Add(new Expr.Mul(new Expr.Add(new Expr.Num(2), new Expr.Num(3)), new Expr.Neg(new Expr.Neg(new Expr.Num(4)))), new Expr.Mul(new Expr.Num(0), new Expr.Num(7)));
-        global::System.Console.WriteLine(show(e));
-        global::System.Console.WriteLine(eval(e));
-        Expr simple = simplify(e);
-        global::System.Console.WriteLine(show(simple));
-        global::System.Console.WriteLine(eval(simple));
-        global::System.Console.WriteLine(show(simplify(new Expr.Mul(new Expr.Num(1), new Expr.Num(-5)))));
+        global::System.Console.WriteLine(Show(e));
+        global::System.Console.WriteLine(Eval(e));
+        Expr simple = Simplify(e);
+        global::System.Console.WriteLine(Show(simple));
+        global::System.Console.WriteLine(Eval(simple));
+        global::System.Console.WriteLine(Show(Simplify(new Expr.Mul(new Expr.Num(1), new Expr.Num(-5)))));
     }
 }
 
@@ -136,6 +136,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Expression_tree.main();
+        Expression_tree.Main();
     }
 }

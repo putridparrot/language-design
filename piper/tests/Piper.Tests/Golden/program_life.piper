@@ -5,23 +5,23 @@ using System.Text;
 
 record Grid(cells: bool[,], rows: int, columns: int);
 
-fn parse(pattern: string) => Grid {
+fn Parse(pattern: string) => Grid {
     let lines = pattern.Split('\n');
     let rows = lines.Length;
     let columns = lines[0].Length;
     let cells = bool[rows, columns];
-    for row in 0..rows {
-        for column in 0..columns {
+    for row in 0..<rows {
+        for column in 0..<columns {
             cells[row, column] = lines[row][column] == '#';
         }
     }
     Grid(cells, rows, columns)
 }
 
-fn neighbours(grid: Grid, row: int, column: int) => int {
-    var count = 0;
-    for dr in -1..=1 {
-        for dc in -1..=1 {
+fn Neighbours(grid: Grid, row: int, column: int) => int {
+    mut count = 0;
+    for dr in -1..1 {
+        for dc in -1..1 {
             if (dr, dc) == (0, 0) {
                 continue;
             }
@@ -36,11 +36,11 @@ fn neighbours(grid: Grid, row: int, column: int) => int {
     count
 }
 
-fn step(grid: Grid) => Grid {
+fn Step(grid: Grid) => Grid {
     let next = bool[grid.rows, grid.columns];
-    for row in 0..grid.rows {
-        for column in 0..grid.columns {
-            next[row, column] = match (grid.cells[row, column], neighbours(grid, row, column)) {
+    for row in 0..<grid.rows {
+        for column in 0..<grid.columns {
+            next[row, column] = match (grid.cells[row, column], Neighbours(grid, row, column)) {
                 (true, 2) | (_, 3) => true,
                 _ => false,
             };
@@ -49,10 +49,10 @@ fn step(grid: Grid) => Grid {
     Grid(next, grid.rows, grid.columns)
 }
 
-fn render(grid: Grid) => string {
+fn Render(grid: Grid) => string {
     let builder = StringBuilder();
-    for row in 0..grid.rows {
-        for column in 0..grid.columns {
+    for row in 0..<grid.rows {
+        for column in 0..<grid.columns {
             builder.Append(if grid.cells[row, column] { '#' } else { '.' });
         }
         if row < grid.rows - 1 {
@@ -62,8 +62,8 @@ fn render(grid: Grid) => string {
     builder.ToString()
 }
 
-fn population(grid: Grid) => int {
-    var alive = 0;
+fn Population(grid: Grid) => int {
+    mut alive = 0;
     for cell in grid.cells {
         if cell {
             alive += 1;
@@ -72,7 +72,7 @@ fn population(grid: Grid) => int {
     alive
 }
 
-fn main() {
+fn Main() {
     // A glider on a 6x6 torus.
     let glider = """
         .#....
@@ -82,17 +82,17 @@ fn main() {
         ......
         ......
         """;
-    var grid = parse(glider);
+    mut grid = Parse(glider);
 
-    for generation in 0..=4 {
-        print("generation {generation}, population {population(grid)}:");
-        print(render(grid));
-        grid = step(grid);
+    for generation in 0..4 {
+        Print("generation {generation}, population {Population(grid)}:");
+        Print(Render(grid));
+        grid = Step(grid);
     }
 
     // A glider moves one cell diagonally every 4 generations, so on a 6x6 torus it's back after 24.
-    for _ in 5..24 {
-        grid = step(grid);
+    for _ in 5..<24 {
+        grid = Step(grid);
     }
-    print("back to the start after 24: {render(grid) == glider}");
+    Print("back to the start after 24: {Render(grid) == glider}");
 }

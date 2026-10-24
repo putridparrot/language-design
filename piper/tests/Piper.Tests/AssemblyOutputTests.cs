@@ -33,9 +33,9 @@ public sealed class AssemblyOutputTests : IDisposable
     public void An_executable_runs_on_its_own()
     {
         var result = Compile("""
-            fn main() {
+            fn Main() {
                 let (q, r) = (17 / 5, 17 % 5);
-                print("{q} r {r}");
+                Print("{q} r {r}");
             }
             """);
 
@@ -59,8 +59,8 @@ public sealed class AssemblyOutputTests : IDisposable
                 throw System.InvalidOperationException("oops")
             }
 
-            fn main() {
-                print(fail());
+            fn Main() {
+                Print(fail());
             }
             """);
 
@@ -71,6 +71,39 @@ public sealed class AssemblyOutputTests : IDisposable
         Assert.NotEqual(0, exitCode);
         Assert.Contains("app.piper:line 2", text);
         Assert.Contains("app.piper:line 6", text);
+    }
+
+    [Fact]
+    public void The_pdb_maps_statements_to_piper_lines_for_debuggers()
+    {
+        // Debuggers bind a breakpoint by finding the PDB document with the breakpoint's file path and a sequence point
+        // on its line.
+        var path = Path.Combine(_directory, "src", "app.piper");
+        var source = """
+            fn twice(x: int) => int {
+                let y = x * 2;
+                y
+            }
+
+            fn Main() {
+                Print(twice(21));
+            }
+            """;
+        var result = Compilation.Compile([new Piper.Text.SourceText(source, path)], new CompilationOptions(LineDirectives: true));
+        Assert.True(result.Success);
+
+        var output = AssemblyWriter.Write(result.Files, _directory, "app", executable: true);
+        Assert.True(output.Success);
+
+        using var stream = File.OpenRead(Path.Combine(_directory, "app.pdb"));
+        using var provider = System.Reflection.Metadata.MetadataReaderProvider.FromPortablePdbStream(stream);
+        var pdb = provider.GetMetadataReader();
+        var lines = pdb.MethodDebugInformation
+            .SelectMany(handle => pdb.GetMethodDebugInformation(handle).GetSequencePoints())
+            .Where(point => !point.IsHidden && pdb.GetString(pdb.GetDocument(point.Document).Name) == path)
+            .Select(point => point.StartLine)
+            .ToHashSet();
+        Assert.Superset(new HashSet<int> { 2, 3, 7 }, lines);
     }
 
     [Fact]

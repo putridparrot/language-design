@@ -133,7 +133,7 @@ public sealed class BoundWhileStatement(BoundExpression condition, BoundStatemen
     public bool IsInfinite { get; init; }
 }
 
-/// <summary>A counted loop over <c>Lower..Upper</c> (or <c>..=</c> when <see cref="IsInclusive"/>).</summary>
+/// <summary>A counted loop over <c>Lower..Upper</c>, including <see cref="Upper"/> when <see cref="IsInclusive"/> (<c>Lower..&lt;Upper</c> excludes it).</summary>
 public sealed class BoundForStatement(
     VariableSymbol variable,
     BoundExpression lower,
@@ -810,3 +810,14 @@ public sealed class BoundConditionalExpression(BoundExpression condition, BoundE
 
     public override TypeSymbol Type { get; } = type;
 }
+
+/// <summary>
+/// <c>[Obsolete("…")]</c>: an attribute of .NET type <see cref="Type"/>, with constant constructor <see cref="Arguments"/>
+/// and <see cref="NamedArguments"/> for its properties and fields. <see cref="Target"/> is C#'s target specifier
+/// (<c>property</c> for a record field's attribute that applies to properties), or null.
+/// </summary>
+public sealed record BoundAttribute(
+    TypeSymbol Type,
+    ImmutableArray<BoundExpression> Arguments,
+    ImmutableArray<(string Name, BoundExpression Value)> NamedArguments,
+    string? Target = null);

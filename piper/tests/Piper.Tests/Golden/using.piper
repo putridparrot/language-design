@@ -3,10 +3,10 @@
 using System;
 using System.IO;
 
-fn lines(text: string) => int {
+fn Lines(text: string) => int {
     // Disposed when the function returns, by whichever path.
     using let reader = StringReader(text);
-    var count = 0;
+    mut count = 0;
     while reader.ReadLine() is Some(line) {
         if line == "stop" {
             return count;
@@ -16,24 +16,24 @@ fn lines(text: string) => int {
     count
 }
 
-fn size(stream: MemoryStream) => long {
+fn Size(stream: MemoryStream) => long {
     using (stream) {
         return stream.Length;
     }
 }
 
-fn main() {
-    print(lines("a\nb\nc"));
-    print(lines("a\nstop\nc"));
+fn Main() {
+    Print(Lines("a\nb\nc"));
+    Print(Lines("a\nstop\nc"));
 
     // A using declaration lasts until the end of its block.
     let first = MemoryStream();
     {
         using let stream = first;
         stream.SetLength(3);
-        print("in the block: {stream.CanRead}");
+        Print("in the block: {stream.CanRead}");
     }
-    print("after the block: {first.CanRead}");
+    Print("after the block: {first.CanRead}");
 
     // ...even when the block is an expression.
     let second = MemoryStream();
@@ -42,16 +42,16 @@ fn main() {
         stream.SetLength(2);
         stream.Length
     };
-    print("length {length}, still open: {second.CanRead}");
+    Print("length {length}, still open: {second.CanRead}");
 
     // The statement form, with a declaration or with any expression.
     using (let writer = StringWriter()) {
         writer.Write("written");
-        print(writer.ToString());
+        Print(writer.ToString());
     }
 
     let third = MemoryStream();
     third.SetLength(5);
-    print(size(third));
-    print("after using (third): {third.CanRead}");
+    Print(Size(third));
+    Print("after using (third): {third.CanRead}");
 }

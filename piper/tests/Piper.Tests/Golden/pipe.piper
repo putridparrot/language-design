@@ -2,27 +2,27 @@
 
 using System.Linq;
 
-fn twice(n: int) => int = n * 2;
+fn Twice(n: int) => int = n * 2;
 
-fn add(n: int, amount: int) => int = n + amount;
+fn Add(n: int, amount: int) => int = n + amount;
 
-fn describe(n: int, what: string) => string = "{n} {what}";
+fn Describe(n: int, what: string) => string = "{n} {what}";
 
 record Box(value: int);
 
-fn main() {
+fn Main() {
     // A bare function, or a call whose arguments come after the piped value.
-    print(5 |> twice);
-    print(5 |> add(10) |> twice |> describe("apples"));
+    Print(5 |> Twice);
+    Print(5 |> Add(10) |> Twice |> Describe("apples"));
 
     // Binds looser than arithmetic and tighter than comparison: (1 + 2) |> twice, then == 6.
-    print(1 + 2 |> twice == 6);
+    Print(1 + 2 |> Twice == 6);
 
     // Function values, lambdas in variables, record constructors and generic functions.
     let triple = (n: int) => n * 3;
-    print(4 |> triple);
-    print(7 |> Box);
-    print("Piper" |> string.Concat("!"));
+    Print(4 |> triple);
+    Print(7 |> Box);
+    Print("Piper" |> string.Concat("!"));
 
     // Static .NET methods, including LINQ called as plain functions.
     let words = ["pear", "fig", "banana"];
@@ -30,11 +30,11 @@ fn main() {
         |> Enumerable.Where(w => w.Length > 3)
         |> Enumerable.Select(w => w.Length)
         |> Enumerable.ToList();
-    print(string.Join(",", lengths));
-    print(-16.0 |> System.Math.Abs |> System.Math.Sqrt);
+    Print(string.Join(",", lengths));
+    Print(-16.0 |> System.Math.Abs |> System.Math.Sqrt);
 
     // Evaluated left to right: the piped value before the other arguments.
-    var log = "";
-    let result = { log += "a"; 1 } |> add({ log += "b"; 2 });
-    print("{result} {log}");
+    mut log = "";
+    let result = { log += "a"; 1 } |> Add({ log += "b"; 2 });
+    Print("{result} {log}");
 }

@@ -10,15 +10,15 @@ public sealed record Point(int x, int y);
 
 public static class Hello
 {
-    public static int add(int a, int b) => a + b;
+    public static int Add(int a, int b) => a + b;
 
-    public static string classify(int n)
+    public static string Classify(int n)
     {
         string kind = n < 0 ? "negative" : n == 0 ? "zero" : "positive";
         return kind;
     }
 
-    public static void main()
+    public static void Main()
     {
         Point p = new Point(1, 2);
         int total = 0;
@@ -30,7 +30,7 @@ public static class Hello
         {
             total -= 1;
         }
-        global::System.Console.WriteLine($"p=({p.x}, {p.y}) total={total} {classify(-3)} {add(2, 3)}");
+        global::System.Console.WriteLine($"p=({p.x}, {p.y}) total={total} {Classify(-3)} {Add(2, 3)}");
     }
 }
 
@@ -39,6 +39,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Hello.main();
+        Hello.Main();
     }
 }

@@ -10,9 +10,9 @@ public sealed record User(string name, Option<string> nickname);
 
 public static class Guards
 {
-    public static Option<User> lookup(int id) => id == 1 ? Option<User>.Some(new User("Ada", Option<string>.Some("ada"))) : id == 2 ? Option<User>.Some(new User("Bob", Option<string>.None)) : Option<User>.None;
+    public static Option<User> Lookup(int id) => id == 1 ? Option<User>.Some(new User("Ada", Option<string>.Some("ada"))) : id == 2 ? Option<User>.Some(new User("Bob", Option<string>.None)) : Option<User>.None;
 
-    public static Option<int> parse(string text)
+    public static Option<int> Parse(string text)
     {
         int n;
         if (int.TryParse(text, out n))
@@ -25,17 +25,17 @@ public static class Guards
         }
     }
 
-    public static int count(global::System.Collections.Generic.List<int> log, int n)
+    public static int Count(global::System.Collections.Generic.List<int> log, int n)
     {
         log.Add(n);
         return n;
     }
 
-    public static string describe(Option<int> n, global::System.Collections.Generic.List<int> log)
+    public static string Describe(Option<int> n, global::System.Collections.Generic.List<int> log)
     {
         if (n is { IsSome: true, Value: var x })
         {
-            int doubled = count(log, x) * 2;
+            int doubled = Count(log, x) * 2;
             if (doubled > 10)
             {
                 return $"big {x}";
@@ -55,13 +55,13 @@ public static class Guards
         }
     }
 
-    public static Option<int> firstBig(string texts, string limit)
+    public static Option<int> FirstBig(string texts, string limit)
     {
         string label;
-        Option<int> temp = parse(texts);
+        Option<int> temp = Parse(texts);
         if (temp is { IsSome: true, Value: var n })
         {
-            Option<int> temp_1 = parse(limit);
+            Option<int> temp_1 = Parse(limit);
             if (!temp_1.IsSome)
             {
                 return Option<int>.None;
@@ -85,18 +85,18 @@ public static class Guards
         return Option<int>.Some(label.Length);
     }
 
-    public static string greet(int id, Option<User> fallback)
+    public static string Greet(int id, Option<User> fallback)
     {
         if (fallback is { IsSome: true, Value: var f })
         {
-            Option<User> temp = lookup(id);
+            Option<User> temp = Lookup(id);
             Option<string> temp_1 = temp.IsSome ? temp.Value.nickname : Option<string>.None;
             if ((temp_1.IsSome ? temp_1.Value : f.name) == "Ada")
             {
                 return "hello Ada";
             }
         }
-        if (lookup(id) is { IsSome: true, Value: var u })
+        if (Lookup(id) is { IsSome: true, Value: var u })
         {
             Option<string> temp_2 = u.nickname;
             string n = temp_2.IsSome ? temp_2.Value : "?";
@@ -108,25 +108,25 @@ public static class Guards
         return "who?";
     }
 
-    public static void main()
+    public static void Main()
     {
         global::System.Collections.Generic.List<int> log = new global::System.Collections.Generic.List<int>();
-        global::System.Console.WriteLine(describe(Option<int>.Some(7), log));
-        global::System.Console.WriteLine(describe(Option<int>.Some(3), log));
-        global::System.Console.WriteLine(describe(Option<int>.Some(-4), log));
-        global::System.Console.WriteLine(describe(Option<int>.None, log));
+        global::System.Console.WriteLine(Describe(Option<int>.Some(7), log));
+        global::System.Console.WriteLine(Describe(Option<int>.Some(3), log));
+        global::System.Console.WriteLine(Describe(Option<int>.Some(-4), log));
+        global::System.Console.WriteLine(Describe(Option<int>.None, log));
         global::System.Console.WriteLine($"the guard ran for {string.Join<int>(",", log)}");
-        global::System.Console.WriteLine(firstBig("12", "10"));
-        global::System.Console.WriteLine(firstBig("5", "10"));
-        global::System.Console.WriteLine(firstBig("12", "x"));
-        global::System.Console.WriteLine(greet(1, Option<User>.Some(new User("Ada", Option<string>.None))));
-        global::System.Console.WriteLine(greet(2, Option<User>.None));
-        global::System.Console.WriteLine(greet(3, Option<User>.None));
+        global::System.Console.WriteLine(FirstBig("12", "10"));
+        global::System.Console.WriteLine(FirstBig("5", "10"));
+        global::System.Console.WriteLine(FirstBig("12", "x"));
+        global::System.Console.WriteLine(Greet(1, Option<User>.Some(new User("Ada", Option<string>.None))));
+        global::System.Console.WriteLine(Greet(2, Option<User>.None));
+        global::System.Console.WriteLine(Greet(3, Option<User>.None));
         global::System.Collections.Generic.List<string> queue = new global::System.Collections.Generic.List<string> { "3", "4", "x", "5" };
         int total = 0;
         while (true)
         {
-            if (queue.Count > 0 && parse(queue[0]) is { IsSome: true, Value: var n })
+            if (queue.Count > 0 && Parse(queue[0]) is { IsSome: true, Value: var n })
             {
                 queue.RemoveAt(0);
                 if (n < 10)
@@ -146,6 +146,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Guards.main();
+        Guards.Main();
     }
 }

@@ -23,7 +23,7 @@ public abstract record Shape
 
 public static class Or_bindings
 {
-    public static string size(Shape s)
+    public static string Size(Shape s)
     {
         double r;
         if (s is Shape.Circle(var r_1))
@@ -61,12 +61,12 @@ public static class Or_bindings
         return "other";
     }
 
-    public static void main()
+    public static void Main()
     {
         global::System.Collections.Generic.List<Shape> shapes = new global::System.Collections.Generic.List<Shape> { new Shape.Circle(1.5), new Shape.Ring(3.0, 1.0), new Shape.Square(20.0), new Shape.Square(2.0), new Shape.Dot() };
         foreach (Shape s in shapes)
         {
-            global::System.Console.WriteLine(size(s));
+            global::System.Console.WriteLine(Size(s));
         }
         foreach (Shape s_1 in shapes)
         {
@@ -180,6 +180,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Or_bindings.main();
+        Or_bindings.Main();
     }
 }

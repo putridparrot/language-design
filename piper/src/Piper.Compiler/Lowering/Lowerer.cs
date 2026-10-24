@@ -723,6 +723,11 @@ public sealed class Lowerer
         BoundConstructorPattern constructor => new BoundConstructorPattern(
             constructor.Constructor, [.. constructor.Arguments.Select(a => RenameBindings(a, copies))], constructor.Type),
         BoundTuplePattern tuple => new BoundTuplePattern([.. tuple.Elements.Select(e => RenameBindings(e, copies))], (TupleTypeSymbol)tuple.Type),
+        BoundListPattern list => new BoundListPattern(
+            [.. list.Elements.Select(e => RenameBindings(e, copies))], list.SliceIndex, list.Slice is { } slice ? RenameBindings(slice, copies) : null,
+            list.ElementType, list.Type),
+        BoundPropertyPattern properties => new BoundPropertyPattern(
+            [.. properties.Properties.Select(p => p with { Pattern = RenameBindings(p.Pattern, copies) })], properties.Type),
         _ => pattern,
     };
 
@@ -771,6 +776,11 @@ public sealed class Lowerer
             Combinations(constructor.Arguments).Select(arguments => new BoundConstructorPattern(constructor.Constructor, arguments, constructor.Type)),
         BoundTuplePattern { HasBindings: true } tuple =>
             Combinations(tuple.Elements).Select(elements => new BoundTuplePattern(elements, (TupleTypeSymbol)tuple.Type)),
+        BoundListPattern { HasBindings: true } list =>
+            Combinations(list.Elements).Select(elements => new BoundListPattern(elements, list.SliceIndex, list.Slice, list.ElementType, list.Type)),
+        BoundPropertyPattern { HasBindings: true } properties =>
+            Combinations([.. properties.Properties.Select(p => p.Pattern)]).Select(patterns => new BoundPropertyPattern(
+                [.. properties.Properties.Zip(patterns, (p, pattern) => p with { Pattern = pattern })], properties.Type)),
         _ => [pattern],
     };
 

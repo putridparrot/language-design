@@ -11,9 +11,9 @@ public class LineMappingTests
             value
         }
 
-        fn main() {
-            print(check(1));
-            print(check(-5));
+        fn Main() {
+            Print(check(1));
+            Print(check(-5));
         }
         """;
 
@@ -43,7 +43,7 @@ public class LineMappingTests
         var error = Assert.Single(run.Errors);
         Assert.Contains("System.InvalidOperationException: negative: -5", error);
         Assert.Contains("at check in crash.piper:line 3", error);
-        Assert.Contains("at main in crash.piper:line 10", error);
+        Assert.Contains("at Main in crash.piper:line 10", error);
         Assert.Equal("1\n", run.Output);
     }
 

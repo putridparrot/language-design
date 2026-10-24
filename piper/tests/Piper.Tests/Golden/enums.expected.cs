@@ -21,7 +21,7 @@ public abstract record Shape
 
 public static class Enums
 {
-    public static double area(Shape shape)
+    public static double Area(Shape shape)
     {
         if (shape is Shape.Circle(var r))
         {
@@ -37,7 +37,7 @@ public static class Enums
         }
     }
 
-    public static string describe(Shape shape)
+    public static string Describe(Shape shape)
     {
         if (shape is Shape.Circle(var r) && r > 10.0)
         {
@@ -61,7 +61,7 @@ public static class Enums
         }
     }
 
-    public static char initial(Shape shape)
+    public static char Initial(Shape shape)
     {
         char letter;
         if (shape is Shape.Circle(_))
@@ -79,18 +79,18 @@ public static class Enums
         return letter;
     }
 
-    public static void main()
+    public static void Main()
     {
         Shape shapes = new Shape.Rect(2.0, 3.0);
-        global::System.Console.WriteLine(area(new Shape.Circle(2.0)));
-        global::System.Console.WriteLine(area(shapes));
-        global::System.Console.WriteLine(area(new Shape.Empty()));
-        global::System.Console.WriteLine(describe(new Shape.Circle(20.0)));
-        global::System.Console.WriteLine(describe(new Shape.Circle(1.0)));
-        global::System.Console.WriteLine(describe(new Shape.Rect(4.0, 4.0)));
-        global::System.Console.WriteLine(describe(shapes));
-        global::System.Console.WriteLine(describe(new Shape.Empty()));
-        global::System.Console.WriteLine($"{initial(shapes)}{initial(new Shape.Circle(1.0))}{initial(new Shape.Empty())}");
+        global::System.Console.WriteLine(Area(new Shape.Circle(2.0)));
+        global::System.Console.WriteLine(Area(shapes));
+        global::System.Console.WriteLine(Area(new Shape.Empty()));
+        global::System.Console.WriteLine(Describe(new Shape.Circle(20.0)));
+        global::System.Console.WriteLine(Describe(new Shape.Circle(1.0)));
+        global::System.Console.WriteLine(Describe(new Shape.Rect(4.0, 4.0)));
+        global::System.Console.WriteLine(Describe(shapes));
+        global::System.Console.WriteLine(Describe(new Shape.Empty()));
+        global::System.Console.WriteLine($"{Initial(shapes)}{Initial(new Shape.Circle(1.0))}{Initial(new Shape.Empty())}");
         global::System.Console.WriteLine(new Shape.Rect(2.0, 3.0) == shapes);
         global::System.Console.WriteLine(shapes);
         if (shapes is Shape.Rect(var w, _) && w > 1.0)
@@ -108,6 +108,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Enums.main();
+        Enums.Main();
     }
 }

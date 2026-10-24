@@ -10,7 +10,7 @@ public sealed record Point(int x, int y);
 
 public static class Collections
 {
-    public static int sum(global::System.Collections.Generic.List<int> values)
+    public static int Sum(global::System.Collections.Generic.List<int> values)
     {
         int total = 0;
         foreach (int @value in values)
@@ -20,7 +20,7 @@ public static class Collections
         return total;
     }
 
-    public static int sumX(Point[] points)
+    public static int SumX(Point[] points)
     {
         int total = 0;
         foreach (Point p in points)
@@ -30,10 +30,10 @@ public static class Collections
         return total;
     }
 
-    public static void main()
+    public static void Main()
     {
         global::System.Collections.Generic.List<int> primes = new global::System.Collections.Generic.List<int> { 2, 3, 5, 7 };
-        global::System.Console.WriteLine(sum(primes));
+        global::System.Console.WriteLine(Sum(primes));
         global::System.Console.WriteLine(primes[2]);
         primes.Add(11);
         global::System.Console.WriteLine(primes.Count);
@@ -58,7 +58,7 @@ public static class Collections
         Option<string> temp_2 = slots[1];
         global::System.Console.WriteLine($"{temp_1} {(temp_2.IsSome ? temp_2.Value : "empty")}");
         Point[] points = new Point[] { new Point(1, 2), new Point(3, 4) };
-        global::System.Console.WriteLine(sumX(points));
+        global::System.Console.WriteLine(SumX(points));
         int[][] jagged = new int[][] { new int[] { 1 }, new int[] { 2, 3 } };
         global::System.Console.WriteLine(jagged[1].Length);
         global::System.Console.WriteLine(string.Join<int>(" ", global::System.Linq.Enumerable.ToArray<int>(primes)));
@@ -104,6 +104,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Collections.main();
+        Collections.Main();
     }
 }

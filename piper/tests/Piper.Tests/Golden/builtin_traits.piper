@@ -4,68 +4,68 @@ using System.Collections.Generic;
 using System.Text;
 
 trait Shape {
-    fn area() => double;
-    fn describe() => string = "area {this.area()}";
+    fn Area() => double;
+    fn Describe() => string = "area {this.Area()}";
 }
-trait Named { fn name() => string; fn greet() => string = "Hello, {this.name()}"; }
-trait Formal: Named { fn greet() => string = "Good day, {this.name()}"; }
+trait Named { fn Name() => string; fn Greet() => string = "Hello, {this.Name()}"; }
+trait Formal: Named { fn Greet() => string = "Good day, {this.Name()}"; }
 trait Monoid<T: Monoid<T>> {
-    static fn empty() => T;
-    fn combine(other: T) => T;
-    static fn label() => string = "monoid";
+    static fn Identity() => T;
+    fn Combine(other: T) => T;
+    static fn Label() => string = "monoid";
 }
-trait Convert<T> { fn convert() => T; fn mapTo<U>(f: (T) => U) => U = f(this.convert()); }
+trait Convert<T> { fn Convert() => T; fn MapTo<U>(f: (T) => U) => U = f(this.Convert()); }
 
 record Circle(r: double);
-extend Circle: Shape { fn area() => double = 3.0 * this.r * this.r; }
+extend Circle: Shape { fn Area() => double = 3.0 * this.r * this.r; }
 // int, string, StringBuilder and Option implement traits like any record.
-extend int: Shape { fn area() => double = (double)(this * this); }
-extend string: Formal { fn name() => string = this; }
-extend int: Monoid<int> { static fn empty() => int = 0; fn combine(other: int) => int = this + other; }
-extend string: Monoid<string> { static fn empty() => string = ""; fn combine(other: string) => string = this + other; }
-extend StringBuilder: Named { fn name() => string = this.ToString(); }
-extend Option: Convert<string> { fn convert() => string = match this { Some(v) => "some {v}", None => "none" }; }
+extend int: Shape { fn Area() => double = (double)(this * this); }
+extend string: Formal { fn Name() => string = this; }
+extend int: Monoid<int> { static fn Identity() => int = 0; fn Combine(other: int) => int = this + other; }
+extend string: Monoid<string> { static fn Identity() => string = ""; fn Combine(other: string) => string = this + other; }
+extend StringBuilder: Named { fn Name() => string = this.ToString(); }
+extend Option: Convert<string> { fn Convert() => string = match this { Some(v) => "some {v}", None => "none" }; }
 
 // A bounded generic record instantiated with int.
 record Holder<T: Shape>(item: T);
-extend Holder { fn area() => double = this.item.area(); }
+extend Holder { fn Area() => double = this.item.Area(); }
 
-fn total<T: Shape>(items: List<T>) => double {
-    var sum = 0.0;
-    for i in items { sum += i.area(); }
+fn Total<T: Shape>(items: List<T>) => double {
+    mut sum = 0.0;
+    for i in items { sum += i.Area(); }
     sum
 }
-fn concat<T: Monoid<T>>(items: List<T>) => T {
-    var result = T.empty();
-    for i in items { result = result.combine(i); }
+fn Concat<T: Monoid<T>>(items: List<T>) => T {
+    mut result = T.Identity();
+    for i in items { result = result.Combine(i); }
     result
 }
-fn welcome<T: Named>(x: T) => string = x.greet();
-fn asShape<T: Shape>(x: T) => Shape = x;
+fn Welcome<T: Named>(x: T) => string = x.Greet();
+fn AsShape<T: Shape>(x: T) => Shape = x;
 
-fn main() {
-    print(3.area());
-    print(3.describe());
+fn Main() {
+    Print(3.Area());
+    Print(3.Describe());
     let shapes: List<Shape> = [Circle(1.0), 2, 3];
-    for s in shapes { print(s.describe()); }
-    print(total([1, 2, 3]));
-    print(total(shapes));
-    print(concat([1, 2, 3]));
-    print(concat(["a", "b", "c"]));
-    print(int.label());                // a static default, through the type
-    print("Ann".greet());
-    print(welcome("Bob"));
-    print(welcome(StringBuilder("sb")));
+    for s in shapes { Print(s.Describe()); }
+    Print(Total([1, 2, 3]));
+    Print(Total(shapes));
+    Print(Concat([1, 2, 3]));
+    Print(Concat(["a", "b", "c"]));
+    Print(int.Label());                // a static default, through the type
+    Print("Ann".Greet());
+    Print(Welcome("Bob"));
+    Print(Welcome(StringBuilder("sb")));
     let n: Named = "Cy";
-    print(n.greet());
-    print(Option.Some(4).convert());
+    Print(n.Greet());
+    Print(Option.Some(4).Convert());
     let o: Option<int> = None;
-    print(o.mapTo((s) => s.Length));
-    print(Holder(5).area());
+    Print(o.MapTo((s) => s.Length));
+    Print(Holder(5).Area());
     let s: Shape = 7;
-    print(s);
+    Print(s);
     let back = (int)s;                 // a cast back from the trait
-    print(back + 1);
-    print(asShape(9).area());
-    print(s == asShape(7));
+    Print(back + 1);
+    Print(AsShape(9).Area());
+    Print(s == AsShape(7));
 }

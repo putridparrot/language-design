@@ -7,31 +7,31 @@ using System.Collections.Generic;
 
 record Point(x: int, y: int);
 
-fn describe(path: string) => string {
+fn Describe(path: string) => string {
     // Path.GetExtension is annotated as possibly returning null, so it comes back as string?.
     let extension = System.IO.Path.GetExtension(path);
     "{path}: {extension ?? "no extension"}"
 }
 
-fn main() {
+fn Main() {
     // Static methods and properties, with overloads chosen by argument type.
-    print(Math.Sqrt(16));
-    print(Math.Max(3, 7));
-    print(Math.Max(2.5, 1.0));
-    print(Math.Abs(-5L));
-    print(Math.PI > 3.14);
-    print(int.MaxValue);
-    print(int.Parse("42") + 1);
-    print(char.IsDigit('7'));
+    Print(Math.Sqrt(16));
+    Print(Math.Max(3, 7));
+    Print(Math.Max(2.5, 1.0));
+    Print(Math.Abs(-5L));
+    Print(Math.PI > 3.14);
+    Print(int.MaxValue);
+    Print(int.Parse("42") + 1);
+    Print(char.IsDigit('7'));
 
     // Members of Piper's builtin types are the .NET members.
     let name = "Piper";
-    print(name.Length);
-    print(name.ToUpper());
-    print(name.Contains("ip"));
-    print(name.Replace('p', 'P'));
-    print(name.Substring(1, 3));
-    print("a,b,c".Split(',').Length);
+    Print(name.Length);
+    Print(name.ToUpper());
+    Print(name.Contains("ip"));
+    Print(name.Replace('p', 'P'));
+    Print(name.Substring(1, 3));
+    Print("a,b,c".Split(',').Length);
 
     // Constructing .NET objects and calling their methods.
     let builder = StringBuilder();
@@ -39,34 +39,34 @@ fn main() {
     builder.Append(42);
     builder.Append(", ok = ");
     builder.Append(true);
-    print(builder.ToString());
-    print(TimeSpan.FromMinutes(90).TotalHours);
+    Print(builder.ToString());
+    Print(TimeSpan.FromMinutes(90).TotalHours);
 
     // Generic .NET types take their type arguments from the expected type, and may hold Piper values.
     let points: List<Point> = List();
     points.Add(Point(1, 2));
     points.Add(Point(3, 4));
-    print(points.Count);
-    print(points.Contains(Point(3, 4)));
+    Print(points.Count);
+    Print(points.Contains(Point(3, 4)));
 
     // ...or from type arguments written out, as in C#.
     let scores = Dictionary<string, long>();
     scores.Add("Ada", 1);
-    print(scores.Count);
-    print(System.Linq.Enumerable.Count(System.Linq.Enumerable.Empty<int>()));
-    print(string.Join(",", System.Linq.Enumerable.Repeat<long>(7, 3)));
+    Print(scores.Count);
+    Print(System.Linq.Enumerable.Count(System.Linq.Enumerable.Empty<int>()));
+    Print(string.Join(",", System.Linq.Enumerable.Repeat<long>(7, 3)));
 
     let ages: Dictionary<string, int> = Dictionary();
     ages.Add("Ada", 36);
-    print(ages.ContainsKey("Ada"));
+    Print(ages.ContainsKey("Ada"));
 
     // null from .NET becomes None.
-    print(describe("notes.txt"));
-    print(Environment.GetEnvironmentVariable("PIPER_SURELY_UNSET_VARIABLE") ?? "unset");
+    Print(Describe("notes.txt"));
+    Print(Environment.GetEnvironmentVariable("PIPER_SURELY_UNSET_VARIABLE") ?? "unset");
 
     // ...and None becomes null where .NET accepts it.
     let missing: string? = null;
     let present: string? = "here";
-    print("{string.IsNullOrEmpty(missing)} {string.IsNullOrEmpty(present)}");
-    print(string.Join(", ", "a", "b", "c"));
+    Print("{string.IsNullOrEmpty(missing)} {string.IsNullOrEmpty(present)}");
+    Print(string.Join(", ", "a", "b", "c"));
 }

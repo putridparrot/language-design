@@ -14,33 +14,33 @@ enum Category {
 record Item(sku: string, name: string, category: Category, price: Money, stock: int);
 
 trait Priced {
-    fn unitPrice() => Money;
+    fn UnitPrice() => Money;
 
     // A default method: implementers get it for free.
-    fn priceText() => string {
-        let pounds = this.unitPrice().pence / 100;
-        let pence = this.unitPrice().pence % 100;
+    fn PriceText() => string {
+        let pounds = this.UnitPrice().pence / 100;
+        let pence = this.UnitPrice().pence % 100;
         "£{pounds}.{pence.ToString().PadLeft(2, '0')}"
     }
 }
 
 extend Item: Priced {
-    fn unitPrice() => Money = this.price;
+    fn UnitPrice() => Money = this.price;
 }
 
 extend Money {
-    fn plus(other: Money) => Money = Money(this.pence + other.pence);
+    fn Plus(other: Money) => Money = Money(this.pence + other.pence);
 
-    fn times(count: int) => Money = Money(this.pence * count);
+    fn Times(count: int) => Money = Money(this.pence * count);
 
-    static fn zero() => Money = Money(0);
+    static fn Zero() => Money = Money(0);
 }
 
 /// The total value of anything priced.
-fn total<T: Priced>(items: List<T>) => Money {
-    var sum = Money.zero();
+fn Total<T: Priced>(items: List<T>) => Money {
+    mut sum = Money.Zero();
     for item in items {
-        sum = sum.plus(item.unitPrice());
+        sum = sum.Plus(item.UnitPrice());
     }
     sum
 }

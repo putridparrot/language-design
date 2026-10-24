@@ -84,7 +84,7 @@ public static class Runner
             var assembly = context.LoadFromStream(new MemoryStream(build.Assembly!), new MemoryStream(build.Pdb!));
             var entryPoint = assembly.GetType(CSharpEmitter.EntryPointClassName)?.GetMethod("Main");
             if (entryPoint is null)
-                return new RunResult(false, "", ["The program has no 'main' function."]);
+                return new RunResult(false, "", ["The program has no 'Main' function."]);
 
             return captureOutput ? RunCaptured(entryPoint) : RunDirect(entryPoint);
         }

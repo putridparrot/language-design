@@ -9,7 +9,7 @@ public static class SymbolDisplay
     {
         VariableSymbol { Kind: VariableKind.Parameter } v => $"{v.Name}: {v.Type}",
         VariableSymbol { Kind: VariableKind.This } v => $"this: {v.Type}",
-        VariableSymbol v => $"{(v.IsMutable ? "var" : "let")} {v.Name}: {v.Type}",
+        VariableSymbol v => $"{(v.IsMutable ? "mut" : "let")} {v.Name}: {v.Type}",
         MethodSymbol m => Function(m, $"{m.ContainingType}."),
         FunctionSymbol f => Function(f, ""),
         RecordSymbol r => $"record {r.Name}{TypeParameters(r.TypeParameters)}({Fields(r.Fields)})",

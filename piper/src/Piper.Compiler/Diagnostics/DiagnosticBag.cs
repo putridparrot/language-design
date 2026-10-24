@@ -134,7 +134,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
             VariableKind.LoopVariable => $"Cannot assign to loop variable '{variable.Name}'.",
             VariableKind.PatternVariable => $"Cannot assign to pattern variable '{variable.Name}'.",
             VariableKind.This => "Cannot assign to 'this'.",
-            _ => $"Cannot assign to '{variable.Name}' because it is immutable; declare it with 'var' instead of 'let'.",
+            _ => $"Cannot assign to '{variable.Name}' because it is immutable; declare it with 'mut' instead of 'let'.",
         });
 
     public void ReportInvalidAssignmentTarget(TextSpan span) =>
@@ -182,7 +182,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0217", span, $"'{name}' is a {kind}, not a value.");
 
     public void ReportInvalidMain(TextSpan span) =>
-        Error("PIP0219", span, "'main' must take no parameters and return unit.");
+        Error("PIP0219", span, "'Main' must take no parameters and return unit.");
 
     public void ReportFieldNamedAsRecord(TextSpan span, string name) =>
         Error("PIP0220", span, $"A field cannot have the same name as its record '{name}'.");
@@ -284,7 +284,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0251", span, $"'{name}' needs a body; only trait methods can be declared without one.");
 
     public void ReportExistingClrMember(TextSpan span, TypeSymbol type, string name) =>
-        Error("PIP0252", span, $"'{type}' already has a member named '{name}', which would hide this method.");
+        Error("PIP0252", span, $"'{type}' already has a member named '{name}', which would hide this method; give the method another name.");
 
     // Null safety
 
@@ -334,7 +334,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0275", span, $"The call to '{member}' is ambiguous between: {string.Join("; ", candidates)}.");
 
     public void ReportDuplicateMain(TextSpan span) =>
-        Error("PIP0276", span, "A program can only have one 'main' function.");
+        Error("PIP0276", span, "A program can only have one 'Main' function.");
 
     public void ReportNotAType(TextSpan span, string name, string kind) =>
         Error("PIP0277", span, $"'{name}' is a {kind}, not a type.");
@@ -393,7 +393,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0311", span, "'ref' can only pass a variable to a .NET method's ref parameter.");
 
     public void ReportInvalidRefTarget(TextSpan span) =>
-        Error("PIP0312", span, "'ref' needs a variable declared with 'var', or an element of an array, since .NET may write to it.");
+        Error("PIP0312", span, "'ref' needs a variable declared with 'mut', or an element of an array, since .NET may write to it.");
 
     public void ReportEventMisused(TextSpan span, string name) =>
         Error("PIP0313", span, $"'{name}' is an event: add a handler with '+=' or remove one with '-='.");
@@ -421,6 +421,51 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportAmbiguousTraitOverride(TextSpan span, string method, TypeSymbol first, TypeSymbol second, string where) =>
         Error("PIP0321", span, $"'{first}' and '{second}' both override '{method}', so neither is the most specific; override it {where}.");
+
+    public void ReportListPatternType(TextSpan span, TypeSymbol type) =>
+        Error("PIP0322", span, $"A list pattern can't match a value of type '{type}'; it needs an array, a string, a List or another .NET collection with a Count and an indexer.");
+
+    public void ReportSlicePattern(TextSpan span, string problem) =>
+        Error("PIP0323", span, problem);
+
+    public void ReportPropertyPatternType(TextSpan span, TypeSymbol type) =>
+        Error("PIP0324", span, $"A property pattern can't match a value of type '{type}'; it needs a record, an enum variant or a .NET type.");
+
+    public void ReportDuplicateProperty(TextSpan span, string name) =>
+        Error("PIP0325", span, $"'{name}' is matched more than once in this pattern.");
+
+    public void ReportNullablePropertyPattern(TextSpan span, string name) =>
+        Error("PIP0326", span, $"'{name}' can be null, which a property pattern can't match; read it into a variable (an optional) and match that.");
+
+    public void ReportRelationalPatternType(TextSpan span, string op, TypeSymbol type) =>
+        Error("PIP0327", span, $"A '{op}' pattern can't match a value of type '{type}'; relational patterns need a number or a char.");
+
+    public void ReportEmptyRelationalPattern(TextSpan span, TypeSymbol type) =>
+        Error("PIP0328", span, $"This pattern matches no '{type}' values.");
+
+    public void ReportReservedName(TextSpan span, string name) =>
+        Error("PIP0335", span, $"'{name}' is reserved for future use, so it can't be used as a name.");
+
+    public void ReportUnknownAttribute(TextSpan span, string name) =>
+        Error("PIP0329", span, $"There's no attribute type '{name}' (or '{name}Attribute'); attributes are .NET types deriving from System.Attribute. Is a 'using' missing?");
+
+    public void ReportAttributeArgument(TextSpan span, string problem) =>
+        Error("PIP0330", span, problem);
+
+    public void ReportAttributeTarget(TextSpan span, string attribute, string what, System.AttributeTargets validOn) =>
+        Error("PIP0331", span, $"'{attribute}' can't be applied to {what}; it's valid on: {validOn}.");
+
+    public void ReportDuplicateAttribute(TextSpan span, string attribute) =>
+        Error("PIP0332", span, $"'{attribute}' can only be applied once here.");
+
+    public void ReportObsolete(TextSpan span, string name, string? message, bool isError)
+    {
+        var text = message is null ? $"'{name}' is obsolete." : $"'{name}' is obsolete: {message}";
+        if (isError)
+            Error("PIP0334", span, text);
+        else
+            Warning("PIP0333", span, text);
+    }
 
     public void ReportConstantOverflow(TextSpan span) =>
         Error("PIP0292", span, "This constant expression overflows. Constant arithmetic is checked, as in C#; use a long or a variable if wrapping around is intended.");
@@ -480,5 +525,5 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0310", span, $"Can't spread '{from}' items into a collection of '{to}'.");
 
     public void ReportEmptyRangePattern(TextSpan span) =>
-        Error("PIP0239", span, "This range pattern is empty: its lower bound is not below its upper bound.");
+        Error("PIP0239", span, "This range pattern is empty: its lower bound is above its upper bound (or equal to it, with '..<').");
 }

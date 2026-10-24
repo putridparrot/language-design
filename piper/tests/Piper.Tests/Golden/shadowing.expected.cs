@@ -8,9 +8,9 @@ using Piper.Runtime;
 
 public static class Shadowing
 {
-    public static int @value(int x) => x * 2;
+    public static int Value(int x) => x * 2;
 
-    public static void main()
+    public static void Main()
     {
         int x = 1;
         int y;
@@ -23,8 +23,8 @@ public static class Shadowing
             global::System.Console.WriteLine($"loop x={x_2}");
         }
         string @event = "a C# keyword as a name";
-        int @class = 42;
-        global::System.Console.WriteLine($"{@event} / {@class}");
+        int @fixed = 42;
+        global::System.Console.WriteLine($"{@event} / {@fixed}");
         int temp = 7;
         int r;
         if (temp > 5)
@@ -37,7 +37,7 @@ public static class Shadowing
             r = 0;
         }
         global::System.Console.WriteLine($"r={r} temp={temp}");
-        global::System.Console.WriteLine(@value(21));
+        global::System.Console.WriteLine(Value(21));
     }
 }
 
@@ -46,6 +46,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Shadowing.main();
+        Shadowing.Main();
     }
 }

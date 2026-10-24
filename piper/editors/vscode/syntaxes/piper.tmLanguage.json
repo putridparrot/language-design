@@ -45,7 +45,7 @@
           "captures": { "1": { "name": "keyword.other.namespace.piper" }, "2": { "name": "entity.name.namespace.piper" } }
         },
         {
-          "match": "\\b(let|var)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "match": "\\b(let|mut)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": { "1": { "name": "storage.type.piper" }, "2": { "name": "variable.other.piper" } }
         }
       ]
@@ -90,7 +90,7 @@
     "keywords": {
       "patterns": [
         { "name": "keyword.control.piper", "match": "\\b(if|else|while|for|in|return|break|continue|match|try|catch|finally|throw|defer|yield|await)\\b" },
-        { "name": "keyword.declaration.piper", "match": "\\b(fn|record|enum|trait|extend|namespace|using|let|var)\\b" },
+        { "name": "keyword.declaration.piper", "match": "\\b(fn|record|enum|trait|extend|namespace|using|let|mut)\\b" },
         { "name": "storage.modifier.piper", "match": "\\b(static|private|async|out|ref)\\b" },
         { "name": "keyword.operator.word.piper", "match": "\\bis\\b" },
         { "name": "variable.language.this.piper", "match": "\\bthis\\b" },
@@ -110,7 +110,7 @@
     "operators": {
       "patterns": [
         { "name": "keyword.operator.arrow.piper", "match": "=>|\\|>" },
-        { "name": "keyword.operator.range.piper", "match": "\\.\\.=?|\\.\\.\\." },
+        { "name": "keyword.operator.range.piper", "match": "\\.\\.\\.|\\.\\.<?" },
         { "name": "keyword.operator.null.piper", "match": "\\?\\?|\\?\\.|\\?" },
         { "name": "keyword.operator.comparison.piper", "match": "==|!=|<=|>=" },
         { "name": "keyword.operator.logical.piper", "match": "&&|\\|\\||!" },

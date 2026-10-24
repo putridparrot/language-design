@@ -19,7 +19,7 @@ record Connection(name: string);
 // IDisposable makes a Piper record usable with `using`.
 extend Connection: IDisposable {
     fn Dispose() {
-        print("closing {this.name}");
+        Print("closing {this.name}");
     }
 }
 
@@ -31,8 +31,8 @@ extend ByLength: IComparer<string> {
 }
 
 // A .NET interface as a bound: Piper types that implement it and .NET types alike.
-fn largest<T: IComparable<T>>(items: List<T>) => T {
-    var best = items[0];
+fn Largest<T: IComparable<T>>(items: List<T>) => T {
+    mut best = items[0];
     for item in items {
         if item.CompareTo(best) > 0 {
             best = item;
@@ -41,27 +41,27 @@ fn largest<T: IComparable<T>>(items: List<T>) => T {
     best
 }
 
-fn main() {
+fn Main() {
     let wallet = [Money(250), Money(1200), Money(75)];
     wallet.Sort();
-    print(string.Join(", ", wallet));
-    print(largest(wallet));
-    print(largest([3, 9, 4]));
-    print(largest(["pear", "fig"]));
+    Print(string.Join(", ", wallet));
+    Print(Largest(wallet));
+    Print(Largest([3, 9, 4]));
+    Print(Largest(["pear", "fig"]));
 
     {
         using let c = Connection("db");
-        print("using {c.name}");
+        Print("using {c.name}");
     }
 
     let words = ["banana", "fig", "apple"];
     words.Sort(ByLength());
-    print(string.Join(", ", words));
+    Print(string.Join(", ", words));
 
     let comparable: IComparable<Money> = Money(5);
-    print(comparable.CompareTo(Money(3)));
+    Print(comparable.CompareTo(Money(3)));
 
     // A .NET result that may be null is optional for Piper types too.
     let none: List<Money> = [];
-    print(none.FirstOrDefault() ?? Money(0));
+    Print(none.FirstOrDefault() ?? Money(0));
 }

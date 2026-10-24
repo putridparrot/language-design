@@ -16,7 +16,7 @@ public enum TokenKind
     // Keywords
     FnKeyword,
     LetKeyword,
-    VarKeyword,
+    MutKeyword,
     IfKeyword,
     ElseKeyword,
     WhileKeyword,
@@ -60,7 +60,7 @@ public enum TokenKind
     Colon,
     Dot,
     DotDot,
-    DotDotEquals,
+    DotDotLess,
     /// <summary>`...`: a spread, as in `{ ...p, y: 5 }`.</summary>
     Ellipsis,
     Arrow,

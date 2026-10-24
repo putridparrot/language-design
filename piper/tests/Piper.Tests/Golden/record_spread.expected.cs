@@ -14,9 +14,9 @@ public sealed record Box<T>(T @value, int count);
 
 public static class Record_spread
 {
-    public static Point moveRight(Point p, int by) => p with { x = p.x + by };
+    public static Point MoveRight(Point p, int by) => p with { x = p.x + by };
 
-    public static void main()
+    public static void Main()
     {
         Point p = new Point(1, 2);
         Point q = p with { y = 5 };
@@ -32,7 +32,7 @@ public static class Record_spread
         Box<string> more = box with { count = box.count + 1 };
         global::System.Console.WriteLine(more);
         global::System.Console.WriteLine(p with { } == p);
-        global::System.Console.WriteLine(moveRight(p, 2) == new Point(3, 2));
+        global::System.Console.WriteLine(MoveRight(p, 2) == new Point(3, 2));
         global::System.Collections.Generic.List<Point> points = new global::System.Collections.Generic.List<Point> { new Point(1, 1), new Point(2, 2) };
         global::System.Console.WriteLine(string.Join<Point>(" ", global::System.Linq.Enumerable.Select<Point, Point>(points, (Point pt) => pt with { y = 0 })));
         Point flipped;
@@ -53,6 +53,6 @@ internal static class PiperEntryPoint
     public static void Main()
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
-        Record_spread.main();
+        Record_spread.Main();
     }
 }

@@ -4,33 +4,33 @@ using System;
 using System.Linq;
 using System.Collections.Generic;
 
-fn doubled(x: int) => int = x * 2;
+fn Doubled(x: int) => int = x * 2;
 
-fn apply(f: (int) => int, value: int) => int = f(value);
+fn Apply(f: (int) => int, value: int) => int = f(value);
 
-fn twice(f: (int) => int) => (int) => int = x => f(f(x));
+fn Twice(f: (int) => int) => (int) => int = x => f(f(x));
 
-fn main() {
+fn Main() {
     // Parameter types come from the expected function type...
     let increment: (int) => int = x => x + 1;
-    print(increment(41));
-    print(apply(x => x * x, 7));
+    Print(increment(41));
+    Print(Apply(x => x * x, 7));
 
     // ...or from annotations, giving the lambda its natural type.
     let add = (a: int, b: int) => a + b;
-    print(add(2, 3));
+    Print(add(2, 3));
 
     // Top-level functions are values too.
-    print(apply(doubled, 21));
-    let quadruple = twice(doubled);
-    print(quadruple(5));
+    Print(Apply(Doubled, 21));
+    let quadruple = Twice(Doubled);
+    Print(quadruple(5));
 
     // Block bodies, captured variables, and lambdas returning unit.
-    var total = 0;
+    mut total = 0;
     let accumulate: (int) => unit = n => { total += n; };
     accumulate(10);
     accumulate(5);
-    print(total);
+    Print(total);
 
     let classify = (n: int) => {
         if n < 0 {
@@ -38,21 +38,21 @@ fn main() {
         }
         if n == 0 { "zero" } else { "positive" }
     };
-    print(classify(-3));
-    print(classify(0));
-    print(classify(8));
+    Print(classify(-3));
+    Print(classify(0));
+    Print(classify(8));
 
     // LINQ, with type arguments inferred from the lambdas.
     let numbers = [5, 3, 8, 1, 9, 2];
     let evens = numbers.Where(n => n % 2 == 0).Select(n => n * 10).ToList();
-    print(string.Join(", ", evens));
-    print(numbers.Any(n => n > 8));
-    print(numbers.Sum());
-    print(string.Join(" ", numbers.OrderBy(n => n).Select(n => "<{n}>")));
+    Print(string.Join(", ", evens));
+    Print(numbers.Any(n => n > 8));
+    Print(numbers.Sum());
+    Print(string.Join(" ", numbers.OrderBy(n => n).Select(n => "<{n}>")));
 
     // .NET delegate types other than Func/Action.
     let names: List<string> = ["Grace", "Ada", "Linus"];
     names.Sort((a, b) => a.Length - b.Length);
-    print(string.Join(", ", names));
-    print(names.Exists(name => name.StartsWith("L")));
+    Print(string.Join(", ", names));
+    Print(names.Exists(name => name.StartsWith("L")));
 }
