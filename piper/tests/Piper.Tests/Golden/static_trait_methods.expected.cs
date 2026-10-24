@@ -6,13 +6,34 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public interface Monoid<T> where T : Monoid<T>
+public interface Monoid<T>
 {
     static abstract T empty();
 
     T combine(T other);
 
     static virtual string describe() => "a monoid";
+
+    public interface PiperWitness<TPiperSelf>
+    {
+        T empty();
+        T combine(TPiperSelf piperSelf, T other);
+        string describe();
+    }
+
+    public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Monoid<T>
+    {
+        public T empty() => TPiperSelf.empty();
+        public T combine(TPiperSelf piperSelf, T other) => piperSelf.combine(other);
+        public string describe() => TPiperSelf.describe();
+    }
+
+    public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Monoid<T>, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
+    {
+        public T empty() => TPiperBox.empty();
+        public T combine(TPiperSelf piperSelf, T other) => TPiperBox.Wrap(piperSelf).combine(other);
+        public string describe() => TPiperBox.describe();
+    }
 }
 
 public sealed record Total(int amount) : Monoid<Total>
@@ -33,17 +54,17 @@ public sealed record Text(string @value) : Monoid<Text>
 
 public static class Static_trait_methods
 {
-    public static T concat<T>(global::System.Collections.Generic.List<T> items) where T : Monoid<T>
+    public static T concat<T>(global::System.Collections.Generic.List<T> items)
     {
-        T result = T.empty();
+        T result = global::Piper.Runtime.PiperTraits.Witness<Monoid<T>.PiperWitness<T>>().empty();
         foreach (T item in items)
         {
-            result = result.combine(item);
+            result = global::Piper.Runtime.PiperTraits.Witness<Monoid<T>.PiperWitness<T>>().combine(result, item);
         }
         return result;
     }
 
-    public static string describe<T>() where T : Monoid<T> => T.describe();
+    public static string describe<T>() => global::Piper.Runtime.PiperTraits.Witness<Monoid<T>.PiperWitness<T>>().describe();
 
     public static void main()
     {

@@ -13,7 +13,7 @@ namespace Piper.Emit;
 /// point class calls <c>main</c>. Locals are renamed where needed so every variable in a method
 /// has a unique C# name (Piper allows shadowing; C# does not).
 /// </summary>
-public sealed class CSharpEmitter
+public sealed partial class CSharpEmitter
 {
     public const string EntryPointClassName = "PiperEntryPoint";
 
@@ -52,6 +52,7 @@ public sealed class CSharpEmitter
     private readonly HashSet<string> _topLevelNames;
     private readonly Dictionary<SourceText, string> _moduleClassNames = [];
     private readonly Dictionary<SourceText, string> _extensionClassNames = [];
+    private readonly Dictionary<(SourceText File, TypeSymbol Type), string> _separateExtensionClasses = [];
     private readonly SourceText _runtimeFile;
     private CodeWriter _writer = new();
     private NameAllocator _names = new([]);
@@ -93,6 +94,17 @@ public sealed class CSharpEmitter
             var moduleName = UniqueTopLevelName(ModuleName(file.FileName), "Module");
             _moduleClassNames[file] = moduleName;
             _extensionClassNames[file] = UniqueTopLevelName(moduleName + "Extensions", "_");
+
+            // Static extension members are plain static methods of their class, so one name on two types would clash.
+            var staticNames = new HashSet<string>();
+            foreach (var group in program.Methods.Select(m => (MethodSymbol)m.Symbol)
+                         .Where(m => m.DeclaringFile == file && m.IsStatic && m.ContainingType is not (TraitSymbol or NamedTypeDefinition { IsRuntimeType: false }))
+                         .GroupBy(m => m.ContainingType))
+            {
+                if (group.Any(m => staticNames.Contains(m.Name)))
+                    _separateExtensionClasses[(file, group.Key)] = UniqueTopLevelName($"{_extensionClassNames[file]}_{new string([.. group.Key.Name.Where(char.IsAsciiLetterOrDigit)])}", "_");
+                staticNames.UnionWith(group.Select(m => m.Name));
+            }
         }
         _runtimeFile = program.Main?.DeclaringFile ?? program.Files[0];
     }
@@ -175,6 +187,8 @@ public sealed class CSharpEmitter
             var functions = _program.Functions.Where(f => f.Symbol.DeclaringFile == file).ToList();
             if (functions.Count > 0 || file == _runtimeFile)
                 sections.Add(() => EmitModuleClass(file, functions));
+            if (BoxedTypesIn(file).Count > 0)
+                sections.Add(() => EmitBoxes(file));
             if (HasExtensions(file))
                 sections.Add(() => EmitExtensions(file));
 
@@ -348,7 +362,11 @@ public sealed class CSharpEmitter
         var partial = IsPartial(trait) ? "partial " : "";
         _writer.WriteLine($"{Visibility(trait)} {partial}interface {Escape(trait.Name)}{TypeParameterList(trait.TypeParameters)}{BaseList(trait.Parents)}{Constraints(trait.TypeParameters)}");
         _writer.OpenBrace();
-        EmitTraitMembers(MethodsFrom(trait, file).ToList());
+        var methods = MethodsFrom(trait, file).ToList();
+        EmitTraitMembers(methods);
+        if (methods.Count > 0)
+            _writer.WriteLine();
+        EmitWitnessTypes(trait);
         _writer.CloseBrace();
     }
 
@@ -430,35 +448,47 @@ public sealed class CSharpEmitter
 
     private void EmitExtensions(SourceText file)
     {
-        var groups = ExtensionMethods(file).GroupBy(m => (m.ContainingType, m.IsStatic)).ToList();
-
-        _writer.WriteLine($"public static class {Escape(_extensionClassNames[file])}");
-        _writer.OpenBrace();
-        for (int i = 0; i < groups.Count; i++)
+        var classes = ExtensionMethods(file).GroupBy(m => ExtensionClassName(m)).ToList();
+        for (int c = 0; c < classes.Count; c++)
         {
-            if (i > 0)
+            if (c > 0)
                 _writer.WriteLine();
-            var (type, isStatic) = groups[i].Key;
-            // A generic type is extended for all its instantiations: `extension<T>(Option<T> self)`.
-            var (generics, extended) = type is NamedTypeDefinition definition
-                ? (TypeParameterList(definition.TypeParameters), TypeName(definition.SelfType))
-                : ("", TypeName(type));
-            _writer.WriteLine(isStatic ? $"extension{generics}({extended})" : $"extension{generics}({extended} self)");
+            var groups = classes[c].GroupBy(m => (m.ContainingType, m.IsStatic)).ToList();
+            _writer.WriteLine($"public static class {Escape(classes[c].Key)}");
             _writer.OpenBrace();
-            var methods = groups[i].ToList();
-            for (int j = 0; j < methods.Count; j++)
+            for (int i = 0; i < groups.Count; i++)
             {
-                if (j > 0)
+                if (i > 0)
                     _writer.WriteLine();
-                _thisName = "self";
-                var access = methods[j].IsPrivate ? "internal " : "public ";
-                EmitFunction(_methodBodies[methods[j]], access + (isStatic ? "static " : ""));
+                var (type, isStatic) = groups[i].Key;
+                // A generic type is extended for all its instantiations: `extension<T>(Option<T> self)`.
+                var (generics, extended) = type is NamedTypeDefinition definition
+                    ? (TypeParameterList(definition.TypeParameters), TypeName(definition.SelfType))
+                    : ("", TypeName(type));
+                _writer.WriteLine(isStatic ? $"extension{generics}({extended})" : $"extension{generics}({extended} self)");
+                _writer.OpenBrace();
+                var methods = groups[i].ToList();
+                for (int j = 0; j < methods.Count; j++)
+                {
+                    if (j > 0)
+                        _writer.WriteLine();
+                    _thisName = "self";
+                    var access = methods[j].IsPrivate ? "internal " : "public ";
+                    EmitFunction(_methodBodies[methods[j]], access + (isStatic ? "static " : ""));
+                }
+                _writer.CloseBrace();
             }
             _writer.CloseBrace();
         }
-        _writer.CloseBrace();
         _thisName = "this";
     }
+
+    /// <summary>
+    /// The class holding an extension member: the file's extensions class, except that static methods of the same name on
+    /// two types (`int.empty()`, `string.empty()`) would clash there, so the later type gets a class of its own.
+    /// </summary>
+    private string ExtensionClassName(MethodSymbol method) =>
+        _separateExtensionClasses.TryGetValue((method.DeclaringFile!, method.ContainingType), out var name) ? name : _extensionClassNames[method.DeclaringFile!];
 
     /// <summary>The entry point, in the global namespace. (Option, Result and the interop helpers are in Piper.Runtime.)</summary>
     private string EmitRuntime()
@@ -503,9 +533,11 @@ public sealed class CSharpEmitter
         traits.Any() ? $" : {string.Join(", ", traits.Select(t => TypeName(t)))}" : "";
 
     private string Constraints(IEnumerable<TypeParameterSymbol> parameters) =>
+        // Trait bounds are checked by Piper and met through witnesses, since int or string can satisfy one; only .NET
+        // interface bounds are C# constraints.
         string.Concat(parameters
-            .Where(p => p.Constraints.Length > 0)
-            .Select(p => $" where {Escape(p.Name)} : {string.Join(", ", p.Constraints.Select(c => TypeName(c)))}"));
+            .Where(p => p.Constraints.Any(c => c is ClrTypeSymbol))
+            .Select(p => $" where {Escape(p.Name)} : {string.Join(", ", p.Constraints.OfType<ClrTypeSymbol>().Select(c => TypeName(c)))}"));
 
     /// <summary>How to reach a top-level function from the current position: its module class, qualified as needed.</summary>
     private string FunctionContainer(FunctionSymbol function)
@@ -800,8 +832,13 @@ public sealed class CSharpEmitter
     private string Expr(BoundExpression expression, int minPrecedence)
     {
         // Conversions are all implicit widenings in C# too, so they need no syntax.
+        // A builtin or type parameter becomes a trait value through its witness, which boxes it if needed.
         if (expression is BoundConversionExpression conversion)
-            return Expr(conversion.Expression, minPrecedence);
+        {
+            return conversion.Type.IsTrait && UsesWitness(conversion.Expression.Type)
+                ? $"{WitnessOf(conversion.Type, conversion.Expression.Type)}.PiperBox({Expr(conversion.Expression, ConditionalPrecedence)})"
+                : Expr(conversion.Expression, minPrecedence);
+        }
 
         var (text, precedence) = expression switch
         {
@@ -840,6 +877,9 @@ public sealed class CSharpEmitter
                     : $"{Expr(spread.Source, PrimaryPrecedence)} with {{ {string.Join(", ", spread.Updates.Select(u => $"{Escape(u.Field.Name)} = {Expr(u.Value, AssignmentPrecedence)}"))} }}",
                 MultiplicativePrecedence),
             BoundAwaitExpression await => ($"await {Expr(await.Operand, UnaryPrecedence)}", UnaryPrecedence),
+            // A trait value holding a builtin holds it boxed.
+            BoundCastExpression cast when cast.Operand.Type.IsTrait && UsesWitness(cast.Type) =>
+                ($"{TraitsClassName}.Unbox<{TypeName(cast.Type)}>({Expr(cast.Operand, ConditionalPrecedence)})", PrimaryPrecedence),
             BoundCastExpression cast => ($"({TypeName(cast.Type)}){Expr(cast.Operand, PrimaryPrecedence)}", UnaryPrecedence),
             BoundTupleExpression tuple => ($"({Arguments(tuple.Elements)})", PrimaryPrecedence),
             // Always by position: a name may not be part of the C# expression's static type.
@@ -1001,7 +1041,7 @@ public sealed class CSharpEmitter
     /// </summary>
     private string Branch(BoundExpression branch) =>
         branch is BoundConversionExpression { Type.IsTrait: true, Type: var trait } conversion
-            ? $"({TypeName(trait)}){Expr(conversion.Expression, UnaryPrecedence)}"
+            ? $"({TypeName(trait)}){Expr(UsesWitness(conversion.Expression.Type) ? conversion : conversion.Expression, UnaryPrecedence)}"
             : Expr(branch, ConditionalPrecedence);
 
     /// <summary>
@@ -1066,12 +1106,31 @@ public sealed class CSharpEmitter
     /// </summary>
     private string MethodCall(BoundMethodCallExpression call)
     {
-        var method = $"{Escape(call.Method.Name)}{TypeArgumentList(call.TypeArguments)}({Arguments(call.Arguments)})";
+        var typeArguments = TypeArgumentList(call.TypeArguments);
+        var arguments = Arguments(call.Arguments);
+
+        // A type parameter, builtin, .NET or runtime type reaches a trait's methods through its witness:
+        // `PiperTraits.Witness<Shape.PiperWitness<T>>().area(x)`. So does a static default on any type.
+        if (call.TraitType is { } trait && !call.ReceiverType.IsTrait && (UsesWitness(call.ReceiverType) || call.Receiver is null))
+        {
+            var receiver = call.Receiver is null ? "" : Expr(call.Receiver, ConditionalPrecedence);
+            var all = receiver == "" ? arguments : arguments == "" ? receiver : $"{receiver}, {arguments}";
+            return $"{WitnessOf(trait, call.ReceiverType)}.{Escape(call.Method.Name)}{typeArguments}({all})";
+        }
+
+        // Extend methods of builtin, .NET and runtime types are C# extension members.
+        if (call.Method.ContainingType is var owner && !owner.IsTrait && owner is not NamedTypeDefinition { IsRuntimeType: false })
+        {
+            var receiver = call.Receiver is null ? null : Expr(call.Receiver, PrimaryPrecedence);
+            return ExtensionCall(call.Method, call.ReceiverType, receiver, typeArguments, arguments);
+        }
+
+        var method = $"{Escape(call.Method.Name)}{typeArguments}({arguments})";
         if (call.Receiver is null)
             return $"{TypeName(call.ReceiverType)}.{method}";
 
-        if (call.TraitType is { } trait && !call.ReceiverType.IsTrait && call.ReceiverType is not TypeParameterSymbol)
-            return $"(({TypeName(trait)}){Expr(call.Receiver, UnaryPrecedence)}).{method}";
+        if (call.TraitType is { } implemented && !call.ReceiverType.IsTrait)
+            return $"(({TypeName(implemented)}){Expr(call.Receiver, UnaryPrecedence)}).{method}";
 
         return $"{Expr(call.Receiver, PrimaryPrecedence)}.{method}";
     }

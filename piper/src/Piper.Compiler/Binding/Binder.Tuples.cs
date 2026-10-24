@@ -149,7 +149,7 @@ public sealed partial class Binder
                     break;
                 case SingleDesignationSyntax single:
                 {
-                    var variable = new VariableSymbol(single.Name.Text, elementType, isMutable, kind);
+                    var variable = Declared(new VariableSymbol(single.Name.Text, elementType, isMutable, kind), single.Name);
                     declared.Add((variable, single.Name));
                     elements.Add(new BoundVariableDesignation(variable, elementType));
                     break;

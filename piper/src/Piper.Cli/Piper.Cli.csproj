@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Piper.Compiler\Piper.Compiler.csproj" />
+    <ProjectReference Include="..\Piper.LanguageServer\Piper.LanguageServer.csproj" />
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 

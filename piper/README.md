@@ -34,6 +34,25 @@ Every `.piper` file in the project becomes part of one Piper program, which the 
 `Piper.Runtime`, the small library defining `Option` and `Result` that all compiled Piper code shares. Errors are
 reported against `.piper` lines, and stack traces and the debugger show Piper source.
 
+## Editor support
+
+`piper lsp` runs a language server (the Language Server Protocol, over stdin and stdout). It gives any LSP editor the
+following, from the compiler's own parser and binder, so it works on incomplete code:
+
+- diagnostics as you type
+- hover
+- go to definition
+- find references and highlights
+- rename
+- completion, including members after a dot
+- an outline
+
+[editors/vscode](editors/vscode) is a VS Code extension that starts it and adds syntax highlighting.
+
+The server needs to know which files make up a program. A file is analyzed together with every `.piper` file under the
+nearest folder above it that has a `piper.json` file (its contents aren't read yet) or a `.csproj` using Piper.Build.
+A file outside any such folder is a program on its own.
+
 ## Compatibility
 
 From 1.0, a program that compiles with one 1.x release compiles with every later 1.x release and means the same
@@ -68,7 +87,10 @@ producing one `.cs` file per `.piper` file. The generated code needs C# 14 (.NET
 | [src/Piper.Compiler/Lowering](src/Piper.Compiler/Lowering) | Rewrites block/if expressions into C#-shaped statements |
 | [src/Piper.Compiler/Emit](src/Piper.Compiler/Emit) | Bound tree → C# source text |
 | [src/Piper.Compiler/Runner.cs](src/Piper.Compiler/Runner.cs) | In-memory Roslyn compile and run |
-| [src/Piper.Cli](src/Piper.Cli) | `piper build / emit / run`, packed as the `Piper` dotnet tool |
+| [src/Piper.Compiler/Binding/SemanticModel.cs](src/Piper.Compiler/Binding/SemanticModel.cs) | What the binder records for tooling: each name's symbol, declarations, expression types and scopes |
+| [src/Piper.LanguageServer](src/Piper.LanguageServer) | The language server (`piper lsp`) |
+| [src/Piper.Cli](src/Piper.Cli) | `piper build / emit / run / lsp`, packed as the `Piper` dotnet tool |
+| [editors/vscode](editors/vscode) | The VS Code extension: highlighting, and a client for the language server |
 | [src/Piper.Runtime](src/Piper.Runtime) | The `Piper.Runtime` package: `Option`, `Result` and the interop helpers, shared by all compiled Piper code |
 | [src/Piper.Build](src/Piper.Build) | The `Piper.Build` package: MSBuild targets that compile a project's `.piper` files |
 | [tests/Piper.Tests](tests/Piper.Tests) | Lexer, parser and binder unit tests, plus golden tests |

@@ -2,3 +2,4 @@ circle at (0, 0) radius 1
 3x4 rectangle at (1, 2)
 CIRCLE AT (0, 0) RADIUS 1
 Totals { count = 2, area = 15 }
+15

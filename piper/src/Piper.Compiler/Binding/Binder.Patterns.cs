@@ -88,6 +88,7 @@ public sealed partial class Binder
                 // A bare name is a fieldless variant of the matched enum if there is one, otherwise a binding.
                 if (expected.OriginalDefinition is EnumSymbol @enum && @enum.FindVariant(name.Text) is { } variant)
                 {
+                    Record(name, variant);
                     if (variant.Fields.IsEmpty)
                         return new BoundConstructorPattern(variant, [], expected);
                     _diagnostics.ReportPatternArity(syntax.Span, variant.QualifiedName, variant.Fields.Length, 0);
@@ -114,7 +115,7 @@ public sealed partial class Binder
                     return new BoundBindingPattern(existing);
                 }
 
-                var variable = new VariableSymbol(name.Text, expected, isMutable: false, VariableKind.PatternVariable);
+                var variable = Declared(new VariableSymbol(name.Text, expected, isMutable: false, VariableKind.PatternVariable), name);
                 if (!_scope.TryDeclare(variable))
                     _diagnostics.ReportDuplicateDeclaration(name.Span, name.Text);
                 return new BoundBindingPattern(variable);
@@ -223,6 +224,7 @@ public sealed partial class Binder
                 _diagnostics.ReportUnknownConstructorPattern(name.Span, name.Text, expected);
             return new BoundWildcardPattern(expected);
         }
+        Record(name, constructor);
 
         // The matched value's type supplies a generic definition's type arguments.
         TypeSymbol constructedType;

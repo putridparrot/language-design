@@ -15,6 +15,7 @@ public sealed partial class Binder
     {
         var bound = BindExpressionCore(syntax, expected);
         bound.SourceSpan ??= syntax.Span;
+        _semantic?.AddExpression(_file.Source, syntax.Span, bound.Type, _scope);
         return bound;
     }
 
@@ -161,6 +162,7 @@ public sealed partial class Binder
         TypeSymbol? expected,
         ImmutableArray<TypeSyntax> typeArguments = default)
     {
+        Record(name, symbol);
         var explicitArguments = ExplicitTypeArguments(typeArguments.IsDefault ? [] : typeArguments);
         if (explicitArguments is not null && symbol is not (FunctionSymbol or null or ErrorSymbol or AmbiguousSymbol))
         {
@@ -326,6 +328,7 @@ public sealed partial class Binder
             return new BoundErrorExpression();
         }
 
+        Record(name.Identifier, _scope.Lookup(name.Identifier.Text));
         if (_scope.Lookup(name.Identifier.Text) is not VariableSymbol variable)
         {
             BindExpression(syntax.Value);
@@ -422,11 +425,14 @@ public sealed partial class Binder
         {
             // `Box<Int>.empty()`, `List<Int>[3]`: a type name with type arguments.
             case NameExpressionSyntax { Identifier: { IsMissing: false } name, TypeArguments.IsEmpty: false } generic:
+                Record(name, _scope.Lookup(name.Text));
                 return _scope.Lookup(name.Text) is (TypeSymbol or ClrTypeGroupSymbol) and var genericType
                     ? Constructed(genericType, name, name.Text, generic.TypeArguments, generic.Span, isQualified: false)
                     : null;
 
             case NameExpressionSyntax { Identifier: { IsMissing: false } name }:
+                if (_scope.Lookup(name.Text) is TypeSymbol or NamespaceSymbol)
+                    Record(name, _scope.Lookup(name.Text));
                 return _scope.Lookup(name.Text) switch
                 {
                     (NamespaceSymbol or ClrTypeGroupSymbol or ErrorSymbol) and var symbol => symbol,
@@ -485,6 +491,7 @@ public sealed partial class Binder
         TypeSymbol? expected,
         ImmutableArray<TypeSyntax> typeArgumentSyntax = default)
     {
+        Record(name, symbol);
         var calleeName = name.Text;
         typeArgumentSyntax = typeArgumentSyntax.IsDefault ? [] : typeArgumentSyntax;
 
@@ -615,6 +622,7 @@ public sealed partial class Binder
         // `Shape.Circle(1.0)`; `Option<Int>.None` takes the enum's type arguments from its name.
         if (type.OriginalDefinition is EnumSymbol @enum && @enum.FindVariant(member.Text) is { } variant)
         {
+            Record(member, variant);
             if (explicitArguments is not null)
             {
                 BindArgumentsForDiagnostics(arguments);
@@ -626,6 +634,7 @@ public sealed partial class Binder
 
         var found = FindMethodWithOwner(type, member.Text);
         var method = found?.Method;
+        Record(member, method);
         if (method is null)
         {
             // Math.Sqrt(2.0), Math.PI, Int.MaxValue, Enumerable.Empty<Int>()
@@ -654,10 +663,10 @@ public sealed partial class Binder
             return new BoundErrorExpression();
         }
 
-        // A static trait method (`T.zero()`) is reached through a type parameter bounded by the trait: C# can't call one
-        // on the trait itself, nor a trait's default on a type that doesn't implement it itself.
+        // A static trait method is called on a type that implements it (`Total.zero()`, through a witness if the trait
+        // supplies it) or a type parameter bounded by the trait (`T.zero()`), not on the trait itself, which has no body.
         var owner = found!.Value.Owner;
-        if (owner.IsTrait && type is not TypeParameterSymbol)
+        if (type.IsTrait)
         {
             BindArgumentsForDiagnostics(arguments);
             _diagnostics.ReportStaticTraitMethodCall(member.Span, method.Name, type);
@@ -680,7 +689,10 @@ public sealed partial class Binder
             : type;
         var typeArguments = TypeArgumentsFrom(method.TypeParameters, map, span);
         return new BoundMethodCallExpression(
-            null, receiverType, method, typeArguments, boundArguments.Value, TypeSubstitution.Substitute(method.ReturnType, map));
+            null, receiverType, method, typeArguments, boundArguments.Value, TypeSubstitution.Substitute(method.ReturnType, map))
+        {
+            TraitType = owner.IsTrait ? owner : null,
+        };
     }
 
     private BoundExpression BindMethodCall(
@@ -696,6 +708,8 @@ public sealed partial class Binder
         var explicitArguments = ExplicitTypeArguments(typeArgumentSyntax);
         var found = FindMethodWithOwner(receiver.Type, member.Text);
         var method = found?.Method;
+        if (_semantic is not null)
+            Record(member, (Symbol?)method ?? FindField(receiver.Type, member.Text));
 
         // A record field holding a function: `handler.onClick(event)`.
         if (method is null && FindField(receiver.Type, member.Text) is { } delegateField &&
@@ -765,14 +779,14 @@ public sealed partial class Binder
     {
         if (type.OriginalDefinition is NamedTypeDefinition definition && definition.Methods.FirstOrDefault(m => m.Name == name) is { } own)
             return (own, type);
+        if (_builtinMethods.TryGetValue(type, out var methods) && methods.FirstOrDefault(m => m.Name == name) is { } builtin)
+            return (builtin, type);
         foreach (var trait in TraitsOf(type))
         {
             if (trait.TraitDefinition?.Methods.FirstOrDefault(m => m.Name == name) is { } inherited)
                 return (inherited, trait);
         }
-        return _builtinMethods.TryGetValue(type, out var methods) && methods.FirstOrDefault(m => m.Name == name) is { } builtin
-            ? (builtin, type)
-            : null;
+        return null;
     }
 
     private static FieldSymbol? FindField(TypeSymbol type, string name) =>
@@ -994,7 +1008,12 @@ public sealed partial class Binder
             return new BoundErrorExpression();
 
         if (FindField(target.Type, syntax.Member.Text) is { } field)
+        {
+            Record(syntax.Member, field);
             return new BoundFieldAccessExpression(target, field, TypeSubstitution.FieldType(field, target.Type));
+        }
+        if (_semantic is not null)
+            Record(syntax.Member, FindMethod(target.Type, syntax.Member.Text));
 
         // `pair.Item1`, `point.x`.
         if (target.Type is TupleTypeSymbol tuple && tuple.IndexOf(syntax.Member.Text) is >= 0 and var index)

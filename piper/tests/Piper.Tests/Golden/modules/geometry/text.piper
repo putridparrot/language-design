@@ -1,5 +1,6 @@
 namespace Geometry;
 
+using System;
 using System.Text;
 
 trait Describe {
@@ -24,6 +25,10 @@ extend Shape: Describe {
         }
         text.ToString()
     }
+}
+
+extend double {
+    fn rounded() => long = (long)Math.Round(this);
 }
 
 extend Point {

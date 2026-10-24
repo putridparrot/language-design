@@ -11,6 +11,24 @@ public sealed record User(int id, string name);
 public interface Store
 {
     global::System.Threading.Tasks.Task<Option<User>> load(int id);
+
+    public interface PiperWitness<TPiperSelf>
+    {
+        Store PiperBox(TPiperSelf piperSelf);
+        global::System.Threading.Tasks.Task<Option<User>> load(TPiperSelf piperSelf, int id);
+    }
+
+    public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Store
+    {
+        Store Store.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
+        public global::System.Threading.Tasks.Task<Option<User>> load(TPiperSelf piperSelf, int id) => piperSelf.load(id);
+    }
+
+    public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Store, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
+    {
+        Store Store.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
+        public global::System.Threading.Tasks.Task<Option<User>> load(TPiperSelf piperSelf, int id) => TPiperBox.Wrap(piperSelf).load(id);
+    }
 }
 
 public sealed record MemoryStore(global::System.Collections.Generic.List<User> users) : Store

@@ -57,7 +57,7 @@ public class BinderTests
     [InlineData("PIP0294", "async fn f() { await using let s = System.Text.StringBuilder(); }")]
     [InlineData("PIP0301", "using System.Threading.Tasks; trait T { async fn m() => Task; }")]
     [InlineData("PIP0219", "async fn main() => System.Threading.Tasks.Task<int> = await System.Threading.Tasks.Task.FromResult(1);")]
-    [InlineData("PIP0247", "trait Show { fn show() => string; } extend Option: Show { fn show() => string = \"\"; }")]
+    [InlineData("PIP0247", "extend Option: System.IComparable<int> { fn CompareTo(other: int) => int = 0; }")]
     public void Async_and_runtime_type_errors_are_reported(string code, string program)
     {
         AssertSingleError(code, program);
@@ -264,7 +264,7 @@ public class BinderTests
     [InlineData("PIP0318", "extend M: System.Collections.Generic.IList<int> { }")]
     [InlineData("PIP0319", "trait Z<T: Z<T>> { static fn zero() => T; } extend M: Z<M> { static fn zero() => M = M(0); } fn f(z: Z<M>) { }")]
     [InlineData("PIP0319", "trait Z<T: Z<T>> { static fn zero() => T; } extend M: Z<M> { static fn zero() => M = M(0); } fn f() { let zs: System.Collections.Generic.List<Z<M>> = []; }")]
-    [InlineData("PIP0320", "trait Z<T: Z<T>> { static fn zero() => T; static fn d() => int = 1; } extend M: Z<M> { static fn zero() => M = M(0); } fn f() => int = M.d();")]
+    [InlineData("PIP0320", "trait Z<T: Z<T>> { static fn zero() => T; static fn d() => int = 1; } extend M: Z<M> { static fn zero() => M = M(0); } trait N { static fn d() => int = 1; } fn f() => int = N.d();")]
     [InlineData("PIP0246", "trait Z<T: Z<T>> { static fn zero() => T; } extend M: Z<M> { fn zero() => M = M(0); }")]
     [InlineData("PIP0245", "trait Z<T: Z<T>> { static fn zero() => T; } extend M: Z<M> { }")]
     [InlineData("PIP0246", "extend M: System.IComparable<M> { fn CompareTo(other: M) => int = 0; }")]
@@ -319,7 +319,8 @@ public class BinderTests
     [InlineData("PIP0244", "extend R { fn get() => int = this.x; } fn f() { R.get(); }")]
     [InlineData("PIP0245", "extend R: T { }")]
     [InlineData("PIP0246", "extend R: T { fn m() => string = \"\"; }")]
-    [InlineData("PIP0247", "extend int: T { }")]
+    [InlineData("PIP0247", "extend int: System.IDisposable { fn Dispose() { } }")]
+    [InlineData("PIP0245", "extend int: T { }")]
     [InlineData("PIP0247", "extend T: T { }")]
     [InlineData("PIP0247", "extend O<int> { }")]
     [InlineData("PIP0248", "fn f<X: R>(x: X) {}")]

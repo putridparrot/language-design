@@ -21,4 +21,5 @@ fn main() {
     shapes.Add(rect);
     let totals = Totals(shapes.Count, area(circle) + Geometry.area(rect));
     print(totals);
+    print(totals.area.rounded());        // an extend method on a builtin, from another namespace
 }

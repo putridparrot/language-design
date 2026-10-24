@@ -26,7 +26,10 @@ public sealed class Lowerer
         var lowerer = new Lowerer();
         ImmutableArray<BoundFunction> LowerAll(ImmutableArray<BoundFunction> functions) =>
             [.. functions.Select(f => new BoundFunction(f.Symbol, lowerer.LowerFunction(f), f.IsExpressionBodied))];
-        return new BoundProgram(program.Files, program.FileNamespaces, program.Types, program.BuiltinTypes, LowerAll(program.Functions), LowerAll(program.Methods), program.Main);
+        return new BoundProgram(program.Files, program.FileNamespaces, program.Types, program.BuiltinTypes, LowerAll(program.Functions), LowerAll(program.Methods), program.Main)
+        {
+            ExternalConformances = program.ExternalConformances,
+        };
     }
 
     private BoundBlockStatement LowerFunction(BoundFunction function) =>

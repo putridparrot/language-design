@@ -32,6 +32,12 @@ public sealed partial class Binder
     /// <summary>Methods added to builtin and .NET types with <c>extend Int { … }</c>; user types keep theirs on the symbol.</summary>
     private readonly Dictionary<TypeSymbol, List<MethodSymbol>> _builtinMethods = [];
 
+    /// <summary>
+    /// Traits implemented by types C# can't make implement an interface: builtins, .NET types, and Option and Result (keyed
+    /// by their definition, with traits written in terms of its type parameters).
+    /// </summary>
+    private readonly Dictionary<TypeSymbol, List<(TypeSymbol Trait, SourceText File)>> _externalConformances = [];
+
     /// <summary>The built-in <c>Option&lt;T&gt;</c> (<c>T?</c>) and <c>Result&lt;T, E&gt;</c>.</summary>
     private readonly EnumSymbol _option;
     private readonly EnumSymbol _result;
@@ -40,6 +46,9 @@ public sealed partial class Binder
     private readonly Stack<BoundExpression> _implicitReceivers = new();
 
     private FileContext _file = null!;
+
+    /// <summary>Where names, declarations and expression types are recorded for editor tooling, if anyone asked.</summary>
+    private readonly SemanticModel? _semantic;
     private Scope _scope = null!;
     /// <summary>What `return` returns from: the current function or lambda.</summary>
     private ReturnContext? _return;
@@ -115,9 +124,10 @@ public sealed partial class Binder
         public IReadOnlyList<string> Sources { get; } = sources;
     }
 
-    private Binder(DiagnosticBag diagnostics)
+    private Binder(DiagnosticBag diagnostics, SemanticModel? semantic)
     {
         _diagnostics = diagnostics;
+        _semantic = semantic;
         (_option, _result) = EnumSymbol.CreateBuiltins();
 
         _builtins = new Scope(parent: null);
@@ -139,14 +149,28 @@ public sealed partial class Binder
         _globalNamespace = new NamespaceSymbol("", null, new Scope(null));
     }
 
-    public static BoundProgram BindProgram(ImmutableArray<CompilationUnitSyntax> units, DiagnosticBag diagnostics) =>
-        new Binder(diagnostics).Bind(units);
+    public static BoundProgram BindProgram(ImmutableArray<CompilationUnitSyntax> units, DiagnosticBag diagnostics, SemanticModel? semantic = null) =>
+        new Binder(diagnostics, semantic).Bind(units);
 
     /// <param name="Traits">The traits it declares, bound in its type-parameter scope (`extend Box: Convert<T>`), with their syntax.</param>
     private sealed record ExtendInfo(
         ExtendDeclarationSyntax Syntax, FileContext File, TypeSymbol Target, Scope TypeParameterScope, IReadOnlyList<(TypeSymbol Trait, TypeSyntax Syntax)> Traits);
 
     private sealed record FunctionInfo(FunctionSymbol Symbol, FunctionDeclarationSyntax Syntax, FileContext File, Scope SignatureScope);
+
+    /// <summary>Records that <paramref name="name"/> refers to (or declares) <paramref name="symbol"/>, for editor tooling.</summary>
+    private void Record(Token name, Symbol? symbol, bool declaration = false)
+    {
+        if (_semantic is not null && symbol is not (null or ErrorSymbol) && !name.IsMissing)
+            _semantic.AddOccurrence(_file.Source, name.Span, symbol, declaration);
+    }
+
+    /// <summary>Records <paramref name="symbol"/>'s declaration at <paramref name="name"/>, and returns it.</summary>
+    private T Declared<T>(T symbol, Token name) where T : Symbol
+    {
+        Record(name, symbol, declaration: true);
+        return symbol;
+    }
 
     private void InFile(FileContext file)
     {
@@ -257,7 +281,10 @@ public sealed partial class Binder
             _diagnostics.ReportInvalidMain(main.Declaration!.Name.Span);
         }
 
-        return new BoundProgram([.. units.Select(u => u.Source)], [.. _files.Select(f => f.Namespace)], [.. types], [_option, _result], boundFunctions, boundMethods, main);
+        return new BoundProgram([.. units.Select(u => u.Source)], [.. _files.Select(f => f.Namespace)], [.. types], [_option, _result], boundFunctions, boundMethods, main)
+        {
+            ExternalConformances = [.. _externalConformances.SelectMany(e => e.Value.Select(c => new ExternalConformance(e.Key, c.Trait, c.File)))],
+        };
     }
 
     private FileContext FileOf(Symbol symbol) => _files.First(f => f.Source == symbol.DeclaringFile);
@@ -353,6 +380,8 @@ public sealed partial class Binder
         symbol.DeclaringFile = file.Source;
         symbol.Namespace = file.Namespace;
         symbol.IsPrivate = declaration.Private is not null;
+        if (_semantic is not null && !declaration.Name.IsMissing)
+            _semantic.AddOccurrence(file.Source, declaration.Name.Span, symbol, isDeclaration: true);
 
         var name = symbol.Name;
         bool clash = file.Private.LookupLocal(name) is not null || file.Namespace.Members.LookupLocal(name) is not null;
@@ -449,7 +478,7 @@ public sealed partial class Binder
         foreach (var parameterSyntax in syntax)
         {
             var name = parameterSyntax.Name;
-            var parameter = new TypeParameterSymbol(name.IsMissing ? "?" : name.Text);
+            var parameter = Declared(new TypeParameterSymbol(name.IsMissing ? "?" : name.Text), name);
             if (!name.IsMissing && (reservedNames.Contains(name.Text) || !scope.TryDeclare(parameter)))
                 _diagnostics.ReportDuplicateDeclaration(name.Span, name.Text);
 
@@ -553,7 +582,7 @@ public sealed partial class Binder
             else if (ReservedMemberNames.Contains(field.Name.Text))
                 _diagnostics.ReportReservedMemberName(field.Name.Span, field.Name.Text);
             else
-                fields.Add(new FieldSymbol(field.Name.Text, type));
+                fields.Add(Declared(new FieldSymbol(field.Name.Text, type), field.Name));
         }
         return fields.ToImmutable();
     }
@@ -579,7 +608,7 @@ public sealed partial class Binder
             else if (ReservedMemberNames.Contains(name.Text))
                 _diagnostics.ReportReservedMemberName(name.Span, name.Text);
             else
-                variants.Add(new VariantSymbol(name.Text, @enum) { Fields = BindFields(syntax.Fields, name.Text) });
+                variants.Add(Declared(new VariantSymbol(name.Text, @enum) { Fields = BindFields(syntax.Fields, name.Text) }, name));
         }
         @enum.Variants = variants.ToImmutable();
     }
@@ -644,16 +673,19 @@ public sealed partial class Binder
                     continue;
                 }
 
-                if (target is not NamedTypeDefinition || target is NamedTypeDefinition { IsRuntimeType: true })
+                // Builtin, .NET and runtime types implement traits through a generated box (see PiperTraits), which can't
+                // stand in for them where .NET expects one of its own interfaces.
+                bool external = IsExternalTarget(target);
+                if (external && !type.IsTrait)
                 {
                     _diagnostics.ReportInvalidExtendTarget(traitSyntax.Span,
-                        $"Only your own records and enums can implement traits; '{target.Name}' is a builtin, runtime or .NET type.");
+                        $"'{target.Name}' is a builtin, runtime or .NET type, so it can implement Piper traits but not .NET interfaces such as '{type}'.");
                     continue;
                 }
 
                 // Methods can't be overloaded, so a type can't have the methods of two instantiations of one trait.
                 // That includes inherited traits: Ordered<int> brings Equatable<int>, which rules out Equatable<string>.
-                var declared = traits.Select(t => t.Trait).Concat(((NamedTypeDefinition)target).Traits).ToList();
+                var declared = traits.Select(t => t.Trait).Concat(DeclaredTraits(target)).ToList();
                 var implemented = declared.SelectMany(WithAncestors).ToList();
                 var conflict = WithAncestors(type)
                     .SelectMany(added => implemented.Where(e => e.OriginalDefinition == added.OriginalDefinition && e != added).Select(e => (e, added)))
@@ -666,13 +698,30 @@ public sealed partial class Binder
                     traits.Add((type, traitSyntax));
             }
 
-            if (target is NamedTypeDefinition named)
+            if (IsExternalTarget(target))
+            {
+                if (traits.Count > 0)
+                {
+                    var list = _externalConformances.TryGetValue(target, out var existing) ? existing : _externalConformances[target] = [];
+                    list.AddRange(traits.Select(t => (t.Trait, file.Source)));
+                }
+            }
+            else if (target is NamedTypeDefinition named)
                 named.Conformances = [.. named.Conformances, .. traits.Select(t => (t.Trait, (SourceText?)file.Source))];
 
             extends.Add(new ExtendInfo(syntax, file, target, typeParameterScope, traits));
         }
         return extends;
     }
+
+    /// <summary>A builtin, .NET or runtime (Option, Result) type: one whose C# declaration Piper doesn't write.</summary>
+    private static bool IsExternalTarget(TypeSymbol target) => target is not NamedTypeDefinition { IsRuntimeType: false } && !target.IsTrait;
+
+    /// <summary>The traits an `extend` has declared <paramref name="target"/> implements so far (not those they inherit).</summary>
+    private IEnumerable<TypeSymbol> DeclaredTraits(TypeSymbol target) =>
+        _externalConformances.TryGetValue(target, out var external)
+            ? external.Select(c => c.Trait)
+            : (target as NamedTypeDefinition)?.Traits ?? [];
 
     private IEnumerable<FunctionInfo> BindTraitMethods(TraitSymbol trait)
     {
@@ -877,10 +926,11 @@ public sealed partial class Binder
     /// </summary>
     private void CheckConformances(List<ExtendInfo> extends)
     {
-        var checkedByType = new Dictionary<NamedTypeDefinition, HashSet<TypeSymbol>>();
+        var checkedByType = new Dictionary<TypeSymbol, HashSet<TypeSymbol>>();
         foreach (var extend in extends)
         {
-            if (extend.Target is not NamedTypeDefinition definition)
+            var definition = extend.Target;
+            if (definition.IsTrait)
                 continue;
 
             InFile(extend.File);
@@ -891,14 +941,14 @@ public sealed partial class Binder
             {
                 if (traitType.TraitDefinition is not { } trait)
                 {
-                    if (!CheckClrConformance(definition, traitType, traitSyntax))
+                    if (!CheckClrConformance((NamedTypeDefinition)definition, traitType, traitSyntax))
                         break;
                     continue;
                 }
                 var map = TypeSubstitution.MapFor(traitType);
                 foreach (var required in trait.Methods)
                 {
-                    var implementation = definition.Methods.FirstOrDefault(m => m.Name == required.Name);
+                    var implementation = OwnMethods(definition).FirstOrDefault(m => m.Name == required.Name);
                     if (implementation is null)
                     {
                         // A trait the type implements may override the method, supplying (or replacing) its default.
@@ -925,6 +975,12 @@ public sealed partial class Binder
     /// A generic method matches one with as many type parameters, renamed to the trait's (`fn map<U>` implements
     /// `fn map<R>`), and with the same bounds, as C# requires.
     /// </summary>
+    /// <summary>The methods extend blocks give a type itself (not those it gets from traits).</summary>
+    private IEnumerable<MethodSymbol> OwnMethods(TypeSymbol type) =>
+        type is NamedTypeDefinition definition ? definition.Methods
+        : _builtinMethods.TryGetValue(type, out var methods) ? methods
+        : [];
+
     private static bool SignaturesMatch(MethodSymbol implementation, MethodSymbol required, IReadOnlyDictionary<TypeParameterSymbol, TypeSymbol> traitMap)
     {
         if (implementation.IsStatic != required.IsStatic || implementation.TypeParameters.Length != required.TypeParameters.Length)
@@ -1045,7 +1101,7 @@ public sealed partial class Binder
                 continue;
             if (!names.Add(parameter.Name.Text))
                 _diagnostics.ReportDuplicateDeclaration(parameter.Name.Span, parameter.Name.Text);
-            parameters.Add(new VariableSymbol(parameter.Name.Text, type, isMutable: false, VariableKind.Parameter));
+            parameters.Add(Declared(new VariableSymbol(parameter.Name.Text, type, isMutable: false, VariableKind.Parameter), parameter.Name));
         }
 
         // An async function with no return type returns a Task, as a plain one returns unit.
@@ -1104,6 +1160,7 @@ public sealed partial class Binder
             BodyReturnType = bodyReturnType,
             IteratorElementType = iteratorElement,
         };
+        Record(declaration.Name, method, declaration: true);
         return new FunctionInfo(method, declaration, file, scope);
     }
 
@@ -1326,6 +1383,13 @@ public sealed partial class Binder
     /// </summary>
     private Symbol? ResolveTypeName(NamedTypeSyntax syntax)
     {
+        var symbol = ResolveTypeNameCore(syntax);
+        Record(syntax.Name, symbol);
+        return symbol;
+    }
+
+    private Symbol? ResolveTypeNameCore(NamedTypeSyntax syntax)
+    {
         if (syntax.Qualifier.IsEmpty)
             return _scope.Lookup(syntax.Name.Text);
 
@@ -1412,8 +1476,10 @@ public sealed partial class Binder
     {
         TypeParameterSymbol parameter => parameter.Constraints,
         _ when type.IsTrait => [type],
-        _ when type.OriginalDefinition is NamedTypeDefinition definition =>
+        _ when type.OriginalDefinition is NamedTypeDefinition { IsRuntimeType: false } definition =>
             definition.Traits.Select(t => TypeSubstitution.Substitute(t, TypeSubstitution.MapFor(type))),
+        _ when _externalConformances.TryGetValue(type.OriginalDefinition, out var external) =>
+            external.Select(c => TypeSubstitution.Substitute(c.Trait, TypeSubstitution.MapFor(type))),
         _ => [],
     }).SelectMany(WithAncestors).Distinct();
 
@@ -1517,7 +1583,7 @@ public sealed partial class Binder
             CheckDisposable(type, syntax.Initializer.Span, syntax.Await);
 
         // Declared after binding the initializer, so `let x = x + 1;` refers to the outer x.
-        var variable = new VariableSymbol(syntax.Name.Text, type, syntax.IsMutable, VariableKind.Local);
+        var variable = Declared(new VariableSymbol(syntax.Name.Text, type, syntax.IsMutable, VariableKind.Local), syntax.Name);
         if (!syntax.Name.IsMissing && !_scope.TryDeclare(variable))
             _diagnostics.ReportDuplicateDeclaration(syntax.Name.Span, variable.Name);
 
@@ -1538,7 +1604,7 @@ public sealed partial class Binder
         VariableSymbol? variable = null;
         if (syntax.Name is { } name)
         {
-            variable = new VariableSymbol(name.Text, type ?? resource.Type, isMutable: false, VariableKind.Local);
+            variable = Declared(new VariableSymbol(name.Text, type ?? resource.Type, isMutable: false, VariableKind.Local), name);
             if (!name.IsMissing)
                 _scope.TryDeclare(variable);
         }
@@ -1602,7 +1668,7 @@ public sealed partial class Binder
 
         var outer = _scope;
         _scope = new Scope(outer);
-        var variable = new VariableSymbol(syntax.Variable.Text, type, isMutable: false, VariableKind.LoopVariable);
+        var variable = Declared(new VariableSymbol(syntax.Variable.Text, type, isMutable: false, VariableKind.LoopVariable), syntax.Variable);
         if (!syntax.Variable.IsMissing)
             _scope.TryDeclare(variable);
 

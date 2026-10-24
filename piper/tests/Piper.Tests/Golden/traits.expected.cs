@@ -13,6 +13,30 @@ public interface Shape
     string name();
 
     string describe() => $"{this.name()} with area {this.area()}";
+
+    public interface PiperWitness<TPiperSelf>
+    {
+        Shape PiperBox(TPiperSelf piperSelf);
+        double area(TPiperSelf piperSelf);
+        string name(TPiperSelf piperSelf);
+        string describe(TPiperSelf piperSelf);
+    }
+
+    public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Shape
+    {
+        Shape Shape.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
+        public double area(TPiperSelf piperSelf) => piperSelf.area();
+        public string name(TPiperSelf piperSelf) => piperSelf.name();
+        public string describe(TPiperSelf piperSelf) => piperSelf.describe();
+    }
+
+    public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Shape, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
+    {
+        Shape Shape.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
+        public double area(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).area();
+        public string name(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).name();
+        public string describe(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).describe();
+    }
 }
 
 public sealed record Circle(double radius) : Shape
@@ -47,6 +71,27 @@ public interface Speak
     string sound();
 
     string speak() => $"says {this.sound()}";
+
+    public interface PiperWitness<TPiperSelf>
+    {
+        Speak PiperBox(TPiperSelf piperSelf);
+        string sound(TPiperSelf piperSelf);
+        string speak(TPiperSelf piperSelf);
+    }
+
+    public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Speak
+    {
+        Speak Speak.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
+        public string sound(TPiperSelf piperSelf) => piperSelf.sound();
+        public string speak(TPiperSelf piperSelf) => piperSelf.speak();
+    }
+
+    public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Speak, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
+    {
+        Speak Speak.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
+        public string sound(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).sound();
+        public string speak(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).speak();
+    }
 }
 
 public abstract record Animal : Speak
@@ -90,9 +135,9 @@ public abstract record Animal : Speak
 
 public static class Traits
 {
-    public static T largest<T>(T a, T b) where T : Shape => a.area() >= b.area() ? a : b;
+    public static T largest<T>(T a, T b) => global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().area(a) >= global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().area(b) ? a : b;
 
-    public static string summary<T>(T shape) where T : Shape => shape.describe();
+    public static string summary<T>(T shape) => global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().describe(shape);
 
     public static double totalArea(List<Shape> shapes)
     {

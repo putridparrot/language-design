@@ -30,6 +30,18 @@ public sealed class SourceText
         return (line + 1, position - _lineStarts[line] + 1);
     }
 
+    public int LineCount => _lineStarts.Length;
+
+    /// <summary>The position of a 0-based line and column (clamped to the text), as editors count them.</summary>
+    public int GetPosition(int line, int column)
+    {
+        if (line >= _lineStarts.Length)
+            return Text.Length;
+        var start = _lineStarts[Math.Max(line, 0)];
+        var end = line + 1 < _lineStarts.Length ? _lineStarts[line + 1] : Text.Length;
+        return Math.Min(start + Math.Max(column, 0), end);
+    }
+
     private static int[] ComputeLineStarts(string text)
     {
         var starts = new List<int> { 0 };

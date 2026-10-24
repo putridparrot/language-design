@@ -1,0 +1,71 @@
+// Builtin, .NET and runtime types implementing traits, used as trait values and to satisfy bounds.
+
+using System.Collections.Generic;
+using System.Text;
+
+trait Shape {
+    fn area() => double;
+    fn describe() => string = "area {this.area()}";
+}
+trait Named { fn name() => string; fn greet() => string = "Hello, {this.name()}"; }
+trait Formal: Named { fn greet() => string = "Good day, {this.name()}"; }
+trait Monoid<T: Monoid<T>> {
+    static fn empty() => T;
+    fn combine(other: T) => T;
+    static fn label() => string = "monoid";
+}
+trait Convert<T> { fn convert() => T; fn mapTo<U>(f: (T) => U) => U = f(this.convert()); }
+
+record Circle(r: double);
+extend Circle: Shape { fn area() => double = 3.0 * this.r * this.r; }
+// int, string, StringBuilder and Option implement traits like any record.
+extend int: Shape { fn area() => double = (double)(this * this); }
+extend string: Formal { fn name() => string = this; }
+extend int: Monoid<int> { static fn empty() => int = 0; fn combine(other: int) => int = this + other; }
+extend string: Monoid<string> { static fn empty() => string = ""; fn combine(other: string) => string = this + other; }
+extend StringBuilder: Named { fn name() => string = this.ToString(); }
+extend Option: Convert<string> { fn convert() => string = match this { Some(v) => "some {v}", None => "none" }; }
+
+// A bounded generic record instantiated with int.
+record Holder<T: Shape>(item: T);
+extend Holder { fn area() => double = this.item.area(); }
+
+fn total<T: Shape>(items: List<T>) => double {
+    var sum = 0.0;
+    for i in items { sum += i.area(); }
+    sum
+}
+fn concat<T: Monoid<T>>(items: List<T>) => T {
+    var result = T.empty();
+    for i in items { result = result.combine(i); }
+    result
+}
+fn welcome<T: Named>(x: T) => string = x.greet();
+fn asShape<T: Shape>(x: T) => Shape = x;
+
+fn main() {
+    print(3.area());
+    print(3.describe());
+    let shapes: List<Shape> = [Circle(1.0), 2, 3];
+    for s in shapes { print(s.describe()); }
+    print(total([1, 2, 3]));
+    print(total(shapes));
+    print(concat([1, 2, 3]));
+    print(concat(["a", "b", "c"]));
+    print(int.label());                // a static default, through the type
+    print("Ann".greet());
+    print(welcome("Bob"));
+    print(welcome(StringBuilder("sb")));
+    let n: Named = "Cy";
+    print(n.greet());
+    print(Option.Some(4).convert());
+    let o: Option<int> = None;
+    print(o.mapTo((s) => s.Length));
+    print(Holder(5).area());
+    let s: Shape = 7;
+    print(s);
+    let back = (int)s;                 // a cast back from the trait
+    print(back + 1);
+    print(asShape(9).area());
+    print(s == asShape(7));
+}

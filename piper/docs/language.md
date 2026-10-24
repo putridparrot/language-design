@@ -261,8 +261,8 @@ extend Circle: Shape {
 - **Generic methods:** a trait method can take type parameters of its own, `fn mapAll<U>(f: (T) => U) => List<U>;`. An implementation has as many type parameters, with the same bounds, under any names: `fn mapAll<R>(f: (int) => R) => List<R>`.
 - **Adding methods to a trait:** `extend Named { fn shout() => string = this.greet().ToUpper(); }` adds default methods to a trait, including one declared in another file or namespace, and every implementer gets them. They must have bodies and can't be static or private, and the block can't make the trait implement other traits (list parents in its declaration).
 - **.NET interfaces:** `extend` can implement a .NET interface too, and one can be a bound. Each method of `extend Money: IComparable<Money> { fn CompareTo(other: Money?) => int = … }` has the interface's signature as Piper sees it: a parameter or result .NET marks as possibly null is an Option, as when calling .NET. Then `wallet.Sort()` uses it, `using let c = Connection(…)` works for an `IDisposable`, and the record passes wherever .NET expects the interface (`words.Sort(ByLength())` for an `IComparer<string>`). `fn largest<T: IComparable<T>>(items: List<T>)` accepts Piper types that implement it and .NET types such as `int` and `string`, and calls `a.CompareTo(b)` on them. Only interfaces made of instance methods (no properties, events, static or generic methods, or ref and out parameters) can be implemented.
-- **Static methods:** `static fn empty() => T;` in a trait is a C# static abstract member, and one with a body a default (`static virtual`). Implementers write `static fn empty() => Total = …`. They are called through a type parameter bounded by the trait, as in C#: `fn concat<T: Monoid<T>>(items: List<T>) => T { var result = T.empty(); … }`. A trait with static methods can only be a bound, not the type of a value, and a trait's default static method can only be called through a type parameter, not on a type that doesn't implement it itself (`Total.describe()`).
-- **Builtin and .NET types can't implement traits** (`extend int: Shape`). Traits become C# interfaces, and C# has no way to make `int` or `string` implement one, even with extension members, so they couldn't satisfy a bound either. Use a record that wraps the value, or a .NET interface they already implement (`T: IComparable<T>` accepts `int`).
+- **Static methods:** `static fn empty() => T;` in a trait is a C# static abstract member, and one with a body a default (`static virtual`). Implementers write `static fn empty() => Total = …`. They are called through a type parameter bounded by the trait, as in C#: `fn concat<T: Monoid<T>>(items: List<T>) => T { var result = T.empty(); … }`. They can also be called on a type that implements the trait, including a default it doesn't override (`Total.describe()`), but not on the trait itself. A trait with static methods can only be a bound, not the type of a value.
+- **Builtin, .NET and runtime types implement traits too:** `extend int: Shape { fn area() => double = … }`, and likewise `string`, `StringBuilder` or `Option` (`extend Option: Convert<string> { … }`). They get the trait's defaults (`3.describe()`), convert to the trait (`let shapes: List<Shape> = [Circle(1.0), 2, 3];`), cast back from it (`(int)s`), and satisfy bounds (`total([1, 2, 3])` for `fn total<T: Shape>(items: List<T>)`, `concat(["a", "b"])` for a `Monoid<T>` with static methods). Only Piper traits, not .NET interfaces: C# has no way to make `int` implement an interface, so a value used as a trait is wrapped in a generated box (see [How bounds are compiled](#how-trait-bounds-are-compiled)).
 
 ### Methods and `extend`
 
@@ -325,7 +325,7 @@ fn compute(a: int, b: int) => Result<int, MathError> {
 
 - **`?` propagates errors.** On a `Result`, `?` unwraps `Ok`, or returns the `Err` from a function that itself returns a `Result` with a compatible error type. A `Result` has no conditional access, so `divide(a, b)?.ToString()` is `?` then `.ToString()`. On an `Option`, `?.` is always conditional access; write `(f()?).name` to unwrap first.
 - **Pattern matching:** `Result` values match like any enum, e.g. `Err(MathError.DivideByZero)`.
-- **No redeclaring:** `Option` and `Result` are built in, so they can't be redeclared. You can extend them with methods, e.g. `extend Option { fn isNone() => bool = this is None; }`, but not make them implement traits.
+- **No redeclaring:** `Option` and `Result` are built in, so they can't be redeclared. You can extend them with methods, e.g. `extend Option { fn isNone() => bool = this is None; }`, and make them implement traits.
 - **One runtime:** they're defined once, in the `Piper.Runtime` assembly (as `Piper.Runtime.Option<T>` and `Piper.Runtime.Result<T, E>`), which every compiled Piper program and library references. So Piper libraries can pass them to each other, and C# code can use them too.
 
 ### Programs, namespaces and visibility
@@ -626,7 +626,7 @@ is locale-independent. `main()` takes no parameters and returns unit; it is the 
 | `Shape.Circle(1.0)` | `new Shape.Circle(1.0)` |
 | `match s { Circle(r) if r > 1.0 => a, Empty => b, … }` | `if (s is Shape.Circle(var r) && r > 1.0) { … } else if … else { … }` |
 | patterns `1 \| 2`, `1..=9`, `_` | C# patterns `1 or 2`, `>= 1 and <= 9`, `_` |
-| `record Pair<A, B: Show>(…)` | `public sealed record Pair<A, B>(…) where B : Show` |
+| `record Pair<A, B: Show>(…)`, `fn f<T: IComparable<T>>` | `public sealed record Pair<A, B>(…)`: trait bounds aren't C# constraints (see below); .NET interface bounds are, `where T : IComparable<T>` |
 | `swap(p)` (generic) | `swap<int, string>(p)`: type arguments are always explicit |
 | `(int, string)`, `(x: int, y: int)`, `(1, "a")`, `t.x` | `(int, string)`, `(int x, int y)`, `(1, "a")`, `t.Item1` (always by position) |
 | `let (a, b) = t;`, `(a, b) = (b, a);`, `for (k, v) in d` | `var (a, b) = t;`, `(a, b) = (b, a);`, `foreach (var (k, v) in d)` |
@@ -634,9 +634,12 @@ is locale-independent. `main()` takes no parameters and returns unit; it is the 
 | `int.TryParse(s, out let n)` | `int n;` before the statement, then `int.TryParse(s, out n)`; an optional `out` goes through `PiperInterop.AfterOutReference(…)` |
 | `Interlocked.Increment(ref n)`, `list.Changed += h` | the same: `ref n`, `list.Changed += h` |
 | `trait Shape { fn area() => double; fn d() => string = …; }` | `public interface Shape { double area(); string d() => …; }` |
-| `trait Ordered<T: Ordered<T>>: Equatable<T> { … }` | `public interface Ordered<T> : Equatable<T> where T : Ordered<T> { … }` |
+| `trait Ordered<T: Ordered<T>>: Equatable<T> { … }` | `public interface Ordered<T> : Equatable<T> { … }`, with nested witness types `PiperWitness<TPiperSelf>`, `PiperVia<TPiperSelf>` and `PiperMapped<TPiperSelf, TPiperBox>` |
 | `trait Formal: Named { fn greet() => string = …; }` (an override) | `public interface Formal : Named { string Named.greet() => …; }` (an explicit implementation) |
-| `trait Monoid<T: Monoid<T>> { static fn empty() => T; static fn d() => string = …; }`, `T.empty()` | `interface Monoid<T> where T : Monoid<T> { static abstract T empty(); static virtual string d() => …; }`, `T.empty()` |
+| `trait Monoid<T: Monoid<T>> { static fn empty() => T; static fn d() => string = …; }` | `interface Monoid<T> { static abstract T empty(); static virtual string d() => …; }` |
+| `x.area()`, `T.empty()` and `let s: Shape = x;` for `x: T`, `T: Shape` | `PiperTraits.Witness<Shape.PiperWitness<T>>().area(x)`, `….empty()` and `….PiperBox(x)` |
+| `extend int: Shape { … }` | the methods as extension members, plus `file readonly record struct PiperBox_int(int Value) : Shape, IPiperBox<int, PiperBox_int>` forwarding to them, registered by a `[ModuleInitializer]` |
+| `(int)s` for `s: Shape` | `PiperTraits.Unbox<int>(s)` |
 | `extend Money: IComparable<Money> { fn CompareTo(other: Money?) => int … }` | `record Money : IComparable<Money>` with `public int CompareTo(Option<Money> other)`, plus `int IComparable<Money>.CompareTo(Money? other) => CompareTo(PiperInterop.FromNullableReference(other));` where nullability differs |
 | `extend Circle: Shape { fn area() … }` | members inside `public sealed record Circle(…) : Shape { public double area() … }` |
 | `c.d()` where `d` is an un-overridden default | `((Shape)c).d()` (C# only exposes default interface methods through the interface) |
@@ -686,7 +689,6 @@ is locale-independent. `main()` takes no parameters and returns unit; it is the 
 - **Identifiers that are C# keywords** are escaped (`@class`).
 - **The module class** is named after the source file (`hello.piper` → `Hello`). A `PiperEntryPoint.Main` calls `main`.
 
-**Why `match` becomes an if/else chain, not a C# `switch`.**
 - **No double-checking:** Piper checks exhaustiveness and reachability itself. C# treats a switch arm it considers subsumed as an error, and its analysis isn't identical to Piper's.
 - **Jumps:** a `break` inside a C# `switch` statement would exit the switch rather than the enclosing loop.
 - **Shared lowering:** the chain reuses the lowering already used for `if`, which handles arms with statements, returns and values.
@@ -698,9 +700,21 @@ ifs: `if (s is P(var x)) { …; if (guard) { body; goto end; } }`, followed by t
 `while` whose condition binds variables with `is` and then needs statements is lowered the same way, so C# still knows the
 variables are assigned.
 
+### How trait bounds are compiled
+
+A bound `T: Shape` can be met by `int`, which C# can't make implement the `Shape` interface, so trait bounds aren't C#
+constraints. Generic code reaches a trait through a *witness* for its type parameter instead:
+
+- **The witness interface:** each trait has a nested `Shape.PiperWitness<TPiperSelf>`, with the trait's methods taking the value as their first parameter (static methods take none), and `PiperBox`, which turns the value into a `Shape`.
+- **Calls:** `x.area()` on a `T` becomes `PiperTraits.Witness<Shape.PiperWitness<T>>().area(x)`. `PiperTraits` (in Piper.Runtime) finds the witness once per type and caches it in a static field, so a call costs a field read and an interface call.
+- **Piper types:** records, enums and traits implement the interface themselves, and use `Shape.PiperVia<TPiperSelf>`, which calls it. Overrides and defaults dispatch as usual.
+- **Builtin, .NET and runtime types:** these use `Shape.PiperMapped<TPiperSelf, TPiperBox>`. It wraps the value in a generated `readonly record struct` box that implements `Shape` by calling the type's extend methods. Wrapping an `int` in the struct allocates nothing, but a default method or a conversion to `Shape` puts the box on the heap. Each file registers its boxes' witnesses in a `[ModuleInitializer]`.
+- **.NET interface bounds:** `T: IComparable<T>` stays a C# constraint, since .NET types implement those themselves.
+- **Calling from C#:** C# code can call a Piper generic function with any type argument. One that doesn't implement the trait fails at run time, when its witness is first looked up.
+
 ## Known limitations
 
-- Builtin and .NET types can't implement traits, because C# can't make them implement an interface (see [Traits](#traits)).
+None known.
 
 ## Roadmap
 
@@ -712,5 +726,5 @@ variables are assigned.
 6. ~~**Language freeze**~~, done in milestone 7: C#-compatible printing and minimum-value literals, arrays (`int[]`, `int[5]`), explicit type arguments, generic functions as values, tuples and deconstruction, and `out` parameters.
 7. ~~**Robustness and tooling**~~, done in milestone 8: `#line` mapping to `.piper` sources, constant checking and C# errors reported as internal compiler errors, larger sample programs, raw strings, C#'s numeric types and casts, `using`, equality on type parameters, `|` patterns that bind, the `piper` dotnet tool and the Piper.Build MSBuild package.
 8. ~~**Async and iterators**~~, done after milestone 8: `async`/`await`, async lambdas and `main`, `await for`, `await using`, `yield` iterators (sync and async), and the shared `Piper.Runtime` assembly.
-9. ~~**Smaller features**~~, done: spreading sequences into collection literals (`[0, ...xs]`), `defer` and the pipe operator `|>`, generic trait methods, traits overriding inherited methods, and `extend Trait`.
-10. **A language server** that reuses the fault-tolerant parser and binder.
+9. ~~**Smaller features**~~, done: spreading sequences into collection literals (`[0, ...xs]`), `defer` and the pipe operator `|>`, generic trait methods, traits overriding inherited methods, `extend Trait`, and builtin, .NET and runtime types implementing traits (through witnesses).
+10. ~~**A language server**~~, done: `piper lsp`, reusing the fault-tolerant parser and binder, with a VS Code extension in `editors/vscode`.

@@ -9,6 +9,24 @@ using Piper.Runtime;
 public interface Shape
 {
     double area();
+
+    public interface PiperWitness<TPiperSelf>
+    {
+        Shape PiperBox(TPiperSelf piperSelf);
+        double area(TPiperSelf piperSelf);
+    }
+
+    public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Shape
+    {
+        Shape Shape.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
+        public double area(TPiperSelf piperSelf) => piperSelf.area();
+    }
+
+    public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Shape, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
+    {
+        Shape Shape.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
+        public double area(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).area();
+    }
 }
 
 public sealed record Square(double side) : Shape

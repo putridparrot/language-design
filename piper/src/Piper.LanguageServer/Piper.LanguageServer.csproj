@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The Piper language server (LSP), run by `piper lsp`; it reuses the compiler's fault-tolerant parser and binder. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Piper.Compiler\Piper.Compiler.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -45,7 +45,16 @@ public sealed class BoundProgram(
     public ImmutableArray<BoundFunction> Methods { get; } = methods;
 
     public FunctionSymbol? Main { get; } = main;
+
+    /// <summary>Traits implemented by builtin, .NET and runtime types, which are boxed to be used as the trait.</summary>
+    public ImmutableArray<ExternalConformance> ExternalConformances { get; init; } = [];
 }
+
+/// <summary>
+/// `extend int: Shape`, in <paramref name="File"/>. For Option or Result, <paramref name="Target"/> is the definition and
+/// <paramref name="Trait"/> is written in terms of its type parameters.
+/// </summary>
+public sealed record ExternalConformance(TypeSymbol Target, TypeSymbol Trait, SourceText File);
 
 /// <summary>Before lowering <see cref="Body"/> is a <see cref="BoundBlockExpression"/>; after, a <see cref="BoundBlockStatement"/>.</summary>
 public sealed class BoundFunction(FunctionSymbol symbol, BoundNode body, bool isExpressionBodied)

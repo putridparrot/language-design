@@ -417,7 +417,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0319", span, $"'{trait}' has static methods, so it can only be a bound ('T: {trait}'), not the type of a value.");
 
     public void ReportStaticTraitMethodCall(TextSpan span, string method, TypeSymbol type) =>
-        Error("PIP0320", span, $"'{type}' doesn't implement static method '{method}' itself; call the trait's default through a type parameter bounded by the trait, or implement it in the extend block.");
+        Error("PIP0320", span, $"Static method '{method}' can't be called on trait '{type}' itself; call it on a type that implements the trait, or a type parameter bounded by it.");
 
     public void ReportAmbiguousTraitOverride(TextSpan span, string method, TypeSymbol first, TypeSymbol second, string where) =>
         Error("PIP0321", span, $"'{first}' and '{second}' both override '{method}', so neither is the most specific; override it {where}.");

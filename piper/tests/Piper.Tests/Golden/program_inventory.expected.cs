@@ -109,16 +109,37 @@ namespace Shop.Model
             long pence = this.unitPrice().pence % 100;
             return $"£{pounds}.{pence.ToString().PadLeft(2, '0')}";
         }
+
+        public interface PiperWitness<TPiperSelf>
+        {
+            Priced PiperBox(TPiperSelf piperSelf);
+            Money unitPrice(TPiperSelf piperSelf);
+            string priceText(TPiperSelf piperSelf);
+        }
+
+        public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Priced
+        {
+            Priced Priced.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
+            public Money unitPrice(TPiperSelf piperSelf) => piperSelf.unitPrice();
+            public string priceText(TPiperSelf piperSelf) => piperSelf.priceText();
+        }
+
+        public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Priced, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
+        {
+            Priced Priced.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
+            public Money unitPrice(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).unitPrice();
+            public string priceText(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).priceText();
+        }
     }
 
     public static class Model
     {
-        public static Money total<T>(global::System.Collections.Generic.List<T> items) where T : Priced
+        public static Money total<T>(global::System.Collections.Generic.List<T> items)
         {
             Money sum = Money.zero();
             foreach (T item in items)
             {
-                sum = sum.plus(item.unitPrice());
+                sum = sum.plus(global::Piper.Runtime.PiperTraits.Witness<Priced.PiperWitness<T>>().unitPrice(item));
             }
             return sum;
         }

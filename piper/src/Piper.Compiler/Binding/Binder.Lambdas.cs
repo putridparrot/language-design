@@ -114,7 +114,7 @@ public sealed partial class Binder
             var type = parameterTypes?[i] ?? annotated ?? TypeSymbol.Error;
             if (parameterTypes is not null && annotated is not null && annotated != type && annotated != TypeSymbol.Error)
                 _diagnostics.ReportLambdaParameterType(parameter.Span, parameter.Name.Text, type, annotated);
-            parameters.Add(new VariableSymbol(parameter.Name.Text, type, isMutable: false, VariableKind.Parameter));
+            parameters.Add(Declared(new VariableSymbol(parameter.Name.Text, type, isMutable: false, VariableKind.Parameter), parameter.Name));
         }
 
         // An async lambda's body produces the Task's result: `async x => 1` is a (T) => Task<int>.
@@ -398,7 +398,7 @@ public sealed partial class Binder
 
         var outer = _scope;
         _scope = new Scope(outer);
-        var variable = new VariableSymbol(syntax.Variable.Text, elementType, isMutable: false, VariableKind.LoopVariable);
+        var variable = Declared(new VariableSymbol(syntax.Variable.Text, elementType, isMutable: false, VariableKind.LoopVariable), syntax.Variable);
         BoundParenthesizedDesignation? deconstruction = null;
         if (syntax.Deconstruction is { } designation)
         {
@@ -662,7 +662,7 @@ public sealed partial class Binder
             VariableSymbol? variable = null;
             if (clause.Name is { IsMissing: false } name && name.Text != "_")
             {
-                variable = new VariableSymbol(name.Text, exceptionType ?? TypeSymbol.Error, isMutable: false, VariableKind.Local);
+                variable = Declared(new VariableSymbol(name.Text, exceptionType ?? TypeSymbol.Error, isMutable: false, VariableKind.Local), name);
                 _scope.TryDeclare(variable);
             }
             var clauseBody = BindBlock(clause.Body);

@@ -23,6 +23,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Piper.Compiler\Piper.Compiler.csproj" />
+    <ProjectReference Include="..\..\src\Piper.LanguageServer\Piper.LanguageServer.csproj" />
   </ItemGroup>
 
 </Project>

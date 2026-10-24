@@ -11,6 +11,7 @@ const string Usage = """
                                            Compile to a library: <name>.dll, .pdb and Piper.Runtime.dll
       piper emit  <inputs...>              Print the generated C# to stdout
       piper run   <inputs...>              Transpile, compile and run
+      piper lsp                            Run the language server (LSP over stdin and stdout), for editors
       piper --version                      Show the compiler's version
 
     Inputs are .piper files or directories (searched recursively for .piper files);
@@ -26,6 +27,9 @@ if (args is ["--version" or "-v"])
     Console.WriteLine($"piper {version?.Split('+')[0] ?? "?"}");
     return 0;
 }
+
+if (args is ["lsp", ..])
+    return await Piper.LanguageServer.PiperLanguageServer.RunAsync(Console.OpenStandardInput(), Console.OpenStandardOutput());
 
 if (args.Length < 2 || args[0] is not ("build" or "emit" or "run"))
 {

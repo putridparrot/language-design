@@ -67,6 +67,24 @@ public abstract record Expr
 public interface Describe
 {
     string describe();
+
+    public interface PiperWitness<TPiperSelf>
+    {
+        Describe PiperBox(TPiperSelf piperSelf);
+        string describe(TPiperSelf piperSelf);
+    }
+
+    public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Describe
+    {
+        Describe Describe.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
+        public string describe(TPiperSelf piperSelf) => piperSelf.describe();
+    }
+
+    public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Describe, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
+    {
+        Describe Describe.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
+        public string describe(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).describe();
+    }
 }
 
 public sealed record Parser(global::System.Collections.Generic.List<Token> tokens, int[] position);

@@ -436,7 +436,7 @@ public sealed partial class Binder
             if (parameter.NullWhenFalse && _outsKnownTrue is { } knownTrue && knownTrue.Arguments.Any(a => ReferenceEquals(a, syntax)))
                 (type, boundary, scope) = (parameter.Type, ClrBoundary.None, knownTrue.Scope);
 
-            var variable = new VariableSymbol(syntax.Name.Text, type, keyword.Kind == TokenKind.VarKeyword, VariableKind.Local);
+            var variable = Declared(new VariableSymbol(syntax.Name.Text, type, keyword.Kind == TokenKind.VarKeyword, VariableKind.Local), syntax.Name);
             if (!syntax.Name.IsMissing && !scope.TryDeclare(variable))
                 _diagnostics.ReportDuplicateDeclaration(syntax.Name.Span, variable.Name);
             return new BoundOutArgument(variable, declares: true, parameter.Type, boundary, type);

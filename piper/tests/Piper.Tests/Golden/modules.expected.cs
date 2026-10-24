@@ -23,6 +23,7 @@ public static class MainModule
         shapes.Add(rect);
         Totals totals = new Totals(shapes.Count, global::Geometry.Shapes.area(circle) + global::Geometry.Shapes.area(rect));
         global::System.Console.WriteLine(totals);
+        global::System.Console.WriteLine(global::Geometry.TextExtensions.rounded(totals.area));
     }
 }
 
@@ -101,6 +102,27 @@ namespace Geometry
     public partial interface Describe
     {
         string describe();
+
+        public interface PiperWitness<TPiperSelf>
+        {
+            Describe PiperBox(TPiperSelf piperSelf);
+            string describe(TPiperSelf piperSelf);
+            string shout(TPiperSelf piperSelf);
+        }
+
+        public readonly struct PiperVia<TPiperSelf> : PiperWitness<TPiperSelf> where TPiperSelf : Describe
+        {
+            Describe Describe.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => piperSelf;
+            public string describe(TPiperSelf piperSelf) => piperSelf.describe();
+            public string shout(TPiperSelf piperSelf) => piperSelf.shout();
+        }
+
+        public readonly struct PiperMapped<TPiperSelf, TPiperBox> : PiperWitness<TPiperSelf> where TPiperBox : struct, Describe, global::Piper.Runtime.IPiperBox<TPiperSelf, TPiperBox>
+        {
+            Describe Describe.PiperWitness<TPiperSelf>.PiperBox(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf);
+            public string describe(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).describe();
+            public string shout(TPiperSelf piperSelf) => TPiperBox.Wrap(piperSelf).shout();
+        }
     }
 
     partial record Point
@@ -130,6 +152,14 @@ namespace Geometry
                 throw new global::System.Diagnostics.UnreachableException();
             }
             return text.ToString();
+        }
+    }
+
+    public static class TextExtensions
+    {
+        extension(double self)
+        {
+            public long rounded() => (long)global::System.Math.Round(self);
         }
     }
 }

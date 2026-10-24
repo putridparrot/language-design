@@ -1,0 +1,76 @@
+{
+  "name": "piper-language",
+  "displayName": "Piper",
+  "description": "Piper language support: syntax highlighting, and diagnostics, hover, go to definition, references, rename, completion and an outline from the Piper language server.",
+  "version": "1.0.0-preview.1",
+  "publisher": "putridparrot",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "piper",
+        "aliases": [
+          "Piper",
+          "piper"
+        ],
+        "extensions": [
+          ".piper"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "piper",
+        "scopeName": "source.piper",
+        "path": "./syntaxes/piper.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Piper",
+      "properties": {
+        "piper.server.path": {
+          "type": "string",
+          "default": "piper",
+          "description": "The command that starts the language server: the `piper` tool (`dotnet tool install -g Piper`), or `dotnet` to run a built piper.dll."
+        },
+        "piper.server.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "lsp"
+          ],
+          "description": "Arguments for the server command, e.g. [\"path/to/piper.dll\", \"lsp\"] when the path is `dotnet`."
+        },
+        "piper.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Log the messages between VS Code and the language server to the Piper output channel."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "piper.restartServer",
+        "title": "Piper: Restart Language Server"
+      }
+    ]
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}
