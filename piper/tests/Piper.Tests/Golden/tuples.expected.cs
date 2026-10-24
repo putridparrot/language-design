@@ -96,8 +96,16 @@ public static class Tuples
         global::System.Console.WriteLine(classify((1, 2)));
         var (quotient, remainder) = global::System.Math.DivRem(20, 6);
         global::System.Console.WriteLine($"{quotient} {remainder}");
+        (int Quotient, int Remainder) division = global::System.Math.DivRem(20, 6);
+        global::System.Console.WriteLine($"{division.Item1} r {division.Item2}");
+        (int, int) unnamed = division;
+        global::System.Console.WriteLine(unnamed.Item1);
+        foreach ((int Index, string Item) entry in global::System.Linq.Enumerable.Index<string>(new global::System.Collections.Generic.List<string> { "a", "b" }))
+        {
+            global::System.Console.WriteLine($"{entry.Item1}:{entry.Item2}");
+        }
         global::System.Collections.Generic.List<(string, int)> pairs = new global::System.Collections.Generic.List<(string, int)> { ("x", 1), ("y", 2) };
-        global::System.Console.WriteLine(string.Join(";", global::System.Linq.Enumerable.Select<(string, int), string>(pairs, ((string, int) entry) => $"{entry.Item1}={entry.Item2 * 10}")));
+        global::System.Console.WriteLine(string.Join(";", global::System.Linq.Enumerable.Select<(string, int), string>(pairs, ((string, int) entry_1) => $"{entry_1.Item1}={entry_1.Item2 * 10}")));
     }
 }
 

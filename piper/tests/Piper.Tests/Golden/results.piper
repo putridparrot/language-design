@@ -22,6 +22,12 @@ fn compute(a: int, b: int) => Result<int, MathError> {
     Ok(r * 10)
 }
 
+
+// On a Result, `?.` is `?` then member access: there's no conditional access on a Result.
+fn digits(a: int, b: int) => Result<int, MathError> {
+    let text = divide(a, b)?.ToString();
+    Ok(text.Length + compute(a, b)?.CompareTo(0))
+}
 fn show(result: Result<int, MathError>) => string = match result {
     Ok(v) => "ok: {v}",
     Err(MathError.DivideByZero) => "error: divide by zero",
@@ -36,4 +42,6 @@ fn main() {
     print(root(-1));
 
     if compute(64, 1) is Ok(v) { print("64 -> {v}"); }
+    print(show(digits(12345, 1)));
+    print(show(digits(1, 0)));
 }

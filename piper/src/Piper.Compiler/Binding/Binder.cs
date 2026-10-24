@@ -37,7 +37,7 @@ public sealed partial class Binder
     private readonly EnumSymbol _result;
 
     /// <summary>The unwrapped values that <c>?.</c> chains currently being bound refer to.</summary>
-    private readonly Stack<VariableSymbol> _implicitReceivers = new();
+    private readonly Stack<BoundExpression> _implicitReceivers = new();
 
     private FileContext _file = null!;
     private Scope _scope = null!;
@@ -52,6 +52,19 @@ public sealed partial class Binder
     /// the if (as in C#, where such variables outlive the if statement).
     /// </summary>
     private Scope? _outScope;
+
+    /// <summary>
+    /// The arguments of a call known to have returned true where its <c>out let</c> variables are used (an if or while
+    /// condition, or <c>if !call(…) { return; }</c>), and the scope to declare them in. There, a
+    /// <c>[MaybeNullWhen(false)]</c> variable such as TryGetValue's isn't optional.
+    /// </summary>
+    private (ImmutableArray<ExpressionSyntax> Arguments, Scope Scope)? _outsKnownTrue;
+
+    /// <summary>While declarations are being bound: constraint checks to run once every conformance is known.</summary>
+    private List<Action>? _deferredConstraintChecks;
+
+    /// <summary>True while binding a bound, a trait's parents or an extend's traits, where a trait with static methods may appear.</summary>
+    private bool _bindingBound;
 
     /// <summary>For each loop being bound, innermost last: whether a `break` leaves it.</summary>
     private readonly Stack<bool> _loopBreaks = new();
@@ -129,7 +142,9 @@ public sealed partial class Binder
     public static BoundProgram BindProgram(ImmutableArray<CompilationUnitSyntax> units, DiagnosticBag diagnostics) =>
         new Binder(diagnostics).Bind(units);
 
-    private sealed record ExtendInfo(ExtendDeclarationSyntax Syntax, FileContext File, TypeSymbol Target, Scope TypeParameterScope);
+    /// <param name="Traits">The traits it declares, bound in its type-parameter scope (`extend Box: Convert<T>`), with their syntax.</param>
+    private sealed record ExtendInfo(
+        ExtendDeclarationSyntax Syntax, FileContext File, TypeSymbol Target, Scope TypeParameterScope, IReadOnlyList<(TypeSymbol Trait, TypeSyntax Syntax)> Traits);
 
     private sealed record FunctionInfo(FunctionSymbol Symbol, FunctionDeclarationSyntax Syntax, FileContext File, Scope SignatureScope);
 
@@ -151,21 +166,38 @@ public sealed partial class Binder
         foreach (var file in _files)
             types.AddRange(DeclareTypes(file));
 
-        // Type parameters (with their trait constraints) come next: everything below may mention them.
-        foreach (var definition in types.OfType<NamedTypeDefinition>())
+        // Type parameters (with their trait constraints) come next: everything below may mention them. All are declared
+        // before any bound is bound, since a bound may name any generic type: `trait Comparable<T: Comparable<T>>`.
+        _deferredConstraintChecks = [];
+        var typeParameterSyntax = new List<(GenericTypeDefinition Definition, ImmutableArray<TypeParameterSyntax> Syntax, Scope Scope)>();
+        foreach (var definition in types.OfType<GenericTypeDefinition>())
         {
             InFile(FileOf(definition));
             var (syntax, reserved) = definition switch
             {
                 RecordSymbol r => (r.Declaration.TypeParameters, new HashSet<string> { r.Name }),
                 EnumSymbol e => (e.Declaration!.TypeParameters, [e.Name, .. e.Declaration.Variants.Select(v => v.Name.Text)]),
+                TraitSymbol t => (t.Declaration.TypeParameters, new HashSet<string> { t.Name }),
                 _ => throw new InvalidOperationException(),
             };
-            definition.TypeParameters = BindTypeParameters(syntax, new Scope(_file.Scope), reserved);
+            var scope = new Scope(_file.Scope);
+            definition.TypeParameters = DeclareTypeParameters(syntax, scope, reserved);
+            typeParameterSyntax.Add((definition, syntax, scope));
         }
+        foreach (var (definition, syntax, scope) in typeParameterSyntax)
+        {
+            InFile(FileOf(definition));
+            WithScope(scope, () => BindConstraints(definition.TypeParameters, syntax));
+            if (definition is TraitSymbol trait)
+                WithScope(scope, () => BindTraitParents(trait));
+        }
+        CheckInheritanceCycles(types.OfType<TraitSymbol>());
 
         // Conformances must be known before any generic type is instantiated, to check constraints.
         var extends = _files.SelectMany(BindExtendHeaders).ToList();
+        var deferred = _deferredConstraintChecks;
+        _deferredConstraintChecks = null;
+        deferred.ForEach(check => check());
 
         foreach (var type in types)
         {
@@ -184,6 +216,7 @@ public sealed partial class Binder
         var methods = new List<FunctionInfo>();
         foreach (var trait in types.OfType<TraitSymbol>())
             methods.AddRange(BindTraitMethods(trait));
+        CheckInheritedMethods(types.OfType<TraitSymbol>());
         foreach (var extend in extends)
             methods.AddRange(BindExtendMethods(extend));
         CheckConformances(extends);
@@ -384,7 +417,7 @@ public sealed partial class Binder
     private static Scope TypeParameterScope(TypeSymbol target, FileContext file)
     {
         var scope = new Scope(file.Scope);
-        if (target is NamedTypeDefinition definition)
+        if (target is GenericTypeDefinition definition)
         {
             foreach (var parameter in definition.TypeParameters)
                 scope.TryDeclare(parameter);
@@ -398,6 +431,17 @@ public sealed partial class Binder
         Scope scope,
         IReadOnlySet<string> reservedNames)
     {
+        var parameters = DeclareTypeParameters(syntax, scope, reservedNames);
+        WithScope(scope, () => BindConstraints(parameters, syntax));
+        return parameters;
+    }
+
+    /// <summary>Declares type parameters in <paramref name="scope"/>, without their bounds.</summary>
+    private ImmutableArray<TypeParameterSymbol> DeclareTypeParameters(
+        ImmutableArray<TypeParameterSyntax> syntax,
+        Scope scope,
+        IReadOnlySet<string> reservedNames)
+    {
         var parameters = ImmutableArray.CreateBuilder<TypeParameterSymbol>();
         foreach (var parameterSyntax in syntax)
         {
@@ -406,19 +450,86 @@ public sealed partial class Binder
             if (!name.IsMissing && (reservedNames.Contains(name.Text) || !scope.TryDeclare(parameter)))
                 _diagnostics.ReportDuplicateDeclaration(name.Span, name.Text);
 
-            var constraints = ImmutableArray.CreateBuilder<TraitSymbol>();
-            foreach (var constraint in parameterSyntax.Constraints)
-            {
-                var type = BindType(constraint);
-                if (type is TraitSymbol trait)
-                    constraints.Add(trait);
-                else if (type != TypeSymbol.Error)
-                    _diagnostics.ReportNotATrait(constraint.Span, type.Name);
-            }
-            parameter.Constraints = constraints.ToImmutable();
             parameters.Add(parameter);
         }
         return parameters.ToImmutable();
+    }
+
+    /// <summary><c>trait Greeter: Named</c>: the parents, bound where the trait's type parameters are in scope.</summary>
+    private void BindTraitParents(TraitSymbol trait)
+    {
+        var parents = new List<TypeSymbol>();
+        foreach (var parentSyntax in trait.Declaration.Parents)
+        {
+            var parent = BindBound(parentSyntax);
+            if (!parent.IsTrait)
+            {
+                if (parent != TypeSymbol.Error)
+                    _diagnostics.ReportNotATrait(parentSyntax.Span, parent.Name);
+            }
+            else if (parents.Any(p => p.TraitDefinition == parent.TraitDefinition))
+            {
+                _diagnostics.ReportDuplicateDeclaration(parentSyntax.Span, parent.Name);
+            }
+            else
+            {
+                parents.Add(parent);
+            }
+        }
+        trait.Parents = [.. parents];
+    }
+
+    /// <summary>A trait can't inherit from itself, directly or through others; such a trait's parents are dropped.</summary>
+    private void CheckInheritanceCycles(IEnumerable<TraitSymbol> traits)
+    {
+        foreach (var trait in traits)
+        {
+            var seen = new HashSet<TraitSymbol>();
+            var pending = new Stack<TraitSymbol>(trait.Parents.Select(p => p.TraitDefinition!));
+            while (pending.TryPop(out var next))
+            {
+                if (next == trait)
+                {
+                    InFile(FileOf(trait));
+                    _diagnostics.ReportTraitInheritsItself(trait.Declaration.Name.Span, trait.Name);
+                    trait.Parents = [];
+                    break;
+                }
+                if (seen.Add(next))
+                {
+                    foreach (var parent in next.Parents)
+                        pending.Push(parent.TraitDefinition!);
+                }
+            }
+        }
+    }
+
+    /// <summary>Binds each type parameter's bounds, in a scope where all of them are declared (`T: Comparable<T>`).</summary>
+    private void BindConstraints(IReadOnlyList<TypeParameterSymbol> parameters, ImmutableArray<TypeParameterSyntax> syntax)
+    {
+        // A bound such as `Comparable<T>` is checked against Comparable's own bound, which needs T's bounds: wait for them.
+        bool deferring = _deferredConstraintChecks is null;
+        if (deferring)
+            _deferredConstraintChecks = [];
+        for (int i = 0; i < parameters.Count; i++)
+        {
+            var constraints = ImmutableArray.CreateBuilder<TypeSymbol>();
+            foreach (var constraint in syntax[i].Constraints)
+            {
+                var type = BindBound(constraint);
+                if (IsInterfaceType(type))
+                    constraints.Add(type);
+                else if (type != TypeSymbol.Error)
+                    _diagnostics.ReportNotATrait(constraint.Span, type.Name);
+            }
+            parameters[i].Constraints = constraints.ToImmutable();
+        }
+        if (deferring)
+        {
+            var deferred = _deferredConstraintChecks!;
+            _deferredConstraintChecks = null;
+            deferred.ForEach(check => check());
+        }
     }
 
     /// <summary>Binds fields of a record or variant named <paramref name="owner"/> in the current (type-parameter) scope.</summary>
@@ -512,11 +623,13 @@ public sealed partial class Binder
                     $"Write 'extend {target.Name}' without type arguments; its type parameters are in scope inside the block.");
             }
 
-            var traits = new List<TraitSymbol>();
+            var typeParameterScope = TypeParameterScope(target, file);
+            var traits = new List<(TypeSymbol Trait, TypeSyntax Syntax)>();
             foreach (var traitSyntax in syntax.Traits)
             {
-                var type = BindType(traitSyntax);
-                if (type is not TraitSymbol trait)
+                var type = TypeSymbol.Error;
+                WithScope(typeParameterScope, () => type = BindBound(traitSyntax));
+                if (!IsInterfaceType(type))
                 {
                     if (type != TypeSymbol.Error)
                         _diagnostics.ReportNotATrait(traitSyntax.Span, type.Name);
@@ -530,16 +643,25 @@ public sealed partial class Binder
                     continue;
                 }
 
-                if (traits.Contains(trait) || ((NamedTypeDefinition)target).Traits.Contains(trait))
-                    _diagnostics.ReportDuplicateDeclaration(traitSyntax.Span, trait.Name);
+                // Methods can't be overloaded, so a type can't have the methods of two instantiations of one trait.
+                // That includes inherited traits: Ordered<int> brings Equatable<int>, which rules out Equatable<string>.
+                var declared = traits.Select(t => t.Trait).Concat(((NamedTypeDefinition)target).Traits).ToList();
+                var implemented = declared.SelectMany(WithAncestors).ToList();
+                var conflict = WithAncestors(type)
+                    .SelectMany(added => implemented.Where(e => e.OriginalDefinition == added.OriginalDefinition && e != added).Select(e => (e, added)))
+                    .FirstOrDefault();
+                if (declared.Contains(type))
+                    _diagnostics.ReportDuplicateDeclaration(traitSyntax.Span, type.Name);
+                else if (conflict.e is not null)
+                    _diagnostics.ReportTraitImplementedTwice(traitSyntax.Span, target, conflict.e, conflict.added);
                 else
-                    traits.Add(trait);
+                    traits.Add((type, traitSyntax));
             }
 
             if (target is NamedTypeDefinition named)
-                named.Conformances = [.. named.Conformances, .. traits.Select(t => (t, (SourceText?)file.Source))];
+                named.Conformances = [.. named.Conformances, .. traits.Select(t => (t.Trait, (SourceText?)file.Source))];
 
-            extends.Add(new ExtendInfo(syntax, file, target, TypeParameterScope(target, file)));
+            extends.Add(new ExtendInfo(syntax, file, target, typeParameterScope, traits));
         }
         return extends;
     }
@@ -553,14 +675,12 @@ public sealed partial class Binder
         var names = new HashSet<string>();
         foreach (var syntax in trait.Declaration.Methods)
         {
-            if (syntax.Static is { } @static)
-                _diagnostics.ReportInvalidTraitMethod(@static.Span, $"Trait method '{syntax.Name.Text}' cannot be static (yet).");
             if (!syntax.TypeParameters.IsEmpty)
                 _diagnostics.ReportInvalidTraitMethod(syntax.Name.Span, $"Trait method '{syntax.Name.Text}' cannot be generic (yet).");
             if (syntax.Private is { } @private)
                 _diagnostics.ReportInvalidTraitMethod(@private.Span, $"Trait method '{syntax.Name.Text}' cannot be private.");
 
-            var info = BindFunctionSignature(syntax, file, file.Scope, trait, trait);
+            var info = BindFunctionSignature(syntax, file, TypeParameterScope(trait, file), trait, trait.SelfType);
             var method = (MethodSymbol)info.Symbol;
             if (syntax.Name.IsMissing)
                 continue;
@@ -576,6 +696,33 @@ public sealed partial class Binder
         }
         trait.Methods = methods.ToImmutable();
         return infos;
+    }
+
+    /// <summary>
+    /// A trait's methods and those it inherits must have different names: it can't redeclare (or override) a parent's
+    /// method, and two parents can't both supply one, since a call through the trait would be ambiguous.
+    /// </summary>
+    private void CheckInheritedMethods(IEnumerable<TraitSymbol> traits)
+    {
+        foreach (var trait in traits)
+        {
+            InFile(FileOf(trait));
+            var inherited = new Dictionary<string, TypeSymbol>();
+            foreach (var ancestor in WithAncestors(trait.SelfType).Skip(1))
+            {
+                foreach (var method in ancestor.TraitDefinition!.Methods)
+                {
+                    if (inherited.TryGetValue(method.Name, out var first) && first.TraitDefinition != ancestor.TraitDefinition)
+                        _diagnostics.ReportTraitMethodInheritedTwice(trait.Declaration.Name.Span, method.Name, first, ancestor);
+                    inherited.TryAdd(method.Name, ancestor);
+                }
+            }
+            foreach (var method in trait.Methods)
+            {
+                if (inherited.TryGetValue(method.Name, out var parent))
+                    _diagnostics.ReportTraitMethodRedeclared(method.Declaration!.Name.Span, method.Name, parent);
+            }
+        }
     }
 
     private IEnumerable<FunctionInfo> BindExtendMethods(ExtendInfo extend)
@@ -649,34 +796,45 @@ public sealed partial class Binder
 
     private void ReportMemberClash(Token name) => _diagnostics.ReportDuplicateDeclaration(name.Span, name.Text);
 
-    /// <summary>Every required trait method must be implemented, with exactly the trait's signature.</summary>
+    /// <summary>
+    /// Every required trait method must be implemented, with exactly the trait's signature once the trait's type
+    /// arguments are substituted: for <c>Convert&lt;string&gt;</c>, <c>fn convert() => string</c>.
+    /// </summary>
     private void CheckConformances(List<ExtendInfo> extends)
     {
+        var checkedByType = new Dictionary<NamedTypeDefinition, HashSet<TypeSymbol>>();
         foreach (var extend in extends)
         {
             if (extend.Target is not NamedTypeDefinition definition)
                 continue;
 
             InFile(extend.File);
-            foreach (var traitSyntax in extend.Syntax.Traits)
+            // Implementing a trait means implementing the traits it inherits too (each checked once per type).
+            var checkedTraits = checkedByType.TryGetValue(definition, out var set) ? set : checkedByType[definition] = [];
+            foreach (var (declared, traitSyntax) in extend.Traits)
+            foreach (var traitType in WithAncestors(declared).Where(checkedTraits.Add))
             {
-                if (traitSyntax is not NamedTypeSyntax named || ResolveTypeName(named) is not TraitSymbol trait)
+                if (traitType.TraitDefinition is not { } trait)
+                {
+                    if (!CheckClrConformance(definition, traitType, traitSyntax))
+                        break;
                     continue;
-
+                }
+                var map = TypeSubstitution.MapFor(traitType);
                 foreach (var required in trait.Methods)
                 {
                     var implementation = definition.Methods.FirstOrDefault(m => m.Name == required.Name);
                     if (implementation is null)
                     {
                         if (required.IsAbstract)
-                            _diagnostics.ReportMissingTraitMethod(traitSyntax.Span, definition, required.Name, trait);
+                            _diagnostics.ReportMissingTraitMethod(traitSyntax.Span, definition, required.Name, traitType);
                         continue;
                     }
 
-                    if (!SignaturesMatch(implementation, required))
+                    if (!SignaturesMatch(implementation, required, map))
                     {
                         _diagnostics.CurrentSource = implementation.DeclaringFile;
-                        _diagnostics.ReportTraitSignatureMismatch(implementation.Declaration!.Name.Span, required.Name, trait, Signature(required));
+                        _diagnostics.ReportTraitSignatureMismatch(implementation.Declaration!.Name.Span, required.Name, traitType, Signature(required, map));
                         _diagnostics.CurrentSource = extend.File.Source;
                     }
                 }
@@ -684,16 +842,17 @@ public sealed partial class Binder
         }
     }
 
-    private static bool SignaturesMatch(MethodSymbol implementation, MethodSymbol required) =>
-        !implementation.IsStatic &&
+    private static bool SignaturesMatch(MethodSymbol implementation, MethodSymbol required, IReadOnlyDictionary<TypeParameterSymbol, TypeSymbol> map) =>
+        implementation.IsStatic == required.IsStatic &&
         implementation.TypeParameters.IsEmpty &&
-        implementation.ReturnType == required.ReturnType &&
-        implementation.Parameters.Select(p => p.Type).SequenceEqual(required.Parameters.Select(p => p.Type));
+        implementation.ReturnType == TypeSubstitution.Substitute(required.ReturnType, map) &&
+        implementation.Parameters.Select(p => p.Type).SequenceEqual(required.Parameters.Select(p => TypeSubstitution.Substitute(p.Type, map)));
 
-    private static string Signature(MethodSymbol method)
+    private static string Signature(MethodSymbol method, IReadOnlyDictionary<TypeParameterSymbol, TypeSymbol> map)
     {
-        var parameters = string.Join(", ", method.Parameters.Select(p => $"{p.Name}: {p.Type}"));
-        var result = method.ReturnType == TypeSymbol.Unit ? "" : $" => {method.ReturnType}";
+        var parameters = string.Join(", ", method.Parameters.Select(p => $"{p.Name}: {TypeSubstitution.Substitute(p.Type, map)}"));
+        var returnType = TypeSubstitution.Substitute(method.ReturnType, map);
+        var result = returnType == TypeSymbol.Unit ? "" : $" => {returnType}";
         return $"fn {method.Name}({parameters}){result}";
     }
 
@@ -728,10 +887,10 @@ public sealed partial class Binder
 
             if (type is NamedTypeDefinition definition && !definition.IsPrivate)
             {
-                foreach (var (trait, _) in definition.Conformances.Where(c => c.Trait.IsPrivate))
+                foreach (var (trait, _) in definition.Conformances.Where(c => MentionsPrivateType(c.Trait)))
                 {
                     InFile(FileOf(definition));
-                    _diagnostics.ReportPrivateTypeExposed(NameOf(definition).Span, definition.Name, trait.Name);
+                    _diagnostics.ReportPrivateTypeExposed(NameOf(definition).Span, definition.Name, PrivateTypeIn(trait)!);
                 }
             }
         }
@@ -922,6 +1081,37 @@ public sealed partial class Binder
 
     private TypeSymbol BindType(TypeSyntax syntax)
     {
+        var type = BindTypeCore(syntax);
+        // C# can only reach a static trait method through a type parameter, so such a trait is only ever a bound.
+        if (!_bindingBound && type.TraitDefinition is { } trait && HasStaticMethods(trait))
+        {
+            _diagnostics.ReportStaticTraitAsType(syntax.Span, type);
+            return TypeSymbol.Error;
+        }
+        return type;
+    }
+
+    /// <summary>Binds a type used as a bound, where traits with static methods are allowed.</summary>
+    private TypeSymbol BindBound(TypeSyntax syntax)
+    {
+        var outer = _bindingBound;
+        _bindingBound = true;
+        try
+        {
+            return BindType(syntax);
+        }
+        finally
+        {
+            _bindingBound = outer;
+        }
+    }
+
+    /// <summary>A trait declaring static methods, itself or in a trait it inherits (read from the syntax, so it works early).</summary>
+    private bool HasStaticMethods(TraitSymbol trait) =>
+        WithAncestors(trait.SelfType).Any(t => t.TraitDefinition?.Declaration.Methods.Any(m => m.Static is not null) == true);
+
+    private TypeSymbol BindTypeCore(TypeSyntax syntax)
+    {
         if (syntax is OptionalTypeSyntax optional)
         {
             var inner = BindValueType(optional.Inner, "type argument");
@@ -1001,7 +1191,7 @@ public sealed partial class Binder
             case NamespaceSymbol:
                 _diagnostics.ReportNotAType(name.Span, displayName, "namespace");
                 return TypeSymbol.Error;
-            case NamedTypeDefinition definition:
+            case GenericTypeDefinition definition:
                 if (definition.TypeParameters.Length != arguments.Length)
                 {
                     if (definition.IsGeneric)
@@ -1078,23 +1268,88 @@ public sealed partial class Binder
 
     private void CheckConstraints(ImmutableArray<TypeParameterSymbol> parameters, IReadOnlyList<TypeSymbol> arguments, TextSpan span)
     {
+        // While declarations are bound, conformances aren't all known yet (`extend Money: Comparable<Money>` checks
+        // Money against Comparable's own bound), so the checks wait until they are.
+        if (_deferredConstraintChecks is { } deferred)
+        {
+            var source = _diagnostics.CurrentSource;
+            deferred.Add(() =>
+            {
+                _diagnostics.CurrentSource = source;
+                CheckConstraintsNow(parameters, arguments, span);
+            });
+            return;
+        }
+        CheckConstraintsNow(parameters, arguments, span);
+    }
+
+    private void CheckConstraintsNow(ImmutableArray<TypeParameterSymbol> parameters, IReadOnlyList<TypeSymbol> arguments, TextSpan span)
+    {
+        // A bound may mention the type parameters themselves: `T: Comparable<T>` with T = Money needs Comparable<Money>.
+        var map = parameters.Zip(arguments).ToDictionary(p => p.First, p => p.Second);
         for (int i = 0; i < parameters.Length; i++)
         {
-            foreach (var trait in parameters[i].Constraints)
+            foreach (var constraint in parameters[i].Constraints)
             {
+                var trait = TypeSubstitution.Substitute(constraint, map);
                 if (!Implements(arguments[i], trait))
                     _diagnostics.ReportConstraintNotSatisfied(span, arguments[i], trait, parameters[i]);
             }
         }
     }
 
-    /// <summary>True if values of <paramref name="type"/> can be used where <paramref name="trait"/> is expected.</summary>
-    private static bool Implements(TypeSymbol type, TraitSymbol trait) => type switch
+    /// <summary>
+    /// True if values of <paramref name="type"/> can be used where <paramref name="trait"/> is expected: a trait, or a .NET
+    /// interface (which .NET types implement themselves, and Piper types with <c>extend</c>).
+    /// </summary>
+    private bool Implements(TypeSymbol type, TypeSymbol trait) =>
+        type == TypeSymbol.Error || trait == TypeSymbol.Error || type == trait || TraitsOf(type).Contains(trait) ||
+        (trait is ClrTypeSymbol && IsClrBacked(type) && SelfAndBaseTypes(type).Contains(trait));
+
+    /// <summary>A trait or a .NET interface: what a type parameter can be bounded by and an <c>extend</c> can implement.</summary>
+    private static bool IsInterfaceType(TypeSymbol type) => type.IsTrait || type is ClrTypeSymbol { Type.IsInterface: true };
+
+    /// <summary>
+    /// The traits and .NET interfaces <paramref name="type"/> is known to implement through Piper, instantiated for it:
+    /// for a <c>Box&lt;int&gt;</c> declared with <c>extend Box: Convert&lt;T&gt;</c>, <c>Convert&lt;int&gt;</c>. A type
+    /// parameter has its bounds; a trait itself. (What .NET types implement themselves comes from reflection instead.)
+    /// </summary>
+    private IEnumerable<TypeSymbol> TraitsOf(TypeSymbol type) => (type switch
     {
-        _ when type == TypeSymbol.Error || type == trait => true,
-        TypeParameterSymbol parameter => parameter.Constraints.Contains(trait),
-        _ => type.OriginalDefinition is NamedTypeDefinition definition && definition.Traits.Contains(trait),
-    };
+        TypeParameterSymbol parameter => parameter.Constraints,
+        _ when type.IsTrait => [type],
+        _ when type.OriginalDefinition is NamedTypeDefinition definition =>
+            definition.Traits.Select(t => TypeSubstitution.Substitute(t, TypeSubstitution.MapFor(type))),
+        _ => [],
+    }).SelectMany(WithAncestors).Distinct();
+
+    /// <summary>
+    /// A trait or .NET interface followed by every one it inherits, directly or not, instantiated to match: for
+    /// <c>trait Ordered&lt;T&gt;: Equatable&lt;T&gt;</c>, <c>Ordered&lt;int&gt;</c> gives <c>Ordered&lt;int&gt;, Equatable&lt;int&gt;</c>.
+    /// </summary>
+    private IEnumerable<TypeSymbol> WithAncestors(TypeSymbol trait)
+    {
+        var result = new List<TypeSymbol>();
+        var pending = new Queue<TypeSymbol>([trait]);
+        while (pending.TryDequeue(out var next))
+        {
+            if (result.Contains(next))
+                continue;
+            if (next.TraitDefinition is { } definition)
+            {
+                result.Add(next);
+                var map = TypeSubstitution.MapFor(next);
+                foreach (var parent in definition.Parents)
+                    pending.Enqueue(TypeSubstitution.Substitute(parent, map));
+            }
+            else if (next is ClrTypeSymbol { Type.IsInterface: true })
+            {
+                // A .NET interface's base interfaces are already flattened by reflection.
+                result.AddRange(SelfAndBaseTypes(next).Where(t => !result.Contains(t)));
+            }
+        }
+        return result;
+    }
 
     // Statements
 
@@ -1204,7 +1459,7 @@ public sealed partial class Binder
         if (await is not null)
             CheckAwaitAllowed(await);
         var required = await is null ? typeof(IDisposable) : typeof(IAsyncDisposable);
-        if (type != TypeSymbol.Error && !(ClrTypes.ToClr(type) is { } clr && required.IsAssignableFrom(clr)))
+        if (type != TypeSymbol.Error && !(ClrTypes.ToClr(type) is { } clr && required.IsAssignableFrom(clr)) && !Implements(type, ClrTypeSymbol.For(required)))
             _diagnostics.ReportNotDisposable(span, type, required.Name);
     }
 

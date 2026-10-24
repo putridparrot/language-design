@@ -1,0 +1,54 @@
+// `|` alternatives that bind variables in `is` tests, as they can in match arms.
+
+using System.Collections.Generic;
+
+enum Shape {
+    Circle(radius: double),
+    Square(side: double),
+    Ring(outer: double, inner: double),
+    Dot,
+}
+
+fn size(s: Shape) => string {
+    // Every alternative binds the same names, with the same types.
+    if s is Circle(r) | Ring(r, _) {
+        return "round, {r}";
+    }
+    if s is Square(x) | Ring(_, x) && x > 10.0 {
+        return "big, {x}";
+    }
+    "other"
+}
+
+fn main() {
+    let shapes = [Shape.Circle(1.5), Shape.Ring(3.0, 1.0), Shape.Square(20.0), Shape.Square(2.0), Shape.Dot];
+    for s in shapes {
+        print(size(s));
+    }
+
+    // With an else, a value, and more conditions after.
+    for s in shapes {
+        let label = if s is Circle(d) | Square(d) && d > 1.75 { "large {d}" } else { "-" };
+        print(label);
+    }
+
+    // Nested inside other patterns, and in a match guard.
+    let pairs: List<(int, Shape?)> = [(1, Some(Shape.Square(4.0))), (2, Some(Shape.Ring(5.0, 2.0))), (3, None)];
+    for pair in pairs {
+        let text = match pair {
+            (n, Some(shape)) if shape is Square(v) | Ring(v, _) && v > 4.5 => "{n}: over 4.5",
+            (n, _) => "{n}: no",
+        };
+        print(text);
+        if pair is (_, Some(Square(w) | Circle(w))) {
+            print("width {w}");
+        }
+    }
+
+    // In a while condition.
+    var index = 0;
+    while index < shapes.Count && shapes[index] is Circle(r) | Ring(r, _) {
+        print("round {r}");
+        index += 1;
+    }
+}

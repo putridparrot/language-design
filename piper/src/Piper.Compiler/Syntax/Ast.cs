@@ -72,7 +72,13 @@ public sealed record EnumDeclarationSyntax(
     ImmutableArray<TypeParameterSyntax> TypeParameters,
     ImmutableArray<VariantSyntax> Variants) : DeclarationSyntax(Span, Name);
 
-public sealed record TraitDeclarationSyntax(TextSpan Span, Token Name, ImmutableArray<FunctionDeclarationSyntax> Methods)
+/// <summary><c>trait Greeter&lt;T&gt;: Named { methods }</c>; <see cref="Parents"/> are the traits it inherits.</summary>
+public sealed record TraitDeclarationSyntax(
+    TextSpan Span,
+    Token Name,
+    ImmutableArray<TypeParameterSyntax> TypeParameters,
+    ImmutableArray<TypeSyntax> Parents,
+    ImmutableArray<FunctionDeclarationSyntax> Methods)
     : DeclarationSyntax(Span, Name);
 
 /// <summary>
@@ -337,6 +343,9 @@ public sealed record OutArgumentSyntax(TextSpan Span, Token Keyword, Token? Decl
 {
     public bool IsDiscard => Declaration is null && Name.Text == "_";
 }
+
+/// <summary><c>ref x</c> or <c>ref items[i]</c>: passes a variable or array element to a .NET <c>ref</c> parameter. <c>ref</c> is contextual.</summary>
+public sealed record RefArgumentSyntax(TextSpan Span, Token Keyword, ExpressionSyntax Target) : ExpressionSyntax(Span);
 
 /// <summary><c>null</c>: the None of whatever optional type the context expects.</summary>
 public sealed record NullLiteralExpressionSyntax(TextSpan Span, Token Keyword) : ExpressionSyntax(Span);

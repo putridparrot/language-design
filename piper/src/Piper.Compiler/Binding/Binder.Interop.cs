@@ -13,12 +13,13 @@ namespace Piper.Binding;
 /// Generic methods infer their type arguments from the arguments, including from lambda bodies, and lambdas
 /// are bound against each candidate's delegate type, as in C#. Where .NET may produce null, Piper sees an
 /// Option; where .NET accepts null, an Option may be passed (None becomes null).
-/// Not supported (yet): ref/out parameters and events.
+/// Out and ref parameters take <c>out</c>/<c>ref</c> arguments, and events take handlers with <c>+=</c> and <c>-=</c>.
 /// </summary>
 public sealed partial class Binder
 {
     /// <param name="IsOut">An <c>out</c> parameter: <see cref="Type"/> is what it produces.</param>
-    private sealed record ClrParameter(TypeSymbol Type, ClrBoundary Boundary, bool IsOut = false);
+    /// <param name="NullWhenFalse">An out parameter marked <c>[MaybeNullWhen(false)]</c>: null only when the method returns false.</param>
+    private sealed record ClrParameter(TypeSymbol Type, ClrBoundary Boundary, bool IsOut = false, bool NullWhenFalse = false, bool IsRef = false);
 
     /// <summary>A .NET method or constructor as Piper sees it. <see cref="ParamsElement"/> is set for a <c>params</c> array.</summary>
     private sealed record ClrCandidate(
@@ -39,6 +40,9 @@ public sealed partial class Binder
     private sealed record ClrArgument(BoundExpression? Bound, LambdaExpressionSyntax? Lambda, TextSpan Span)
     {
         public OutArgumentSyntax? Out { get; init; }
+
+        /// <summary>`ref x`: <see cref="Bound"/> is the variable or array element passed.</summary>
+        public RefArgumentSyntax? Ref { get; init; }
 
         public VariableSymbol? OutVariable { get; init; }
 
@@ -167,7 +171,8 @@ public sealed partial class Binder
                 _ => null,
             };
             if (read is not { } value ||
-                MapValue(value.Type, GenericAware(value.Info.ReadState, value.Type, member.CustomAttributes, member, "MaybeNull"), map) is not { } mapped)
+                MapValue(value.Type, GenericAware(value.Info.ReadState, value.Type, member.CustomAttributes, member, "MaybeNull"), map,
+                    ClrTypes.TupleNames(member.CustomAttributes)) is not { } mapped)
             {
                 continue;
             }
@@ -178,6 +183,8 @@ public sealed partial class Binder
 
         if (members.OfType<MethodInfo>().Any())
             _diagnostics.ReportNotAValue(name.Span, name.Text, "method");
+        else if (members.OfType<EventInfo>().Any())
+            _diagnostics.ReportEventMisused(name.Span, name.Text);
         else
             _diagnostics.ReportUnknownMember(name.Span, container, name.Text);
         return new BoundErrorExpression();
@@ -258,6 +265,7 @@ public sealed partial class Binder
             {
                 LambdaExpressionSyntax lambda => new ClrArgument(null, lambda, a.Span),
                 OutArgumentSyntax output => new ClrArgument(null, null, a.Span) { Out = output, OutVariable = OutTarget(output) },
+                RefArgumentSyntax reference => new ClrArgument(BindRefTarget(reference), null, a.Span) { Ref = reference },
                 _ => new ClrArgument(RequireValue(BindExpression(a), a.Span), null, a.Span),
             }))
             .ToList();
@@ -313,6 +321,8 @@ public sealed partial class Binder
             var parameter = ParameterFor(chosen, i, isExpanded);
             if (argument.Out is { } output)
                 return BindOutArgument(output, argument.OutVariable, parameter);
+            if (argument.Ref is not null)
+                return new BoundRefArgument(argument.Bound!);
             return argument.Lambda is { } lambda
                 ? BindLambda(lambda, parameter.Type)
                 : ConvertClrArgument(argument.Bound!, parameter);
@@ -332,6 +342,78 @@ public sealed partial class Binder
         return null;
     }
 
+    /// <summary><c>ref x</c>: x must be something .NET can write to, a <c>var</c> variable or an array element.</summary>
+    private BoundExpression BindRefTarget(RefArgumentSyntax syntax)
+    {
+        var target = BindExpression(syntax.Target);
+        if (target is BoundVariableExpression { Variable.IsMutable: true } or BoundIndexExpression { Indexer: null } || target.Type == TypeSymbol.Error)
+            return target;
+        _diagnostics.ReportInvalidRefTarget(syntax.Target.Span);
+        return new BoundErrorExpression();
+    }
+
+
+    /// <summary>
+    /// <c>extend Money: IComparable&lt;Money&gt;</c>: each abstract method of the .NET interface needs a public Piper method of
+    /// the same name whose signature is the .NET one as Piper sees it, with a parameter or return type that .NET marks as
+    /// possibly null being an Option (<c>fn CompareTo(other: Money?) => int</c>). Where that makes the C# signatures
+    /// differ, a bridge is recorded for the emitter. Interfaces with properties, events, static or generic methods, or
+    /// ref and out parameters, can't be implemented; false after reporting such an interface.
+    /// </summary>
+    private bool CheckClrConformance(NamedTypeDefinition definition, TypeSymbol @interface, TypeSyntax syntax)
+    {
+        var (clrType, map) = ClrContext(@interface);
+        var members = clrType.GetMembers(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
+            .Where(m => m is not MethodInfo { IsAbstract: false })
+            .ToList();
+        if (members.Any(m => m is not MethodInfo { IsStatic: false, IsSpecialName: false, IsGenericMethodDefinition: false }))
+        {
+            _diagnostics.ReportUnsupportedInterface(syntax.Span, @interface);
+            return false;
+        }
+
+        foreach (var required in members.Cast<MethodInfo>())
+        {
+            if (Describe(required, @interface, map) is not { } candidate || candidate.Parameters.Any(p => p.IsOut || p.IsRef))
+            {
+                _diagnostics.ReportUnsupportedInterface(syntax.Span, @interface);
+                return false;
+            }
+
+            var implementation = definition.Methods.FirstOrDefault(m => m.Name == required.Name);
+            if (implementation is null)
+            {
+                _diagnostics.ReportMissingTraitMethod(syntax.Span, definition, required.Name, @interface);
+                continue;
+            }
+
+            var parameterTypes = candidate.Parameters.Select(p => p.Boundary == ClrBoundary.NullableReference ? _option.Construct([p.Type]) : p.Type).ToList();
+            bool matches = !implementation.IsStatic && !implementation.IsPrivate && implementation.TypeParameters.IsEmpty &&
+                           implementation.ReturnType == candidate.ReturnType &&
+                           implementation.Parameters.Select(p => p.Type).SequenceEqual(parameterTypes);
+            if (!matches)
+            {
+                var expected = $"fn {required.Name}({string.Join(", ", required.GetParameters().Zip(parameterTypes, (p, t) => $"{p.Name}: {t}"))})" +
+                               (candidate.ReturnType == TypeSymbol.Unit ? "" : $" => {candidate.ReturnType}");
+                _diagnostics.CurrentSource = implementation.DeclaringFile;
+                _diagnostics.ReportTraitSignatureMismatch(implementation.Declaration!.Name.Span, required.Name, @interface, $"a public {expected}");
+                _diagnostics.CurrentSource = _file.Source;
+                continue;
+            }
+
+            // C#'s own types: an Option stands for a .NET `T?`.
+            static TypeSymbol Inner(TypeSymbol type, ClrBoundary boundary) => boundary == ClrBoundary.None ? type : type.TypeArguments[0];
+            var parameters = candidate.Parameters
+                .Select(p => (p.Boundary == ClrBoundary.NullableValue ? p.Type.TypeArguments[0] : p.Type, p.Boundary))
+                .ToImmutableArray();
+            if (candidate.ReturnBoundary != ClrBoundary.None || parameters.Any(p => p.Boundary != ClrBoundary.None))
+            {
+                definition.InterfaceBridges.Add(new ClrInterfaceBridge(
+                    implementation, @interface, parameters, Inner(candidate.ReturnType, candidate.ReturnBoundary), candidate.ReturnBoundary));
+            }
+        }
+        return true;
+    }
     /// <summary>The Piper type of what an <c>out</c> parameter produces: an Option where .NET may produce null.</summary>
     private TypeSymbol OutType(ClrParameter parameter) =>
         parameter.Boundary == ClrBoundary.NullableReference ? _option.Construct([parameter.Type]) : parameter.Type;
@@ -348,10 +430,16 @@ public sealed partial class Binder
 
         if (syntax.Declaration is { } keyword)
         {
+            // Where the call is known to have returned true, `[MaybeNullWhen(false)] out` wrote a value.
+            var scope = _outScope ?? _scope;
+            var boundary = parameter.Boundary;
+            if (parameter.NullWhenFalse && _outsKnownTrue is { } knownTrue && knownTrue.Arguments.Any(a => ReferenceEquals(a, syntax)))
+                (type, boundary, scope) = (parameter.Type, ClrBoundary.None, knownTrue.Scope);
+
             var variable = new VariableSymbol(syntax.Name.Text, type, keyword.Kind == TokenKind.VarKeyword, VariableKind.Local);
-            if (!syntax.Name.IsMissing && !(_outScope ?? _scope).TryDeclare(variable))
+            if (!syntax.Name.IsMissing && !scope.TryDeclare(variable))
                 _diagnostics.ReportDuplicateDeclaration(syntax.Name.Span, variable.Name);
-            return new BoundOutArgument(variable, declares: true, parameter.Type, parameter.Boundary, type);
+            return new BoundOutArgument(variable, declares: true, parameter.Type, boundary, type);
         }
 
         if (!existing!.IsMutable)
@@ -415,10 +503,14 @@ public sealed partial class Binder
             // An out argument goes only to an out parameter (an existing variable must have exactly its type), and vice versa.
             if (parameter.IsOut != arguments[i].Out is not null)
                 return null;
+            // Likewise ref: a ref argument must have exactly the parameter's type, since .NET may write to it.
+            if (parameter.IsRef != arguments[i].Ref is not null)
+                return null;
             int? score = arguments[i] switch
             {
                 { Out: not null, OutVariable: { } variable } => variable.Type == OutType(parameter) ? 0 : null,
                 { Out: not null } => 0,
+                { Ref: not null, Bound: var target } => target!.Type == parameter.Type ? 0 : null,
                 { Lambda: { } lambda } => LambdaScore(lambda, parameter.Type),
                 var argument => ConversionScore(argument.Bound!, parameter),
             };
@@ -474,6 +566,9 @@ public sealed partial class Binder
             return 12;
         if (targetClr is not null && ClrTypes.ToClr(argument) is { } argumentClr && targetClr.IsAssignableFrom(argumentClr))
             return 12;
+        // A Piper type implementing a .NET interface with extend: `words.Sort(ByLength())`.
+        if (target is ClrTypeSymbol { Type.IsInterface: true } && Implements(argument, target))
+            return 12;
         return null;
     }
 
@@ -511,7 +606,7 @@ public sealed partial class Binder
             if (hasParams && i >= parameters.Length - 1 && !(bound.Type is ClrTypeSymbol { IsArray: true } && arguments.Count == parameters.Length))
                 InferClr(parameters[^1].ParameterType.GetElementType()!, bound.Type, result, generics);
             else if (i < parameters.Length)
-                InferClr(parameters[i].ParameterType, bound.Type, result, generics);
+                InferClr(parameters[i].ParameterType is { IsByRef: true } byRef ? byRef.GetElementType()! : parameters[i].ParameterType, bound.Type, result, generics);
         }
 
         bool progress = true;
@@ -623,29 +718,39 @@ public sealed partial class Binder
         {
             var info = infos[i];
             bool isOut = info.ParameterType.IsByRef && info.IsOut;
-            // `ref` parameters aren't supported; an `in` parameter takes its argument like a value parameter.
-            if (info.ParameterType.IsByRef && !isOut && !info.IsIn)
-                return null;
+            // An `in` or `ref readonly` parameter takes its argument like a value parameter; a `ref` one takes `ref x`.
+            bool isRef = info.ParameterType.IsByRef && !isOut && !info.IsIn &&
+                         !info.CustomAttributes.Any(a => a.AttributeType.Name == "RequiresLocationAttribute");
             var parameterType = info.ParameterType.IsByRef ? info.ParameterType.GetElementType()! : info.ParameterType;
 
             NullabilityState state;
+            bool nullWhenFalse = false;
             if (isOut)
             {
                 // What an out parameter produces may be null: `out string? s`, or `[MaybeNullWhen(false)] out TValue value`.
                 state = GenericAware(nullability.Create(info).ReadState, parameterType, info.CustomAttributes, member, "MaybeNull");
-                if (info.CustomAttributes.Any(a => a.AttributeType.Name == "MaybeNullWhenAttribute"))
+                if (info.CustomAttributes.FirstOrDefault(a => a.AttributeType.Name == "MaybeNullWhenAttribute") is { } maybeNullWhen)
+                {
+                    nullWhenFalse = state != NullabilityState.Nullable && maybeNullWhen.ConstructorArguments is [{ Value: false }];
                     state = NullabilityState.Nullable;
+                }
+            }
+            else if (isRef)
+            {
+                // A ref argument is a variable of exactly the parameter's type, so .NET's nullability for it is not used:
+                // `Array.Resize(ref items, 10)` takes an `int[]` though its parameter is `T[]?`.
+                state = NullabilityState.NotNull;
             }
             else
             {
                 state = GenericAware(nullability.Create(info).WriteState, parameterType, info.CustomAttributes, member, "AllowNull");
             }
-            if (MapValue(parameterType, state, map) is not { } mapped)
+            if (MapValue(parameterType, state, map, ClrTypes.TupleNames(info.CustomAttributes)) is not { } mapped)
                 return null;
 
             var (type, boundary) = mapped;
             // A parameter that accepts (or produces) null takes the plain type; the Option is converted at the call.
-            parameters.Add(new ClrParameter(boundary == ClrBoundary.NullableReference ? type.TypeArguments[0] : type, boundary, isOut));
+            parameters.Add(new ClrParameter(boundary == ClrBoundary.NullableReference ? type.TypeArguments[0] : type, boundary, isOut, nullWhenFalse, isRef));
             if (!info.IsOptional)
                 required = i + 1;
 
@@ -664,7 +769,8 @@ public sealed partial class Binder
             MethodInfo method => MapValue(
                 method.ReturnType,
                 GenericAware(nullability.Create(method.ReturnParameter).ReadState, method.ReturnType, method.ReturnParameter.CustomAttributes, method, "MaybeNull"),
-                map),
+                map,
+                ClrTypes.TupleNames(method.ReturnParameter.CustomAttributes)),
             _ => null,
         };
         if (result is not { } returned)
@@ -709,9 +815,10 @@ public sealed partial class Binder
     /// The Piper view of a .NET value: <c>Nullable&lt;T&gt;</c> and possibly-null references become <c>T?</c>
     /// (with the boundary recorded so the conversion can be emitted). Null if Piper can't represent the type.
     /// </summary>
-    private (TypeSymbol Type, ClrBoundary Boundary)? MapValue(Type type, NullabilityState state, IReadOnlyDictionary<Type, TypeSymbol> map)
+    private (TypeSymbol Type, ClrBoundary Boundary)? MapValue(
+        Type type, NullabilityState state, IReadOnlyDictionary<Type, TypeSymbol> map, IReadOnlyList<string?>? tupleNames = null)
     {
-        if (ClrTypes.FromClr(type, map, _option) is not { } mapped)
+        if (ClrTypes.FromClr(type, map, _option, tupleNames) is not { } mapped)
             return null;
         if (Nullable.GetUnderlyingType(type) is not null)
             return (mapped, ClrBoundary.NullableValue);

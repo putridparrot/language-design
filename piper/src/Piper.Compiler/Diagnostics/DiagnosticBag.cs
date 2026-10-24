@@ -210,9 +210,6 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportVariantHasNoFields(TextSpan span, string variant) =>
         Error("PIP0232", span, $"Variant '{variant}' has no fields; write '{variant}' without parentheses.");
 
-    public void ReportGuardContainsStatements(TextSpan span) =>
-        Error("PIP0233", span, "A match guard cannot (yet) contain blocks with statements or match expressions.");
-
     public void ReportPatternTypeMismatch(TextSpan span, string pattern, TypeSymbol expected) =>
         Error("PIP0234", span, $"{pattern} cannot match a value of type '{expected}'.");
 
@@ -248,7 +245,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportTypeArgumentCount(TextSpan span, string name, int expected, int actual) =>
         Error("PIP0241", span, $"'{name}' takes {expected} type argument{(expected == 1 ? "" : "s")} but was given {actual}.");
 
-    public void ReportConstraintNotSatisfied(TextSpan span, TypeSymbol argument, TraitSymbol trait, TypeParameterSymbol parameter) =>
+    public void ReportConstraintNotSatisfied(TextSpan span, TypeSymbol argument, TypeSymbol trait, TypeParameterSymbol parameter) =>
         Error("PIP0242", span, $"'{argument}' does not implement '{trait}', which type parameter '{parameter}' requires.");
 
     public void ReportUnknownMethod(TextSpan span, TypeSymbol type, string name) =>
@@ -268,10 +265,10 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportInstanceMethodCalledStatically(TextSpan span, string method) =>
         Error("PIP0244", span, $"'{method}' is an instance method; call it on a value: value.{method}(...).");
 
-    public void ReportMissingTraitMethod(TextSpan span, TypeSymbol type, string method, TraitSymbol trait) =>
+    public void ReportMissingTraitMethod(TextSpan span, TypeSymbol type, string method, TypeSymbol trait) =>
         Error("PIP0245", span, $"'{type}' does not implement '{method}', which trait '{trait}' requires.");
 
-    public void ReportTraitSignatureMismatch(TextSpan span, string method, TraitSymbol trait, string expected) =>
+    public void ReportTraitSignatureMismatch(TextSpan span, string method, TypeSymbol trait, string expected) =>
         Error("PIP0246", span, $"'{method}' does not match its declaration in trait '{trait}': expected {expected}.");
 
     public void ReportInvalidExtendTarget(TextSpan span, string reason) =>
@@ -301,9 +298,6 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportIsBindingOutsideCondition(TextSpan span) =>
         Error("PIP0262", span, "Variables bound by 'is' can only be used in an if or while condition (optionally joined with '&&').");
-
-    public void ReportIsBindingBeforeStatements(TextSpan span) =>
-        Error("PIP0262", span, "After an 'is' that binds variables, the rest of the condition cannot (yet) contain blocks with statements, match, or '?'.");
 
     public void ReportTryOutsideOptionalFunction(TextSpan span, string kind) =>
         Error("PIP0263", span, kind == "Option"
@@ -394,6 +388,36 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportMisplacedOut(TextSpan span) =>
         Error("PIP0291", span, "'out' can only pass a variable to a .NET method's out parameter; Piper functions return several values as a tuple instead.");
+
+    public void ReportMisplacedRef(TextSpan span) =>
+        Error("PIP0311", span, "'ref' can only pass a variable to a .NET method's ref parameter.");
+
+    public void ReportInvalidRefTarget(TextSpan span) =>
+        Error("PIP0312", span, "'ref' needs a variable declared with 'var', or an element of an array, since .NET may write to it.");
+
+    public void ReportEventMisused(TextSpan span, string name) =>
+        Error("PIP0313", span, $"'{name}' is an event: add a handler with '+=' or remove one with '-='.");
+
+    public void ReportTraitImplementedTwice(TextSpan span, TypeSymbol type, TypeSymbol first, TypeSymbol second) =>
+        Error("PIP0314", span, $"'{type}' already implements '{first}', so it can't implement '{second}' too: a type implements each generic trait once, since its methods can't be overloaded.");
+
+    public void ReportTraitInheritsItself(TextSpan span, string trait) =>
+        Error("PIP0315", span, $"Trait '{trait}' inherits from itself.");
+
+    public void ReportTraitMethodRedeclared(TextSpan span, string method, TypeSymbol parent) =>
+        Error("PIP0316", span, $"'{method}' is already declared by '{parent}', which this trait inherits; a trait can't redeclare or override an inherited method.");
+
+    public void ReportTraitMethodInheritedTwice(TextSpan span, string method, TypeSymbol first, TypeSymbol second) =>
+        Error("PIP0317", span, $"This trait inherits '{method}' from both '{first}' and '{second}', so calls to it would be ambiguous.");
+
+    public void ReportUnsupportedInterface(TextSpan span, TypeSymbol @interface) =>
+        Error("PIP0318", span, $"'{@interface}' can't be implemented in Piper: only interfaces whose members are all instance methods, without ref or out parameters or type parameters of their own, can.");
+
+    public void ReportStaticTraitAsType(TextSpan span, TypeSymbol trait) =>
+        Error("PIP0319", span, $"'{trait}' has static methods, so it can only be a bound ('T: {trait}'), not the type of a value.");
+
+    public void ReportStaticTraitMethodCall(TextSpan span, string method, TypeSymbol type) =>
+        Error("PIP0320", span, $"'{type}' doesn't implement static method '{method}' itself; call the trait's default through a type parameter bounded by the trait, or implement it in the extend block.");
 
     public void ReportConstantOverflow(TextSpan span) =>
         Error("PIP0292", span, "This constant expression overflows. Constant arithmetic is checked, as in C#; use a long or a variable if wrapping around is intended.");

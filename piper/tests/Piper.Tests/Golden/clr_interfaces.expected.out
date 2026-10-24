@@ -1,0 +1,9 @@
+Money { pence = 75 }, Money { pence = 250 }, Money { pence = 1200 }
+Money { pence = 1200 }
+9
+pear
+using db
+closing db
+fig, apple, banana
+1
+Money { pence = 0 }

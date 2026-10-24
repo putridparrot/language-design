@@ -42,7 +42,7 @@ function        = [ "static" ] [ "async" ] "fn" IDENT [ typeParameters ] "(" [ p
 record          = "record" IDENT [ typeParameters ] "(" [ parameters ] ")" ";" ;
 enum            = "enum" IDENT [ typeParameters ] "{" [ variant { "," variant } [ "," ] ] "}" ;
 variant         = IDENT [ "(" [ parameters ] ")" ] ;
-trait           = "trait" IDENT "{" { function } "}" ;
+trait           = "trait" IDENT [ typeParameters ] [ ":" type { "," type } ] "{" { function } "}" ;   (* ": Named" inherits *)
 extend          = "extend" namedType [ ":" type { "," type } ] "{" { function } "}" ;
 typeParameters  = "<" typeParameter { "," typeParameter } [ "," ] ">" ;
 typeParameter   = IDENT [ ":" type { "+" type } ] ;           (* bounds must be traits *)
@@ -77,7 +77,7 @@ unary           = ( "-" | "!" | "await" ) unary | "(" type ")" unary | postfix ;
 postfix         = primary { "(" [ arguments ] ")" | "[" arguments "]" | "." IDENT [ typeArguments ] | "?" | "?." IDENT postfix } ;
                                                               (* after "?." the rest of the chain is skipped on None *)
 arguments       = argument { "," argument } [ "," ] ;
-argument        = expression | "out" [ "let" | "var" ] IDENT ;   (* out: only for .NET out parameters *)
+argument        = expression | "out" [ "let" | "var" ] IDENT | "ref" expression ;   (* out and ref: only for .NET out and ref parameters *)
 primary         = INT | DOUBLE | CHAR | STRING | "true" | "false" | "null" | IDENT [ typeArguments ] | "this"
                 | "(" expression ")" | tuple | block | if | match | lambda | collection | recordSpread | "throw" expression ;
 recordSpread    = "{" "..." expression { "," IDENT [ ":" expression ] } [ "," ] "}" ;   (* { ...p, y: 5, height } *)
@@ -131,7 +131,7 @@ generic call `a<b, c>(d)`, as in C#.
 ### Lexical structure
 
 - **Identifiers:** ASCII letters, digits and `_`, not starting with a digit.
-- **Keywords:** `fn let var if else while for in return break continue record enum match trait extend static this null is namespace using private try catch finally defer throw out true false`; `async`, `await` and `yield`, which are contextual as in C# (still usable as names); and the builtin type names `int long double bool string char object byte sbyte short ushort uint ulong float decimal unit`.
+- **Keywords:** `fn let var if else while for in return break continue record enum match trait extend static this null is namespace using private try catch finally defer throw out true false`; `async`, `await`, `yield` and `ref`, which are contextual as in C# (still usable as names); and the builtin type names `int long double bool string char object byte sbyte short ushort uint ulong float decimal unit`.
 - **Comments:** `// line` and `/* block */`. Block comments nest.
 - **Integers:** `42`, `1_000_000`, `0xFF`, `0b1010`. Suffixes as in C#: `L` long (`3_000_000_000L`), `U` uint (or ulong if it doesn't fit), `UL` ulong. An unsuffixed literal must fit in int (C# would make a larger one a uint or long; Piper asks for the suffix); as in C#, `-2147483648` and `-9223372036854775808L` are allowed too.
 - **Doubles:** `1.5`, `2e3`, `2.5E-1`. A digit is required after the `.`, so `0..10` is a range. Suffixes `F` (float), `D` (double) and `M` (decimal) work on any decimal number: `1.5f`, `19.99m`, `2m`.
@@ -198,19 +198,19 @@ fn area(s: Shape) => double = match s {
 | `Empty`, `Shape.Empty` | a fieldless variant; a bare name is a variant if the matched enum has one by that name, otherwise a binding |
 | `Point(x, 0)` | a record, deconstructed positionally |
 | `42`, `-1`, `2.5`, `'c'`, `"text"`, `true` | that literal; an int literal also matches long and double values |
-| `1..10`, `'a'..='z'` | a range of int, long or char values; `..` excludes the end, `..=` includes it |
-| `p1 \| p2` | either pattern; in a match arm, alternatives can bind variables if every one binds the same names with the same types: `Click(x, y) \| Touch(x, y) => …` |
+| `1..10`, `'a'..='z'` | a range of integer or char values; `..` excludes the end, `..=` includes it |
+| `p1 \| p2` | either pattern; alternatives can bind variables if every one binds the same names with the same types, in a match arm (`Click(x, y) \| Touch(x, y) => …`) or an `is` test (`if s is Circle(r) \| Ring(r, _) { … }`) |
 
 Patterns nest to any depth, e.g. `Add(Num(0), x)`.
 
-- **Exhaustiveness:** a match must handle every possible value, or it is a compile error that names a missing case, e.g. `'Shape.Rect(_, _)' is not covered`.
+- **Exhaustiveness:** a match must handle every possible value, or it is a compile error that names a missing case, e.g. `'Shape.Rect(_, _)' is not covered`. Integer and char values are covered by literals and ranges together, so `match b { 0..=127 => …, 128..=255 => … }` on a byte needs no wildcard; strings and doubles always need one.
   - Enums, records and bool are checked exactly.
   - int, string and the other types with unlimited values need a final `_` or binding arm.
   - Guarded arms don't count towards coverage.
-- **Unreachable arms:** an arm that can never match, because earlier unguarded arms cover everything it would, is a warning. A misspelled variant name usually shows up this way: it becomes a binding that matches everything, so every later arm is unreachable.
+- **Unreachable arms:** an arm that can never match, because earlier unguarded arms cover everything it would, is a warning. That includes overlapping literals and ranges: `3` after `1..=5`. A misspelled variant name usually shows up this way: it becomes a binding that matches everything, so every later arm is unreachable.
 - **Arm types:** the match's type is the arms' common type, unified as for `if`.
 - **Jumps in arms:** an arm may also be `return …`, `break` or `continue`. These have type Never and jump out of the enclosing function or loop.
-- **Guards:** guards are bool expressions evaluated after the pattern matches, with its bindings in scope. A guard cannot (yet) contain a block with statements or a nested `match`.
+- **Guards:** guards are bool expressions evaluated after the pattern matches, with its bindings in scope. A guard can be any bool expression, including a block with statements, a `match`, or `?` (which returns from the function, as anywhere else). It runs only for values the pattern matched.
 
 ### Generics
 
@@ -253,7 +253,12 @@ extend Circle: Shape {
 - **Traits as types:** a trait is also a type. A `Circle` converts implicitly to `Shape`, and calls through a `Shape` value dispatch dynamically.
 - **Traits as bounds:** a type parameter bound by a trait gets static dispatch.
 - **Using the expected type:** when an `if` or `match` produces different types that all implement the expected trait, the trait is used, e.g. `let s: Shape = if c { circle } else { rect };`.
-- **Not yet supported:** traits can't be generic, inherit from each other, have static methods or refer to the implementing type as a type (a `Self` type). Builtin types can't implement traits.
+- **Generic traits:** a trait can take type parameters, as `trait Convert<T> { fn convert() => T; }`, implemented as `extend Celsius: Convert<string>` and used as a bound (`T: Convert<int>`) or a type (`List<Convert<string>>`). A generic type can implement one in terms of its own type parameters: `extend Box: Convert<T>`. A type implements each generic trait once, since its methods can't be overloaded: not both `Convert<string>` and `Convert<int>`.
+- **Referring to the implementing type:** as in C# (`IComparable<T>`, `INumber<TSelf>`), a trait takes the implementing type as a type parameter bounded by the trait itself, and implementers name themselves: `trait Comparable<T: Comparable<T>> { fn compareTo(other: T) => int; }` with `extend Money: Comparable<Money>`, and `fn largest<T: Comparable<T>>(items: List<T>) => T`.
+- **Inheritance:** `trait Person: Named, Aged { … }` builds on other traits (generic ones too: `trait Ordered<T>: Equatable<T>`). A child trait's defaults can call its parents' methods. Implementing `Person` means implementing `Named` and `Aged` as well, in the same `extend` block or separate ones. A `Person` converts to `Named`, and a bound `T: Person` gives `T` its parents' methods. A trait can't redeclare or override an inherited method, and can't inherit methods with the same name from two parents.
+- **.NET interfaces:** `extend` can implement a .NET interface too, and one can be a bound. Each method of `extend Money: IComparable<Money> { fn CompareTo(other: Money?) => int = … }` has the interface's signature as Piper sees it: a parameter or result .NET marks as possibly null is an Option, as when calling .NET. Then `wallet.Sort()` uses it, `using let c = Connection(…)` works for an `IDisposable`, and the record passes wherever .NET expects the interface (`words.Sort(ByLength())` for an `IComparer<string>`). `fn largest<T: IComparable<T>>(items: List<T>)` accepts Piper types that implement it and .NET types such as `int` and `string`, and calls `a.CompareTo(b)` on them. Only interfaces made of instance methods (no properties, events, static or generic methods, or ref and out parameters) can be implemented.
+- **Static methods:** `static fn empty() => T;` in a trait is a C# static abstract member, and one with a body a default (`static virtual`). Implementers write `static fn empty() => Total = …`. They are called through a type parameter bounded by the trait, as in C#: `fn concat<T: Monoid<T>>(items: List<T>) => T { var result = T.empty(); … }`. A trait with static methods can only be a bound, not the type of a value, and a trait's default static method can only be called through a type parameter, not on a type that doesn't implement it itself (`Total.describe()`).
+- **Builtin and .NET types can't implement traits** (`extend int: Shape`). Traits become C# interfaces, and C# has no way to make `int` or `string` implement one, even with extension members, so they couldn't satisfy a bound either. Use a record that wraps the value, or a .NET interface they already implement (`T: IComparable<T>` accepts `int`).
 
 ### Methods and `extend`
 
@@ -314,7 +319,7 @@ fn compute(a: int, b: int) => Result<int, MathError> {
 }
 ```
 
-- **`?` propagates errors.** On a `Result`, `?` unwraps `Ok`, or returns the `Err` from a function that itself returns a `Result` with a compatible error type.
+- **`?` propagates errors.** On a `Result`, `?` unwraps `Ok`, or returns the `Err` from a function that itself returns a `Result` with a compatible error type. A `Result` has no conditional access, so `divide(a, b)?.ToString()` is `?` then `.ToString()`. On an `Option`, `?.` is always conditional access; write `(f()?).name` to unwrap first.
 - **Pattern matching:** `Result` values match like any enum, e.g. `Err(MathError.DivideByZero)`.
 - **No redeclaring:** `Option` and `Result` are built in, so they can't be redeclared. You can extend them with methods, e.g. `extend Option { fn isNone() => bool = this is None; }`, but not make them implement traits.
 - **One runtime:** they're defined once, in the `Piper.Runtime` assembly (as `Piper.Runtime.Option<T>` and `Piper.Runtime.Result<T, E>`), which every compiled Piper program and library references. So Piper libraries can pass them to each other, and C# code can use them too.
@@ -375,6 +380,7 @@ points.Add(Point(1, 2));                   // and can hold Piper values
 - **Null at the boundary:**
   - .NET members whose results are annotated as possibly null, and `Nullable<T>` values, come back as `T?`, with `null` becoming `None`. For example, `Environment.GetEnvironmentVariable(name) ?? "unset"`.
   - Where .NET accepts null, you can pass a `T?`, and `None` becomes `null`.
+  - Piper's records, enums and traits are C# classes and interfaces, so a generic .NET result that may be null is optional for them too: `people.FirstOrDefault()` on a `List<Person>` is a `Person?`.
 - **`extend` on .NET types:** a non-generic .NET type can be extended like a builtin, e.g. `extend StringBuilder { fn line(s: string) { this.AppendLine(s); } }`, but not with a member name it already has.
 - **Generic and extension methods:** type arguments are inferred from the arguments, including lambdas, and extension methods from imported namespaces apply, so LINQ works: `numbers.Where(n => n > 2).Select(n => n * 10).ToList()`.
 - **Indexers and setters:** `list[0]`, `ages["Ada"] = 36`, `ages["Ada"] += 1` and `builder.Length = 0` use .NET indexers, arrays and property setters.
@@ -385,9 +391,10 @@ points.Add(Point(1, 2));                   // and can hold Piper values
   if !int.TryParse(text, out let n) { return; }
   print(n * 2);
   ```
-  Where .NET may write null (`out string?`, or `[MaybeNullWhen(false)]` as on `Dictionary.TryGetValue`), the variable is optional: `if names.TryGetValue(key, out let name) { print(name ?? "?"); }`. Piper functions have no `out` parameters; they return several values as a [tuple](#tuples-and-deconstruction).
+  Where .NET may write null (`out string?`), the variable is optional. `[MaybeNullWhen(false)]`, as on `Dictionary.TryGetValue`, means null only when the call returns false, so where it returned true the variable is a plain value: in the body of `if names.TryGetValue(key, out let name) { print(name.Length); }` (or a `while`, or later in an `&&` chain), and after a guard `if !names.TryGetValue(key, out let name) { return; }`. Anywhere else it is optional. Piper functions have no `out` parameters; they return several values as a [tuple](#tuples-and-deconstruction).
 - **`in` parameters** take ordinary arguments.
-- **Not yet supported:** `ref` parameters and events.
+- **`ref` parameters** take `ref x`, where x is a `var` variable of exactly the parameter's type, or an array element: `Interlocked.Increment(ref counter)`, `Array.Resize(ref items, 10)`. .NET's nullability on a ref parameter is ignored, since the variable already has a type.
+- **Events:** `list.CollectionChanged += handler` adds a handler and `-=` removes it, as in C#. The handler is a lambda or a function, converted to the event's delegate type. An event can't be read or assigned with `=`.
 
 ### Lambdas and function values
 
@@ -417,7 +424,7 @@ names.Sort((a, b) => a.Length - b.Length);    // a .NET delegate type
 
 ### Tuples and deconstruction
 
-Tuples are C#'s value tuples. Elements can be named, and are read by name or as `Item1`, `Item2`, ….
+Tuples are C#'s value tuples. Elements can be named, and are read by name or as `Item1`, `Item2`, …. Tuples from .NET keep their element names, so `Math.DivRem(20, 6).Quotient` works.
 
 ```piper
 fn divide(a: int, b: int) => (quotient: int, remainder: int) = (a / b, a % b);
@@ -621,7 +628,11 @@ is locale-independent. `main()` takes no parameters and returns unit; it is the 
 | `let (a, b) = t;`, `(a, b) = (b, a);`, `for (k, v) in d` | `var (a, b) = t;`, `(a, b) = (b, a);`, `foreach (var (k, v) in d)` |
 | `int[]`, `int[5]`, `double[2, 3]` | `int[]`, `new int[5]`, `new double[2, 3]` |
 | `int.TryParse(s, out let n)` | `int n;` before the statement, then `int.TryParse(s, out n)`; an optional `out` goes through `PiperInterop.AfterOutReference(…)` |
+| `Interlocked.Increment(ref n)`, `list.Changed += h` | the same: `ref n`, `list.Changed += h` |
 | `trait Shape { fn area() => double; fn d() => string = …; }` | `public interface Shape { double area(); string d() => …; }` |
+| `trait Ordered<T: Ordered<T>>: Equatable<T> { … }` | `public interface Ordered<T> : Equatable<T> where T : Ordered<T> { … }` |
+| `trait Monoid<T: Monoid<T>> { static fn empty() => T; static fn d() => string = …; }`, `T.empty()` | `interface Monoid<T> where T : Monoid<T> { static abstract T empty(); static virtual string d() => …; }`, `T.empty()` |
+| `extend Money: IComparable<Money> { fn CompareTo(other: Money?) => int … }` | `record Money : IComparable<Money>` with `public int CompareTo(Option<Money> other)`, plus `int IComparable<Money>.CompareTo(Money? other) => CompareTo(PiperInterop.FromNullableReference(other));` where nullability differs |
 | `extend Circle: Shape { fn area() … }` | members inside `public sealed record Circle(…) : Shape { public double area() … }` |
 | `c.d()` where `d` is an un-overridden default | `((Shape)c).d()` (C# only exposes default interface methods through the interface) |
 | `extend int { fn squared() … static fn zero() … }` | C# 14 `extension(int self) { public int squared() … }` and `extension(int) { public static int zero() … }` |
@@ -676,15 +687,15 @@ is locale-independent. `main()` takes no parameters and returns unit; it is the 
 
 The match is known to be exhaustive, so a final arm without a guard or bindings becomes a plain `else`. Otherwise the chain ends in `throw new UnreachableException()`.
 
+A guard that needs statements (a block, `?`, or `?.`/`??` on a call) can't go in an `if` condition, so its arm becomes nested
+ifs: `if (s is P(var x)) { …; if (guard) { body; goto end; } }`, followed by the later arms and an `end: ;` label. An `if` or
+`while` whose condition binds variables with `is` and then needs statements is lowered the same way, so C# still knows the
+variables are assigned.
+
 ## Known limitations
 
-- Match guards can't contain statements. `|` alternatives can bind variables in match arms, but not in `is` tests.
-- Overlapping literal and range patterns (`1..=5` followed by `3`) aren't reported as unreachable.
-- Traits: no generic traits, trait inheritance, static trait methods or `Self` type. Builtin types can't implement traits.
-- `?` followed by member access needs parentheses, `(f()?).name`, because `?.` is conditional access.
-- A match guard, or the rest of an if/while condition after an `is` that binds variables, can't contain `?`, or `?.`/`??` on anything but a variable.
-- .NET interop: no `ref` parameters or events yet. Element names of tuples returned by .NET (`Math.DivRem`'s `Quotient`) aren't read; use `Item1` or deconstruct.
-- An `out` parameter marked `[MaybeNullWhen(false)]` gives an optional variable even when the call returned true.
+- Builtin and .NET types can't implement traits, because C# can't make them implement an interface (see [Traits](#traits)). A trait can't override a method it inherits.
+- Trait methods can't have type parameters of their own, and a trait can't be the target of `extend` (add default methods to the trait instead).
 
 ## Roadmap
 

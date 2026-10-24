@@ -185,6 +185,19 @@ public static class Patterns
             temp_1 = "surprising";
         }
         global::System.Console.WriteLine(temp_1);
+        foreach (byte b in new global::System.Collections.Generic.List<byte> { (byte)3, (byte)200 })
+        {
+            string temp_2;
+            if (b is >= 0 and <= 127)
+            {
+                temp_2 = "low";
+            }
+            else
+            {
+                temp_2 = "high";
+            }
+            global::System.Console.WriteLine(temp_2);
+        }
     }
 }
 

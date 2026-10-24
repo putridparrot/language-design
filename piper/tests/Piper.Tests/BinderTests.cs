@@ -29,6 +29,14 @@ public class BinderTests
     [InlineData("PIP0284", "fn f(x: int?) => int? { try { } finally { let y = x?; } x }")]
     [InlineData("PIP0306", "using System.Collections.Generic; fn f() => IEnumerable<int> { defer { yield return 1; } }")]
     [InlineData("PIP0200", "fn f() { defer print(x); let x = 1; }")]
+    [InlineData("PIP0263", "fn f(r: Result<int, string>) => int = r?.CompareTo(0);")]
+    [InlineData("PIP0200", "using System.Collections.Generic; fn f(d: Dictionary<string, string>) { if !d.TryGetValue(\"k\", out let v) { print(v); return; } }")]
+    [InlineData("PIP0261", "using System.Collections.Generic; fn f(d: Dictionary<string, string>) { if d.TryGetValue(\"k\", out let v) { print(v ?? \"\"); } }")]
+    [InlineData("PIP0212", "using System.Collections.Generic; fn f(d: Dictionary<string, string>) { if !d.TryGetValue(\"k\", out let v) { print(1); } print(v.Length); }")]
+    [InlineData("PIP0312", "fn f() { let n = 0; System.Threading.Interlocked.Increment(ref n); }")]
+    [InlineData("PIP0311", "fn g(x: int) { } fn f() { var n = 0; g(ref n); }")]
+    [InlineData("PIP0313", "fn f(c: System.Collections.ObjectModel.ObservableCollection<int>) { let h = c.CollectionChanged; }")]
+    [InlineData("PIP0313", "fn f(c: System.Collections.ObjectModel.ObservableCollection<int>) { c.CollectionChanged = (s, e) => print(1); }")]
     [InlineData("PIP0309", "fn f() { let xs = [1, ...5]; }")]
     [InlineData("PIP0310", "fn f(xs: string[]) { let ys: int[] = [...xs]; }")]
     [InlineData("PIP0310", "fn f(xs: int[]) { let ys: int?[] = [...xs]; }")]
@@ -173,7 +181,6 @@ public class BinderTests
     [InlineData("PIP0230", "fn f(s: S) => int = match s { A => 1 };")]
     [InlineData("PIP0232", "fn f() { let s = S.B; }")]
     [InlineData("PIP0232", "fn f() { let s = S.A(); }")]
-    [InlineData("PIP0233", "fn f(n: int) => int = match n { x if { let y = 1; y > x } => 1, _ => 2 };")]
     [InlineData("PIP0234", "fn f(n: int) => int = match n { \"a\" => 1, _ => 2 };")]
     [InlineData("PIP0234", "fn f(s: S) => int = match s { P(_, _) => 1, _ => 2 };")]
     [InlineData("PIP0235", "fn f() { let s = S.C; }")]
@@ -182,7 +189,8 @@ public class BinderTests
     [InlineData("PIP0236", "fn f(s: S) => int = match s { B => 1, _ => 2 };")]
     [InlineData("PIP0296", "fn f(s: S) => int = match s { B(x) | A => 1, _ => 2 };")]
     [InlineData("PIP0296", "fn f(p: P, t: string) => int = match (p, t) { (P(x, _), _) | (_, x) => 1 };")]
-    [InlineData("PIP0237", "fn f(s: S) => int = if s is B(x) | A { 1 } else { 2 };")]
+    [InlineData("PIP0296", "fn f(s: S) => int = if s is B(x) | A { 1 } else { 2 };")]
+    [InlineData("PIP0262", "fn f(s: S) => bool = s is B(x) | B(x);")]
     [InlineData("PIP0238", "enum E {}")]
     [InlineData("PIP0238", "enum E { E }")]
     [InlineData("PIP0239", "fn f(t: string) => int = match t { \"a\"..\"z\" => 1, _ => 2 };")]
@@ -199,6 +207,8 @@ public class BinderTests
     [InlineData("match s { A => 1, B(x) if x > 0 => 2 }", "S.B(_)")]
     [InlineData("match flag { true => 1 }", "false")]
     [InlineData("match n { 0 => 1, 1..=9 => 2 }", "_")]
+    [InlineData("match n { -2147483648..=0 => 1, 2..=2147483647 => 2 }", "1")]
+    [InlineData("match n { -2147483648..=0 => 1, 5..=2147483647 => 2 }", "1..=4")]
     [InlineData("match p { P(0, _) => 1, P(_, 0) => 2 }", "P(_, _)")]
     [InlineData("match pair { Pair(true, true) => 1, Pair(false, _) => 2 }", "Pair(true, false)")]
     public void Non_exhaustive_matches_name_a_missing_case(string match, string missing)
@@ -215,6 +225,10 @@ public class BinderTests
     [InlineData("match s { A => 1, A => 2, B(_) => 3 }")]
     [InlineData("match s { B(_) => 1, B(5) => 2, A => 3 }")]
     [InlineData("match flag { true | false => 1, true => 2 }")]
+    [InlineData("match n { 1..=5 => 1, 3 => 2, _ => 3 }")]
+    [InlineData("match n { 0..10 => 1, 5..=9 => 2, _ => 3 }")]
+    [InlineData("match n { 1 | 2 | 3 => 1, 2..=3 => 2, _ => 3 }")]
+    [InlineData("match n { 0..=4 => 1, 5..=9 => 2, 3..=7 => 3, _ => 4 }")]
     [InlineData("match s { Typo => 1, A => 2 }")]
     public void Unreachable_arms_are_warnings(string match)
     {
@@ -222,6 +236,37 @@ public class BinderTests
         Assert.True(result.Success, string.Join("\n", result.Diagnostics));
         var warning = Assert.Single(result.Diagnostics);
         Assert.Equal(("PIP0231", Diagnostics.DiagnosticSeverity.Warning), (warning.Code, warning.Severity));
+    }
+
+    private const string GenericTraits = "trait Convert<T> { fn convert() => T; } trait Ord<T: Ord<T>> { fn cmp(other: T) => int; } record M(x: int); ";
+
+    [Theory]
+    [InlineData("PIP0246", "extend M: Convert<string> { fn convert() => int = 1; }")]
+    [InlineData("PIP0245", "extend M: Convert<string> { }")]
+    [InlineData("PIP0314", "extend M: Convert<string>, Convert<int> { fn convert() => string = \"\"; }")]
+    [InlineData("PIP0242", "fn f<T: Ord<T>>(x: T) => int = 0; fn g() => int = f(M(1));")]
+    [InlineData("PIP0242", "record N(x: int); extend M: Ord<N> { fn cmp(other: N) => int = 0; }")]
+    [InlineData("PIP0241", "fn f(c: Convert) => int = 0;")]
+    [InlineData("PIP0315", "trait A: B { } trait B: A { }")]
+    [InlineData("PIP0316", "trait A { fn m() => int; } trait B: A { fn m() => int = 1; }")]
+    [InlineData("PIP0317", "trait A { fn m() => int; } trait B { fn m() => int; } trait C: A, B { }")]
+    [InlineData("PIP0245", "trait A { fn m() => int; } trait B: A { fn n() => int; } extend M: B { fn n() => int = 1; }")]
+    [InlineData("PIP0314", "trait E<T> { } trait O<T>: E<T> { } extend M: O<int>, E<string> { }")]
+    [InlineData("PIP0248", "trait A: M { }")]
+    [InlineData("PIP0318", "extend M: System.Collections.Generic.IList<int> { }")]
+    [InlineData("PIP0319", "trait Z<T: Z<T>> { static fn zero() => T; } extend M: Z<M> { static fn zero() => M = M(0); } fn f(z: Z<M>) { }")]
+    [InlineData("PIP0319", "trait Z<T: Z<T>> { static fn zero() => T; } extend M: Z<M> { static fn zero() => M = M(0); } fn f() { let zs: System.Collections.Generic.List<Z<M>> = []; }")]
+    [InlineData("PIP0320", "trait Z<T: Z<T>> { static fn zero() => T; static fn d() => int = 1; } extend M: Z<M> { static fn zero() => M = M(0); } fn f() => int = M.d();")]
+    [InlineData("PIP0246", "trait Z<T: Z<T>> { static fn zero() => T; } extend M: Z<M> { fn zero() => M = M(0); }")]
+    [InlineData("PIP0245", "trait Z<T: Z<T>> { static fn zero() => T; } extend M: Z<M> { }")]
+    [InlineData("PIP0246", "extend M: System.IComparable<M> { fn CompareTo(other: M) => int = 0; }")]
+    [InlineData("PIP0246", "extend M: System.IComparable<M> { private fn CompareTo(other: M?) => int = 0; }")]
+    [InlineData("PIP0245", "extend M: System.IDisposable { }")]
+    [InlineData("PIP0242", "fn f<T: System.IComparable<T>>(x: T) => int = 0; fn g() => int = f(M(1));")]
+    [InlineData("PIP0202", "extend M: Convert<string> { fn convert() => string = \"\"; } fn f(m: M) => int = m.convert();")]
+    public void Generic_trait_errors_are_reported(string code, string program)
+    {
+        AssertSingleError(code, GenericTraits + program);
     }
 
     [Fact]
@@ -235,6 +280,8 @@ public class BinderTests
             fn c(t: Tree) => int = match t { Leaf => 0, Node(Leaf, _) => 1, Node(Node(_, _), r) => 2 };
             fn d(flag: bool) => int = match flag { true => 1, false => 0 };
             fn e(s: S) => int = match s { S.A | S.B(_) => 1 };
+            fn g(b: byte) => int = match b { 0..=127 => 1, 128..=255 => 2 };
+            fn h(c: char, n: sbyte) => int = match (c, n) { (_, -128..0) => 1, (_, 0) => 2, (_, 1..=127) => 3 };
             """);
     }
 
@@ -268,7 +315,6 @@ public class BinderTests
     [InlineData("PIP0247", "extend T { }")]
     [InlineData("PIP0247", "extend O<int> { }")]
     [InlineData("PIP0248", "fn f<X: R>(x: X) {}")]
-    [InlineData("PIP0250", "trait U { static fn make() => int; }")]
     [InlineData("PIP0251", "fn f();")]
     [InlineData("PIP0251", "extend R { fn g(); }")]
     [InlineData("PIP0252", "extend string { fn Length() => int = 0; }")]

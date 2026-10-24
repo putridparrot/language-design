@@ -221,7 +221,7 @@ public sealed partial class Binder
                         _diagnostics.ReportCannotAssignImmutable(name.Span, variable);
                     // The part converts as C# would: identically or by widening (not by wrapping in Some).
                     else if (elementType != TypeSymbol.Error && variable.Type != elementType &&
-                             !(Operators.IsImplicitlyConvertible(elementType, variable.Type) || (variable.Type is TraitSymbol && IsConvertible(elementType, variable.Type))))
+                             !(Operators.IsImplicitlyConvertible(elementType, variable.Type) || (variable.Type.IsTrait && IsConvertible(elementType, variable.Type))))
                         _diagnostics.ReportCannotConvert(element.Span, elementType, variable.Type);
                     elements.Add(new BoundVariableDesignation(variable, elementType));
                     break;

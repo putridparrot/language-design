@@ -56,6 +56,9 @@ public sealed class CSharpEmitter
     private CodeWriter _writer = new();
     private NameAllocator _names = new([]);
 
+    /// <summary>Label names, unique across the file (C# labels have their own namespace, so they never clash with variables).</summary>
+    private readonly Dictionary<BoundLabel, string> _labels = [];
+
     /// <summary>How <c>this</c> is spelled in the method being emitted: <c>this</c> in members, the receiver parameter in extension blocks.</summary>
     private string _thisName = "this";
 
@@ -239,7 +242,7 @@ public sealed class CSharpEmitter
     private IEnumerable<MethodSymbol> MethodsFrom(NamedTypeDefinition type, SourceText file) =>
         type.Methods.Where(m => (m.DeclaringFile ?? _runtimeFile) == file);
 
-    private IEnumerable<TraitSymbol> TraitsFrom(NamedTypeDefinition type, SourceText file) =>
+    private IEnumerable<TypeSymbol> TraitsFrom(NamedTypeDefinition type, SourceText file) =>
         type.Conformances.Where(c => (c.File ?? _runtimeFile) == file).Select(c => c.Trait);
 
     /// <summary>Other files add to this type with extend blocks, so every C# part must be <c>partial</c>.</summary>
@@ -324,7 +327,7 @@ public sealed class CSharpEmitter
     /// <summary>A trait is an interface; methods with a body become default interface methods.</summary>
     private void EmitTrait(TraitSymbol trait)
     {
-        _writer.WriteLine($"{Visibility(trait)} interface {Escape(trait.Name)}");
+        _writer.WriteLine($"{Visibility(trait)} interface {Escape(trait.Name)}{TypeParameterList(trait.TypeParameters)}{BaseList(trait.Parents)}{Constraints(trait.TypeParameters)}");
         _writer.OpenBrace();
         for (int i = 0; i < trait.Methods.Length; i++)
         {
@@ -332,14 +335,15 @@ public sealed class CSharpEmitter
                 _writer.WriteLine();
             var method = trait.Methods[i];
             _thisName = "this";
+            // A static trait method is a C# 11 static abstract (or, with a body, static virtual) interface member.
             if (_methodBodies.TryGetValue(method, out var body))
             {
-                EmitFunction(body, "");
+                EmitFunction(body, method.IsStatic ? "static virtual " : "");
             }
             else
             {
                 _names = NewNameAllocator(method);
-                _writer.WriteLine($"{Signature(method, "")};");
+                _writer.WriteLine($"{Signature(method, method.IsStatic ? "static abstract " : "")};");
             }
         }
         _writer.CloseBrace();
@@ -355,6 +359,39 @@ public sealed class CSharpEmitter
             var access = methods[i].IsPrivate ? "internal " : "public ";
             EmitFunction(_methodBodies[methods[i]], access + (methods[i].IsStatic ? "static " : ""));
         }
+
+        var bridges = methods.Select(m => m.ContainingType).OfType<NamedTypeDefinition>().Distinct()
+            .SelectMany(t => t.InterfaceBridges)
+            .Where(b => methods.Contains(b.Method));
+        foreach (var bridge in bridges)
+        {
+            _writer.WriteLine();
+            EmitInterfaceBridge(bridge);
+        }
+    }
+
+    /// <summary>
+    /// <c>int IComparable&lt;Money&gt;.CompareTo(Money? other) =&gt; CompareTo(PiperInterop.FromNullableReference(other));</c>:
+    /// implements a .NET interface method whose nullable parameters or result are Options in the Piper method.
+    /// </summary>
+    private void EmitInterfaceBridge(ClrInterfaceBridge bridge)
+    {
+        string CSharpType(TypeSymbol type, ClrBoundary boundary) =>
+            type == TypeSymbol.Unit ? "void" : TypeName(type) + (boundary == ClrBoundary.None ? "" : "?");
+        string Convert(string value, ClrBoundary boundary, string direction) =>
+            boundary switch
+            {
+                ClrBoundary.NullableReference => $"global::{InteropClassName}.{direction}NullableReference({value})",
+                ClrBoundary.NullableValue => $"global::{InteropClassName}.{direction}NullableValue({value})",
+                _ => value,
+            };
+
+        var method = bridge.Method;
+        var names = method.Parameters.Select(p => Escape(p.Name)).ToList();
+        var parameters = bridge.Parameters.Select((p, i) => $"{CSharpType(p.Type, p.Boundary)} {names[i]}");
+        var arguments = bridge.Parameters.Select((p, i) => Convert(names[i], p.Boundary, "From"));
+        var call = Convert($"{Escape(method.Name)}({string.Join(", ", arguments)})", bridge.ReturnBoundary, "To");
+        _writer.WriteLine($"{CSharpType(bridge.ReturnType, bridge.ReturnBoundary)} {TypeName(bridge.Interface)}.{Escape(method.Name)}({string.Join(", ", parameters)}) => {call};");
     }
 
     /// <summary>
@@ -438,7 +475,7 @@ public sealed class CSharpEmitter
     private static string TypeParameterList(IEnumerable<TypeParameterSymbol> parameters) =>
         parameters.Any() ? $"<{string.Join(", ", parameters.Select(p => Escape(p.Name)))}>" : "";
 
-    private string BaseList(IEnumerable<TraitSymbol> traits) =>
+    private string BaseList(IEnumerable<TypeSymbol> traits) =>
         traits.Any() ? $" : {string.Join(", ", traits.Select(t => TypeName(t)))}" : "";
 
     private string Constraints(IEnumerable<TypeParameterSymbol> parameters) =>
@@ -669,6 +706,14 @@ public sealed class CSharpEmitter
                 _writer.WriteLine("throw new global::System.Diagnostics.UnreachableException();");
                 break;
 
+            case BoundLabelStatement label:
+                _writer.WriteLine($"{LabelName(label.Label)}: ;");
+                break;
+
+            case BoundGotoStatement jump:
+                _writer.WriteLine($"goto {LabelName(jump.Label)};");
+                break;
+
             case BoundBreakStatement:
                 _writer.WriteLine("break;");
                 break;
@@ -751,6 +796,7 @@ public sealed class CSharpEmitter
                 ($"new {TypeName(construction.ContainerType)}({Arguments(construction.Arguments)})", PrimaryPrecedence),
             BoundClrInvocationExpression invocation => (ClrInvocation(invocation), PrimaryPrecedence),
             BoundOutArgument output => (output.Variable is { } variable ? $"out {Escape(_names.Get(variable))}" : "out _", PrimaryPrecedence),
+            BoundRefArgument reference => ($"ref {Expr(reference.Target, PrimaryPrecedence)}", PrimaryPrecedence),
             BoundClrAssignmentExpression assignment => (ClrAssignment(assignment), AssignmentPrecedence),
             BoundIndexExpression index =>
                 ($"{Expr(index.Target, PrimaryPrecedence)}[{Arguments(index.Arguments)}]", PrimaryPrecedence),
@@ -836,12 +882,19 @@ public sealed class CSharpEmitter
     }
 
     private static bool NeedsEqualityComparer(TypeSymbol type) =>
-        type is TypeParameterSymbol or TraitSymbol || (type is TupleTypeSymbol tuple && tuple.ElementTypes.Any(NeedsEqualityComparer));
+        type is TypeParameterSymbol || type.IsTrait || (type is TupleTypeSymbol tuple && tuple.ElementTypes.Any(NeedsEqualityComparer));
 
     private string Assignment(BoundAssignmentExpression assignment)
     {
         var op = assignment.CompoundOperator is { } compound ? Operators.GetText(compound) + "=" : "=";
         return $"{Escape(_names.Get(assignment.Variable))} {op} {Expr(assignment.Value, AssignmentPrecedence)}";
+    }
+
+    private string LabelName(BoundLabel label)
+    {
+        if (!_labels.TryGetValue(label, out var name))
+            _labels[label] = name = $"{label.Name}_{_labels.Count + 1}";
+        return name;
     }
 
     private string ClrAssignment(BoundClrAssignmentExpression assignment)
@@ -917,7 +970,7 @@ public sealed class CSharpEmitter
     /// don't; casting a branch converted to a trait gives the expression that type.
     /// </summary>
     private string Branch(BoundExpression branch) =>
-        branch is BoundConversionExpression { Type: TraitSymbol trait } conversion
+        branch is BoundConversionExpression { Type.IsTrait: true, Type: var trait } conversion
             ? $"({TypeName(trait)}){Expr(conversion.Expression, UnaryPrecedence)}"
             : Expr(branch, ConditionalPrecedence);
 
@@ -987,7 +1040,7 @@ public sealed class CSharpEmitter
         if (call.Receiver is null)
             return $"{TypeName(call.ReceiverType)}.{method}";
 
-        if (call.Method.Trait is { } trait && call.ReceiverType is not (TraitSymbol or TypeParameterSymbol))
+        if (call.TraitType is { } trait && !call.ReceiverType.IsTrait && call.ReceiverType is not TypeParameterSymbol)
             return $"(({TypeName(trait)}){Expr(call.Receiver, UnaryPrecedence)}).{method}";
 
         return $"{Expr(call.Receiver, PrimaryPrecedence)}.{method}";

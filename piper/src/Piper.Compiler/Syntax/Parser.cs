@@ -332,13 +332,25 @@ public sealed class Parser
         return new EnumDeclarationSyntax(SpanFrom(keyword), name, typeParameters, variants);
     }
 
-    /// <summary>trait = "trait" IDENT "{" { function } "}" ;</summary>
+    /// <summary>trait = "trait" IDENT [ typeParameters ] [ ":" type { "," type } ] "{" { function } "}" ;</summary>
     private TraitDeclarationSyntax ParseTrait()
     {
         var keyword = Expect(TokenKind.TraitKeyword);
         var name = Expect(TokenKind.Identifier);
+        var typeParameters = ParseTypeParameters();
+        var parents = ImmutableArray.CreateBuilder<TypeSyntax>();
+        if (Current.Kind == TokenKind.Colon)
+        {
+            NextToken();
+            parents.Add(ParseType());
+            while (Current.Kind == TokenKind.Comma)
+            {
+                NextToken();
+                parents.Add(ParseType());
+            }
+        }
         var methods = ParseMethodBlock();
-        return new TraitDeclarationSyntax(SpanFrom(keyword), name, methods);
+        return new TraitDeclarationSyntax(SpanFrom(keyword), name, typeParameters, parents.ToImmutable(), methods);
     }
 
     /// <summary>extend = "extend" type [ ":" type { "," type } ] "{" { function } "}" ;</summary>
@@ -1126,9 +1138,16 @@ public sealed class Parser
         }
     }
 
-    /// <summary>argument = expression | "out" [ "let" | "var" ] IDENT ;</summary>
+    /// <summary>argument = expression | "out" [ "let" | "var" ] IDENT | "ref" expression ;</summary>
     private ExpressionSyntax ParseArgument()
     {
+        // `ref x`: `ref` is a keyword only before a name, so it can still be one itself.
+        if (Current is { Kind: TokenKind.Identifier, Text: "ref" } && Peek(1).Kind == TokenKind.Identifier)
+        {
+            var refKeyword = NextToken();
+            var target = ParseExpression();
+            return new RefArgumentSyntax(Span(refKeyword, target), refKeyword, target);
+        }
         if (Current.Kind != TokenKind.OutKeyword)
             return ParseExpression();
         var keyword = NextToken();

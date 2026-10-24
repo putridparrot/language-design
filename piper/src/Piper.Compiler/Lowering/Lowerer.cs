@@ -183,6 +183,19 @@ public sealed class Lowerer
 
     private void LowerWhile(BoundWhileStatement loop, List<BoundStatement> output)
     {
+        if (NeedsBranching(loop.Condition))
+        {
+            // `while (true) { if (…) { if (…) { body; continue; } } break; }`
+            var loopBody = Flatten(LowerToStatement(loop.Body)).ToList();
+            if (!EndsInJump(loopBody))
+                loopBody.Add(new BoundContinueStatement());
+            var iteration = new List<BoundStatement>();
+            LowerBranch(loop.Condition, loopBody, iteration);
+            iteration.Add(new BoundBreakStatement());
+            output.Add(new BoundWhileStatement(new BoundLiteralExpression(true, TypeSymbol.Bool), new BoundBlockStatement([.. iteration])));
+            return;
+        }
+
         var conditionPrelude = new List<BoundStatement>();
         var condition = LowerForValue(loop.Condition, conditionPrelude);
         var body = LowerToStatement(loop.Body);
@@ -240,6 +253,10 @@ public sealed class Lowerer
     {
         switch (expression)
         {
+            case BoundIfExpression @if when NeedsBranching(@if.Condition):
+                LowerBranchingIf(@if, sink: null, output);
+                break;
+
             case BoundIfExpression @if:
             {
                 var condition = LowerForValue(@if.Condition, output);
@@ -308,6 +325,10 @@ public sealed class Lowerer
     {
         switch (expression)
         {
+            case BoundIfExpression { Else: not null } @if when NeedsBranching(@if.Condition):
+                LowerBranchingIf(@if, sink, output);
+                break;
+
             case BoundIfExpression { Else: not null } @if when !TryLowerPure(@if, out _):
                 output.Add(IfInto(LowerForValue(@if.Condition, output), @if, sink));
                 break;
@@ -411,12 +432,12 @@ public sealed class Lowerer
                 // The receiver is evaluated before the arguments.
                 var operands = LowerOperands([receiver, .. call.Arguments], prelude);
                 return new BoundMethodCallExpression(
-                    operands[0], call.ReceiverType, call.Method, call.TypeArguments, operands[1..], call.Type);
+                    operands[0], call.ReceiverType, call.Method, call.TypeArguments, operands[1..], call.Type) { TraitType = call.TraitType };
             }
 
             case BoundMethodCallExpression call:
                 return new BoundMethodCallExpression(
-                    null, call.ReceiverType, call.Method, call.TypeArguments, LowerOperands(call.Arguments, prelude), call.Type);
+                    null, call.ReceiverType, call.Method, call.TypeArguments, LowerOperands(call.Arguments, prelude), call.Type) { TraitType = call.TraitType };
 
             case BoundClrInvocationExpression { Receiver: { } receiver } invocation:
             {
@@ -492,6 +513,10 @@ public sealed class Lowerer
                 return new BoundDeconstructionExpression(
                     deconstruction.Designation, LowerForValue(deconstruction.Value, prelude), deconstruction.Declares);
 
+            // The variable or array element itself is passed, so only an element's array and index are evaluated.
+            case BoundRefArgument reference:
+                return new BoundRefArgument(reference.Target is BoundVariableExpression ? reference.Target : LowerForValue(reference.Target, prelude));
+
             case BoundClrAssignmentExpression assignment:
             {
                 // The target's receiver and indices are evaluated before the value.
@@ -559,6 +584,14 @@ public sealed class Lowerer
 
     private BoundExpression LowerIfForValue(BoundIfExpression @if, List<BoundStatement> prelude)
     {
+        if (NeedsBranching(@if.Condition))
+        {
+            var result = NewTemp(@if.Type);
+            prelude.Add(new BoundVariableDeclaration(result, null));
+            LowerBranchingIf(@if, value => Assign(result, value), prelude);
+            return new BoundVariableExpression(result);
+        }
+
         var condition = LowerForValue(@if.Condition, prelude);
         if (@if.Else is not null &&
             TryLowerPure(@if.Then, out var whenTrue) &&
@@ -585,6 +618,137 @@ public sealed class Lowerer
             new BoundBlockStatement([.. then]),
             @else is [BoundIfStatement elseIf] ? elseIf : new BoundBlockStatement([.. @else]));
     }
+
+    /// <summary>
+    /// A condition that can't be a C# condition as it is: one that binds pattern variables and then needs statements
+    /// (<c>if x is Some(v) &amp;&amp; f(v)? > 0</c>), which lowered to a value would store the binding test in a temporary
+    /// first, so C# would no longer know the variables are assigned; or one with a <c>|</c> pattern that binds. It
+    /// becomes branches instead (<see cref="LowerBranch"/>).
+    /// </summary>
+    private bool NeedsBranching(BoundExpression condition) =>
+        (BindsVariables(condition) && !TryLowerPure(condition, out _)) || HasBindingAlternatives(condition);
+
+    /// <summary>A condition <see cref="LowerBranch"/> can test with a single C# if.</summary>
+    private bool IsSimpleCondition(BoundExpression condition) => TryLowerPure(condition, out _) && !HasBindingAlternatives(condition);
+
+    private static bool BindsVariables(BoundExpression condition) => condition switch
+    {
+        BoundIsPatternExpression test => test.Pattern.HasBindings,
+        BoundBinaryExpression { Operator: BoundBinaryOperatorKind.LogicalAnd } and => BindsVariables(and.Left) || BindsVariables(and.Right),
+        _ => false,
+    };
+
+    /// <summary>An <c>is</c> test (in a <c>&amp;&amp;</c> chain) whose <c>|</c> alternatives bind variables, which C# can't express.</summary>
+    private static bool HasBindingAlternatives(BoundExpression condition) => condition switch
+    {
+        BoundIsPatternExpression test => Alternatives(test.Pattern).Skip(1).Any(),
+        BoundBinaryExpression { Operator: BoundBinaryOperatorKind.LogicalAnd } and => HasBindingAlternatives(and.Left) || HasBindingAlternatives(and.Right),
+        _ => false,
+    };
+
+    /// <summary>
+    /// Adds code that runs <paramref name="onTrue"/> when <paramref name="condition"/> holds and otherwise falls
+    /// through. <c>a &amp;&amp; b</c> becomes <c>if (a) { if (b) { onTrue } }</c> when b needs statements, so they run only
+    /// once a is true, inside the if that declares a's pattern variables.
+    /// </summary>
+    private void LowerBranch(BoundExpression condition, List<BoundStatement> onTrue, List<BoundStatement> output)
+    {
+        if (IsSimpleCondition(condition))
+        {
+            output.Add(new BoundIfStatement(LowerForValue(condition, output), new BoundBlockStatement([.. onTrue]), null));
+        }
+        else if (condition is BoundBinaryExpression { Operator: BoundBinaryOperatorKind.LogicalAnd } and)
+        {
+            var inner = new List<BoundStatement>();
+            LowerBranch(and.Right, onTrue, inner);
+            LowerBranch(and.Left, inner, output);
+        }
+        else if (condition is BoundIsPatternExpression test && HasBindingAlternatives(test))
+        {
+            LowerAlternativesBranch(test, onTrue, output);
+        }
+        else
+        {
+            output.Add(new BoundIfStatement(LowerForValue(condition, output), new BoundBlockStatement([.. onTrue]), null));
+        }
+    }
+
+    /// <summary>
+    /// <c>value is A(x) | B(x)</c>: x is declared first, and each alternative binds its own copy and jumps to the code
+    /// that runs on a match, which C# then knows x is assigned in:
+    /// <c>T x; if (value is A(var x1)) { x = x1; goto matched; } if (value is B(var x2)) { … } goto skip; matched: ; onTrue skip: ;</c>
+    /// </summary>
+    private void LowerAlternativesBranch(BoundIsPatternExpression test, List<BoundStatement> onTrue, List<BoundStatement> output)
+    {
+        int start = output.Count;
+        var value = LowerForValue(test.Expression, output);
+        if (value is not BoundVariableExpression)
+            value = Spill(value, output);
+
+        var matched = new BoundLabel("matched");
+        var skip = new BoundLabel("skip");
+        var variables = new List<VariableSymbol>();
+        foreach (var alternative in Alternatives(test.Pattern))
+        {
+            var copies = new Dictionary<VariableSymbol, VariableSymbol>();
+            var renamed = RenameBindings(alternative, copies);
+            var body = new List<BoundStatement>();
+            foreach (var (variable, copy) in copies)
+            {
+                if (!variables.Contains(variable))
+                {
+                    variables.Add(variable);
+                    output.Insert(start + variables.Count - 1, new BoundVariableDeclaration(variable, null));
+                }
+                body.Add(Assign(variable, new BoundVariableExpression(copy)));
+            }
+            body.Add(new BoundGotoStatement(matched));
+            output.Add(new BoundIfStatement(new BoundIsPatternExpression(value, renamed), new BoundBlockStatement([.. body]), null));
+        }
+        output.Add(new BoundGotoStatement(skip));
+        output.Add(new BoundLabelStatement(matched));
+        output.AddRange(onTrue);
+        output.Add(new BoundLabelStatement(skip));
+    }
+
+    /// <summary>The pattern with each variable it binds replaced by a fresh one, recorded in <paramref name="copies"/>.</summary>
+    private static BoundPattern RenameBindings(BoundPattern pattern, Dictionary<VariableSymbol, VariableSymbol> copies) => pattern switch
+    {
+        BoundBindingPattern binding => new BoundBindingPattern(copies.TryGetValue(binding.Variable, out var copy)
+            ? copy
+            : copies[binding.Variable] = new VariableSymbol(binding.Variable.Name, binding.Variable.Type, isMutable: false, VariableKind.PatternVariable)),
+        BoundConstructorPattern constructor => new BoundConstructorPattern(
+            constructor.Constructor, [.. constructor.Arguments.Select(a => RenameBindings(a, copies))], constructor.Type),
+        BoundTuplePattern tuple => new BoundTuplePattern([.. tuple.Elements.Select(e => RenameBindings(e, copies))], (TupleTypeSymbol)tuple.Type),
+        _ => pattern,
+    };
+
+    /// <summary>
+    /// <c>if c { a } else { b }</c> where c needs branching: <c>if (…) { if (…) { a; goto end; } } b; end: ;</c>, so b
+    /// runs when any part of c is false without being written twice.
+    /// </summary>
+    private void LowerBranchingIf(BoundIfExpression @if, Func<BoundExpression, BoundStatement>? sink, List<BoundStatement> output)
+    {
+        var then = new List<BoundStatement>();
+        LowerArmBody(@if.Then, sink, then);
+        if (@if.Else is null)
+        {
+            LowerBranch(@if.Condition, then, output);
+            return;
+        }
+
+        var end = EndsInJump(then) ? null : new BoundLabel();
+        if (end is not null)
+            then.Add(new BoundGotoStatement(end));
+        LowerBranch(@if.Condition, then, output);
+        LowerArmBody(@if.Else, sink, output);
+        if (end is not null)
+            output.Add(new BoundLabelStatement(end));
+    }
+
+    private static bool EndsInJump(List<BoundStatement> statements) => statements.LastOrDefault() is
+        BoundReturnStatement or BoundThrowStatement or BoundBreakStatement or BoundContinueStatement or BoundGotoStatement or
+        BoundUnreachableStatement;
 
     /// <summary>
     /// <c>match s { P1 if g => a, P2 => b, P3 => c }</c> becomes
@@ -627,6 +791,7 @@ public sealed class Lowerer
             scrutinee = Spill(scrutinee, output);
 
         BoundStatement? chain = null;
+        BoundLabel? end = null;
         // C# can't declare variables inside an `or` pattern: `A(x) | B(x) => body` becomes an arm per alternative.
         var arms = match.Arms.SelectMany(arm => Alternatives(arm.Pattern).Select(p => new BoundMatchArm(p, arm.Guard, arm.Body))).ToList();
         for (int i = arms.Count - 1; i >= 0; i--)
@@ -645,6 +810,23 @@ public sealed class Lowerer
             }
 
             LowerArmBody(arm.Body, sink, body);
+
+            // A guard that needs statements runs them only once the pattern matched:
+            // `if (s is P(var x)) { …; if (guard) { body; goto end; } }`, then the later arms.
+            if (arm.Guard is not null && !IsSimpleCondition(arm.Guard))
+            {
+                if (!EndsInJump(body))
+                    body.Add(new BoundGotoStatement(end ??= new BoundLabel()));
+                var test = arm.Pattern is BoundWildcardPattern
+                    ? arm.Guard
+                    : new BoundBinaryExpression(new BoundIsPatternExpression(scrutinee, arm.Pattern), BoundBinaryOperatorKind.LogicalAnd, arm.Guard, TypeSymbol.Bool);
+                var branch = new List<BoundStatement>();
+                LowerBranch(test, body, branch);
+                branch.AddRange(Flatten(chain ?? new BoundUnreachableStatement()));
+                chain = new BoundBlockStatement([.. branch]);
+                continue;
+            }
+
             chain = new BoundIfStatement(ArmCondition(scrutinee, arm), new BoundBlockStatement([.. body]), chain ?? new BoundUnreachableStatement());
         }
 
@@ -652,6 +834,8 @@ public sealed class Lowerer
             output.AddRange(block.Statements);
         else if (chain is not null)
             output.Add(chain);
+        if (end is not null)
+            output.Add(new BoundLabelStatement(end));
     }
 
     private BoundExpression ArmCondition(BoundExpression scrutinee, BoundMatchArm arm)
@@ -880,8 +1064,8 @@ public sealed class Lowerer
         BoundConversionExpression conversion => IsInvariant(conversion.Expression),
         // Creating a lambda or function value has no effects worth ordering (captures are by reference anyway).
         BoundLambdaExpression or BoundFunctionReferenceExpression => true,
-        // An out argument is a variable's address, not a value to evaluate early.
-        BoundOutArgument => true,
+        // An out or ref argument is a variable's address, not a value to evaluate early.
+        BoundOutArgument or BoundRefArgument => true,
         _ => IsConstant(expression),
     };
 

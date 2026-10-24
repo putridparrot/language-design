@@ -52,14 +52,21 @@ public static class Out_parameters
         }
         global::System.Collections.Generic.Dictionary<string, string> names = new global::System.Collections.Generic.Dictionary<string, string>();
         names["ada"] = "Ada Lovelace";
-        Option<string> full;
-        if (global::Piper.Runtime.PiperInterop.AfterOutReference(names.TryGetValue("ada", out var outValue), outValue, out full))
+        string full;
+        if (names.TryGetValue("ada", out full))
         {
-            global::System.Console.WriteLine(full.IsSome ? full.Value : "?");
+            global::System.Console.WriteLine(full.Length);
         }
         Option<string> missing;
-        bool found = global::Piper.Runtime.PiperInterop.AfterOutReference(names.TryGetValue("bob", out var outValue_1), outValue_1, out missing);
+        bool found = global::Piper.Runtime.PiperInterop.AfterOutReference(names.TryGetValue("bob", out var outValue), outValue, out missing);
         global::System.Console.WriteLine($"{found} {(missing.IsSome ? missing.Value : "none")}");
+        string first;
+        if (names.TryGetValue("ada", out first) && first.StartsWith("Ada"))
+        {
+            global::System.Console.WriteLine("starts with Ada");
+        }
+        global::System.Console.WriteLine(lookup(names, "ada"));
+        global::System.Console.WriteLine(lookup(names, "bob"));
         global::System.Collections.Generic.Dictionary<string, int> ages = new global::System.Collections.Generic.Dictionary<string, int>();
         ages["Ada"] = 36;
         int age;
@@ -75,6 +82,16 @@ public static class Out_parameters
             }
         }
         global::System.Console.WriteLine(total);
+    }
+
+    public static string lookup(global::System.Collections.Generic.Dictionary<string, string> names, string key)
+    {
+        string name;
+        if (!names.TryGetValue(key, out name))
+        {
+            return $"no {key}";
+        }
+        return name.ToUpper();
     }
 }
 

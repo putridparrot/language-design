@@ -301,6 +301,10 @@ public sealed partial class Binder
     /// <summary><c>[1, 2, 3]</c>: a <c>List&lt;T&gt;</c>, or an array when one is expected. The element type comes from the context or the elements.</summary>
     private BoundExpression BindCollection(CollectionExpressionSyntax syntax, TypeSymbol? expected)
     {
+        // The annotation was already reported: `let xs: Bad<int> = [];` shouldn't also complain about the literal.
+        if (expected == TypeSymbol.Error && syntax.Elements.IsEmpty)
+            return new BoundErrorExpression();
+
         TypeSymbol? elementType = null;
         TypeSymbol? arrayType = null;
         if (expected is ClrTypeSymbol { IsArray: true, Rank: 1 } array)
@@ -516,10 +520,20 @@ public sealed partial class Binder
                     return new BoundErrorExpression();
                 if (FindField(receiver.Type, member.Member.Text) is not null || !IsClrBacked(receiver.Type))
                     return null;
+                if (FindClrEvent(receiver.Type, member.Member.Text, System.Reflection.BindingFlags.Instance) is { } instanceEvent)
+                    return BindEventAssignment(syntax, receiver, receiver.Type, instanceEvent);
                 target = BindClrInstanceMember(receiver, member.Member);
                 name = member.Member.Text;
                 break;
             }
+            // `Console.CancelKeyPress += …`: a static event.
+            case MemberAccessExpressionSyntax member when ResolveContainer(member.Target) switch
+            {
+                TypeSymbol type => type,
+                ClrTypeGroupSymbol group => NonGenericMember(group),
+                _ => null,
+            } is { } container && IsClrBacked(container) && FindClrEvent(container, member.Member.Text, System.Reflection.BindingFlags.Static) is { } staticEvent:
+                return BindEventAssignment(syntax, null, container, staticEvent);
             default:
                 return null;
         }
@@ -565,6 +579,35 @@ public sealed partial class Binder
             return new BoundErrorExpression();
         }
         return new BoundClrAssignmentExpression(target, kind, Widen(value, resolution.OperandType));
+    }
+
+    private static System.Reflection.EventInfo? FindClrEvent(TypeSymbol container, string name, System.Reflection.BindingFlags kind) =>
+        ClrContext(container).Type.GetEvent(name, System.Reflection.BindingFlags.Public | kind);
+
+    /// <summary>
+    /// <c>list.CollectionChanged += handler</c> or <c>-= handler</c>: the handler (a lambda or function) is converted to the
+    /// event's delegate type. An event can't be read or assigned otherwise, as in C#.
+    /// </summary>
+    private BoundExpression BindEventAssignment(AssignmentExpressionSyntax syntax, BoundExpression? receiver, TypeSymbol container, System.Reflection.EventInfo @event)
+    {
+        var target = (MemberAccessExpressionSyntax)syntax.Target;
+        if (ClrTypes.FromClr(@event.EventHandlerType!, ClrContext(container).Map, _option) is not { } handlerType)
+        {
+            BindExpression(syntax.Value);
+            _diagnostics.ReportUnknownMember(target.Member.Span, container, @event.Name);
+            return new BoundErrorExpression();
+        }
+
+        var handler = RequireValue(BindExpression(syntax.Value, handlerType), syntax.Value.Span);
+        if (syntax.Operator.Kind is not (TokenKind.PlusEquals or TokenKind.MinusEquals))
+        {
+            _diagnostics.ReportEventMisused(target.Member.Span, @event.Name);
+            return new BoundErrorExpression();
+        }
+
+        var kind = syntax.Operator.Kind == TokenKind.PlusEquals ? BoundBinaryOperatorKind.Add : BoundBinaryOperatorKind.Subtract;
+        return new BoundClrAssignmentExpression(
+            new BoundClrMemberExpression(receiver, container, @event, handlerType), kind, Convert(handler, handlerType, syntax.Value.Span));
     }
 
     // Exceptions

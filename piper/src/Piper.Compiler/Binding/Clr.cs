@@ -211,8 +211,28 @@ public static class ClrTypes
     /// <summary>
     /// The Piper type for a .NET type, or null if Piper can't represent it (pointers, by-refs, ref structs,
     /// unmapped generic parameters). <paramref name="genericMap"/> supplies the containing type's type arguments.
+    /// <paramref name="tupleNames"/> are the element names from a member's <c>[TupleElementNames]</c>, if it has one.
     /// </summary>
-    public static TypeSymbol? FromClr(Type type, IReadOnlyDictionary<Type, TypeSymbol> genericMap, EnumSymbol option)
+    public static TypeSymbol? FromClr(
+        Type type, IReadOnlyDictionary<Type, TypeSymbol> genericMap, EnumSymbol option, IReadOnlyList<string?>? tupleNames = null)
+    {
+        int next = 0;
+        return FromClr(type, genericMap, option, tupleNames, ref next);
+    }
+
+    /// <summary>The element names of <c>[TupleElementNames]</c> among <paramref name="attributes"/>, or null.</summary>
+    public static IReadOnlyList<string?>? TupleNames(IEnumerable<CustomAttributeData> attributes) =>
+        attributes.FirstOrDefault(a => a.AttributeType == typeof(System.Runtime.CompilerServices.TupleElementNamesAttribute))
+            is { ConstructorArguments: [{ Value: IReadOnlyCollection<CustomAttributeTypedArgument> names }] }
+            ? [.. names.Select(n => n.Value as string)]
+            : null;
+
+    /// <summary>
+    /// <paramref name="nextName"/> walks <paramref name="tupleNames"/>, which C# lists in a depth-first, pre-order walk
+    /// of the type: each tuple's own element names, then those of any tuples inside it.
+    /// </summary>
+    private static TypeSymbol? FromClr(
+        Type type, IReadOnlyDictionary<Type, TypeSymbol> genericMap, EnumSymbol option, IReadOnlyList<string?>? tupleNames, ref int nextName)
     {
         if (type.IsByRef || type.IsPointer || type.IsByRefLike || type.IsFunctionPointer)
             return null;
@@ -228,11 +248,11 @@ public static class ClrTypes
         }
 
         if (Nullable.GetUnderlyingType(type) is { } underlying)
-            return FromClr(underlying, genericMap, option) is { } inner ? option.Construct([inner]) : null;
+            return FromClr(underlying, genericMap, option, tupleNames, ref nextName) is { } inner ? option.Construct([inner]) : null;
 
         if (type.IsArray)
         {
-            return FromClr(type.GetElementType()!, genericMap, option) is { } element
+            return FromClr(type.GetElementType()!, genericMap, option, tupleNames, ref nextName) is { } element
                 ? ClrTypeSymbol.ArrayOf(element, type.IsSZArray ? 1 : type.GetArrayRank())
                 : null;
         }
@@ -240,16 +260,25 @@ public static class ClrTypes
         if (type.IsGenericType)
         {
             var definition = type.GetGenericTypeDefinition();
-            var arguments = new List<TypeSymbol>();
-            foreach (var argument in type.GetGenericArguments())
+            bool isTuple = ValueTupleTypes.Contains(definition);
+            var typeArguments = type.GetGenericArguments();
+            ImmutableArray<string?> names = default;
+            if (isTuple && tupleNames is not null && nextName + typeArguments.Length <= tupleNames.Count)
             {
-                if (FromClr(argument, genericMap, option) is not { } piper)
+                names = [.. tupleNames.Skip(nextName).Take(typeArguments.Length)];
+                nextName += typeArguments.Length;
+            }
+
+            var arguments = new List<TypeSymbol>();
+            foreach (var argument in typeArguments)
+            {
+                if (FromClr(argument, genericMap, option, tupleNames, ref nextName) is not { } piper)
                     return null;
                 arguments.Add(piper);
             }
-            // (int, string) is a Piper tuple. (Element names from [TupleElementNames] aren't read.)
-            return ValueTupleTypes.Contains(definition)
-                ? TupleTypeSymbol.Create([.. arguments])
+            // (int, string) is a Piper tuple, named as the member's [TupleElementNames] says: Math.DivRem's (Quotient, Remainder).
+            return isTuple
+                ? TupleTypeSymbol.Create([.. arguments], names)
                 : ClrTypeSymbol.For(definition).Construct([.. arguments]);
         }
 
@@ -289,6 +318,8 @@ public static class ClrTypes
     }
 
     /// <summary>True for the Piper types whose values are .NET reference types (String and CLR classes/interfaces).</summary>
+    /// <summary>A type whose values .NET can make null: strings, .NET classes and interfaces, and Piper's records, enums and traits (C# classes and interfaces; Option and Result are structs).</summary>
     public static bool IsReferenceType(TypeSymbol type) =>
-        type == TypeSymbol.String || type is ClrTypeSymbol { IsReferenceType: true };
+        type == TypeSymbol.String || type is ClrTypeSymbol { IsReferenceType: true } || type.IsTrait ||
+        type.OriginalDefinition is NamedTypeDefinition { IsRuntimeType: false };
 }

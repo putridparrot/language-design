@@ -34,14 +34,20 @@ fn main() {
         print(big);
     }
 
-    // Where .NET may write null, the variable is optional.
+    // TryGetValue writes null only when it returns false: where it returned true, the variable is a plain value.
     let names: Dictionary<string, string> = Dictionary();
     names["ada"] = "Ada Lovelace";
     if names.TryGetValue("ada", out let full) {
-        print(full ?? "?");
+        print(full.Length);
     }
+    // Anywhere else it is optional, since the call may have returned false.
     let found = names.TryGetValue("bob", out let missing);
     print("{found} {missing ?? "none"}");
+    if names.TryGetValue("ada", out let first) && first.StartsWith("Ada") {
+        print("starts with Ada");
+    }
+    print(lookup(names, "ada"));
+    print(lookup(names, "bob"));
 
     // A value type comes back as itself.
     let ages: Dictionary<string, int> = Dictionary();
@@ -57,4 +63,12 @@ fn main() {
         }
     }
     print(total);
+}
+
+// A guard: after `if !…TryGetValue(…) { return …; }` the value is there.
+fn lookup(names: Dictionary<string, string>, key: string) => string {
+    if !names.TryGetValue(key, out let name) {
+        return "no {key}";
+    }
+    name.ToUpper()
 }

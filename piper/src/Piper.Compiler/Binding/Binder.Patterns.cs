@@ -18,18 +18,12 @@ public sealed partial class Binder
             _scope = new Scope(outer);
 
             int errorsBefore = _diagnostics.Count;
-            _inMatchArmPattern = true;
             var pattern = BindPattern(arm.Pattern, scrutineeType, allowBindings: true);
-            _inMatchArmPattern = false;
             patternErrors |= _diagnostics.Count != errorsBefore;
 
             BoundExpression? guard = null;
             if (arm.Guard is not null)
-            {
                 guard = BindCondition(arm.Guard, allowPatternBindings: true);
-                if (ContainsStatements(guard))
-                    _diagnostics.ReportGuardContainsStatements(arm.Guard.Span);
-            }
 
             var body = BindExpression(arm.Body, expected);
             _scope = outer;
@@ -70,47 +64,6 @@ public sealed partial class Binder
         if (Exhaustiveness.FindMissingPattern(scrutineeType, covering) is { } missing)
             _diagnostics.ReportNonExhaustiveMatch(syntax.Keyword.Span, missing);
     }
-
-    /// <summary>
-    /// Lowering turns a match into an if/else-if chain whose conditions are `x is Pattern &amp;&amp; guard`,
-    /// which leaves no place to run statements hoisted out of a guard. Blocks with statements and
-    /// nested matches are the only expressions that need such statements.
-    /// </summary>
-    private static bool ContainsStatements(BoundExpression expression) => expression switch
-    {
-        BoundBlockExpression block => block.Statements.Length > 0 || (block.Trailing is { } t && ContainsStatements(t)),
-        BoundMatchExpression => true,
-        BoundIfExpression @if => ContainsStatements(@if.Condition) || ContainsStatements(@if.Then) ||
-                                 (@if.Else is { } e && ContainsStatements(e)),
-        BoundUnaryExpression unary => ContainsStatements(unary.Operand),
-        BoundBinaryExpression binary => ContainsStatements(binary.Left) || ContainsStatements(binary.Right),
-        BoundConversionExpression conversion => ContainsStatements(conversion.Expression),
-        BoundFieldAccessExpression access => ContainsStatements(access.Target),
-        BoundAssignmentExpression assignment => ContainsStatements(assignment.Value),
-        BoundCallExpression call => call.Arguments.Any(ContainsStatements),
-        BoundMethodCallExpression call => (call.Receiver is { } r && ContainsStatements(r)) || call.Arguments.Any(ContainsStatements),
-        BoundRecordCreationExpression creation => creation.Arguments.Any(ContainsStatements),
-        BoundVariantCreationExpression creation => creation.Arguments.Any(ContainsStatements),
-        BoundInterpolatedStringExpression interpolated => interpolated.Parts.Any(ContainsStatements),
-        BoundIsPatternExpression test => ContainsStatements(test.Expression),
-        // These evaluate their operand once, so anything but a variable is first stored in a temporary.
-        BoundNullCoalescingExpression coalescing =>
-            coalescing.Left is not BoundVariableExpression || ContainsStatements(coalescing.Right),
-        BoundConditionalAccessExpression access =>
-            access.Target is not BoundVariableExpression || ContainsStatements(access.WhenNotNull),
-        BoundTryExpression => true,
-        BoundClrInvocationExpression call => (call.Receiver is { } r && ContainsStatements(r)) || call.Arguments.Any(ContainsStatements),
-        BoundClrMemberExpression member => member.Receiver is { } receiver && ContainsStatements(receiver),
-        BoundNullableBoundaryExpression boundary => ContainsStatements(boundary.Operand),
-        BoundTupleExpression tuple => tuple.Elements.Any(ContainsStatements),
-        BoundCastExpression cast => ContainsStatements(cast.Operand),
-        BoundRecordSpreadExpression spread => ContainsStatements(spread.Source) || spread.Updates.Any(u => ContainsStatements(u.Value)),
-        BoundAwaitExpression await => ContainsStatements(await.Operand),
-        // `out let n` is declared by a statement before the call.
-        BoundOutArgument output => output.Declares,
-        BoundTupleElementExpression element => ContainsStatements(element.Tuple),
-        _ => false,
-    };
 
     /// <param name="allowBindings">False inside '|' alternatives, where bindings aren't supported yet.</param>
     private BoundPattern BindPattern(PatternSyntax syntax, TypeSymbol expected, bool allowBindings)
@@ -181,7 +134,7 @@ public sealed partial class Binder
             case TuplePatternSyntax tuple:
                 return BindTuplePattern(tuple, expected, allowBindings);
 
-            case OrPatternSyntax alternatives when _inMatchArmPattern && allowBindings:
+            case OrPatternSyntax alternatives when allowBindings:
                 return BindOrPatternWithBindings(alternatives, expected);
 
             case OrPatternSyntax alternatives:
@@ -194,17 +147,14 @@ public sealed partial class Binder
         }
     }
 
-    /// <summary>True while binding a match arm's pattern, the only place `|` alternatives may bind variables.</summary>
-    private bool _inMatchArmPattern;
-
     /// <summary>While binding a later alternative of `A(x) | B(x)`: the first alternative's variables, and those used.</summary>
     private Dictionary<string, VariableSymbol>? _orBindings;
     private HashSet<string> _orBindingsUsed = [];
 
     /// <summary>
-    /// `A(x) | B(x) => …` in a match arm: every alternative must bind the same names with the same types (the first
-    /// one declares them; the others reuse them). Lowering splits such an arm into one per alternative, since C#
-    /// can't declare variables inside an `or` pattern.
+    /// `A(x) | B(x)` in a match arm or an `is` test: every alternative must bind the same names with the same types (the first
+    /// one declares them; the others reuse them). C# can't declare variables inside an `or` pattern, so lowering splits
+    /// such an arm into one per alternative, and an `is` test into one test per alternative.
     /// </summary>
     private BoundPattern BindOrPatternWithBindings(OrPatternSyntax syntax, TypeSymbol expected)
     {

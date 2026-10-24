@@ -66,42 +66,33 @@ public class TypeSymbol : Symbol
     /// <summary>An instantiation of the built-in <c>Result&lt;T, E&gt;</c>.</summary>
     public bool IsResult => OriginalDefinition is EnumSymbol { BuiltinKind: BuiltinEnumKind.Result };
 
+    /// <summary>The trait this type is (or is an instantiation of, for <c>Convert&lt;string&gt;</c>), if any.</summary>
+    public TraitSymbol? TraitDefinition => OriginalDefinition as TraitSymbol;
+
+    public bool IsTrait => TraitDefinition is not null;
+
     public override string ToString() => Name;
 }
 
 /// <summary>A type parameter such as <c>T</c> in <c>fn id&lt;T&gt;(x: T) =&gt; T</c>.</summary>
 public sealed class TypeParameterSymbol(string name) : TypeSymbol(name)
 {
-    public ImmutableArray<TraitSymbol> Constraints { get; internal set; } = [];
+    /// <summary>The traits it must implement: <c>Shape</c>, or an instantiation such as <c>Comparable&lt;T&gt;</c>.</summary>
+    public ImmutableArray<TypeSymbol> Constraints { get; internal set; } = [];
 }
 
-/// <summary>A user-declared record or enum: possibly generic, possibly extended with methods and traits.</summary>
-public abstract class NamedTypeDefinition : TypeSymbol
+/// <summary>A user-declared record, enum or trait, possibly generic.</summary>
+public abstract class GenericTypeDefinition : TypeSymbol
 {
     private readonly List<ConstructedTypeSymbol> _instantiations = [];
-    private readonly List<MethodSymbol> _methods = [];
 
-    protected NamedTypeDefinition(string name) : base(name)
+    protected GenericTypeDefinition(string name) : base(name)
     {
     }
 
     public ImmutableArray<TypeParameterSymbol> TypeParameters { get; internal set; } = [];
 
     public bool IsGeneric => TypeParameters.Length > 0;
-
-    /// <summary>Option and Result: defined by the Piper.Runtime assembly rather than emitted with the program.</summary>
-    public bool IsRuntimeType => this is EnumSymbol { BuiltinKind: not BuiltinEnumKind.None };
-
-    /// <summary>Traits this type implements, declared with <c>extend Type: Trait { … }</c>.</summary>
-    public ImmutableArray<TraitSymbol> Traits => [.. Conformances.Select(c => c.Trait)];
-
-    /// <summary>Each implemented trait with the file whose extend block declared it (it may not be this type's file).</summary>
-    public ImmutableArray<(TraitSymbol Trait, SourceText? File)> Conformances { get; internal set; } = [];
-
-    /// <summary>Methods declared in <c>extend</c> blocks.</summary>
-    public IReadOnlyList<MethodSymbol> Methods => _methods;
-
-    internal void AddMethod(MethodSymbol method) => _methods.Add(method);
 
     /// <summary>The type as seen from inside its own declaration: <c>Option&lt;T&gt;</c> for a generic <c>Option</c>.</summary>
     public TypeSymbol SelfType => IsGeneric ? Construct([.. TypeParameters]) : this;
@@ -122,6 +113,36 @@ public abstract class NamedTypeDefinition : TypeSymbol
         _instantiations.Add(constructed);
         return constructed;
     }
+}
+
+/// <summary>A user-declared record or enum: possibly generic, possibly extended with methods and traits.</summary>
+public abstract class NamedTypeDefinition : GenericTypeDefinition
+{
+    private readonly List<MethodSymbol> _methods = [];
+
+    protected NamedTypeDefinition(string name) : base(name)
+    {
+    }
+
+    /// <summary>Option and Result: defined by the Piper.Runtime assembly rather than emitted with the program.</summary>
+    public bool IsRuntimeType => this is EnumSymbol { BuiltinKind: not BuiltinEnumKind.None };
+
+    /// <summary>
+    /// Traits this type implements, declared with <c>extend Type: Trait { … }</c>: a trait, or an instantiation such as
+    /// <c>Convert&lt;string&gt;</c>, written in terms of this type's own type parameters.
+    /// </summary>
+    public ImmutableArray<TypeSymbol> Traits => [.. Conformances.Select(c => c.Trait)];
+
+    /// <summary>Each implemented trait with the file whose extend block declared it (it may not be this type's file).</summary>
+    public ImmutableArray<(TypeSymbol Trait, SourceText? File)> Conformances { get; internal set; } = [];
+
+    /// <summary>Methods declared in <c>extend</c> blocks.</summary>
+    public IReadOnlyList<MethodSymbol> Methods => _methods;
+
+    internal void AddMethod(MethodSymbol method) => _methods.Add(method);
+
+    /// <summary>Methods implementing .NET interface methods whose C# signatures differ from theirs by nullability.</summary>
+    public List<ClrInterfaceBridge> InterfaceBridges { get; } = [];
 }
 
 public sealed class RecordSymbol : NamedTypeDefinition
@@ -204,11 +225,11 @@ public sealed class VariantSymbol(string name, EnumSymbol @enum) : Symbol(name)
     public string QualifiedName => $"{Enum.Name}.{Name}";
 }
 
-/// <summary>A generic record or enum applied to type arguments, e.g. <c>Option&lt;Int&gt;</c>.</summary>
-public sealed class ConstructedTypeSymbol(NamedTypeDefinition definition, ImmutableArray<TypeSymbol> arguments)
+/// <summary>A generic record, enum or trait applied to type arguments, e.g. <c>Option&lt;Int&gt;</c> or <c>Convert&lt;string&gt;</c>.</summary>
+public sealed class ConstructedTypeSymbol(GenericTypeDefinition definition, ImmutableArray<TypeSymbol> arguments)
     : TypeSymbol(definition is EnumSymbol { BuiltinKind: BuiltinEnumKind.Option } ? $"{arguments[0]}?" : $"{definition.Name}<{string.Join(", ", arguments)}>")
 {
-    public NamedTypeDefinition Definition { get; } = definition;
+    public GenericTypeDefinition Definition { get; } = definition;
 
     public override TypeSymbol OriginalDefinition => Definition;
 
@@ -271,7 +292,7 @@ public sealed class TupleTypeSymbol : TypeSymbol
 }
 
 /// <summary>An interface-like set of methods. A trait is also a type: a value of any type that implements it.</summary>
-public sealed class TraitSymbol : TypeSymbol
+public sealed class TraitSymbol : GenericTypeDefinition
 {
     public TraitSymbol(TraitDeclarationSyntax declaration) : base(declaration.Name.Text)
     {
@@ -280,7 +301,11 @@ public sealed class TraitSymbol : TypeSymbol
 
     public TraitDeclarationSyntax Declaration { get; }
 
+    /// <summary>The methods it declares itself (not those it inherits).</summary>
     public ImmutableArray<MethodSymbol> Methods { get; internal set; } = [];
+
+    /// <summary>The traits it inherits, written in terms of its own type parameters: <c>Named</c>, <c>Equatable&lt;T&gt;</c>.</summary>
+    public ImmutableArray<TypeSymbol> Parents { get; internal set; } = [];
 }
 
 public static class TypeSubstitution
@@ -304,7 +329,7 @@ public static class TypeSubstitution
     public static Dictionary<TypeParameterSymbol, TypeSymbol> MapFor(TypeSymbol type)
     {
         var map = new Dictionary<TypeParameterSymbol, TypeSymbol>();
-        if (type.OriginalDefinition is NamedTypeDefinition { IsGeneric: true } definition && type != definition)
+        if (type.OriginalDefinition is GenericTypeDefinition { IsGeneric: true } definition && type != definition)
         {
             for (int i = 0; i < definition.TypeParameters.Length; i++)
                 map[definition.TypeParameters[i]] = type.TypeArguments[i];
@@ -336,3 +361,16 @@ public static class TypeSubstitution
         _ => false,
     };
 }
+
+/// <summary>
+/// A Piper method implementing a .NET interface method whose C# signature differs from the method's own by nullability:
+/// a parameter or return type .NET marks as possibly null is an Option in Piper, so the emitter adds an explicit interface
+/// implementation that converts and forwards, e.g. <c>int IComparable&lt;Money&gt;.CompareTo(Money? other) =&gt;
+/// CompareTo(PiperInterop.FromNullableReference(other))</c>. Each type is the C# one, without the <c>?</c>.
+/// </summary>
+public sealed record ClrInterfaceBridge(
+    MethodSymbol Method,
+    TypeSymbol Interface,
+    ImmutableArray<(TypeSymbol Type, ClrBoundary Boundary)> Parameters,
+    TypeSymbol ReturnType,
+    ClrBoundary ReturnBoundary);

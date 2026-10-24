@@ -1,0 +1,36 @@
+// .NET `ref` parameters and events.
+
+using System;
+using System.Threading;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+
+fn onChange(sender: object, e: NotifyCollectionChangedEventArgs) {
+    print("changed: {e.Action}");
+}
+
+fn main() {
+    // `ref` passes a `var` variable, which .NET may change.
+    var counter = 0;
+    Interlocked.Increment(ref counter);
+    Interlocked.Add(ref counter, 10);
+    print(counter);
+    let old = Interlocked.Exchange(ref counter, 100);
+    print("{old} -> {counter}");
+
+    // Type arguments are inferred through ref, and array elements can be passed too.
+    var items: int[] = [1, 2, 3];
+    Array.Resize(ref items, 5);
+    print("{items.Length}: {string.Join(",", items)}");
+    Interlocked.Increment(ref items[0]);
+    print(items[0]);
+
+    // Events: add a handler with += and remove it with -=.
+    let names: ObservableCollection<string> = ObservableCollection();
+    names.CollectionChanged += onChange;
+    names.Add("Ada");
+    names.CollectionChanged += (sender, e) => print("now {names.Count} names");
+    names.Add("Bob");
+    names.CollectionChanged -= onChange;
+    names.Remove("Ada");
+}

@@ -26,7 +26,7 @@ public sealed partial class Binder
         NameExpressionSyntax s => BindName(s, expected),
         IsExpressionSyntax s => BindIs(s, allowBindings: false),
         ConditionalAccessExpressionSyntax s => BindConditionalAccess(s),
-        ImplicitReceiverSyntax => new BoundVariableExpression(_implicitReceivers.Peek()),
+        ImplicitReceiverSyntax => _implicitReceivers.Peek(),
         TryExpressionSyntax s => BindTry(s),
         LambdaExpressionSyntax s => BindLambda(s, expected),
         IndexExpressionSyntax s => BindIndex(s),
@@ -36,6 +36,7 @@ public sealed partial class Binder
         ThrowExpressionSyntax s => BindThrow(s),
         AwaitExpressionSyntax s => BindAwait(s),
         OutArgumentSyntax s => ReportMisplacedOut(s),
+        RefArgumentSyntax s => ReportMisplacedRef(s),
         UnaryExpressionSyntax s => BindUnary(s),
         CastExpressionSyntax s => BindCast(s),
         BinaryExpressionSyntax s => BindBinary(s),
@@ -254,9 +255,9 @@ public sealed partial class Binder
             else if (right.Type.IsOption && IsConvertible(left.Type, right.Type))
                 left = Convert(left, right.Type, syntax.Left.Span);
             // `shape == circle`: a value compares with a trait it implements, as that trait.
-            else if (left.Type is TraitSymbol && right.Type is not TraitSymbol && IsConvertible(right.Type, left.Type))
+            else if (left.Type.IsTrait && !right.Type.IsTrait && IsConvertible(right.Type, left.Type))
                 right = Convert(right, left.Type, syntax.Right.Span);
-            else if (right.Type is TraitSymbol && left.Type is not TraitSymbol && IsConvertible(left.Type, right.Type))
+            else if (right.Type.IsTrait && !left.Type.IsTrait && IsConvertible(left.Type, right.Type))
                 left = Convert(left, right.Type, syntax.Left.Span);
             // `(1, 2) == pair`: tuples whose names or element types differ compare at their common type.
             else if (left.Type is TupleTypeSymbol && right.Type is TupleTypeSymbol &&
@@ -623,7 +624,8 @@ public sealed partial class Binder
             return BindVariantCreation(@enum, variant, arguments, span, type == @enum ? expected : type);
         }
 
-        var method = FindMethod(type, member.Text);
+        var found = FindMethodWithOwner(type, member.Text);
+        var method = found?.Method;
         if (method is null)
         {
             // Math.Sqrt(2.0), Math.PI, Int.MaxValue, Enumerable.Empty<Int>()
@@ -652,10 +654,20 @@ public sealed partial class Binder
             return new BoundErrorExpression();
         }
 
+        // A static trait method (`T.zero()`) is reached through a type parameter bounded by the trait: C# can't call one
+        // on the trait itself, nor a trait's default on a type that doesn't implement it itself.
+        var owner = found!.Value.Owner;
+        if (owner.IsTrait && type is not TypeParameterSymbol)
+        {
+            BindArgumentsForDiagnostics(arguments);
+            _diagnostics.ReportStaticTraitMethodCall(member.Span, method.Name, type);
+            return new BoundErrorExpression();
+        }
+
         // `Stack.empty()` infers the type's own type arguments as well as the method's; `Stack<Int>.empty()` names them.
         var definition = type.OriginalDefinition as NamedTypeDefinition;
         ImmutableArray<TypeParameterSymbol> inferred = [.. definition?.TypeParameters ?? [], .. method.TypeParameters];
-        var map = TypeSubstitution.MapFor(type);
+        var map = TypeSubstitution.MapFor(owner);
         if (!ApplyExplicitTypeArguments(explicitArguments, method.TypeParameters, map, member.Span, method.Name))
             return BindArgumentsForDiagnostics(arguments);
         Seed(method.ReturnType, expected, map, inferred);
@@ -682,7 +694,8 @@ public sealed partial class Binder
             return BindArgumentsForDiagnostics(syntax.Arguments);
 
         var explicitArguments = ExplicitTypeArguments(typeArgumentSyntax);
-        var method = FindMethod(receiver.Type, member.Text);
+        var found = FindMethodWithOwner(receiver.Type, member.Text);
+        var method = found?.Method;
 
         // A record field holding a function: `handler.onClick(event)`.
         if (method is null && FindField(receiver.Type, member.Text) is { } delegateField &&
@@ -694,6 +707,13 @@ public sealed partial class Binder
 
         if (method is null && IsClrBacked(receiver.Type))
             return BindClrInstanceCall(receiver, member, syntax.Arguments, syntax.Span, explicitArguments);
+
+        // `a.CompareTo(b)` on a `T: IComparable<T>`: a method of a .NET interface it is bounded by.
+        if (method is null && receiver.Type is TypeParameterSymbol &&
+            TraitsOf(receiver.Type).OfType<ClrTypeSymbol>().FirstOrDefault(i => ClrContext(i).Type.GetMethod(member.Text) is not null) is { } bound)
+        {
+            return BindClrInstanceCall(new BoundConversionExpression(bound, receiver), member, syntax.Arguments, syntax.Span, explicitArguments);
+        }
 
         if (method is not null)
             CheckAccessible(method, member);
@@ -714,8 +734,10 @@ public sealed partial class Binder
             return new BoundErrorExpression();
         }
 
-        // The receiver fixes the type's own type arguments (Box<Int> → T = Int); infer the method's, unless written.
-        var map = TypeSubstitution.MapFor(receiver.Type);
+        // The receiver fixes the type's own type arguments (Box<Int> → T = Int), or a trait's (Convert<string> → T = string);
+        // infer the method's, unless written.
+        var owner = found!.Value.Owner;
+        var map = TypeSubstitution.MapFor(owner);
         if (!ApplyExplicitTypeArguments(explicitArguments, method.TypeParameters, map, member.Span, method.Name))
             return BindArgumentsForDiagnostics(syntax.Arguments);
         Seed(method.ReturnType, expected, map, method.TypeParameters);
@@ -725,21 +747,32 @@ public sealed partial class Binder
 
         var typeArguments = TypeArgumentsFrom(method.TypeParameters, map, syntax.Span);
         return new BoundMethodCallExpression(
-            receiver, receiver.Type, method, typeArguments, arguments.Value, TypeSubstitution.Substitute(method.ReturnType, map));
+            receiver, receiver.Type, method, typeArguments, arguments.Value, TypeSubstitution.Substitute(method.ReturnType, map))
+        {
+            TraitType = owner.IsTrait ? owner : null,
+        };
     }
 
-    /// <summary>Methods available on a type: its extend methods, then default methods of the traits it implements.</summary>
-    private MethodSymbol? FindMethod(TypeSymbol type, string name)
+    /// <summary>Methods available on a type: its extend methods, then those of the traits it implements.</summary>
+    private MethodSymbol? FindMethod(TypeSymbol type, string name) => FindMethodWithOwner(type, name)?.Method;
+
+    /// <summary>
+    /// A method available on <paramref name="type"/>, and the type it comes from as seen through <paramref name="type"/>:
+    /// the type itself, or a trait it implements, instantiated for it (<c>Convert&lt;int&gt;</c>), whose type arguments
+    /// the method's signature is written in terms of.
+    /// </summary>
+    private (MethodSymbol Method, TypeSymbol Owner)? FindMethodWithOwner(TypeSymbol type, string name)
     {
-        IEnumerable<MethodSymbol> candidates = type switch
+        if (type.OriginalDefinition is NamedTypeDefinition definition && definition.Methods.FirstOrDefault(m => m.Name == name) is { } own)
+            return (own, type);
+        foreach (var trait in TraitsOf(type))
         {
-            TypeParameterSymbol parameter => parameter.Constraints.SelectMany(t => t.Methods),
-            TraitSymbol trait => trait.Methods,
-            _ when type.OriginalDefinition is NamedTypeDefinition definition =>
-                definition.Methods.Concat(definition.Traits.SelectMany(t => t.Methods)),
-            _ => _builtinMethods.TryGetValue(type, out var methods) ? methods : [],
-        };
-        return candidates.FirstOrDefault(m => m.Name == name);
+            if (trait.TraitDefinition?.Methods.FirstOrDefault(m => m.Name == name) is { } inherited)
+                return (inherited, trait);
+        }
+        return _builtinMethods.TryGetValue(type, out var methods) && methods.FirstOrDefault(m => m.Name == name) is { } builtin
+            ? (builtin, type)
+            : null;
     }
 
     private static FieldSymbol? FindField(TypeSymbol type, string name) =>
@@ -795,6 +828,13 @@ public sealed partial class Binder
     private BoundErrorExpression ReportMisplacedOut(OutArgumentSyntax syntax)
     {
         _diagnostics.ReportMisplacedOut(syntax.Span);
+        return new BoundErrorExpression();
+    }
+
+    private BoundErrorExpression ReportMisplacedRef(RefArgumentSyntax syntax)
+    {
+        BindExpression(syntax.Target);
+        _diagnostics.ReportMisplacedRef(syntax.Keyword.Span);
         return new BoundErrorExpression();
     }
 
@@ -980,10 +1020,19 @@ public sealed partial class Binder
         _scope = new Scope(outer);
         var outerOutScope = _outScope;
         _outScope = outer;
-        var condition = BindCondition(syntax.Condition, allowPatternBindings: true);
+        // A guard's unwrapped out variables join the outer scope after the then-block, where the call returned false.
+        var afterGuard = new Scope(null);
+        var condition = GuardCall(syntax) is { } guard
+            ? WithOutsKnownTrue(guard, afterGuard, () => BindCondition(syntax.Condition, allowPatternBindings: true))
+            : BindCondition(syntax.Condition, allowPatternBindings: true);
         _outScope = outerOutScope;
         var then = BindBlock(syntax.Then, expected);
         _scope = outer;
+        foreach (var variable in afterGuard.Symbols)
+        {
+            if (!outer.TryDeclare(variable))
+                _diagnostics.ReportDuplicateDeclaration(syntax.Condition.Span, variable.Name);
+        }
         if (syntax.Else is null)
             return new BoundIfExpression(condition, then, null, TypeSymbol.Unit);
 
@@ -1046,7 +1095,7 @@ public sealed partial class Binder
         return null;
     }
 
-    private static bool NeedsBranchConversion(TypeSymbol type) => type.IsNumeric || type is TraitSymbol or TupleTypeSymbol || type.IsOption;
+    private static bool NeedsBranchConversion(TypeSymbol type) => type.IsNumeric || type.IsTrait || type is TupleTypeSymbol || type.IsOption;
 
     /// <param name="allowPatternBindings">
     /// True for if/while conditions and match guards: an <c>is</c> pattern there may bind variables, which
@@ -1077,23 +1126,52 @@ public sealed partial class Binder
                 var right = BindCondition(and.Right, allowPatternBindings: true);
                 if (left.Type == TypeSymbol.Error || right.Type == TypeSymbol.Error)
                     return new BoundErrorExpression();
-
-                // Lowering would evaluate a right side with statements after storing the left in a temporary,
-                // which loses C#'s knowledge that the pattern variables are assigned.
-                if (BindsVariables(left) && ContainsStatements(right))
-                    _diagnostics.ReportIsBindingBeforeStatements(and.Right.Span);
                 return new BoundBinaryExpression(left, BoundBinaryOperatorKind.LogicalAnd, right, TypeSymbol.Bool);
             }
+
+            // The rest of the chain and the body only run if this call returned true.
+            case CallExpressionSyntax call:
+                return WithOutsKnownTrue(call, _scope, () => BindExpression(syntax));
 
             default:
                 return BindExpression(syntax);
         }
     }
 
-    private static bool BindsVariables(BoundExpression condition) => condition switch
+    private T WithOutsKnownTrue<T>(CallExpressionSyntax call, Scope scope, Func<T> bind)
     {
-        BoundIsPatternExpression test => test.Pattern.HasBindings,
-        BoundBinaryExpression { Operator: BoundBinaryOperatorKind.LogicalAnd } and => BindsVariables(and.Left) || BindsVariables(and.Right),
+        var outer = _outsKnownTrue;
+        _outsKnownTrue = (call.Arguments, scope);
+        try
+        {
+            return bind();
+        }
+        finally
+        {
+            _outsKnownTrue = outer;
+        }
+    }
+
+    /// <summary><c>if !d.TryGetValue(k, out let v) { return; }</c>: a guard whose call returned true wherever v is in scope.</summary>
+    private static CallExpressionSyntax? GuardCall(IfExpressionSyntax syntax)
+    {
+        if (syntax.Else is not null || !EndsInJump(syntax.Then))
+            return null;
+        var condition = syntax.Condition;
+        while (condition is ParenthesizedExpressionSyntax parenthesized)
+            condition = parenthesized.Expression;
+        if (condition is not UnaryExpressionSyntax { Operator.Kind: TokenKind.Bang, Operand: var operand })
+            return null;
+        while (operand is ParenthesizedExpressionSyntax parenthesized)
+            operand = parenthesized.Expression;
+        return operand as CallExpressionSyntax;
+    }
+
+    private static bool EndsInJump(BlockExpressionSyntax block) => block.Trailing switch
+    {
+        ThrowExpressionSyntax => true,
+        null => block.Statements.LastOrDefault() is ReturnStatementSyntax or BreakStatementSyntax or ContinueStatementSyntax or
+            ExpressionStatementSyntax { Expression: ThrowExpressionSyntax },
         _ => false,
     };
 
@@ -1150,17 +1228,27 @@ public sealed partial class Binder
     /// <summary>
     /// <c>target?.chain</c>: the chain is bound against the unwrapped target. The result is optional
     /// (flattened if the chain already is), or Unit when the chain is a call made for its effect.
+    /// A Result has no conditional access, so on one <c>f()?.name</c> is <c>(f()?).name</c>.
     /// </summary>
     private BoundExpression BindConditionalAccess(ConditionalAccessExpressionSyntax syntax)
     {
         var target = RequireValue(BindExpression(syntax.Target), syntax.Target.Span);
+        if (target.Type.IsResult)
+        {
+            var unwrapped = BindTryOperand(target, TextSpan.FromBounds(syntax.Target.Span.Start, syntax.WhenNotNull.Span.Start + 1));
+            _implicitReceivers.Push(unwrapped);
+            var chain = BindExpression(syntax.WhenNotNull);
+            _implicitReceivers.Pop();
+            return unwrapped is BoundErrorExpression ? unwrapped : chain;
+        }
+
         bool valid = target.Type.IsOption;
         if (!valid && target.Type != TypeSymbol.Error)
             _diagnostics.ReportRequiresOptional(syntax.WhenNotNull.Span, "?.", target.Type);
 
         var receiverType = valid ? target.Type.TypeArguments[0] : target.Type;
         var receiver = new VariableSymbol("value", receiverType, isMutable: false, VariableKind.Temporary);
-        _implicitReceivers.Push(receiver);
+        _implicitReceivers.Push(new BoundVariableExpression(receiver));
         var whenNotNull = BindExpression(syntax.WhenNotNull);
         _implicitReceivers.Pop();
 
@@ -1180,12 +1268,17 @@ public sealed partial class Binder
     private BoundExpression BindTry(TryExpressionSyntax syntax)
     {
         var operand = RequireValue(BindExpression(syntax.Operand), syntax.Operand.Span);
+        return BindTryOperand(operand, syntax.Span);
+    }
+
+    private BoundExpression BindTryOperand(BoundExpression operand, TextSpan span)
+    {
         if (operand.Type == TypeSymbol.Error)
             return new BoundErrorExpression();
         // `?` returns early, which a finally (or defer) block can't do.
         if (_finallyLoopDepth >= 0)
         {
-            _diagnostics.ReportJumpOutOfFinally(syntax.Span, "?");
+            _diagnostics.ReportJumpOutOfFinally(span, "?");
             return new BoundErrorExpression();
         }
 
@@ -1195,7 +1288,7 @@ public sealed partial class Binder
             if (returnType.IsOption)
                 return new BoundTryExpression(operand, operand.Type.TypeArguments[0], returnType);
             if (returnType != TypeSymbol.Error)
-                _diagnostics.ReportTryOutsideOptionalFunction(syntax.Span, "Option");
+                _diagnostics.ReportTryOutsideOptionalFunction(span, "Option");
             return new BoundErrorExpression();
         }
 
@@ -1204,7 +1297,7 @@ public sealed partial class Binder
             if (!returnType.IsResult)
             {
                 if (returnType != TypeSymbol.Error)
-                    _diagnostics.ReportTryOutsideOptionalFunction(syntax.Span, "Result");
+                    _diagnostics.ReportTryOutsideOptionalFunction(span, "Result");
                 return new BoundErrorExpression();
             }
 
@@ -1212,13 +1305,13 @@ public sealed partial class Binder
             var returnedError = returnType.TypeArguments[1];
             if (!IsConvertible(error, returnedError))
             {
-                _diagnostics.ReportCannotConvert(syntax.Span, error, returnedError);
+                _diagnostics.ReportCannotConvert(span, error, returnedError);
                 return new BoundErrorExpression();
             }
             return new BoundTryExpression(operand, operand.Type.TypeArguments[0], returnType);
         }
 
-        _diagnostics.ReportTryOperandNotOptional(syntax.Span, operand.Type);
+        _diagnostics.ReportTryOperandNotOptional(span, operand.Type);
         return new BoundErrorExpression();
     }
 
@@ -1230,7 +1323,7 @@ public sealed partial class Binder
     /// </summary>
     private bool IsConvertible(TypeSymbol from, TypeSymbol to) =>
         Operators.IsImplicitlyConvertible(from, to) ||
-        (to is TraitSymbol trait && from.IsValueType && Implements(from, trait)) ||
+        (IsInterfaceType(to) && from.IsValueType && Implements(from, to)) ||
         (to.IsOption && from.IsValueType && IsConvertible(from, to.TypeArguments[0])) ||
         // .NET reference conversions: List<Int> to IEnumerable<Int>, String to IEnumerable<Char>, anything to object.
         (to is ClrTypeSymbol && from.IsValueType && (ClrTypes.ToClr(to) == typeof(object) || SelfAndBaseTypes(from).Contains(to))) ||
@@ -1281,7 +1374,7 @@ public sealed partial class Binder
     /// <summary>A cast C# allows that may fail at run time: from a trait, object or .NET base type to a more specific type.</summary>
     private bool IsDowncast(TypeSymbol from, TypeSymbol to)
     {
-        if (from is TraitSymbol trait && Implements(to, trait))
+        if (from.IsTrait && Implements(to, from))
             return true;
         if (ClrTypes.ToClr(from) is not { } source)
             return false;

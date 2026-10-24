@@ -52,6 +52,23 @@ public static class Results
         return Result<int, MathError>.Ok(r * 10);
     }
 
+    public static Result<int, MathError> digits(int a, int b)
+    {
+        Result<int, MathError> temp = divide(a, b);
+        if (!temp.IsOk)
+        {
+            return Result<int, MathError>.Err(temp.Error);
+        }
+        string text = temp.Value.ToString();
+        int temp_1 = text.Length;
+        Result<int, MathError> temp_2 = compute(a, b);
+        if (!temp_2.IsOk)
+        {
+            return Result<int, MathError>.Err(temp_2.Error);
+        }
+        return Result<int, MathError>.Ok(temp_1 + temp_2.Value.CompareTo(0));
+    }
+
     public static string show(Result<int, MathError> result)
     {
         if (result is { IsOk: true, Value: var v })
@@ -83,6 +100,8 @@ public static class Results
         {
             global::System.Console.WriteLine($"64 -> {v}");
         }
+        global::System.Console.WriteLine(show(digits(12345, 1)));
+        global::System.Console.WriteLine(show(digits(1, 0)));
     }
 }
 

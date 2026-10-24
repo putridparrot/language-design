@@ -1,0 +1,67 @@
+// Implementing .NET interfaces with extend, and using them as bounds.
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+record Money(pence: int);
+
+// IComparable<T>.CompareTo takes a T? (.NET may pass null), so in Piper the parameter is an Option.
+extend Money: IComparable<Money> {
+    fn CompareTo(other: Money?) => int = match other {
+        Some(o) => this.pence.CompareTo(o.pence),
+        None => 1,
+    };
+}
+
+record Connection(name: string);
+
+// IDisposable makes a Piper record usable with `using`.
+extend Connection: IDisposable {
+    fn Dispose() {
+        print("closing {this.name}");
+    }
+}
+
+// A comparer for List.Sort: a generic interface implemented for another type.
+record ByLength();
+
+extend ByLength: IComparer<string> {
+    fn Compare(x: string?, y: string?) => int = (x?.Length ?? 0) - (y?.Length ?? 0);
+}
+
+// A .NET interface as a bound: Piper types that implement it and .NET types alike.
+fn largest<T: IComparable<T>>(items: List<T>) => T {
+    var best = items[0];
+    for item in items {
+        if item.CompareTo(best) > 0 {
+            best = item;
+        }
+    }
+    best
+}
+
+fn main() {
+    let wallet = [Money(250), Money(1200), Money(75)];
+    wallet.Sort();
+    print(string.Join(", ", wallet));
+    print(largest(wallet));
+    print(largest([3, 9, 4]));
+    print(largest(["pear", "fig"]));
+
+    {
+        using let c = Connection("db");
+        print("using {c.name}");
+    }
+
+    let words = ["banana", "fig", "apple"];
+    words.Sort(ByLength());
+    print(string.Join(", ", words));
+
+    let comparable: IComparable<Money> = Money(5);
+    print(comparable.CompareTo(Money(3)));
+
+    // A .NET result that may be null is optional for Piper types too.
+    let none: List<Money> = [];
+    print(none.FirstOrDefault() ?? Money(0));
+}

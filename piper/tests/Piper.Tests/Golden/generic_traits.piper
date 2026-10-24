@@ -1,0 +1,67 @@
+// Generic traits, including one whose type parameter is bounded by the trait itself (as .NET's IComparable<T>).
+
+using System.Collections.Generic;
+
+trait Convert<T> {
+    fn convert() => T;
+    fn describe() => string = "converts to {this.convert()}";
+}
+
+trait Comparable<T: Comparable<T>> {
+    fn compareTo(other: T) => int;
+    fn isLessThan(other: T) => bool = this.compareTo(other) < 0;
+}
+
+record Celsius(degrees: double);
+record Money(pence: int);
+record Box<T>(value: T);
+
+extend Celsius: Convert<string> {
+    fn convert() => string = "{this.degrees} C";
+}
+
+extend Money: Comparable<Money>, Convert<int> {
+    fn compareTo(other: Money) => int = this.pence - other.pence;
+    fn convert() => int = this.pence;
+}
+
+// A generic type can implement a trait in terms of its own type parameter.
+extend Box: Convert<T> {
+    fn convert() => T = this.value;
+}
+
+fn largest<T: Comparable<T>>(items: List<T>) => T {
+    var best = items[0];
+    for item in items {
+        if best.isLessThan(item) {
+            best = item;
+        }
+    }
+    best
+}
+
+fn total<T: Convert<int>>(items: List<T>) => int {
+    var sum = 0;
+    for item in items {
+        sum += item.convert();
+    }
+    sum
+}
+
+fn main() {
+    let c = Celsius(21.5);
+    print(c.convert());
+    print(c.describe());
+
+    // A generic trait is a type too.
+    let converters: List<Convert<string>> = [c, Box("boxed")];
+    for converter in converters {
+        print(converter.describe());
+    }
+
+    let wallet = [Money(250), Money(1200), Money(75)];
+    print(largest(wallet));
+    print(total(wallet));
+    print(total([Box(1), Box(2), Box(3)]));
+    print(Money(5).isLessThan(Money(6)));
+}

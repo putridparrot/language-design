@@ -1,0 +1,81 @@
+// Trait inheritance: a trait can build on others, and implementing it means implementing them too.
+
+using System.Collections.Generic;
+
+trait Named {
+    fn name() => string;
+    fn shout() => string = this.name().ToUpper();
+}
+
+trait Aged {
+    fn age() => int;
+}
+
+// A child trait can call its parents' methods in its own defaults.
+trait Person: Named, Aged {
+    fn introduce() => string = "I'm {this.name()}, {this.age()}";
+}
+
+// Generic traits inherit with their type arguments.
+trait Equatable<T> {
+    fn sameAs(other: T) => bool;
+}
+
+trait Ordered<T>: Equatable<T> {
+    fn before(other: T) => bool;
+    fn notAfter(other: T) => bool = this.before(other) || this.sameAs(other);
+}
+
+record Employee(first: string, years: int);
+record Version(major: int, minor: int);
+
+// The parents' methods can go in the same extend block, or in their own.
+extend Employee: Person {
+    fn age() => int = this.years;
+}
+
+extend Employee: Named {
+    fn name() => string = this.first;
+}
+
+extend Version: Ordered<Version> {
+    fn sameAs(other: Version) => bool = this == other;
+    fn before(other: Version) => bool = this.major < other.major || (this.major == other.major && this.minor < other.minor);
+}
+
+fn greetAll(people: List<Person>) {
+    for p in people {
+        print(p.introduce());
+    }
+}
+
+// A bound by a child trait gives its parents' methods too.
+fn label<T: Person>(p: T) => string = "{p.shout()} ({p.age()})";
+
+fn earliest<T: Ordered<T>>(items: List<T>) => T {
+    var best = items[0];
+    for item in items {
+        if item.before(best) {
+            best = item;
+        }
+    }
+    best
+}
+
+fn main() {
+    let ada = Employee("Ada", 36);
+    print(ada.introduce());
+    print(ada.shout());
+    print(label(ada));
+
+    // A Person converts to each of its parents.
+    let named: Named = ada;
+    let person: Person = ada;
+    let aged: Aged = person;
+    print("{named.name()} {aged.age()}");
+    greetAll([ada, Employee("Grace", 45)]);
+
+    let versions = [Version(2, 1), Version(1, 9), Version(1, 10)];
+    print(earliest(versions));
+    print(Version(1, 0).notAfter(Version(1, 0)));
+}

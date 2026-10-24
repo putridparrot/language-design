@@ -74,4 +74,9 @@ fn main() {
 
     // A match passed straight to a function.
     print(match found { 7 => "as expected", _ => "surprising" });
+
+    // Ranges that cover every byte need no wildcard.
+    for b in [(byte)3, (byte)200] {
+        print(match b { 0..=127 => "low", 128..=255 => "high" });
+    }
 }

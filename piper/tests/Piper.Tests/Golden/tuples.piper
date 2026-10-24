@@ -80,6 +80,15 @@ fn main() {
     let (quotient, remainder) = Math.DivRem(20, 6);
     print("{quotient} {remainder}");
 
+    // Their element names come with them, even inside other types.
+    let division = Math.DivRem(20, 6);
+    print("{division.Quotient} r {division.Remainder}");
+    let unnamed: (int, int) = division;
+    print(unnamed.Item1);
+    for entry in System.Linq.Enumerable.Index(["a", "b"]) {
+        print("{entry.Index}:{entry.Item}");
+    }
+
     let pairs: List<(string, int)> = [("x", 1), ("y", 2)];
     print(string.Join(";", System.Linq.Enumerable.Select(pairs, entry => "{entry.Item1}={entry.Item2 * 10}")));
 }

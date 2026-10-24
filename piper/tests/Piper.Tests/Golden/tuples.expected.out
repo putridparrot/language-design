@@ -22,4 +22,8 @@ axis
 diagonal
 elsewhere
 3 2
+3 r 2
+3
+0:a
+1:b
 x=10;y=20

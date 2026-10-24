@@ -146,6 +146,25 @@ public sealed class BoundForStatement(
 /// <summary>Produced only by lowering: the impossible fall-through at the end of an exhaustive match.</summary>
 public sealed class BoundUnreachableStatement : BoundStatement;
 
+/// <summary>Produced only by lowering: a place <see cref="BoundGotoStatement"/>s jump forward to, past code they skip.</summary>
+public sealed class BoundLabel(string name = "end")
+{
+    /// <summary>What the label marks; the emitter adds a number to make it unique.</summary>
+    public string Name { get; } = name;
+}
+
+/// <summary><c>label: ;</c>, produced only by lowering.</summary>
+public sealed class BoundLabelStatement(BoundLabel label) : BoundStatement
+{
+    public BoundLabel Label { get; } = label;
+}
+
+/// <summary><c>goto label;</c>, produced only by lowering: always forward, out of the blocks it is in.</summary>
+public sealed class BoundGotoStatement(BoundLabel label) : BoundStatement
+{
+    public BoundLabel Label { get; } = label;
+}
+
 /// <summary>
 /// <c>for x in collection</c> over anything enumerable (C# <c>foreach</c>); with <see cref="Deconstruction"/>,
 /// <c>for (k, v) in dictionary</c>, and then <see cref="Variable"/> is unused.
@@ -312,6 +331,9 @@ public sealed class BoundMethodCallExpression(
     public ImmutableArray<BoundExpression> Arguments { get; } = arguments;
 
     public override TypeSymbol Type { get; } = type;
+
+    /// <summary>For a trait method, the trait it is called through as instantiated for the receiver: <c>Convert&lt;int&gt;</c>.</summary>
+    public TypeSymbol? TraitType { get; init; }
 }
 
 public sealed class BoundRecordCreationExpression(RecordSymbol record, ImmutableArray<BoundExpression> arguments, TypeSymbol type)
@@ -563,6 +585,15 @@ public sealed class BoundClrInvocationExpression(
     public ImmutableArray<TypeSymbol> TypeArguments { get; } = typeArguments.IsDefault ? [] : typeArguments;
 
     public override TypeSymbol Type { get; } = type;
+}
+
+/// <summary><c>ref x</c> or <c>ref items[i]</c>, for a .NET <c>ref</c> parameter: <see cref="Target"/> is passed by reference.</summary>
+public sealed class BoundRefArgument(BoundExpression target) : BoundExpression
+{
+    /// <summary>A mutable variable, or an element of an array.</summary>
+    public BoundExpression Target { get; } = target;
+
+    public override TypeSymbol Type => Target.Type;
 }
 
 /// <summary>
