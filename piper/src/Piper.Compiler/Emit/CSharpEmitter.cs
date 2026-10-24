@@ -754,6 +754,7 @@ public sealed class CSharpEmitter
             BoundClrAssignmentExpression assignment => (ClrAssignment(assignment), AssignmentPrecedence),
             BoundIndexExpression index =>
                 ($"{Expr(index.Target, PrimaryPrecedence)}[{Arguments(index.Arguments)}]", PrimaryPrecedence),
+            BoundCollectionExpression { HasSpread: true } collection => (SpreadCollection(collection), UnaryPrecedence),
             BoundCollectionExpression collection => (Collection(collection), PrimaryPrecedence),
             // The operand is parenthesized unless primary: C# reads `(Point)-x` as a subtraction.
             // C#'s `with` binds tighter than `*` but looser than unary operators.
@@ -856,6 +857,14 @@ public sealed class CSharpEmitter
         if (collection.Elements.IsEmpty)
             return collection.Type is ClrTypeSymbol { Type.IsArray: true } ? $"new {type} {{ }}" : $"new {type}()";
         return $"new {type} {{ {Arguments(collection.Elements)} }}";
+    }
+
+    /// <summary><c>(List&lt;int&gt;)[1, .. xs]</c>: a collection initializer can't spread, so use a collection expression and cast it to give it a type.</summary>
+    private string SpreadCollection(BoundCollectionExpression collection)
+    {
+        var elements = collection.Elements.Select(e =>
+            e is BoundSpreadElement spread ? $".. {Expr(spread.Source, AssignmentPrecedence)}" : Expr(e, AssignmentPrecedence));
+        return $"({TypeName(collection.Type)})[{string.Join(", ", elements)}]";
     }
 
     /// <summary>

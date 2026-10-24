@@ -111,6 +111,7 @@ fn connect(host: string, portText: string) => Result<string, string> {
 ```
 
 Exceptions are still there (`throw`, `try`/`catch`/`finally`) for crossing into .NET.
+`defer` runs cleanup code when a block ends, however it ends: `defer file.Close();`.
 
 ## Traits, generics and extensions
 
@@ -145,6 +146,8 @@ using System.Linq;
 let numbers = [5, 3, 8, 1];                    // a List<int>; [] makes an array where one is expected
 let evens = numbers.Where(n => n % 2 == 0).Select(n => n * 10).ToList();
 let squares: int[] = [1, 4, 9];
+let more = [0, ...numbers, ...squares];        // spread sequences in, as C#'s [0, ..numbers]
+let total = numbers |> Enumerable.Sum();      // x |> f(a) is f(x, a)
 let grid = double[3, 3];                       // C#'s new double[3, 3]
 
 let add = (a: int, b: int) => a + b;           // a Func<int, int, int>

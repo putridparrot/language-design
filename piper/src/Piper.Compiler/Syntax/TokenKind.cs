@@ -40,6 +40,7 @@ public enum TokenKind
     TryKeyword,
     CatchKeyword,
     FinallyKeyword,
+    DeferKeyword,
     ThrowKeyword,
     OutKeyword,
     /// <summary>A builtin type name: int, string, … (the token's text says which).</summary>
@@ -84,6 +85,7 @@ public enum TokenKind
     Percent,
     AmpersandAmpersand,
     PipePipe,
+    PipeGreater,
     Pipe,
     PlusEquals,
     MinusEquals,

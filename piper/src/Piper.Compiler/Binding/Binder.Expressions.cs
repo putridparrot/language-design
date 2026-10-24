@@ -42,6 +42,7 @@ public sealed partial class Binder
         RangeExpressionSyntax s => BindRange(s),
         AssignmentExpressionSyntax s => BindAssignment(s),
         CallExpressionSyntax s => BindCall(s, expected),
+        PipeExpressionSyntax s => BindPipe(s, expected),
         MemberAccessExpressionSyntax s => BindMemberAccess(s, expected),
         ParenthesizedExpressionSyntax s => BindExpression(s.Expression, expected),
         IfExpressionSyntax s => BindIf(s, expected),
@@ -358,6 +359,15 @@ public sealed partial class Binder
     }
 
     // Calls
+
+    /// <summary><c>x |> f(a)</c> is <c>f(x, a)</c>, and <c>x |> f</c> is <c>f(x)</c>: the left side becomes the first argument.</summary>
+    private BoundExpression BindPipe(PipeExpressionSyntax syntax, TypeSymbol? expected)
+    {
+        var call = syntax.Right is CallExpressionSyntax right
+            ? right with { Span = syntax.Span, Arguments = [syntax.Left, .. right.Arguments] }
+            : new CallExpressionSyntax(syntax.Span, syntax.Right, [syntax.Left]);
+        return BindCall(call, expected);
+    }
 
     private BoundExpression BindCall(CallExpressionSyntax syntax, TypeSymbol? expected)
     {
@@ -1172,6 +1182,12 @@ public sealed partial class Binder
         var operand = RequireValue(BindExpression(syntax.Operand), syntax.Operand.Span);
         if (operand.Type == TypeSymbol.Error)
             return new BoundErrorExpression();
+        // `?` returns early, which a finally (or defer) block can't do.
+        if (_finallyLoopDepth >= 0)
+        {
+            _diagnostics.ReportJumpOutOfFinally(syntax.Span, "?");
+            return new BoundErrorExpression();
+        }
 
         var returnType = _return!.Type;
         if (operand.Type.IsOption)

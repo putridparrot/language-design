@@ -1109,6 +1109,7 @@ public sealed partial class Binder
         _scope = outer;
 
         var type = trailing?.Type ?? (statements.Any(Diverges) ? TypeSymbol.Never : TypeSymbol.Unit);
+        (statements, trailing) = ApplyDefers(statements, trailing, type);
         return new BoundBlockExpression(statements, trailing, type);
     }
 
@@ -1142,6 +1143,7 @@ public sealed partial class Binder
         TryStatementSyntax s => BindTryCatch(s),
         YieldStatementSyntax s => BindYield(s),
         UsingStatementSyntax s => BindUsing(s),
+        DeferStatementSyntax s => BindDefer(s),
         BreakStatementSyntax s => BindLoopJump(s.Keyword, new BoundBreakStatement()),
         ContinueStatementSyntax s => BindLoopJump(s.Keyword, new BoundContinueStatement()),
         _ => throw new InvalidOperationException($"Unexpected statement {syntax.GetType().Name}"),

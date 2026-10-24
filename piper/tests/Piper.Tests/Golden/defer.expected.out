@@ -1,0 +1,25 @@
+body
+second deferred
+first deferred
+compute 5
+leaving compute 5
+10
+compute -1
+leaving compute -1
+0
+cleanup
+caught boom
+worked
+cleanup
+iteration 0
+end of iteration 0
+end of iteration 1
+iteration 2
+end of iteration 2
+100 11
+a
+b
+3
+1
+2
+iterator done

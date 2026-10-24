@@ -610,6 +610,9 @@ public sealed class Parser
                 case TokenKind.UsingKeyword:
                     statements.Add(ParseUsing());
                     break;
+                case TokenKind.DeferKeyword:
+                    statements.Add(ParseDefer());
+                    break;
                 // `yield return x;`, `yield break;`: `yield` is a keyword only there, as in C#.
                 case TokenKind.Identifier when Current.Text == "yield" && Peek(1).Kind is TokenKind.ReturnKeyword or TokenKind.BreakKeyword:
                 {
@@ -911,9 +914,12 @@ public sealed class Parser
 
             var op = NextToken();
             var right = ParseBinary(SyntaxFacts.IsRightAssociative(op.Kind) ? precedence - 1 : precedence);
-            left = op.Kind is TokenKind.DotDot or TokenKind.DotDotEquals
-                ? new RangeExpressionSyntax(Span(left, right), left, op, right)
-                : new BinaryExpressionSyntax(Span(left, right), left, op, right);
+            left = op.Kind switch
+            {
+                TokenKind.PipeGreater => new PipeExpressionSyntax(Span(left, right), left, op, right),
+                TokenKind.DotDot or TokenKind.DotDotEquals => new RangeExpressionSyntax(Span(left, right), left, op, right),
+                _ => new BinaryExpressionSyntax(Span(left, right), left, op, right),
+            };
         }
     }
 
@@ -1051,7 +1057,7 @@ public sealed class Parser
             case TokenKind.OpenBracket:
             {
                 var open = NextToken();
-                var elements = ParseSeparatedList(ParseExpression, TokenKind.CloseBracket);
+                var elements = ParseSeparatedList(ParseCollectionElement, TokenKind.CloseBracket);
                 Expect(TokenKind.CloseBracket);
                 return new CollectionExpressionSyntax(SpanFrom(open), elements);
             }
@@ -1105,7 +1111,7 @@ public sealed class Parser
                     return Peek(offset + 1).Kind is TokenKind.OpenParen or TokenKind.CloseParen or TokenKind.CloseBracket
                         or TokenKind.CloseBrace or TokenKind.Colon or TokenKind.Semicolon or TokenKind.Comma or TokenKind.Dot
                         or TokenKind.QuestionDot or TokenKind.Question or TokenKind.EqualsEquals or TokenKind.BangEquals
-                        or TokenKind.Pipe or TokenKind.AmpersandAmpersand or TokenKind.PipePipe or TokenKind.OpenBracket
+                        or TokenKind.Pipe or TokenKind.AmpersandAmpersand or TokenKind.PipePipe or TokenKind.PipeGreater or TokenKind.OpenBracket
                         or TokenKind.EndOfFile;
                 case TokenKind.Greater or TokenKind.Identifier or TokenKind.PredefinedTypeKeyword or TokenKind.Dot or TokenKind.Comma or TokenKind.Question
                     or TokenKind.QuestionQuestion or TokenKind.OpenBracket or TokenKind.CloseBracket or TokenKind.OpenParen
@@ -1174,6 +1180,16 @@ public sealed class Parser
         }
         var expression = ParseExpression();
         return new TupleElementSyntax(TextSpan.FromBounds(start.Span.Start, expression.Span.End), name, expression);
+    }
+
+    /// <summary>collectionElement = [ "..." ] expression ;</summary>
+    private ExpressionSyntax ParseCollectionElement()
+    {
+        if (Current.Kind != TokenKind.Ellipsis)
+            return ParseExpression();
+        var ellipsis = NextToken();
+        var source = ParseExpression();
+        return new SpreadElementSyntax(TextSpan.FromBounds(ellipsis.Span.Start, source.Span.End), source);
     }
 
     private static readonly int CastPrecedence = SyntaxFacts.GetUnaryPrecedence(TokenKind.Minus);
@@ -1276,6 +1292,25 @@ public sealed class Parser
         ExpressionSyntax body = Current.Kind == TokenKind.OpenBrace && !AtRecordSpread() ? ParseBlock() : ParseExpression();
         _sawYield = outerYield;
         return new LambdaExpressionSyntax(TextSpan.FromBounds(first.Span.Start, body.Span.End), parameters, body);
+    }
+
+    /// <summary>defer = "defer" ( block [ ";" ] | expression ";" ) ;</summary>
+    private DeferStatementSyntax ParseDefer()
+    {
+        var keyword = NextToken();
+        ExpressionSyntax body;
+        if (Current.Kind == TokenKind.OpenBrace && !AtRecordSpread())
+        {
+            body = ParseBlock();
+            if (Current.Kind == TokenKind.Semicolon)
+                NextToken();
+        }
+        else
+        {
+            body = ParseExpression();
+            Expect(TokenKind.Semicolon);
+        }
+        return new DeferStatementSyntax(SpanFrom(keyword), keyword, body);
     }
 
     /// <summary>

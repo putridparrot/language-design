@@ -30,6 +30,7 @@ public static class SyntaxFacts
         "try" => TokenKind.TryKeyword,
         "catch" => TokenKind.CatchKeyword,
         "finally" => TokenKind.FinallyKeyword,
+        "defer" => TokenKind.DeferKeyword,
         "throw" => TokenKind.ThrowKeyword,
         "out" => TokenKind.OutKeyword,
         "true" => TokenKind.TrueKeyword,
@@ -53,8 +54,9 @@ public static class SyntaxFacts
     /// </summary>
     public static int GetBinaryPrecedence(TokenKind kind) => kind switch
     {
-        TokenKind.Star or TokenKind.Slash or TokenKind.Percent => 8,
-        TokenKind.Plus or TokenKind.Minus => 7,
+        TokenKind.Star or TokenKind.Slash or TokenKind.Percent => 9,
+        TokenKind.Plus or TokenKind.Minus => 8,
+        TokenKind.PipeGreater => 7,
         TokenKind.Less or TokenKind.LessEquals or TokenKind.Greater or TokenKind.GreaterEquals => IsPrecedence,
         TokenKind.EqualsEquals or TokenKind.BangEquals => 5,
         TokenKind.AmpersandAmpersand => 4,
@@ -72,7 +74,7 @@ public static class SyntaxFacts
     /// <summary>Prefix operators bind tighter than any binary operator.</summary>
     public static int GetUnaryPrecedence(TokenKind kind) => kind switch
     {
-        TokenKind.Minus or TokenKind.Bang => 9,
+        TokenKind.Minus or TokenKind.Bang => 10,
         _ => 0,
     };
 
@@ -119,6 +121,7 @@ public static class SyntaxFacts
         TokenKind.TryKeyword => "try",
         TokenKind.CatchKeyword => "catch",
         TokenKind.FinallyKeyword => "finally",
+        TokenKind.DeferKeyword => "defer",
         TokenKind.ThrowKeyword => "throw",
         TokenKind.OutKeyword => "out",
         TokenKind.TrueKeyword => "true",
@@ -156,6 +159,7 @@ public static class SyntaxFacts
         TokenKind.Percent => "%",
         TokenKind.AmpersandAmpersand => "&&",
         TokenKind.PipePipe => "||",
+        TokenKind.PipeGreater => "|>",
         TokenKind.Pipe => "|",
         TokenKind.PlusEquals => "+=",
         TokenKind.MinusEquals => "-=",

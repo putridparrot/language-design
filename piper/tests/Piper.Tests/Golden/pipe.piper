@@ -1,0 +1,40 @@
+// The pipe operator: `x |> f(a)` is `f(x, a)`, so a chain of calls reads left to right.
+
+using System.Linq;
+
+fn twice(n: int) => int = n * 2;
+
+fn add(n: int, amount: int) => int = n + amount;
+
+fn describe(n: int, what: string) => string = "{n} {what}";
+
+record Box(value: int);
+
+fn main() {
+    // A bare function, or a call whose arguments come after the piped value.
+    print(5 |> twice);
+    print(5 |> add(10) |> twice |> describe("apples"));
+
+    // Binds looser than arithmetic and tighter than comparison: (1 + 2) |> twice, then == 6.
+    print(1 + 2 |> twice == 6);
+
+    // Function values, lambdas in variables, record constructors and generic functions.
+    let triple = (n: int) => n * 3;
+    print(4 |> triple);
+    print(7 |> Box);
+    print("Piper" |> string.Concat("!"));
+
+    // Static .NET methods, including LINQ called as plain functions.
+    let words = ["pear", "fig", "banana"];
+    let lengths = words
+        |> Enumerable.Where(w => w.Length > 3)
+        |> Enumerable.Select(w => w.Length)
+        |> Enumerable.ToList();
+    print(string.Join(",", lengths));
+    print(-16.0 |> System.Math.Abs |> System.Math.Sqrt);
+
+    // Evaluated left to right: the piped value before the other arguments.
+    var log = "";
+    let result = { log += "a"; 1 } |> add({ log += "b"; 2 });
+    print("{result} {log}");
+}

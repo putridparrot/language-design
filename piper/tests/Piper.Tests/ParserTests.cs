@@ -32,6 +32,7 @@ public class ParserTests
         UnaryExpressionSyntax e => $"({e.Operator.Text}{Show(e.Operand)})",
         CastExpressionSyntax e => $"(cast {Show(e.Operand)})",
         BinaryExpressionSyntax e => $"({Show(e.Left)} {e.Operator.Text} {Show(e.Right)})",
+        PipeExpressionSyntax e => $"({Show(e.Left)} |> {Show(e.Right)})",
         RangeExpressionSyntax e => $"({Show(e.Start)} {e.Operator.Text} {Show(e.End)})",
         AssignmentExpressionSyntax e => $"({Show(e.Target)} {e.Operator.Text} {Show(e.Value)})",
         CallExpressionSyntax e => $"{Show(e.Callee)}({string.Join(", ", e.Arguments.Select(Show))})",
@@ -87,6 +88,10 @@ public class ParserTests
     [InlineData("-(int)x", "(-(cast x))")]
     [InlineData("(int)-x", "(cast (-x))")]
     [InlineData("{ ...p, y: 1 } == q", "(RecordSpreadExpressionSyntax == q)")]
+    [InlineData("[1, ...xs, ...ys.z]", "CollectionExpressionSyntax")]
+    [InlineData("a + b |> f(c) |> g == d", "((((a + b) |> f(c)) |> g) == d)")]
+    [InlineData("x |> f ?? y", "((x |> f) ?? y)")]
+    [InlineData("-x |> f * 2", "((-x) |> (f * 2))")]
     [InlineData("{ p }", "{}")]
     [InlineData("(x) => x", "LambdaExpressionSyntax")]
     [InlineData("f<(int) => int>(g)", "f<1>(g)")]

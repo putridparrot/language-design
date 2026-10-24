@@ -461,7 +461,13 @@ public sealed class Lowerer
             }
 
             case BoundCollectionExpression collection:
-                return new BoundCollectionExpression(LowerOperands(collection.Elements, prelude), collection.Type);
+            {
+                // Lower a spread's source in place, keeping it a spread.
+                var operands = LowerOperands([.. collection.Elements.Select(e => e is BoundSpreadElement s ? s.Source : e)], prelude);
+                return new BoundCollectionExpression(
+                    [.. operands.Select((e, i) => collection.Elements[i] is BoundSpreadElement ? new BoundSpreadElement(e) : e)],
+                    collection.Type);
+            }
 
             case BoundArrayCreationExpression creation:
                 return new BoundArrayCreationExpression(LowerOperands(creation.Sizes, prelude), creation.Type);

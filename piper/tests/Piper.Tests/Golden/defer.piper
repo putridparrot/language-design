@@ -1,0 +1,77 @@
+// `defer`: run code when the enclosing block ends, however it ends (as Swift's defer).
+
+using System.Collections.Generic;
+
+fn log(message: string) {
+    print(message);
+}
+
+// Deferred code runs after the block's value is computed, and on every exit path.
+fn compute(n: int) => int {
+    log("compute {n}");
+    defer log("leaving compute {n}");
+    if n < 0 {
+        return 0;
+    }
+    n * 2
+}
+
+fn risky(fail: bool) {
+    defer { log("cleanup"); }
+    if fail {
+        throw System.InvalidOperationException("boom");
+    }
+    log("worked");
+}
+
+fn numbers() => IEnumerable<int> {
+    defer log("iterator done");
+    yield return 1;
+    yield return 2;
+}
+
+fn main() {
+    // Several defers run in reverse order.
+    {
+        defer log("first deferred");
+        defer log("second deferred");
+        log("body");
+    }
+
+    print(compute(5));
+    print(compute(-1));
+
+    try {
+        risky(true);
+    } catch (e) {
+        log("caught {e.Message}");
+    }
+    risky(false);
+
+    // Each loop iteration is its own block.
+    for i in 0..3 {
+        defer log("end of iteration {i}");
+        if i == 1 {
+            continue;
+        }
+        log("iteration {i}");
+    }
+
+    // A block with a value, and a defer that sees the variables declared before it.
+    var counter = 0;
+    let value = {
+        counter += 1;
+        defer counter += 10;
+        counter * 100
+    };
+    print("{value} {counter}");
+
+    // Temporaries never clash with each other or with your names.
+    let result = { defer log("a"); 1 };
+    let other = { defer log("b"); 2 };
+    print(result + other);
+
+    for n in numbers() {
+        print(n);
+    }
+}

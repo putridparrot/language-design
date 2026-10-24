@@ -205,6 +205,9 @@ public sealed record TryStatementSyntax(
 public sealed record CatchClauseSyntax(TextSpan Span, Token Keyword, Token? Name, TypeSyntax? Type, BlockExpressionSyntax Body)
     : SyntaxNode(Span);
 
+/// <summary><c>defer close(f);</c> or <c>defer { … }</c>: runs <see cref="Body"/> when the enclosing block ends, however it ends.</summary>
+public sealed record DeferStatementSyntax(TextSpan Span, Token Keyword, ExpressionSyntax Body) : StatementSyntax(Span);
+
 public sealed record BreakStatementSyntax(TextSpan Span, Token Keyword) : StatementSyntax(Span);
 
 /// <summary>`yield return value;` or (with no <see cref="Value"/>) `yield break;`, in an iterator.</summary>
@@ -240,6 +243,9 @@ public sealed record CastExpressionSyntax(TextSpan Span, TypeSyntax Type, Expres
 
 public sealed record BinaryExpressionSyntax(TextSpan Span, ExpressionSyntax Left, Token Operator, ExpressionSyntax Right)
     : ExpressionSyntax(Span);
+
+/// <summary><c>x |> f(a)</c>: calls <see cref="Right"/> with <see cref="Left"/> as its first argument, <c>f(x, a)</c>.</summary>
+public sealed record PipeExpressionSyntax(TextSpan Span, ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Span);
 
 public sealed record RangeExpressionSyntax(TextSpan Span, ExpressionSyntax Start, Token Operator, ExpressionSyntax End)
     : ExpressionSyntax(Span)
@@ -316,6 +322,9 @@ public sealed record FieldUpdateSyntax(TextSpan Span, Token Name, ExpressionSynt
 
 /// <summary><c>[1, 2, 3]</c>: a <c>List&lt;T&gt;</c> (or another collection the context expects).</summary>
 public sealed record CollectionExpressionSyntax(TextSpan Span, ImmutableArray<ExpressionSyntax> Elements) : ExpressionSyntax(Span);
+
+/// <summary><c>...items</c> as an element of a collection literal: every item of a sequence, in order. Only allowed there.</summary>
+public sealed record SpreadElementSyntax(TextSpan Span, ExpressionSyntax Source) : ExpressionSyntax(Span);
 
 /// <summary><c>throw ArgumentException("…")</c>; has type Never, so it also works as an expression (<c>x ?? throw …</c>).</summary>
 public sealed record ThrowExpressionSyntax(TextSpan Span, Token Keyword, ExpressionSyntax Exception) : ExpressionSyntax(Span);

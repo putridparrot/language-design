@@ -55,7 +55,7 @@ tupleElement    = [ IDENT ":" ] type ;                        (* (x: int, y: int
 namedType       = qualifiedName [ "<" type { "," type } [ "," ] ">" ] ;   (* e.g. System.Text.StringBuilder, List<int> *)
 
 block           = "{" { statement } [ expression ] "}" ;      (* final expression = block's value *)
-statement       = variableDecl | while | for | return | try | using | yield | "break" ";" | "continue" ";"
+statement       = variableDecl | while | for | return | try | using | defer | yield | "break" ";" | "continue" ";"
                 | blockLike [ ";" ] | expression ";" | ";" ;
 blockLike       = if | match | block ;                        (* ends at its '}', no ';' needed *)
 variableDecl    = ( "let" | "var" ) ( IDENT [ ":" type ] | designation ) "=" expression ";" ;
@@ -64,6 +64,7 @@ while           = "while" expression block ;
 for             = [ "await" ] "for" ( IDENT | designation ) "in" expression block ;   (* a range, anything enumerable, or with await an IAsyncEnumerable *)
 try             = "try" block { catch } [ "finally" block ] ;   (* at least one catch or a finally *)
 catch           = "catch" [ "(" IDENT [ ":" type ] ")" ] block ;   (* no type: any exception *)
+defer           = "defer" ( block [ ";" ] | expression ";" ) ;   (* runs when the enclosing block ends *)
 return          = "return" [ expression ] ";" ;
 yield           = "yield" ( "return" expression | "break" ) ";" ;   (* makes the function an iterator *)
 using           = [ "await" ] "using" ( "let" | "var" ) IDENT [ ":" type ] "=" expression ";"   (* disposed at the end of the block *)
@@ -84,7 +85,8 @@ typeArguments   = "<" type { "," type } ">" ;               (* only where C#'s r
 tuple           = "(" [ IDENT ":" ] expression "," [ IDENT ":" ] expression { "," [ IDENT ":" ] expression } ")" ;
 lambda          = [ "async" ] ( IDENT | "(" [ lambdaParam { "," lambdaParam } [ "," ] ] ")" ) "=>" ( block | expression ) ;
 lambdaParam     = IDENT [ ":" type ] ;                        (* types may come from the expected function type *)
-collection      = "[" [ arguments ] "]" ;
+collection      = "[" [ element { "," element } [ "," ] ] "]" ;
+element         = [ "..." ] expression ;                     (* ...xs spreads a sequence: [0, ...xs] *)
 if              = "if" expression block [ "else" ( block | if ) ] ;
 
 match           = "match" expression "{" { arm ( "," | (* optional after a blockLike body *) ) } "}" ;
@@ -105,10 +107,11 @@ literalPattern  = [ "-" ] ( INT | DOUBLE ) | CHAR | STRING | "true" | "false" ;
 
 | Level | Operators | Associativity |
 |---|---|---|
-| 10 | postfix `()` `[]` `.` `?.` `?` | left |
-| 9 | unary `-` `!` | prefix |
-| 8 | `*` `/` `%` | left |
-| 7 | `+` `-` | left |
+| 11 | postfix `()` `[]` `.` `?.` `?` | left |
+| 10 | unary `-` `!` | prefix |
+| 9 | `*` `/` `%` | left |
+| 8 | `+` `-` | left |
+| 7 | `\|>` | left |
 | 6 | `<` `<=` `>` `>=` `is` | left |
 | 5 | `==` `!=` | left |
 | 4 | `&&` | left |
@@ -121,14 +124,14 @@ The table lives in [SyntaxFacts.cs](../src/Piper.Compiler/Syntax/SyntaxFacts.cs)
 number there is all it takes to change precedence.
 
 **Type arguments or less-than?** As in C#, a `<` after a name starts type arguments only if the tokens up to the
-matching `>` can be types and the token after it is one of `( ) ] } : ; , . ?. ? == != | && || [`. So
+matching `>` can be types and the token after it is one of `( ) ] } : ; , . ?. ? == != | && || |> [`. So
 `parse<int>(s)` and `List<int>()` are generic, `a < b && c > d` is two comparisons, and `f(a < b, c > (d))` is a
 generic call `a<b, c>(d)`, as in C#.
 
 ### Lexical structure
 
 - **Identifiers:** ASCII letters, digits and `_`, not starting with a digit.
-- **Keywords:** `fn let var if else while for in return break continue record enum match trait extend static this null is namespace using private try catch finally throw out true false`; `async`, `await` and `yield`, which are contextual as in C# (still usable as names); and the builtin type names `int long double bool string char object byte sbyte short ushort uint ulong float decimal unit`.
+- **Keywords:** `fn let var if else while for in return break continue record enum match trait extend static this null is namespace using private try catch finally defer throw out true false`; `async`, `await` and `yield`, which are contextual as in C# (still usable as names); and the builtin type names `int long double bool string char object byte sbyte short ushort uint ulong float decimal unit`.
 - **Comments:** `// line` and `/* block */`. Block comments nest.
 - **Integers:** `42`, `1_000_000`, `0xFF`, `0b1010`. Suffixes as in C#: `L` long (`3_000_000_000L`), `U` uint (or ulong if it doesn't fit), `UL` ulong. An unsuffixed literal must fit in int (C# would make a larger one a uint or long; Piper asks for the suffix); as in C#, `-2147483648` and `-9223372036854775808L` are allowed too.
 - **Doubles:** `1.5`, `2e3`, `2.5E-1`. A digit is required after the `.`, so `0..10` is a range. Suffixes `F` (float), `D` (double) and `M` (decimal) work on any decimal number: `1.5f`, `19.99m`, `2m`.
@@ -407,6 +410,7 @@ names.Sort((a, b) => a.Length - b.Length);    // a .NET delegate type
 ### Collections
 
 - **Literals:** `[1, 2, 3]` is a `List<int>`. The element type comes from the expected type (`List<T>`, `IEnumerable<T>`, `IReadOnlyList<T>`, … or a .NET array) or else the elements' common type. `[]` needs an expected type.
+- **Spread:** `[0, ...xs, 4]` puts every item of a sequence (a list, array, string, LINQ result or iterator: anything that is an `IEnumerable<T>`) into the literal, in order, as C#'s `[0, ..xs, 4]`. Its items count towards the common element type, and widen as C# allows (`let ys: long[] = [...ints];`), but not to an optional or a tuple of other element types.
 - **`for x in collection`** works on anything implementing `IEnumerable<T>`: lists, arrays, strings (as `char`s), dictionaries and LINQ results.
 - **Indexing:** `xs[i]` on arrays and on any .NET type with an indexer.
 - **Arrays:** `int[]` is an array of int and `int[,]` a two-dimensional one, as in C#. `let xs: int[] = [1, 2, 3];` makes one from a literal, and `int[5]` or `double[2, 3]` creates one of default values, like C#'s `new int[5]`. That needs an element type whose default isn't null (numbers, bool, char, optionals, .NET structs and tuples of those): `string[3]` is an error, as its elements would be null, but `string?[3]` (three `None`s) is fine.
@@ -511,7 +515,7 @@ try {
 
 - `throw e` throws any value deriving from `System.Exception`. It is an expression of type Never, so it fits anywhere a value is expected: `if ok { v } else { throw InvalidOperationException("…") }`.
 - `catch (e)` without a type catches `System.Exception`. A clause made unreachable by an earlier one is an error, as in C#.
-- `break`, `continue` and `return` can't leave a `finally` block.
+- `break`, `continue`, `return` and `?` can't leave a `finally` block.
 
 ### Disposing resources: `using`
 
@@ -535,6 +539,27 @@ using (let writer = StringWriter()) {         // disposed after the block
 - A `using let` (or `using var`) variable is disposed at the end of the block that declares it, even when that block is an expression, and can't be reassigned.
 - `using (expression) { … }` disposes the value of any expression after the block.
 
+### Cleaning up: `defer`
+
+`defer` runs code when the enclosing block ends, however it ends: by reaching its end, `return`, `break`, `continue`, `?`
+or an exception. It is Swift's `defer`, and C#'s `try`/`finally` without the nesting.
+
+```piper
+fn copy(from: string, to: string) {
+    let input = File.OpenRead(from);
+    defer input.Close();
+    let output = File.Create(to);
+    defer { output.Flush(); output.Close(); }
+    input.CopyTo(output);
+}                                             // output is closed, then input
+```
+
+- The deferred code is a single expression followed by `;`, or a block.
+- Several defers in a block run in reverse order, last first.
+- It runs at the end of the block it is written in, not the function: a `defer` in a loop body runs at the end of every iteration. A block with a value computes the value first, then runs its defers.
+- It sees the variables declared before it, but not after.
+- Like a `finally` block, it can't leave: no `return`, `?`, `yield`, or `break`/`continue` out of an enclosing loop.
+
 ### Bindings
 
 - `let` declares an immutable binding and `var` a mutable one. Assigning to a `let` binding, a parameter or a `for` loop variable is a compile error.
@@ -549,10 +574,27 @@ using (let writer = StringWriter()) {         // disposed after the block
 - **Assignment is a statement-like expression of type unit,** so `a = b = c` is rejected.
 - **Conditions must be `bool`.** There is no truthiness.
 
+### The pipe operator: `|>`
+
+`x |> f(a, b)` is `f(x, a, b)`: the value on the left becomes the first argument of the call on the right, and
+`x |> f` is `f(x)`. A chain of calls then reads in the order it runs.
+
+```piper
+let total = orders
+    |> Enumerable.Where(o => o.paid)
+    |> Enumerable.Sum(o => o.amount)
+    |> round(2);
+```
+
+- The right side is anything that can be called: a function, a function value, a record, or a .NET method (`|> Math.Abs`, `|> Enumerable.ToList()`).
+- It binds looser than arithmetic and tighter than comparison, so `a + b |> f == c` is `f(a + b) == c`. Chains go left to right.
+- It is plain call syntax, so it emits an ordinary C# call.
+
 ### Evaluation order
 
 Evaluation is strictly left to right, including operands that contain blocks.
 - `x += e` reads `x` before evaluating `e`.
+- `x |> f(a)` evaluates `f`, then `x`, then `a`, as the call `f(x, a)` would.
 - The right-hand side of `&&` or `||` is evaluated only when needed.
 - The upper bound of `for i in a..b` is evaluated once.
 
@@ -568,6 +610,7 @@ is locale-independent. `main()` takes no parameters and returns unit; it is the 
 |---|---|
 | `record P(x: int)` | `public sealed record P(int x);` |
 | `{ ...p, y: 5 }` | `p with { y = 5 }` |
+| `[0, ...xs]` | `(List<int>)[0, .. xs]` |
 | `enum Shape { Circle(r: double), Empty }` | `public abstract record Shape` with a private constructor and nested `public sealed record Circle(double r) : Shape;`, `public sealed record Empty() : Shape;` |
 | `Shape.Circle(1.0)` | `new Shape.Circle(1.0)` |
 | `match s { Circle(r) if r > 1.0 => a, Empty => b, … }` | `if (s is Shape.Circle(var r) && r > 1.0) { … } else if … else { … }` |
@@ -612,6 +655,8 @@ is locale-independent. `main()` takes no parameters and returns unit; it is the 
 | `f` used as a value | the method group `f` |
 | `xs.Where(n => n > 2)` (extension method) | `Enumerable.Where<int>(xs, (int n) => n > 2)`: called statically, type arguments explicit |
 | `try`/`catch (e: E)`/`finally`, `throw e` | `try`/`catch (E e)`/`finally`, `throw e;` (or a C# throw expression in `?:`) |
+| `x \|> f(a)` | `f(x, a)` |
+| `defer d; rest` | `try { rest } finally { d }`, with the block's value stored in a temporary inside the `try` |
 | `"…{e}…"` | `$"…{e}…"` |
 | `print(x)` | `global::System.Console.WriteLine(x)` |
 | `(byte)x`, `1.5f`, `19.99m`, `string('#', 3)` | `(byte)x`, `1.5f`, `19.99m`, `new string('#', 3)` |
@@ -651,5 +696,5 @@ The match is known to be exhaustive, so a final arm without a guard or bindings 
 6. ~~**Language freeze**~~, done in milestone 7: C#-compatible printing and minimum-value literals, arrays (`int[]`, `int[5]`), explicit type arguments, generic functions as values, tuples and deconstruction, and `out` parameters.
 7. ~~**Robustness and tooling**~~, done in milestone 8: `#line` mapping to `.piper` sources, constant checking and C# errors reported as internal compiler errors, larger sample programs, raw strings, C#'s numeric types and casts, `using`, equality on type parameters, `|` patterns that bind, the `piper` dotnet tool and the Piper.Build MSBuild package.
 8. ~~**Async and iterators**~~, done after milestone 8: `async`/`await`, async lambdas and `main`, `await for`, `await using`, `yield` iterators (sync and async), and the shared `Piper.Runtime` assembly.
-9. **Smaller features:** `defer` and a pipe operator `|>`.
+9. ~~**Smaller features**~~, done: spreading sequences into collection literals (`[0, ...xs]`), `defer` and the pipe operator `|>`.
 10. **A language server** that reuses the fault-tolerant parser and binder.

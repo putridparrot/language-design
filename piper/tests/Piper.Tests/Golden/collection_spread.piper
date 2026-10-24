@@ -1,0 +1,39 @@
+// Spreading sequences into collection literals: `[...xs, 4]`, as C#'s `[..xs, 4]`.
+
+using System.Linq;
+
+fn evens(limit: int) => System.Collections.Generic.IEnumerable<int> {
+    for i in 0..limit {
+        if i % 2 == 0 {
+            yield return i;
+        }
+    }
+}
+
+fn main() {
+    let xs = [1, 2, 3];
+    let more = [0, ...xs, 4];
+    print(string.Join(",", more));
+
+    // Several spreads, of lists, arrays, LINQ results and iterators.
+    let arr: int[] = [10, 20];
+    let all = [...xs, ...arr, ...xs.Select(x => x * 100), ...evens(5)];
+    print(string.Join(",", all));
+
+    // The target type decides what is built, and items widen as C# allows.
+    let longs: long[] = [...xs, 99];
+    print("{longs.GetType().Name} {string.Join(",", longs)}");
+
+    // A string is a sequence of chars.
+    let letters = [..."abc", 'd'];
+    print(string.Join("-", letters));
+
+    // Spread an empty sequence, and nest collection literals.
+    let none: int[] = [];
+    print([...none, ...[7, 8]].Count);
+
+    // Evaluated left to right, once each.
+    var calls = 0;
+    let counted = [...{ calls += 1; xs }, calls];
+    print("{string.Join(",", counted)} {calls}");
+}

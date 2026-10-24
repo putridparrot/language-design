@@ -366,7 +366,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0283", span, $"'{type}' is not an exception type (it doesn't derive from System.Exception).");
 
     public void ReportJumpOutOfFinally(TextSpan span, string keyword) =>
-        Error("PIP0284", span, $"'{keyword}' cannot leave a finally block.");
+        Error("PIP0284", span, $"'{keyword}' cannot leave a finally or defer block.");
 
     public void ReportNotIndexable(TextSpan span, TypeSymbol type) =>
         Error("PIP0285", span, $"'{type}' cannot be indexed.");
@@ -445,6 +445,12 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportFieldUpdatedTwice(TextSpan span, string field) =>
         Error("PIP0308", span, $"Field '{field}' is set more than once.");
+
+    public void ReportSpreadNotEnumerable(TextSpan span, TypeSymbol type) =>
+        Error("PIP0309", span, $"Only a sequence (an IEnumerable<T>) can be spread into a collection ([...items]); '{type}' isn't one.");
+
+    public void ReportSpreadElementConversion(TextSpan span, TypeSymbol from, TypeSymbol to) =>
+        Error("PIP0310", span, $"Can't spread '{from}' items into a collection of '{to}'.");
 
     public void ReportEmptyRangePattern(TextSpan span) =>
         Error("PIP0239", span, "This range pattern is empty: its lower bound is not below its upper bound.");

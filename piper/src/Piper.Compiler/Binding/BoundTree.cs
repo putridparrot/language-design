@@ -178,6 +178,15 @@ public sealed class BoundTryCatchStatement(BoundStatement body, ImmutableArray<B
     public BoundStatement? Finally { get; } = @finally;
 }
 
+/// <summary>
+/// <c>defer body;</c>. Only seen while binding its block, which turns the statements after it into a try whose finally is
+/// <see cref="Body"/>.
+/// </summary>
+public sealed class BoundDeferStatement(BoundStatement body) : BoundStatement
+{
+    public BoundStatement Body { get; } = body;
+}
+
 /// <summary><see cref="ExceptionType"/> is null for a bare <c>catch</c>; <see cref="Variable"/> is null when nothing is bound.</summary>
 public sealed class BoundCatchClause(TypeSymbol? exceptionType, VariableSymbol? variable, BoundStatement body)
 {
@@ -515,6 +524,16 @@ public sealed class BoundCollectionExpression(ImmutableArray<BoundExpression> el
     public ImmutableArray<BoundExpression> Elements { get; } = elements;
 
     public override TypeSymbol Type { get; } = type;
+
+    public bool HasSpread => Elements.Any(e => e is BoundSpreadElement);
+}
+
+/// <summary><c>...items</c> in a collection literal (C#'s <c>..items</c>); <see cref="Type"/> is the sequence's.</summary>
+public sealed class BoundSpreadElement(BoundExpression source) : BoundExpression
+{
+    public BoundExpression Source { get; } = source;
+
+    public override TypeSymbol Type => Source.Type;
 }
 
 // .NET interop

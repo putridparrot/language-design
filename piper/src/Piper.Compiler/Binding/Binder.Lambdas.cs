@@ -312,7 +312,7 @@ public sealed partial class Binder
             elementType = collection.TypeArguments[0];
         }
 
-        var elements = syntax.Elements.Select(e => RequireValue(BindExpression(e, elementType), e.Span)).ToList();
+        var elements = syntax.Elements.Select(e => BindCollectionElement(e, elementType)).ToList();
         if (elementType is null)
         {
             if (elements.Count == 0)
@@ -320,16 +320,55 @@ public sealed partial class Binder
                 _diagnostics.ReportCannotInferCollection(syntax.Span);
                 return new BoundErrorExpression();
             }
-            elementType = CommonType([.. elements.Select(e => e.Type)], null, out int failed);
+            // A spread contributes its item type: `[0, ...ints]` is a List<int>.
+            var itemTypes = elements.Select(SpreadItemType).ToList();
+            elementType = CommonType(itemTypes, null, out int failed);
             if (elementType is null)
             {
-                _diagnostics.ReportIncompatibleArms(syntax.Elements[failed].Span, elements[0].Type, elements[failed].Type);
+                _diagnostics.ReportIncompatibleArms(syntax.Elements[failed].Span, itemTypes[0], itemTypes[failed]);
                 return new BoundErrorExpression();
             }
         }
 
-        var converted = elements.Select((e, i) => Convert(e, elementType, syntax.Elements[i].Span)).ToImmutableArray();
+        var converted = elements.Select((e, i) => ConvertCollectionElement(e, elementType, syntax.Elements[i].Span)).ToImmutableArray();
         return new BoundCollectionExpression(converted, arrayType ?? ListOf(elementType));
+    }
+
+    /// <summary>An element of a collection literal; <c>...items</c> must be a sequence.</summary>
+    private BoundExpression BindCollectionElement(ExpressionSyntax syntax, TypeSymbol? elementType)
+    {
+        if (syntax is not SpreadElementSyntax spread)
+            return RequireValue(BindExpression(syntax, elementType), syntax.Span);
+
+        var source = RequireValue(BindExpression(spread.Source), spread.Source.Span);
+        if (source.Type == TypeSymbol.Error)
+            return source;
+        if (ElementTypeOf(source.Type) is null)
+        {
+            _diagnostics.ReportSpreadNotEnumerable(spread.Source.Span, source.Type);
+            return new BoundErrorExpression();
+        }
+        return new BoundSpreadElement(source);
+    }
+
+    private TypeSymbol SpreadItemType(BoundExpression element) =>
+        element is BoundSpreadElement spread ? ElementTypeOf(spread.Type)! : element.Type;
+
+    /// <summary>
+    /// C# converts a spread's items one at a time, so only conversions C# makes itself are allowed:
+    /// not the implicit <c>Some</c> or the element-wise tuple conversion Piper adds.
+    /// </summary>
+    private BoundExpression ConvertCollectionElement(BoundExpression element, TypeSymbol elementType, TextSpan span)
+    {
+        if (element is not BoundSpreadElement spread)
+            return Convert(element, elementType, span);
+
+        var itemType = SpreadItemType(spread);
+        if (itemType == elementType || elementType == TypeSymbol.Error ||
+            (!elementType.IsOption && elementType is not TupleTypeSymbol && IsConvertible(itemType, elementType)))
+            return spread;
+        _diagnostics.ReportSpreadElementConversion(span, itemType, elementType);
+        return new BoundErrorExpression();
     }
 
     /// <summary><c>for x in collection</c> over anything that implements <c>IEnumerable&lt;T&gt;</c>.</summary>
@@ -601,5 +640,52 @@ public sealed partial class Binder
         (_yieldReturnForbidden, _yieldBreakForbidden) = (outerReturnForbidden, outerBreakForbidden);
 
         return new BoundTryCatchStatement(new BoundExpressionStatement(body), catches.ToImmutable(), @finally);
+    }
+
+    /// <summary><c>defer body;</c>: the body becomes a finally block, so it has a finally's restrictions.</summary>
+    private BoundStatement BindDefer(DeferStatementSyntax syntax)
+    {
+        var (outerFinally, outerReturnForbidden, outerBreakForbidden) = (_finallyLoopDepth, _yieldReturnForbidden, _yieldBreakForbidden);
+        _finallyLoopDepth = _loopDepth;
+        _yieldReturnForbidden = outerReturnForbidden ?? "in a defer block";
+        _yieldBreakForbidden = outerBreakForbidden ?? "in a defer block";
+        var body = BindExpression(syntax.Body);
+        (_finallyLoopDepth, _yieldReturnForbidden, _yieldBreakForbidden) = (outerFinally, outerReturnForbidden, outerBreakForbidden);
+        return new BoundDeferStatement(new BoundExpressionStatement(body));
+    }
+
+    /// <summary>
+    /// <c>{ a; defer d; b; value }</c> → <c>{ a; T result; try { b; result = value; } finally { d } result }</c>, with
+    /// the result variable only when the block has a value. Later defers nest inside, so they run first.
+    /// </summary>
+    private static (ImmutableArray<BoundStatement> Statements, BoundExpression? Trailing) ApplyDefers(
+        ImmutableArray<BoundStatement> statements, BoundExpression? trailing, TypeSymbol type)
+    {
+        int index = 0;
+        while (index < statements.Length && statements[index] is not BoundDeferStatement)
+            index++;
+        if (index == statements.Length)
+            return (statements, trailing);
+
+        var defer = (BoundDeferStatement)statements[index];
+        var (rest, restTrailing) = ApplyDefers(statements[(index + 1)..], trailing, type);
+        var before = statements[..index].ToBuilder();
+
+        BoundBlockExpression body;
+        BoundExpression? result = null;
+        if (restTrailing is { Type.IsValueType: true })
+        {
+            var variable = new VariableSymbol("result", restTrailing.Type, isMutable: true, VariableKind.Temporary);
+            before.Add(new BoundVariableDeclaration(variable, null));
+            body = new BoundBlockExpression(
+                [.. rest, new BoundExpressionStatement(new BoundAssignmentExpression(variable, null, restTrailing))], null, TypeSymbol.Unit);
+            result = new BoundVariableExpression(variable);
+        }
+        else
+        {
+            body = new BoundBlockExpression(rest, restTrailing, restTrailing?.Type ?? type);
+        }
+        before.Add(new BoundTryCatchStatement(new BoundExpressionStatement(body), [], defer.Body) { SourceSpan = defer.SourceSpan });
+        return (before.ToImmutable(), result);
     }
 }
