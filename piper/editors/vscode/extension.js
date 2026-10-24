@@ -43,7 +43,9 @@ async function run(subcommand = "run") {
     if (!piper) {
         return;
     }
-    const execution = new vscode.ShellExecution(piper.command, [...piper.args, subcommand, target], { cwd: path.dirname(target) });
+    // Run the process directly, not through the terminal's shell: a shell such as Git Bash reads the backslashes in
+    // Windows paths as escapes.
+    const execution = new vscode.ProcessExecution(piper.command, [...piper.args, subcommand, target], { cwd: path.dirname(target) });
     const task = new vscode.Task({ type: "piper", target }, vscode.TaskScope.Workspace, `${subcommand} ${path.basename(target)}`, "piper", execution);
     task.presentationOptions = { reveal: vscode.TaskRevealKind.Always, clear: true, focus: false };
     await vscode.tasks.executeTask(task);
