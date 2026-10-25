@@ -20,6 +20,8 @@ correct.
 | [library/](library) | A program of several files with a `piper.json`: namespaces, `using` and qualified names, `private` functions, types and methods (and what a public signature can't expose), extending a type from another file, and tests |
 | [web/](web) | ASP.NET Core from `piper.json`'s `"frameworks"`: a minimal API with dependency injection, which serves on a free port, calls itself and stops |
 | [webapp/](webapp) | The same kind of web API declared with the web plugin's `services { }` and `endpoints { }` (build `plugins/Piper.Plugins.Web` first), whose piper.json lists only the plugin |
+| [actors/](actors) | Actors from the actors plugin (build `plugins/Piper.Plugins.Actors` first): an account with private state, which a hundred tasks deposit into at once, with tells, asks, an async handler and a refused withdrawal |
+| [remote-actors/](remote-actors) | Actors across processes and machines, with the remote actors plugin (build `plugins/Piper.Plugins.Actors.Remote` first): run with no arguments for two nodes in one process, or `-- host 8000` and `-- client 8001 127.0.0.1:8000` in two terminals |
 | [plugins/](plugins) | Extending the language without changing the compiler: `parallel for` and `concurrency { }` from a compiler plugin listed in `piper.json` (build `plugins/Piper.Plugins.Parallel` first), and a trailing closure (`Retry(3) { … }`) |
 
 ## Visibility in brief

@@ -1,0 +1,79 @@
+// Actors across processes and machines, with the remote actors plugin (on Proto.Actor). Run it three ways:
+//
+//   piper run samples/remote-actors                                  both nodes in this process, over the network
+//   piper run samples/remote-actors -- host 8000                     host the account on port 8000…
+//   piper run samples/remote-actors -- client 8001 127.0.0.1:8000    …and use it from another terminal or machine
+//
+// The address is host:port; for other machines, bind to a reachable address instead of localhost.
+
+using System.Threading.Tasks;
+using Proto;
+using Proto.Remote;
+using Proto.Remote.GrpcNet;
+
+record Transfer(amount: decimal, note: string);
+
+actor Account(owner: string, opening: decimal) {
+    mut balance = opening;
+    mut transfers = 0;
+
+    on Deposit(transfer: Transfer) {
+        balance += transfer.amount;
+        transfers += 1;
+    }
+
+    on Withdraw(amount: decimal) => decimal {
+        if amount > balance {
+            throw System.InvalidOperationException("{owner} can't withdraw {amount}: the balance is {balance}");
+        }
+        balance -= amount;
+        transfers += 1;
+        balance
+    }
+
+    on Summary() => string {
+        await Task.Delay(1);
+        "{owner}: {balance} after {transfers} transfers"
+    }
+}
+
+/// An actor system that other processes can reach, on `port` (0 for any free one).
+async fn StartNode(port: int) => Task<ActorSystem> {
+    let system = ActorSystem().WithRemote(RemoteConfig.BindToLocalhost(port));
+    await system.Remote().StartAsync();
+    system
+}
+
+/// What a client does with an account, wherever it is.
+async fn UseAccount(account: Account) {
+    account.Deposit(Transfer(25m, "salary"));
+    Print("after withdrawing 50: {await account.Withdraw(50m)}");
+    try {
+        await account.Withdraw(1000m);
+    } catch (e: System.InvalidOperationException) {
+        Print("refused: {e.Message}");
+    }
+    Print(await account.Summary());
+}
+
+async fn Main(args: string[]) {
+    if args.Length >= 2 && args[0] == "host" {
+        let node = await StartNode(int.Parse(args[1]));
+        Account.Spawn(node, "ada", "Ada", 100m);
+        Print("Hosting Ada's account at {node.Address}; press Enter to stop.");
+        System.Console.ReadLine();
+        await node.Remote().ShutdownAsync(true);
+    } else if args.Length >= 3 && args[0] == "client" {
+        let node = await StartNode(int.Parse(args[1]));
+        await UseAccount(Account.Connect(node, args[2], "ada"));
+        await node.Remote().ShutdownAsync(true);
+    } else {
+        // Two nodes in one process, on free ports: the client still reaches the account over gRPC.
+        let host = await StartNode(0);
+        let client = await StartNode(0);
+        Account.Spawn(host, "ada", "Ada", 100m);
+        await UseAccount(Account.Connect(client, host.Address, "ada"));
+        await client.Remote().ShutdownAsync(true);
+        await host.Remote().ShutdownAsync(true);
+    }
+}

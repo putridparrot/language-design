@@ -1,0 +1,31 @@
+// Type tests: a record or variant pattern on an object, or on a trait or .NET interface the type implements, tests
+// the value's type, as C#'s `o is Point(var x, var y)` does. Such a match needs a `_` arm.
+
+enum Message { Add(n: int), Get }
+record Point(x: int, y: int);
+fn Describe(o: object) => string {
+    match o {
+        Point(x, y) => "point {x},{y}",
+        Message.Add(n) => "add {n}",
+        Message.Get => "get",
+        _ => "other",
+    }
+}
+fn Main() {
+    Print(Describe(Point(1, 2)));
+    Print(Describe(Message.Add(3)));
+    Print(Describe(Message.Get));
+    Print(Describe("hi"));
+    Print(Kind(Square(2.0)));
+    Print(Check(Point(1, 9)));
+}
+trait Shape { fn Area() => double; }
+record Square(side: double);
+extend Square: Shape { fn Area() => double = this.side * this.side; }
+fn Kind(s: Shape) => string {
+    match s {
+        Square(side) => "square {side}",
+        _ => "some shape",
+    }
+}
+fn Check(o: object) => bool = o is Point(1, _);

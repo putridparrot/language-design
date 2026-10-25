@@ -315,9 +315,10 @@ public sealed partial class Binder
             _diagnostics.ReportDuplicateMain(extra.Declaration!.Name.Span);
         }
         var main = mains.FirstOrDefault();
-        // `fn Main()`, or `async fn Main()` (returning a plain Task).
-        if (main is not null && (main.Parameters.Length != 0 || main.BodyReturnType != TypeSymbol.Unit || main.TypeParameters.Length != 0 ||
-                                 main.IteratorElementType is not null))
+        // `fn Main()` or `fn Main(args: string[])` (the command-line arguments), maybe `async` (returning a plain Task).
+        bool takesArguments = main?.Parameters is [{ Type: ClrTypeSymbol { IsArray: true, Rank: 1, TypeArguments: [var element] } }] && element == TypeSymbol.String;
+        if (main is not null && ((main.Parameters.Length != 0 && !takesArguments) ||
+                                 main.BodyReturnType != TypeSymbol.Unit || main.TypeParameters.Length != 0 || main.IteratorElementType is not null))
         {
             InFile(FileOf(main));
             _diagnostics.ReportInvalidMain(main.Declaration!.Name.Span);

@@ -137,13 +137,16 @@ public sealed class ParallelPlugin : IPiperPlugin
   starts a top-level declaration and returns declarations.
 - **Reading:** `PluginParser` gives the tokens after the keyword (`Current`, `Peek`, `NextToken`, `Expect`, and
   `AtWord`/`ExpectWord` for words special to the construct, such as `singleton`). It also gives Piper's parser for the
-  pieces: `ParseExpression`, `ParseExpressionBeforeBlock` (where a `{` follows), `ParseBlock`, `ParseType`,
-  `ParsePattern`, `ParseLambdaParameters` and `ParseDeclaration`. Like Piper's parser, these never throw: a missing
-  token is reported and synthesized, so the plugin can carry on.
+  pieces: `ParseExpression`, `ParseExpressionBeforeBlock` (where a `{` follows), `ParseBlock`, `ParseAsyncBlock`
+  (for a block the rewritten code runs in async code, so it can `await`), `ParseType`, `ParsePattern`,
+  `ParseLambdaParameters`, `ParseVariableDeclaration` and `ParseDeclaration`. Like Piper's parser, these never throw:
+  a missing token is reported and synthesized, so the plugin can carry on.
 - **Errors:** `p.Report(span, message)` reports an error in the construct (PIP0503), followed by the plugin's name.
 - **Writing the result:** `p.Template` builds syntax from Piper source with `$name` holes:
   - **What a hole can hold:** an expression or block, a type, a token, or a string (as a name). Where a list goes (call
     arguments, collection elements, a block's statements), a hole can hold a sequence, which is spliced in.
+  - **Parameter lists:** write `fn $name($parameters: unit)`, with a sequence of `ParameterSyntax`. (A parameter
+    needs a type to parse; the `unit` is ignored.)
   - **Holes in place of a block:** where Piper needs a block, write `{ $body }`. With a block as its value, that's the
     block itself.
   - **Source positions:** the template's own syntax is given the construct's position, and the holes' syntax keeps its
@@ -161,6 +164,34 @@ public sealed class ParallelPlugin : IPiperPlugin
 - **Failures:** a plugin that throws is reported (PIP0504), and its construct is skipped, so the rest of the file is
   still checked.
 
+### Analyzing the type-checked program
+
+Rewriting happens while parsing, before anything has a type, so a plugin can't check types there. For checks that need
+types, a plugin implements `Analyze`, which the compiler calls once the program is bound (and as the editor analyzes):
+
+```csharp
+public void Analyze(PluginAnalysis analysis)
+{
+    foreach (var expansion in analysis.Expansions)                      // each use of this plugin's keywords
+    {
+        var messages = expansion.Result.OfType<EnumDeclarationSyntax>().Single();
+        var symbol = analysis.Program.Types.OfType<EnumSymbol>().Single(e => ReferenceEquals(e.Declaration, messages));
+        // … look at the symbol's variants and their fields' types …
+        analysis.ReportWarning(expansion.File, span, "…");
+    }
+}
+```
+
+- **What it sees:** `analysis.Program` is the bound program: its types, functions and methods, with their symbols.
+  `analysis.Expansions` lists each use of the plugin's keywords, with the syntax it was rewritten into.
+- **Finding the symbols:** the binder works on that very syntax, so a declaration the plugin wrote can be found by
+  reference, as above.
+- **Reporting:** `ReportError` (PIP0503) or `ReportWarning` (PIP0505), at any span in the user's files. Analysis only
+  reports; it can't change the program.
+- **Failures:** an analysis that throws is reported (PIP0506), and other plugins' analyses still run.
+
+The actors plugin uses this to warn about messages that carry something mutable.
+
 ### Loading and errors
 
 `PluginLoader` loads each assembly into its own load context:
@@ -177,10 +208,12 @@ public sealed class ParallelPlugin : IPiperPlugin
 | PIP0502 | Two plugins add the same keyword. |
 | PIP0503 | An error a plugin found in its construct. |
 | PIP0504 | A plugin threw while reading its construct. |
+| PIP0505 | A warning a plugin's analysis found. |
+| PIP0506 | A plugin threw while analyzing the program. |
 
 Loading errors are reported against `piper.json`, and in the editor they appear on that file.
 
-## Four features as plugins
+## Features as plugins
 
 ### `parallel` and `concurrency`
 
@@ -276,6 +309,96 @@ A program calls them as `AppServices(builder.Services)` and `Api(app)`.
 
   Errors in a handler's own code are reported in the handler, as for any lambda.
 
+### `actor` (the actor model)
+
+In [Piper.Plugins.Actors](../plugins/Piper.Plugins.Actors/ActorPlugin.cs), run in
+[samples/actors](../samples/actors/main.piper). An actor has private state and handles one message at a time, so many
+tasks can use it at once without locks:
+
+```piper
+actor Account(owner: string, opening: decimal) {
+    mut balance = opening;                                   // state: only the handlers can reach it
+
+    on Deposit(amount: decimal) { balance += amount; }       // a tell: the caller sends it and carries on
+    on Balance() => decimal { balance }                      // an ask: the caller awaits the reply
+}
+
+await using let account = Account.Spawn("Ada", 100m);
+account.Deposit(5m);
+Print(await account.Balance());
+```
+
+It becomes ordinary Piper, on .NET's `System.Threading.Channels`:
+
+- `enum AccountMessage { Deposit(amount: decimal), Balance(__reply: TaskCompletionSource<decimal>) }`, a variant for
+  each handler; an ask's carries where its reply goes.
+- `record Account(__mailbox: ChannelWriter<AccountMessage>, …)`, with a method for each handler (`Deposit(amount)`
+  posts the message; `async Balance()` posts it and awaits the reply), `Stop()`, and `DisposeAsync()` for `await using`.
+- `Account.Spawn(owner, opening)`: declares the state, and starts a loop that matches each message to its handler.
+  The state lives in that loop's closure, so nothing else can reach it, and the match is checked to cover every
+  message.
+
+How it behaves:
+
+- **Faults:** if an ask's handler throws, the caller's `await` throws. If a tell's handler throws, the exception is
+  written to the error output and the actor carries on with the next message.
+- **Async handlers:** handlers can `await`. The actor takes its next message only when the current one is done, so a
+  handler that asks another actor waits for the reply first. Two actors asking each other would deadlock.
+- **Stopping:** `Stop()` or disposing stops taking messages and finishes those already sent. Sending to a stopped actor
+  throws.
+- **Syntax checks:** untyped handler parameters, duplicate handler names, a handler named `Spawn`, `Stop` or
+  `DisposeAsync`, a `return` in a handler (its result is its block's value) and an actor with no handlers.
+- **Type checks (analysis):** a warning for a message field whose type could be changed after it's sent, such as a
+  `List<T>`, an array, or a record containing one. Records, enums, Piper's builtin types, immutable .NET types
+  (`DateTime`, `System.Collections.Immutable`) and other actors' handles are fine.
+
+The syntax describes what an actor is, not how it runs, so another plugin can run the same declarations differently.
+
+### `actor` across processes and machines
+
+[Piper.Plugins.Actors.Remote](../plugins/Piper.Plugins.Actors.Remote/RemoteActorPlugin.cs) reads the same `actor`
+syntax, but expands it onto [Proto.Actor](https://proto.actor), whose actors talk over gRPC. An actor hosted in one
+process can then be used from others, on the same machine or across a network. A program picks it instead of the
+in-process plugin in its piper.json; the plugin brings in Proto.Remote and ASP.NET Core (whose server carries the gRPC)
+itself. [samples/remote-actors](../samples/remote-actors/main.piper) runs it:
+
+```piper
+// Every process that hosts or uses actors starts a node, an actor system other processes can reach:
+let node = ActorSystem().WithRemote(RemoteConfig.BindToLocalhost(8000));
+await node.Remote().StartAsync();
+
+let account = Account.Spawn(node, "ada", "Ada", 100m);                 // host an actor here, under a name…
+let remote = Account.Connect(node, "127.0.0.1:8000", "ada");           // …or reach one in another process
+
+remote.Deposit(Transfer(25m, "salary"));                               // a tell: sent over the network
+Print(await remote.Withdraw(50m));                                     // an ask: awaits the reply
+```
+
+```text
+piper run samples/remote-actors -- host 8000                        # in one terminal (or machine)
+piper run samples/remote-actors -- client 8001 127.0.0.1:8000       # in another
+```
+
+What's different from in-process actors:
+
+- **Naming:** `Spawn(system, name, …)` hosts the actor under a name, and `Connect(system, address, name)` refers
+  to an actor by its node's address (`host:port`) and name, wherever it runs.
+- **Messages travel as JSON:** records, enums, Piper's builtin types and immutable .NET types can be sent. The plugin's
+  analysis warns about fields that can't be sent as data: mutable collections, arrays, traits, and other actors'
+  handles (send an actor's name instead).
+- **Failures:**
+  - An ask whose handler throws sends back a fault, which the caller throws as an `InvalidOperationException`.
+  - An ask with no reply within 10 seconds throws a `TimeoutException`; `actor.WithTimeout(TimeSpan.FromSeconds(30))`
+    gives a copy with another limit.
+  - Asking an actor that doesn't exist throws Proto.Actor's `DeadLetterException` at once.
+  - A tell that's lost (its node is down) is lost silently, as a message over a network can be.
+- **The same program, run or built:** a message's type is named with the program's assembly name, so the nodes must
+  run the same program. `piper run` names it as `piper build` does (after its piper.json `name`, or its folder), so a
+  built node and a `piper run` one understand each other.
+
+Still to come: actors that move between nodes when one fails, and finding nodes without addresses. That's
+Proto.Actor's clustering, or Orleans's virtual actors, which need Piper to have classes.
+
 ### Packages and frameworks for plugins
 
 `services` and `endpoints` compile to calls into ASP.NET Core and its DI. A program gets those by listing
@@ -295,3 +418,7 @@ A version in the program's own `piper.json` wins over a plugin's.
   declaration positions exist.
 - **Highlighting:** the TextMate grammar can't know plugin keywords. The language server's semantic highlighting could
   mark them.
+- **More for actors:**
+  - supervision policies (restart with fresh state after a fault)
+  - bounded mailboxes (senders wait when one is full)
+  - clustering (actors placed across nodes and moved when one fails), on Proto.Actor's cluster or Orleans

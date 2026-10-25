@@ -69,6 +69,7 @@ public static class Compilation
         // Bind even after syntax errors: missing tokens and error nodes bind silently to the
         // error type, so the user still sees genuine semantic errors elsewhere in the file.
         var program = Binder.BindProgram(units, diagnostics, clr: ClrTypeIndex.For(options.References.Assemblies));
+        plugins.Analyze(program, diagnostics);
 
         var sorted = diagnostics
             .OrderBy(d => d.Source is null ? -1 : files.IndexOf(d.Source))
@@ -100,6 +101,7 @@ public static class Compilation
         var units = files.Select(source => Parser.ParseCompilationUnit(source, diagnostics, registry)).ToImmutableArray();
         var semantic = new SemanticModel();
         var program = Binder.BindProgram(units, diagnostics, semantic, ClrTypeIndex.For(references?.Assemblies ?? []));
+        registry.Analyze(program, diagnostics);
         return new AnalysisResult(files, [.. diagnostics], units, program, semantic);
     }
 

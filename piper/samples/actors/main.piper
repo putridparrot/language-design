@@ -1,0 +1,55 @@
+// Actors, from the actors plugin: each has private state and handles one message at a time, so many tasks can use
+// it at once without locks. See docs/plugins.md.
+
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+
+record Transfer(amount: decimal, note: string);
+
+actor Account(owner: string, opening: decimal) {
+    mut balance = opening;
+    let history: List<Transfer> = [];
+
+    // A tell: `account.Deposit(10m, "pay")` sends the message and returns at once.
+    on Deposit(amount: decimal, note: string) {
+        balance += amount;
+        history.Add(Transfer(amount, note));
+    }
+
+    // An ask: `await account.Withdraw(…)` waits for the reply. If the handler throws, so does the caller's await.
+    on Withdraw(amount: decimal, note: string) => decimal {
+        if amount > balance {
+            throw System.InvalidOperationException("{owner} can't withdraw {amount}: the balance is {balance}");
+        }
+        balance -= amount;
+        history.Add(Transfer(-amount, note));
+        balance
+    }
+
+    on Balance() => decimal { balance }
+
+    // Handlers can await; the actor takes its next message only when this one is done.
+    on Statement() => string {
+        await Task.Delay(1);
+        let tips = history.Count(t => t.note == "tip");
+        "{owner}: {tips} tips, then {string.Join(", ", history.Where(t => t.note != "tip").Select(t => "{t.note} {t.amount}"))} → {balance}"
+    }
+}
+
+async fn Main() {
+    await using let account = Account.Spawn("Ada", 100m);
+
+    // A hundred tasks deposit at once; the actor handles their messages one by one, so none is lost.
+    let deposits = Enumerable.Range(1, 100).Select(i => Task.Run(() => account.Deposit(1m, "tip")));
+    await Task.WhenAll(deposits);
+    Print("after tips: {await account.Balance()}");
+
+    Print("after rent: {await account.Withdraw(150m, "rent")}");
+    try {
+        await account.Withdraw(1000m, "car");
+    } catch (e: System.InvalidOperationException) {
+        Print("refused: {e.Message}");
+    }
+    Print(await account.Statement());
+}

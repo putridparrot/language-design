@@ -234,7 +234,7 @@ public sealed record ProgramReferences(ImmutableArray<string> Assemblies, Immuta
                 frameworks.Select(f => new XElement("FrameworkReference", new XAttribute("Include", f.Name)))));
         var text = project.ToString();
 
-        var work = Path.Combine(directory, "obj", "piper");
+        var work = Path.Combine(Path.GetFullPath(directory), "obj", "piper");
         var cachePath = Path.Combine(work, "references.json");
         var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
         if (ReadCache(cachePath, key) is { } cached)

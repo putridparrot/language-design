@@ -80,7 +80,7 @@ public static class Named_arguments
 
 internal static class PiperEntryPoint
 {
-    public static void Main()
+    public static void Main(string[] args)
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
         Named_arguments.Main();

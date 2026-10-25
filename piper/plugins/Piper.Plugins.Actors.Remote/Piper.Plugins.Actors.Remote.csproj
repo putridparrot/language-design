@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A sample Piper compiler plugin: `actor` declarations on Proto.Actor, so actors can run on several machines and talk
+    over the network. It's listed in a program's piper.json ("plugins": [".../Piper.Plugins.Actors.Remote.dll"]) and
+    loaded by the compiler, which never references it. It reads the same syntax as Piper.Plugins.Actors.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!-- One place whatever the configuration, so piper.json files can point at it. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\plugin\</OutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The compiler loads the plugin, so it provides Piper.Compiler; don't copy it next to the plugin. -->
+    <ProjectReference Include="..\..\src\Piper.Compiler\Piper.Compiler.csproj" Private="false" ExcludeAssets="runtime" />
+    <!-- How an `actor` declaration reads is shared with the in-process actors plugin. -->
+    <Compile Include="..\Piper.Plugins.Actors\ActorSyntax.cs" Link="ActorSyntax.cs" />
+  </ItemGroup>
+
+</Project>

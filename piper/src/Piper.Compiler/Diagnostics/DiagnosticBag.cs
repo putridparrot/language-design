@@ -185,7 +185,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0217", span, $"'{name}' is a {kind}, not a value.");
 
     public void ReportInvalidMain(TextSpan span) =>
-        Error("PIP0219", span, "'Main' must take no parameters and return unit.");
+        Error("PIP0219", span, "'Main' must take no parameters, or one 'string[]' (the command-line arguments), and return unit.");
 
     public void ReportFieldNamedAsRecord(TextSpan span, string name) =>
         Error("PIP0220", span, $"A field cannot have the same name as its record '{name}'.");
@@ -583,4 +583,11 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportPluginFailed(TextSpan span, string plugin, string keyword, string reason) =>
         Error("PIP0504", span, $"Plugin '{plugin}' failed while reading '{keyword}': {reason}");
+
+    /// <summary>A warning a plugin's analysis found.</summary>
+    public void ReportPluginWarning(TextSpan span, string plugin, string message) =>
+        Warning("PIP0505", span, $"{message} ({plugin})");
+
+    public void ReportPluginAnalysisFailed(string plugin, string reason) =>
+        Error("PIP0506", default, $"Plugin '{plugin}' failed while analyzing the program: {reason}");
 }

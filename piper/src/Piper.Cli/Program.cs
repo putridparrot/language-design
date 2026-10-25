@@ -12,7 +12,8 @@ const string Usage = """
       piper build <inputs...> --library [-o <dir>] [--name <name>]
                                            Compile to a library: <name>.dll, .pdb and Piper.Runtime.dll
       piper emit  <inputs...>              Print the generated C# to stdout
-      piper run   <inputs...>              Transpile, compile and run
+      piper run   <inputs...> [-- <args...>]
+                                           Transpile, compile and run; <args> go to Main(args: string[])
       piper test  <inputs...> [--filter <text>]
                                            Run the program's test blocks (those whose name contains <text>)
       piper lsp                            Run the language server (LSP over stdin and stdout), for editors
@@ -49,8 +50,15 @@ string? outputDirectory = null;
 string? assemblyName = null;
 string? filter = null;
 bool executable = false, library = false;
+string[] programArguments = [];
 for (int i = 1; i < args.Length; i++)
 {
+    // `piper run app -- --port 8001`: what follows `--` is the program's.
+    if (args[i] == "--" && command == "run")
+    {
+        programArguments = args[(i + 1)..];
+        break;
+    }
     if (args[i] is "-o" or "--output" && i + 1 < args.Length)
         outputDirectory = args[++i];
     else if (args[i] == "--name" && i + 1 < args.Length)
@@ -195,7 +203,9 @@ switch (command)
         return 0;
 
     default:
-        var run = Runner.Run(result.Files, captureOutput: false, result.References);
+        // The name `piper build` would give it, so libraries that name the program's types (serializers) agree with a built copy.
+        var programName = assemblyName ?? Path.GetFileNameWithoutExtension(Path.TrimEndingDirectorySeparator(Path.GetFullPath(inputs[0])));
+        var run = Runner.Run(result.Files, captureOutput: false, result.References, programArguments, programName);
         foreach (var error in run.Errors)
             Console.Error.WriteLine(error);
         return run.Success ? 0 : 3;

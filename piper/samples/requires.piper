@@ -18,11 +18,11 @@ enum MathError {
 }
 
 // fn Compute(a: int, b: int) => Result<int> {
-//     return Ok((a + b) * 10);
+//     return Ok((a + b) * 10)
 // }
 
 fn F(a: int, b: int) => Result<int, MathError> {
-    return Ok(a + b);
+    Ok(a + b)
 }
 
 fn Main() 

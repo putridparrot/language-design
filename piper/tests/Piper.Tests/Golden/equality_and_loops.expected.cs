@@ -153,7 +153,7 @@ public static class Equality_and_loops
 
 internal static class PiperEntryPoint
 {
-    public static void Main()
+    public static void Main(string[] args)
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
         Equality_and_loops.Main();

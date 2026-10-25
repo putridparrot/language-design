@@ -163,6 +163,8 @@ public class BinderTests
     [InlineData("PIP0240", "fn f<T>(x: T) {} fn Main() { let a = f; }")]
     [InlineData("PIP0217", "fn Main() { let a = Print; }")]
     [InlineData("PIP0219", "fn Main(a: int) {}")]
+    [InlineData("PIP0219", "fn Main(args: string[], more: int) {}")]
+    [InlineData("PIP0219", "fn Main(args: int[]) {}")]
     [InlineData("PIP0220", "record P(P: int);")]
     [InlineData("PIP0221", "fn Main() { let a = if true { 1 } else { \"s\" }; }")]
     public void Semantic_errors_are_reported(string code, string program)
@@ -798,6 +800,25 @@ public class BinderTests
     public void A_lambda_fitting_no_overload_is_still_reported_as_no_overload()
     {
         AssertSingleError("PIP0274", "fn Main() { let xs = [1, 2]; xs.ForEach((a, b) => { }); }");
+    }
+
+    [Fact]
+    public void An_interfaces_inherited_properties_can_be_read()
+    {
+        // IList<T>.Count is declared on ICollection<T>, which IList<T> inherits.
+        var result = Compilation.Compile("fn Count(xs: System.Collections.Generic.IList<int>) => int = xs.Count;\nfn Main() { Print(Count([1, 2, 3])); }");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Equal("3", Runner.Run(result.Files).Output.Trim());
+    }
+
+    [Theory]
+    [InlineData("fn Main(args: string[]) { Print(string.Join(\"|\", args)); }")]
+    [InlineData("async fn Main(args: string[]) { await System.Threading.Tasks.Task.Yield(); Print(string.Join(\"|\", args)); }")]
+    public void Main_can_take_the_command_line_arguments(string program)
+    {
+        var result = Compilation.Compile(program);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Equal("a|--b", Runner.Run(result.Files, args: ["a", "--b"]).Output.Trim());
     }
 
     [Fact]

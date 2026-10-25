@@ -1,0 +1,22 @@
+// A value that never arrives: a block ending in `throw` can be a variable's initializer or an argument, as C# allows
+// `F(x ?? throw e)`. The call (or declaration) is never reached; the throw happens after the earlier arguments are
+// evaluated.
+
+fn Take(o: object) { Print("took {o}"); }
+fn TakeInt(n: int) { Print("took {n}"); }
+fn Two(first: int, second: int) { Print("{first} {second}"); }
+fn Trace(n: int) => int { Print("evaluated {n}"); n }
+
+fn Declare() { let x: int = { throw System.Exception("declare") }; Print(x); }
+fn Argument() { TakeInt({ throw System.Exception("argument") }); }
+fn ToObject() { Take({ throw System.Exception("object") }); }
+fn AfterFirst() { Two(Trace(1), { throw System.Exception("second") }); }
+fn Maybe(fail: bool) { Take({ if fail { throw System.Exception("maybe") } 1 }); }
+
+fn Main() {
+    for f in [Declare, Argument, ToObject, AfterFirst] {
+        try { f(); } catch (e: System.Exception) { Print("caught {e.Message}"); }
+    }
+    Maybe(false);
+    try { Maybe(true); } catch (e: System.Exception) { Print("caught {e.Message}"); }
+}

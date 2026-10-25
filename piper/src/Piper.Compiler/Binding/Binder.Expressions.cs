@@ -1069,8 +1069,8 @@ public sealed partial class Binder
                     argument = BindExpression(arguments[i], known ? parameterType : null);
                 }
 
-                argument = RequireValue(argument, arguments[i].Span);
-                if (!known)
+                argument = RequireArgument(argument, arguments[i].Span);
+                if (!known && argument.Type != TypeSymbol.Never)
                     Infer(declared[i], argument.Type, map, unresolved);
                 bound[i] = argument;
             }
@@ -1597,6 +1597,13 @@ public sealed partial class Binder
     }
 
     /// <summary>Unit and Never have no value, so they can't be stored, passed or operated on.</summary>
+    /// <summary>
+    /// An argument must have a value, or never complete: <c>Respond({ throw E() })</c> or <c>f(x ?? throw E())</c>
+    /// is fine, as in C#, since the call is never reached without a value.
+    /// </summary>
+    private BoundExpression RequireArgument(BoundExpression expression, TextSpan span) =>
+        expression.Type == TypeSymbol.Never ? expression : RequireValue(expression, span);
+
     private BoundExpression RequireValue(BoundExpression expression, TextSpan span)
     {
         if (expression.Type.IsValueType)

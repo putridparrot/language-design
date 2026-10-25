@@ -61,7 +61,13 @@ public static class Runner
     /// A context to run a program in, which finds its referenced assemblies (<see cref="ReferenceLoadContext"/>), as the
     /// binder did. Collectible, so the program can be unloaded.
     /// </summary>
-    private sealed class ProgramLoadContext(string name, ProgramReferences? references) : AssemblyLoadContext(name, isCollectible: true)
+    /// <remarks>
+    /// Not collectible when the program references packages or other assemblies: those may find the program's types
+    /// by name (serializers do), and an assembly that can't be unloaded can't resolve to one that can. Such programs
+    /// then stay loaded until the process ends, as <c>piper run</c>'s does anyway.
+    /// </remarks>
+    private sealed class ProgramLoadContext(string name, ProgramReferences? references)
+        : AssemblyLoadContext(name, isCollectible: references is null || references.Assemblies.IsEmpty)
     {
         private readonly ReferenceLoadContext? _references = references is { Assemblies.IsEmpty: false } ? ReferenceLoadContext.For(references.Assemblies) : null;
 
@@ -121,25 +127,66 @@ public static class Runner
     public static RunResult Run(string csharp, bool captureOutput = true) =>
         Run([new GeneratedFile("Program.cs", csharp)], captureOutput);
 
-    public static RunResult Run(IEnumerable<GeneratedFile> files, bool captureOutput = true, ProgramReferences? references = null)
-    {
-        var build = Build(files, references: references);
-        if (!build.Success)
-            return new RunResult(false, "", build.Errors);
+    /// <summary>
+    /// The programs being run, by assembly name. Code that finds a type by its assembly-qualified name, as serializers
+    /// do (<c>"Message+Add, PiperProgram3"</c>), can't see an assembly loaded from memory into its own context, so
+    /// <see cref="ResolveRunning"/> finds it here. Each run has its own name, as tests run several at once.
+    /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Assembly> Running = new();
 
-        var context = new ProgramLoadContext("Piper", references);
+    private static int _runs;
+
+    static Runner() => AppDomain.CurrentDomain.AssemblyResolve += ResolveRunning;
+
+    private static Assembly? ResolveRunning(object? sender, ResolveEventArgs args) =>
+        new AssemblyName(args.Name).Name is { } name && Running.TryGetValue(name, out var assembly) ? assembly : null;
+
+    /// <summary>
+    /// Builds and loads a program, which <see cref="ResolveRunning"/> finds by name until it's unloaded: called
+    /// <paramref name="assemblyName"/> if it's given and not running already, or else a name of its own.
+    /// </summary>
+    private static (Assembly? Assembly, ProgramLoadContext Context, string Name, ImmutableArray<string> Errors) Load(
+        IEnumerable<GeneratedFile> files, string contextName, ProgramReferences? references, string? assemblyName = null)
+    {
+        var name = assemblyName is not null && !Running.ContainsKey(assemblyName) ? assemblyName : $"PiperProgram{Interlocked.Increment(ref _runs)}";
+        var context = new ProgramLoadContext(contextName, references);
+        var build = Build(files, name, references: references);
+        if (!build.Success)
+            return (null, context, name, build.Errors);
+        var assembly = context.LoadFromStream(new MemoryStream(build.Assembly!), new MemoryStream(build.Pdb!));
+        Running[name] = assembly;
+        return (assembly, context, name, []);
+    }
+
+    private static void Unload(ProgramLoadContext context, string name)
+    {
+        Running.TryRemove(name, out _);
+        if (context.IsCollectible)
+            context.Unload();
+    }
+
+    /// <param name="args">The command-line arguments, for a `Main(args: string[])`.</param>
+    /// <param name="assemblyName">
+    /// The program's assembly name, as <c>piper build</c> would give it. Libraries that send types between processes
+    /// name them with it (<c>"Message+Add, app"</c>), so a run and a build of the same program then understand each other.
+    /// </param>
+    public static RunResult Run(
+        IEnumerable<GeneratedFile> files, bool captureOutput = true, ProgramReferences? references = null, string[]? args = null, string? assemblyName = null)
+    {
+        var (assembly, context, name, errors) = Load(files, "Piper", references, assemblyName);
         try
         {
-            var assembly = context.LoadFromStream(new MemoryStream(build.Assembly!), new MemoryStream(build.Pdb!));
+            if (assembly is null)
+                return new RunResult(false, "", errors);
             var entryPoint = assembly.GetType(CSharpEmitter.EntryPointClassName)?.GetMethod("Main");
             if (entryPoint is null)
                 return new RunResult(false, "", ["The program has no 'Main' function."]);
 
-            return captureOutput ? RunCaptured(entryPoint) : RunDirect(entryPoint);
+            return captureOutput ? RunCaptured(entryPoint, args ?? []) : RunDirect(entryPoint, args ?? []);
         }
         finally
         {
-            context.Unload();
+            Unload(context, name);
         }
     }
 
@@ -149,15 +196,12 @@ public static class Runner
     /// </summary>
     public static TestRunResult RunTests(IEnumerable<GeneratedFile> files, string? filter = null, ProgramReferences? references = null)
     {
-        var build = Build(files, references: references);
-        if (!build.Success)
-            return new TestRunResult([], build.Errors);
-
-        var context = new ProgramLoadContext("PiperTests", references);
+        var (assembly, context, name, errors) = Load(files, "PiperTests", references);
         var culture = Thread.CurrentThread.CurrentCulture;
         try
         {
-            var assembly = context.LoadFromStream(new MemoryStream(build.Assembly!), new MemoryStream(build.Pdb!));
+            if (assembly is null)
+                return new TestRunResult([], errors);
             var tests = assembly.GetTypes()
                 .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static).OrderBy(m => m.MetadataToken))
                 .Select(m => (Method: m, Name: m.GetCustomAttribute<Piper.Runtime.PiperTestAttribute>()?.Name))
@@ -171,7 +215,7 @@ public static class Runner
         finally
         {
             Thread.CurrentThread.CurrentCulture = culture;
-            context.Unload();
+            Unload(context, name);
         }
     }
 
@@ -207,7 +251,7 @@ public static class Runner
         }
     }
 
-    private static RunResult RunCaptured(MethodInfo entryPoint)
+    private static RunResult RunCaptured(MethodInfo entryPoint, string[] args)
     {
         lock (ConsoleLock)
         {
@@ -216,7 +260,7 @@ public static class Runner
             Console.SetOut(output);
             try
             {
-                return RunDirect(entryPoint) with { Output = output.ToString() };
+                return RunDirect(entryPoint, args) with { Output = output.ToString() };
             }
             finally
             {
@@ -237,13 +281,13 @@ public static class Runner
         return string.Concat(frames);
     }
 
-    private static RunResult RunDirect(MethodInfo entryPoint)
+    private static RunResult RunDirect(MethodInfo entryPoint, string[] args)
     {
         // The generated Main switches to the invariant culture; don't leak that into the host thread.
         var culture = Thread.CurrentThread.CurrentCulture;
         try
         {
-            entryPoint.Invoke(null, null);
+            entryPoint.Invoke(null, [args]);
             return new RunResult(true, "", []);
         }
         catch (TargetInvocationException ex) when (ex.InnerException is { } inner)

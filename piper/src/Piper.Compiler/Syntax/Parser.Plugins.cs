@@ -16,6 +16,16 @@ public sealed partial class Parser
     /// <summary>Whether the code being parsed can await: see <see cref="PluginParser.AsyncContext"/>.</summary>
     internal AsyncContext AsyncContext => _asyncContext;
 
+    /// <summary>A block that will run in async code, as an `async fn`'s body is parsed.</summary>
+    internal BlockExpressionSyntax ParseAsyncBlock()
+    {
+        var (outerAsync, outerContext) = (_inAsync, _asyncContext);
+        (_inAsync, _asyncContext) = (true, AsyncContext.Async);
+        var block = ParseBlock();
+        (_inAsync, _asyncContext) = (outerAsync, outerContext);
+        return block;
+    }
+
     public static CompilationUnitSyntax ParseCompilationUnit(SourceText source, DiagnosticBag diagnostics, PluginRegistry plugins)
     {
         diagnostics.CurrentSource = source;
@@ -52,7 +62,9 @@ public sealed partial class Parser
             hint => new Token(TokenKind.Identifier, keyword.Span, $"__{hint}_{++_freshNames}"));
         try
         {
-            return [.. expand(parser)];
+            ImmutableArray<T> result = [.. expand(parser)];
+            _plugins.Record(plugin, new PluginExpansion(_plugins.KeywordFor(keyword.Text), keyword, _source, [.. result]));
+            return result;
         }
         catch (Exception exception)
         {

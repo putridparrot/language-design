@@ -284,6 +284,59 @@ public class PluginTests
         Assert.Equal("async\nsync\nasync\nif awaited\n", output);
     }
 
+    /// <summary>
+    /// <c>tagged Name;</c> declares <c>record Name(value: int);</c>, and analysis warns about each such record whose
+    /// name is short, finding its symbol through the expansion's syntax. With <paramref name="fail"/>, analysis throws.
+    /// </summary>
+    private sealed class AnalyzingPlugin(bool fail = false) : IPiperPlugin
+    {
+        public string Name => "tagged";
+
+        public IReadOnlyList<PluginKeyword> Keywords { get; } =
+        [
+            new DeclarationKeyword("tagged", p =>
+            {
+                var name = p.Expect(TokenKind.Identifier);
+                p.Expect(TokenKind.Semicolon);
+                return p.Template.Declarations("record $name(value: int);", ("name", name));
+            }),
+        ];
+
+        public void Analyze(PluginAnalysis analysis)
+        {
+            if (fail)
+                throw new InvalidOperationException("analysis broke");
+            foreach (var expansion in analysis.Expansions)
+            {
+                var declaration = expansion.Result.OfType<RecordDeclarationSyntax>().Single();
+                var record = analysis.Program.Types.OfType<Binding.RecordSymbol>().Single(r => ReferenceEquals(r.Declaration, declaration));
+                if (record.Name.Length < 3)
+                    analysis.ReportWarning(expansion.File, declaration.Name.Span, $"'{record.Name}' with {record.Fields.Length} field is too short a name.");
+            }
+        }
+    }
+
+    [Fact]
+    public void A_plugin_analyzes_the_bound_program_through_its_expansions()
+    {
+        var text = "tagged Ok2;\ntagged Id;\nfn Main() { Print(Id(1).value); }";
+        var result = Compile(text, new AnalyzingPlugin());
+        Assert.True(result.Success);
+        var warning = Assert.Single(result.Diagnostics);
+        Assert.Equal(("PIP0505", Diagnostics.DiagnosticSeverity.Warning), (warning.Code, warning.Severity));
+        Assert.Equal("'Id' with 1 field is too short a name. (tagged)", warning.Message);
+        Assert.Equal(text.IndexOf("Id;", StringComparison.Ordinal), warning.Span.Start);
+    }
+
+    [Fact]
+    public void A_plugin_whose_analysis_throws_is_reported()
+    {
+        var result = Compile("tagged Name;\nfn Main() {}", new AnalyzingPlugin(fail: true));
+        var error = Assert.Single(result.Diagnostics);
+        Assert.Equal("PIP0506", error.Code);
+        Assert.Contains("analysis broke", error.Message);
+    }
+
     [Fact]
     public void Loading_a_missing_plugin_is_reported()
     {

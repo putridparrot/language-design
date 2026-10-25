@@ -18,7 +18,8 @@ namespace Piper.Plugins;
 /// </code>
 /// A hole is <c>$name</c> where a name could go: in an expression, a type, a lambda parameter, or as a statement. Its
 /// value can be an expression (or block), a type, a token or a string (a name), or, where a list goes (arguments,
-/// collection elements, a block's statements), a sequence of expressions or statements spliced in. Where Piper needs a
+/// collection elements, a block's statements), a sequence of expressions or statements spliced in; for parameters, write
+/// <c>fn $name($parameters: unit)</c> with a sequence of <see cref="ParameterSyntax"/>. Where Piper needs a
 /// block, write <c>{ $body }</c>: with a block as its value, that's the block itself. A <c>$</c> in a string literal in
 /// a template is read as a hole too.
 /// <para>
@@ -98,6 +99,17 @@ public sealed partial class SyntaxTemplate
         return filled;
     }
 
+    /// <summary>
+    /// The hole a list item is, which a sequence can be spliced into: as <see cref="HoleName"/>, or a parameter named by
+    /// a hole (<c>fn f($parameters: unit)</c>, as a parameter needs a type to parse; the type is ignored).
+    /// </summary>
+    private static string? SpliceHoleName(object? item) => HoleName(item) ?? item switch
+    {
+        ParameterSyntax { Name: var name } => HoleName(name),
+        LambdaParameterSyntax { Name: var name } => HoleName(name),
+        _ => null,
+    };
+
     /// <summary>The hole a node is, if it's one: a name, a type name, or a statement that's just a name.</summary>
     private static string? HoleName(object? node) => node switch
     {
@@ -156,7 +168,7 @@ public sealed partial class SyntaxTemplate
                 foreach (var item in items)
                 {
                     // `f(a, $rest)`, `[$items]`, `{ $statements; b(); }`: a sequence in a list's place is spliced in.
-                    if (HoleName(item) is { } name && values.GetValueOrDefault(name) is IEnumerable sequence and not SyntaxNode and not string)
+                    if (SpliceHoleName(item) is { } name && values.GetValueOrDefault(name) is IEnumerable sequence and not SyntaxNode and not string)
                     {
                         used.Add(name);
                         foreach (var element in sequence)

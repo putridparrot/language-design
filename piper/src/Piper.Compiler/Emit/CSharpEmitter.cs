@@ -573,14 +573,13 @@ public sealed partial class CSharpEmitter
             _writer.WriteLine();
             _writer.WriteLine($"internal static class {EntryPointClassName}");
             _writer.OpenBrace();
-            _writer.WriteLine("public static void Main()");
+            _writer.WriteLine("public static void Main(string[] args)");
             _writer.OpenBrace();
             // Piper output must not depend on the machine's locale (e.g. "1,5" vs "1.5").
             _writer.WriteLine("global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;");
             // An async Main is waited for: `Main().GetAwaiter().GetResult()` (so exceptions keep their own type).
-            _writer.WriteLine(main.IsAsync
-                ? $"{FunctionContainer(main)}.{Escape(main.Name)}().GetAwaiter().GetResult();"
-                : $"{FunctionContainer(main)}.{Escape(main.Name)}();");
+            var call = $"{FunctionContainer(main)}.{Escape(main.Name)}({(main.Parameters.Length == 1 ? "args" : "")})";
+            _writer.WriteLine(main.IsAsync ? $"{call}.GetAwaiter().GetResult();" : $"{call};");
             _writer.CloseBrace();
             _writer.CloseBrace();
         }
@@ -1043,6 +1042,7 @@ public sealed partial class CSharpEmitter
             BoundDelegateInvocationExpression invocation => (DelegateInvocation(invocation), PrimaryPrecedence),
             // Lowering leaves throw expressions only where C# allows them (a ?: branch, the right of ??), which can't be parenthesized.
             BoundThrowExpression thrown => ($"throw {Expr(thrown.Exception, LogicalOrPrecedence)}", PrimaryPrecedence),
+            BoundUnreachableExpression => ("default!", PrimaryPrecedence),
             BoundClrMemberExpression member =>
                 ($"{ClrReceiver(member.Receiver, member.ContainerType)}.{Escape(member.Member.Name)}", PrimaryPrecedence),
             BoundNullableBoundaryExpression boundary => (NullableBoundary(boundary), PrimaryPrecedence),

@@ -213,6 +213,7 @@ fn Area(s: Shape) => double = match s {
 | `Circle(p)`, `Shape.Circle(p)` | that variant, matching its fields against the sub-patterns |
 | `Empty`, `Shape.Empty` | a fieldless variant; a bare name is a variant if the matched enum has one by that name, otherwise a binding |
 | `Point(x, 0)` | a record, deconstructed positionally |
+| `Point(x, y)`, `Message.Add(n)` on an `object`, trait or interface | a type test, as C#'s `o is Point(var x, var y)`: a value of that record or variant (of a non-generic type that the matched type can hold), deconstructed. A match on such a value needs a `_` arm |
 | `42`, `-1`, `2.5`, `'c'`, `"text"`, `true` | that literal; an int literal also matches long and double values |
 | `1..10`, `0..<10`, `'a'..'z'` | a range of integer or char values; `..` includes the end, as in Swift, and `..<` stops before it |
 | `p1 \| p2` | either pattern; alternatives can bind variables if every one binds the same names with the same types, in a match arm (`Click(x, y) \| Touch(x, y) => …`) or an `is` test (`if s is Circle(r) \| Ring(r, _) { … }`) |
@@ -793,7 +794,7 @@ async test "waits" {
 `Print(value)` writes any value followed by a newline, using its C# `ToString`: Bools print as `True`/`False`,
 records as `Point { x = 1, y = 2 }`, fieldless enum variants by name (`Food`, as a C# enum member) and tuples as `(1, a)`. Output
 is locale-independent. `Assert` and `AssertEqual` are for tests (see [Tests](#tests)), though they work anywhere: a failure throws.
-`Main()` takes no parameters and returns unit; it is the program's entry point.
+`Main()` returns unit and is the program's entry point. It takes no parameters, or the command-line arguments as `Main(args: string[])`, as in C#; `piper run app -- one two` passes `one` and `two`.
 
 As in C#, functions and methods are PascalCase (`Print`, `Main`, `Area()`), and variables, parameters and fields camelCase. That's a convention, not a rule: the compiler accepts any casing. A method added to a .NET or builtin type mustn't have the name of one of its members (`extend int { fn Clamp(…) }` clashes with `int.Clamp`).
 

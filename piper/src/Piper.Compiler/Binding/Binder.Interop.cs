@@ -109,16 +109,32 @@ public sealed partial class Binder
     {
         var (clrType, map) = ClrContext(receiver.Type);
         var methods = InstanceMethods(clrType).Where(m => m.Name == member.Text).ToList();
-        if (methods.Count > 0)
-            return BindClrInvocation(receiver, receiver.Type, methods, member.Text, arguments, [], span, map, explicitTypeArguments, member.Span);
-
         // Extension methods from the namespaces this file imports: `numbers.Where(n => n > 2)`.
         var extensions = ImportedExtensionMethods(member.Text);
-        if (extensions.Count > 0)
+        BoundExpression Instance() => BindClrInvocation(receiver, receiver.Type, methods, member.Text, arguments, [], span, map, explicitTypeArguments, member.Span);
+        BoundExpression Extension() => BindClrInvocation(
+            null, receiver.Type, extensions, member.Text, arguments, [receiver], span, new Dictionary<Type, TypeSymbol>(), explicitTypeArguments);
+
+        if (methods.Count > 0 && extensions.Count > 0)
         {
-            return BindClrInvocation(
-                null, receiver.Type, extensions, member.Text, arguments, [receiver], span, new Dictionary<Type, TypeSymbol>(), explicitTypeArguments);
+            // As in C#, an extension method is only considered when no instance method applies: Proto.Actor's
+            // `root.RequestAsync<T>(pid, message, timeout)` is an extension beside instance overloads of the same name.
+            BoundExpression instance = null!, extension = null!;
+            var instanceDiagnostics = TrialDiagnostics(() => instance = Instance());
+            if (instanceDiagnostics.Any(d => d.Severity == DiagnosticSeverity.Error) &&
+                TrialDiagnostics(() => extension = Extension()) is var extensionDiagnostics &&
+                !extensionDiagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))
+            {
+                _diagnostics.AddRange(extensionDiagnostics);
+                return extension;
+            }
+            _diagnostics.AddRange(instanceDiagnostics);
+            return instance;
         }
+        if (methods.Count > 0)
+            return Instance();
+        if (extensions.Count > 0)
+            return Extension();
 
         BindArgumentsForDiagnostics(arguments);
         _diagnostics.ReportUnknownMethod(member.Span, receiver.Type, member.Text);
@@ -154,7 +170,11 @@ public sealed partial class Binder
     private BoundExpression BindClrInstanceMember(BoundExpression receiver, Token member)
     {
         var (clrType, map) = ClrContext(receiver.Type);
-        return BindClrMemberRead(receiver, receiver.Type, member, clrType.GetMember(member.Text, BindingFlags.Public | BindingFlags.Instance), map);
+        var members = clrType.GetMember(member.Text, BindingFlags.Public | BindingFlags.Instance);
+        // An interface's properties include those of the interfaces it inherits (`IContext.Message`), which reflection leaves out.
+        if (clrType.IsInterface && members.Length == 0)
+            members = [.. clrType.GetInterfaces().SelectMany(i => i.GetMember(member.Text, BindingFlags.Public | BindingFlags.Instance))];
+        return BindClrMemberRead(receiver, receiver.Type, member, members, map);
     }
 
     /// <summary>Reads a property or field (<c>s.Length</c>, <c>Math.PI</c>); null-returning ones become optional.</summary>
@@ -287,7 +307,7 @@ public sealed partial class Binder
                     LambdaExpressionSyntax lambda => new ClrArgument(null, lambda, a.Span),
                     OutArgumentSyntax output => new ClrArgument(null, null, a.Span) { Out = output, OutVariable = OutTarget(output) },
                     RefArgumentSyntax reference => new ClrArgument(BindRefTarget(reference), null, a.Span) { Ref = reference },
-                    _ => new ClrArgument(RequireValue(BindExpression(a), a.Span), null, a.Span),
+                    _ => new ClrArgument(RequireArgument(BindExpression(a), a.Span), null, a.Span),
                 }) with { Name = name };
             }))
             .ToList();
@@ -689,7 +709,8 @@ public sealed partial class Binder
     {
         var argument = bound.Type;
         var target = parameter.Type;
-        if (argument == target)
+        // An argument that never completes (`{ throw … }`) fits any parameter.
+        if (argument == target || argument == TypeSymbol.Never)
             return 0;
         // An optional value passed where .NET accepts null (or a Nullable<T>).
         if (parameter.Boundary == ClrBoundary.NullableReference && argument.IsOption && argument.TypeArguments[0] == target)

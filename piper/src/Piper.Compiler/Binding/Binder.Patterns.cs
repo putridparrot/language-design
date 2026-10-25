@@ -125,6 +125,12 @@ public sealed partial class Binder
                 return new BoundBindingPattern(variable);
             }
 
+            // `Point(x, y)` on a `Point?` or an `object?` (such as a nullable .NET property): there's a value and it
+            // matches, so `Some(Point(x, y))`. None doesn't match, as null doesn't in C#'s `o is Point(var x, var y)`.
+            case ConstructorPatternSyntax constructor when expected.IsOption && !NamesOptionVariant(constructor):
+                return new BoundConstructorPattern(
+                    _option.FindVariant("Some")!, [BindConstructorPattern(constructor, expected.TypeArguments[0], allowBindings)], expected);
+
             case ConstructorPatternSyntax constructor:
                 return BindConstructorPattern(constructor, expected, allowBindings);
 
@@ -164,6 +170,10 @@ public sealed partial class Binder
                 throw new InvalidOperationException($"Unexpected pattern {syntax.GetType().Name}");
         }
     }
+
+    /// <summary>Whether the pattern is Option's own <c>Some(…)</c> or <c>None</c> (bare or qualified).</summary>
+    private static bool NamesOptionVariant(ConstructorPatternSyntax pattern) =>
+        pattern.Qualifier is { Text: "Option" } || (pattern.Qualifier is null && pattern.Name.Text is "Some" or "None");
 
     /// <summary>While binding a later alternative of `A(x) | B(x)`: the first alternative's variables, and those used.</summary>
     private Dictionary<string, VariableSymbol>? _orBindings;
@@ -270,11 +280,20 @@ public sealed partial class Binder
             return (constructor, fields, definition.Construct([.. definition.TypeParameters.Select(_ => TypeSymbol.Error)]), displayName);
         if (expected.OriginalDefinition != definition)
         {
+            // `match message { Point(x, y) => … }` on an object, or on a trait or .NET interface the type implements:
+            // a type test, as C#'s `message is Point(var x, var y)`.
+            if (!definition.IsGeneric && CanHold(expected, definition))
+                return (constructor, fields, definition, displayName);
             _diagnostics.ReportPatternTypeMismatch(span, $"A '{displayName}' pattern", expected);
             return null;
         }
         return (constructor, fields, expected, displayName);
     }
+
+    /// <summary>Whether a value of type <paramref name="expected"/> can be a <paramref name="definition"/>: it's `object`, or a trait or interface the type implements.</summary>
+    private bool CanHold(TypeSymbol expected, NamedTypeDefinition definition) =>
+        (expected is ClrTypeSymbol { Type: var type } && type == typeof(object)) ||
+        ((expected.IsTrait || expected is ClrTypeSymbol { Type.IsInterface: true }) && Implements(definition, expected));
 
     /// <summary>
     /// <c>Point { x: 0 }</c> or <c>{ x: 0 }</c> on a record (or a variant) is a constructor pattern with <c>_</c> for the

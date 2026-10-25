@@ -169,6 +169,15 @@ public sealed class BoundForStatement(
 /// <summary>Produced only by lowering: the impossible fall-through at the end of an exhaustive match.</summary>
 public sealed class BoundUnreachableStatement : BoundStatement;
 
+/// <summary>
+/// Stands for a value that's never produced, made by lowering: in <c>F(a, { throw E() })</c> the throw becomes a
+/// statement before the call, which is then never reached, and the argument becomes this (C#'s <c>default!</c>).
+/// </summary>
+public sealed class BoundUnreachableExpression : BoundExpression
+{
+    public override TypeSymbol Type => TypeSymbol.Never;
+}
+
 /// <summary>Produced only by lowering: a place <see cref="BoundGotoStatement"/>s jump forward to, past code they skip.</summary>
 public sealed class BoundLabel(string name = "end")
 {

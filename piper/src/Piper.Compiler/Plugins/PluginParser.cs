@@ -73,6 +73,15 @@ public sealed class PluginParser
 
     public BlockExpressionSyntax ParseBlock() => _parser.ParseBlock();
 
+    /// <summary>
+    /// Reads a block that the rewritten code runs in an async function or lambda, so it can `await` (and plugins inside
+    /// it see <see cref="AsyncContext.Async"/>).
+    /// </summary>
+    public BlockExpressionSyntax ParseAsyncBlock() => _parser.ParseAsyncBlock();
+
+    /// <summary>`let x = …;`, `mut total = 0;` or `let (a, b) = …;`, at a `let` or `mut`.</summary>
+    public StatementSyntax ParseVariableDeclaration() => _parser.ParseVariableDeclaration();
+
     public TypeSyntax ParseType() => _parser.ParseType();
 
     public PatternSyntax ParsePattern() => _parser.ParsePattern();

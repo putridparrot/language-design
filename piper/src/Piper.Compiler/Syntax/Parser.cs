@@ -910,7 +910,7 @@ public sealed partial class Parser
     /// <summary>
     /// variableDeclaration = ( "let" | "mut" ) ( IDENT [ ":" type ] | parenthesizedDesignation ) "=" expression ";" ;
     /// </summary>
-    private StatementSyntax ParseVariableDeclaration()
+    internal StatementSyntax ParseVariableDeclaration()
     {
         var keyword = NextToken();
 

@@ -130,6 +130,8 @@ producing one `.cs` file per `.piper` file. The generated code needs C# 14 (.NET
 | [editors/vscode](editors/vscode) | The VS Code extension: highlighting, and a client for the language server |
 | [src/Piper.Runtime](src/Piper.Runtime) | The `Piper.Runtime` package: `Option`, `Result` and the interop helpers, shared by all compiled Piper code |
 | [src/Piper.Build](src/Piper.Build) | The `Piper.Build` package: MSBuild targets that compile a project's `.piper` files |
+| [plugins/Piper.Plugins.Actors](plugins/Piper.Plugins.Actors) | A sample compiler plugin: `actor` declarations, with private state, tells and asks |
+| [plugins/Piper.Plugins.Actors.Remote](plugins/Piper.Plugins.Actors.Remote) | The same `actor` syntax on Proto.Actor, for actors in other processes and on other machines |
 | [plugins/Piper.Plugins.Parallel](plugins/Piper.Plugins.Parallel) | A sample compiler plugin: `parallel for` and `concurrency { }` |
 | [plugins/Piper.Plugins.Web](plugins/Piper.Plugins.Web) | A sample compiler plugin for ASP.NET Core: `services { }` and `endpoints { }` |
 | [tests/Piper.Tests](tests/Piper.Tests) | Lexer, parser and binder unit tests, plus golden tests |

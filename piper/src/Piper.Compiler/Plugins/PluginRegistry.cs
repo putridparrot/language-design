@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Piper.Binding;
 using Piper.Diagnostics;
 using Piper.Syntax;
 
@@ -9,11 +10,47 @@ public sealed class PluginRegistry
 {
     private readonly Dictionary<string, (IPiperPlugin Plugin, PluginKeyword Keyword)> _keywords;
 
-    private PluginRegistry(Dictionary<string, (IPiperPlugin, PluginKeyword)> keywords) => _keywords = keywords;
+    private readonly ImmutableArray<IPiperPlugin> _plugins;
 
-    public static PluginRegistry Empty { get; } = new([]);
+    private readonly List<(IPiperPlugin Plugin, PluginExpansion Expansion)> _expansions = [];
+
+    private PluginRegistry(Dictionary<string, (IPiperPlugin, PluginKeyword)> keywords, ImmutableArray<IPiperPlugin> plugins) =>
+        (_keywords, _plugins) = (keywords, plugins);
+
+    /// <summary>No plugins. Shared, so nothing is recorded in it.</summary>
+    public static PluginRegistry Empty { get; } = new([], []);
 
     public bool IsEmpty => _keywords.Count == 0;
+
+    internal PluginKeyword KeywordFor(string text) => _keywords[text].Keyword;
+
+    /// <summary>Remembers an expansion, for the plugin's analysis once the program is bound.</summary>
+    internal void Record(IPiperPlugin plugin, PluginExpansion expansion)
+    {
+        if (!ReferenceEquals(this, Empty))
+            _expansions.Add((plugin, expansion));
+    }
+
+    /// <summary>
+    /// Runs each plugin's <see cref="IPiperPlugin.Analyze"/> over the bound <paramref name="program"/>. A plugin that
+    /// throws is reported, and the others still run.
+    /// </summary>
+    public void Analyze(BoundProgram program, DiagnosticBag diagnostics)
+    {
+        foreach (var plugin in _plugins)
+        {
+            var analysis = new PluginAnalysis(plugin, program, [.. _expansions.Where(e => e.Plugin == plugin).Select(e => e.Expansion)], diagnostics);
+            try
+            {
+                plugin.Analyze(analysis);
+            }
+            catch (Exception exception)
+            {
+                diagnostics.CurrentSource = null;
+                diagnostics.ReportPluginAnalysisFailed(plugin.Name, exception.Message);
+            }
+        }
+    }
 
     /// <summary>Registers <paramref name="plugins"/>' keywords, reporting (and skipping) any that clash.</summary>
     public static PluginRegistry Create(ImmutableArray<IPiperPlugin> plugins, DiagnosticBag diagnostics)
@@ -32,7 +69,7 @@ public sealed class PluginRegistry
                     keywords.Add(keyword.Text, (plugin, keyword));
             }
         }
-        return new PluginRegistry(keywords);
+        return new PluginRegistry(keywords, plugins);
     }
 
     /// <summary>Whether <paramref name="text"/> lexes as a name, as a keyword must.</summary>

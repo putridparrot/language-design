@@ -69,7 +69,7 @@ public static class Control_flow
 
 internal static class PiperEntryPoint
 {
-    public static void Main()
+    public static void Main(string[] args)
     {
         global::System.Globalization.CultureInfo.CurrentCulture = global::System.Globalization.CultureInfo.InvariantCulture;
         Control_flow.Main();

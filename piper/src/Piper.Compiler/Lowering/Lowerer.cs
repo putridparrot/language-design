@@ -142,7 +142,12 @@ public sealed class Lowerer
                 }
                 else
                 {
-                    output.Add(new BoundVariableDeclaration(declaration.Variable, LowerForValue(initializer, output)));
+                    var value = LowerForValue(initializer, output);
+                    // `let x: int = { throw E() };`: C# has no throw expression there. Later code may name x (though
+                    // it's never reached), so declare it, then throw.
+                    output.Add(new BoundVariableDeclaration(declaration.Variable, value is BoundThrowExpression ? null : value));
+                    if (value is BoundThrowExpression thrown)
+                        output.Add(new BoundThrowStatement(thrown.Exception));
                 }
                 break;
 
@@ -1105,6 +1110,20 @@ public sealed class Lowerer
 
             var local = new List<BoundStatement>();
             var value = LowerForValue(operand, local);
+            // `F(a, { throw E() })`: C# has no throw expression there, so after evaluating the earlier operands (for
+            // their effects, in order), throw as a statement; the call is then never reached.
+            if (value is BoundThrowExpression thrown)
+            {
+                for (int i = 0; i < results.Count; i++)
+                {
+                    if (!IsInvariant(results[i]))
+                        results[i] = Spill(results[i], prelude);
+                }
+                prelude.AddRange(local);
+                prelude.Add(new BoundThrowStatement(thrown.Exception));
+                results.Add(new BoundUnreachableExpression());
+                continue;
+            }
             if (local.Count > 0)
             {
                 for (int i = 0; i < results.Count; i++)

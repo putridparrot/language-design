@@ -28,6 +28,15 @@ public interface IPiperPlugin
 
     /// <summary>Shared frameworks (<c>Microsoft.AspNetCore.App</c>) the code this plugin writes uses.</summary>
     IReadOnlyList<string> Frameworks => [];
+
+    /// <summary>
+    /// Checks the program once it's type-checked, reporting errors or warnings, such as about the types used in the
+    /// plugin's constructs. Called for every compilation (and as the editor analyzes), after the program is bound,
+    /// whether or not it uses the plugin's keywords. By default it does nothing.
+    /// </summary>
+    void Analyze(PluginAnalysis analysis)
+    {
+    }
 }
 
 /// <summary>

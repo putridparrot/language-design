@@ -17,6 +17,31 @@
   - Packages are restored with the .NET SDK and cached in the folder's `obj/piper`.
   - New errors PIP0401–PIP0403.
   - See `samples/web`, a minimal API with dependency injection.
+- **Remote actors plugin:** `plugins/Piper.Plugins.Actors.Remote` reads the same `actor` syntax on Proto.Actor, so actors
+  can be used from other processes and machines: `Account.Spawn(system, "ada", …)` hosts one,
+  `Account.Connect(system, "host:port", "ada")` reaches it, messages travel as JSON over gRPC, and faults and timeouts
+  reach the caller. See `samples/remote-actors`.
+- **`Main(args: string[])`:** `Main` can take the command-line arguments, as in C#; `piper run app -- one two` passes
+  them.
+- **Interop fixes:**
+  - An interface's inherited properties can be read (`IList<T>.Count`).
+  - An extension method is used when no instance method of the same name applies, as in C# (Proto.Actor's
+    `RequestAsync` with a timeout).
+  - A block ending in `throw` can be an argument or an initializer (`F({ throw E() })`), as `F(x ?? throw e)` can in C#.
+- **Running programs:**
+  - `piper run` names the program as `piper build` would, so libraries that send its types between processes agree with
+    a built copy.
+  - Package restores work for program folders given as relative paths.
+- **Type tests in patterns:** a record or variant pattern can match a value typed `object`, a trait or an interface
+  that the type implements, testing its type as C#'s `o is Point(var x, var y)` does: `match message { Add(n) => …, _ =>
+  … }`.
+- **Actors plugin:** `plugins/Piper.Plugins.Actors` adds `actor Name(params) { mut state = …; on Tell(x: int) { … }
+  on Ask() => int { … } }`. Each actor has private state and handles one message at a time, on .NET channels: tells
+  return at once, asks await the reply, and `Name.Spawn(…)` / `await using` start and stop it. See `samples/actors`.
+- **Plugin analysis:** a plugin can implement `Analyze`, which sees the type-checked program and the code its keywords
+  became, and reports errors or warnings (PIP0505, PIP0506). The actors plugin uses it to warn about messages
+  carrying something mutable. Templates can splice parameter lists, and `PluginParser` adds `ParseAsyncBlock` and
+  `ParseVariableDeclaration`.
 - **Web plugin:** `plugins/Piper.Plugins.Web` adds two declarations, `services Name { singleton Clock = …; scoped
   Greeter => FriendlyGreeter; }` for dependency injection and `endpoints Name "/api" { get "/hello/{name}" (name:
   string) => …; }` for minimal APIs. It checks for duplicate services and routes, route parameters without a handler
