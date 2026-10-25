@@ -121,6 +121,14 @@ fn Connect(host: string, portText: string) => Result<string, string> {
 }
 ```
 
+`?>` pipes a value along only when there is one, so a chain of steps that may each come up empty reads straight
+through. On a Result, an `Err` passes along untouched:
+
+```piper
+let port = Environment.GetEnvironmentVariable("PORT") ?> int.Parse ?> Clamp(1024, 65535) ?? 8080;
+let checked = ParsePort(text) ?> CheckRange;        // Result<int, string>
+```
+
 Exceptions are still there (`throw`, `try`/`catch`/`finally`) for crossing into .NET.
 `defer` runs cleanup code when a block ends, however it ends: `defer file.Close();`.
 

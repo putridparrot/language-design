@@ -1,0 +1,49 @@
+// `c ? a : b` is shorthand for `if c { a } else { b }`, and `x ?> f` is `x |> f` when x has a value: Some (or Ok)
+// goes into f, and None (or Err) passes through. `x? > y` (with a space) is still the `?` operator, then a comparison.
+
+using System;
+
+fn Clamp(n: int, low: int, high: int) => int = n < low ? low : n > high ? high : n;
+fn Half(n: int) => int? = n % 2 == 0 ? n / 2 : None;
+fn Shout(s: string) => string = s.ToUpper() + "!";
+fn Describe(s: string?) => string = s ?? "nothing";
+
+fn ParsePort(text: string) => Result<int, string> =
+    int.TryParse(text, out let n) ? Ok(n) : Err("'{text}' isn't a number");
+fn Positive(n: int) => Result<int, string> = n > 0 ? Ok(n) : Err("{n} isn't positive");
+
+fn Early(x: int?) => int? {
+    let bigger = x? > 3;
+    Print(bigger ? "more than 3" : "3 or less");
+    Some(x? * 2)
+}
+
+fn Main() {
+    let count = 3;
+    Print(count == 1 ? "one item" : "{count} items");
+    Print("{count > 2 ? "many" : "few"}, {count > 2 ? 2.5 : 0.0:F2}");
+    Print(Clamp(5000, 0, 100));
+    Print(Clamp(-5, 0, 100));
+    true ? Print("as a statement") : Print("not printed");
+
+    // Option: each step runs only on a value; a step that returns an option is flattened.
+    let setting: string? = "8080";
+    Print(setting ?> int.Parse ?> Clamp(1024, 65535) ?? 80);
+    let missing: string? = None;
+    Print(missing ?> int.Parse ?> Clamp(1024, 65535) ?? 80);
+    Print(Some(8) ?> Half ?> Half);
+    Print(Some(6) ?> Half ?> Half);
+    Print(Some("hi") ?> Shout |> Describe);
+    Print(missing ?> Shout |> Describe);
+    Some("only when there's a value") ?> Print;
+
+    // Result: Ok goes on, Err passes through; a step that returns a Result is flattened.
+    Print(ParsePort("443") ?> Positive);
+    Print(ParsePort("x") ?> Positive);
+    Print(ParsePort("-5") ?> Positive);
+    Print(ParsePort("12") ?> Clamp(20, 30));
+    ParsePort("7") ?> Print;
+
+    Print(Early(Some(5)));
+    Print(Early(None));
+}

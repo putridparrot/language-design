@@ -194,8 +194,10 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportFieldNamedAsRecord(TextSpan span, string name) =>
         Error("PIP0220", span, $"A field cannot have the same name as its record '{name}'.");
 
-    public void ReportIncompatibleBranches(TextSpan span, TypeSymbol thenType, TypeSymbol elseType) =>
-        Error("PIP0221", span, $"The 'if' and 'else' branches have incompatible types '{thenType}' and '{elseType}'.");
+    public void ReportIncompatibleBranches(TextSpan span, TypeSymbol thenType, TypeSymbol elseType, bool conditional = false) =>
+        Error("PIP0221", span, conditional
+            ? $"The two results of '? :' have incompatible types '{thenType}' and '{elseType}'."
+            : $"The 'if' and 'else' branches have incompatible types '{thenType}' and '{elseType}'.");
 
     public void ReportIncompatibleElements(TextSpan span, TypeSymbol expected, TypeSymbol actual) =>
         Error("PIP0221", span, $"This element has type '{actual}', which is incompatible with the earlier elements' type '{expected}'; give the collection a type if they share one, as in 'let items: List<Shape> = [...]'.");
@@ -325,9 +327,12 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0260", span, "'null' needs an optional type here, e.g. 'let x: int? = null;'. Piper has no null references; 'null' means None.");
 
     public void ReportRequiresOptional(TextSpan span, string op, TypeSymbol type) =>
-        Error("PIP0261", span, op == "?."
-            ? $"'?.' needs an optional value but '{type}' is not optional; use '.' instead."
-            : $"The left side of '??' must be optional but '{type}' is not.");
+        Error("PIP0261", span, op switch
+        {
+            "?." => $"'?.' needs an optional value but '{type}' is not optional; use '.' instead.",
+            "?>" => $"'?>' needs an optional value or a Result but '{type}' is neither; use '|>' instead.",
+            _ => $"The left side of '??' must be optional but '{type}' is not.",
+        });
 
     public void ReportIsBindingOutsideCondition(TextSpan span) =>
         Error("PIP0262", span, "Variables bound by 'is' can only be used in an if or while condition (optionally joined with '&&').");
@@ -338,7 +343,9 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
             : "'?' on a Result can only be used in a function that returns a Result.");
 
     public void ReportTryOperandNotOptional(TextSpan span, TypeSymbol type) =>
-        Error("PIP0263", span, $"'?' needs an optional value or a Result, not '{type}'.");
+        Error("PIP0263", span, type == TypeSymbol.Bool
+            ? $"'?' needs an optional value or a Result, not 'bool'; for a conditional, write 'condition ? a : b'."
+            : $"'?' needs an optional value or a Result, not '{type}'.");
 
     public void ReportBuiltinTypeRedeclared(TextSpan span, string name) =>
         Error("PIP0264", span, $"'{name}' is built into Piper and cannot be redeclared.");

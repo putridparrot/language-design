@@ -1227,10 +1227,10 @@ public sealed partial class Parser
     /// <summary>expression = assignment ;</summary>
     internal ExpressionSyntax ParseExpression() => ParseAssignment();
 
-    /// <summary>assignment = binary [ assignOp assignment ] ;   (right-associative)</summary>
+    /// <summary>assignment = conditional [ assignOp assignment ] ;   (right-associative)</summary>
     private ExpressionSyntax ParseAssignment()
     {
-        var target = ParseBinary(0);
+        var target = ParseConditional();
         if (!SyntaxFacts.IsAssignmentOperator(Current.Kind))
             return target;
 
@@ -1238,6 +1238,59 @@ public sealed partial class Parser
         var value = ParseAssignment();
         return new AssignmentExpressionSyntax(Span(target, value), target, op, value);
     }
+
+    /// <summary>
+    /// conditional = binary [ "?" expression ":" conditional ] ;   (right-associative, as C#'s)
+    /// <c>c ? a : b</c> is <c>if c { a } else { b }</c>.
+    /// </summary>
+    private ExpressionSyntax ParseConditional()
+    {
+        var condition = ParseBinary(0);
+        if (Current.Kind != TokenKind.Question || !IsConditionalQuestion())
+            return condition;
+
+        var question = NextToken();
+        var whenTrue = ParseExpression();
+        Expect(TokenKind.Colon);
+        var whenFalse = ParseConditional();
+        static BlockExpressionSyntax Block(ExpressionSyntax value) => new(value.Span, [], value);
+        return new IfExpressionSyntax(Span(condition, whenFalse), condition, Block(whenTrue), Block(whenFalse)) { Question = question };
+    }
+
+    /// <summary>
+    /// Whether the current <c>?</c> starts <c>? a : b</c> rather than being the <c>?</c> operator (<c>parse(s)? + 1</c>):
+    /// an operand follows (not a block, so <c>if x? { … }</c> is unchanged) and a <c>:</c> comes before the expression
+    /// ends, outside any brackets.
+    /// </summary>
+    private bool IsConditionalQuestion()
+    {
+        if (!StartsOperand(Peek(1).Kind) || Peek(1).Kind == TokenKind.OpenBrace)
+            return false;
+        int depth = 0;
+        for (int i = 1; ; i++)
+        {
+            switch (Peek(i).Kind)
+            {
+                case TokenKind.OpenParen or TokenKind.OpenBracket or TokenKind.OpenBrace:
+                    depth++;
+                    break;
+                case TokenKind.CloseParen or TokenKind.CloseBracket or TokenKind.CloseBrace:
+                    if (depth-- == 0)
+                        return false;
+                    break;
+                case TokenKind.Colon when depth == 0:
+                    return true;
+                case TokenKind.Comma or TokenKind.FatArrow when depth == 0:
+                    return false;
+                case TokenKind.Semicolon or TokenKind.EndOfFile:
+                    return false;
+            }
+        }
+    }
+
+    /// <summary><c>?&gt;</c>, written without a space (so <c>a? &gt; b</c> still compares), which isn't a token of its own so <c>List&lt;int?&gt;</c> still closes.</summary>
+    private bool AtOptionalPipe() =>
+        Current.Kind == TokenKind.Question && Peek(1).Kind == TokenKind.Greater && Peek(1).Span.Start == Current.Span.End;
 
     /// <summary>
     /// binary = unary { binaryOp binary } ;   precedence climbing, see <see cref="SyntaxFacts.GetBinaryPrecedence"/>
@@ -1294,6 +1347,17 @@ public sealed partial class Parser
                 continue;
             }
 
+            // `x ?> f`: binds like `|>`.
+            int pipePrecedence = SyntaxFacts.GetBinaryPrecedence(TokenKind.PipeGreater);
+            if (AtOptionalPipe() && pipePrecedence > parentPrecedence)
+            {
+                var question = NextToken();
+                NextToken();
+                var function = ParseBinary(pipePrecedence);
+                left = new PipeExpressionSyntax(Span(left, function), left, question, function) { IsOptional = true };
+                continue;
+            }
+
             int precedence = SyntaxFacts.GetBinaryPrecedence(Current.Kind);
             if (precedence == 0 || precedence <= parentPrecedence)
                 return left;
@@ -1328,6 +1392,9 @@ public sealed partial class Parser
                     var chain = ParsePostfix(first);
                     return new ConditionalAccessExpressionSyntax(Span(expression, chain), expression, chain);
                 }
+                // `?>` and `c ? a : b` are left for the operators.
+                case TokenKind.Question when AtOptionalPipe() || IsConditionalQuestion():
+                    return expression;
                 case TokenKind.Question:
                     NextToken();
                     expression = new TryExpressionSyntax(TextSpan.FromBounds(expression.Span.Start, Previous.Span.End), expression);
@@ -2123,7 +2190,8 @@ public sealed partial class Parser
     /// </summary>
     private (TextSpan Expression, int? Alignment, string? Format) SplitHole(TextSpan hole)
     {
-        int depth = 0, comma = -1, colon = -1;
+        // A `?` followed by a space starts `c ? a : b`, whose `:` isn't the format's.
+        int depth = 0, comma = -1, colon = -1, conditionals = 0;
         for (int i = hole.Start; i < hole.End && colon < 0; i++)
         {
             switch (_source[i])
@@ -2144,6 +2212,12 @@ public sealed partial class Parser
                     break;
                 case ',' when depth == 0 && comma < 0:
                     comma = i;
+                    break;
+                case '?' when depth == 0 && i + 1 < hole.End && char.IsWhiteSpace(_source[i + 1]) && _source[i - 1] != '?':
+                    conditionals++;
+                    break;
+                case ':' when depth == 0 && conditionals > 0:
+                    conditionals--;
                     break;
                 case ':' when depth == 0:
                     colon = i;

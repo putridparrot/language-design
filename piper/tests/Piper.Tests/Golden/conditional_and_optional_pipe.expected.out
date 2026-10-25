@@ -1,0 +1,20 @@
+3 items
+many, 2.50
+100
+0
+as a statement
+8080
+80
+Some(2)
+None
+HI!
+nothing
+only when there's a value
+Ok(443)
+Err('x' isn't a number)
+Err(-5 isn't positive)
+Ok(20)
+7
+more than 3
+Some(10)
+None

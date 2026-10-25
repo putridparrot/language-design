@@ -360,7 +360,11 @@ public sealed record BinaryExpressionSyntax(TextSpan Span, ExpressionSyntax Left
     : ExpressionSyntax(Span);
 
 /// <summary><c>x |> f(a)</c>: calls <see cref="Right"/> with <see cref="Left"/> as its first argument, <c>f(x, a)</c>.</summary>
-public sealed record PipeExpressionSyntax(TextSpan Span, ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Span);
+public sealed record PipeExpressionSyntax(TextSpan Span, ExpressionSyntax Left, Token Operator, ExpressionSyntax Right) : ExpressionSyntax(Span)
+{
+    /// <summary><c>x ?> f</c>: f is only called when x is Some (or Ok); see <see cref="Operator"/>, the <c>?</c>.</summary>
+    public bool IsOptional { get; init; }
+}
 
 /// <summary><c>1..10</c> includes its end, as in Swift; <c>1..&lt;10</c> stops before it.</summary>
 public sealed record RangeExpressionSyntax(TextSpan Span, ExpressionSyntax Start, Token Operator, ExpressionSyntax End)
@@ -385,7 +389,11 @@ public sealed record ParenthesizedExpressionSyntax(TextSpan Span, ExpressionSynt
 
 /// <summary><see cref="Else"/> is either a <see cref="BlockExpressionSyntax"/> or another <see cref="IfExpressionSyntax"/>.</summary>
 public sealed record IfExpressionSyntax(TextSpan Span, ExpressionSyntax Condition, BlockExpressionSyntax Then, ExpressionSyntax? Else)
-    : ExpressionSyntax(Span);
+    : ExpressionSyntax(Span)
+{
+    /// <summary>The <c>?</c> of <c>c ? a : b</c>, which is written as this if.</summary>
+    public Token? Question { get; init; }
+}
 
 /// <summary>A block is an expression: its value is the optional trailing expression (no semicolon), as in Rust.</summary>
 public sealed record BlockExpressionSyntax(TextSpan Span, ImmutableArray<StatementSyntax> Statements, ExpressionSyntax? Trailing)

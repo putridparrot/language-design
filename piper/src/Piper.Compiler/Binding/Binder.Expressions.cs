@@ -421,6 +421,8 @@ public sealed partial class Binder
     /// <summary><c>x |> f(a)</c> is <c>f(x, a)</c>, and <c>x |> f</c> is <c>f(x)</c>: the left side becomes the first argument.</summary>
     private BoundExpression BindPipe(PipeExpressionSyntax syntax, TypeSymbol? expected)
     {
+        if (syntax.IsOptional)
+            return BindOptionalPipe(syntax);
         var call = syntax.Right is CallExpressionSyntax right
             ? right with { Span = syntax.Span, Arguments = [syntax.Left, .. right.Arguments] }
             : new CallExpressionSyntax(syntax.Span, syntax.Right, [syntax.Left]);
@@ -1306,7 +1308,7 @@ public sealed partial class Binder
         var type = CommonType([then.Type, @else.Type], expected, out _);
         if (type is null)
         {
-            _diagnostics.ReportIncompatibleBranches(new TextSpan(syntax.Span.Start, 2), then.Type, @else.Type);
+            _diagnostics.ReportIncompatibleBranches(syntax.Question?.Span ?? new TextSpan(syntax.Span.Start, 2), then.Type, @else.Type, syntax.Question is not null);
             type = TypeSymbol.Error;
         }
 
@@ -1503,6 +1505,79 @@ public sealed partial class Binder
     /// (flattened if the chain already is), or Unit when the chain is a call made for its effect.
     /// A Result has no conditional access, so on one <c>f()?.name</c> is <c>(f()?).name</c>.
     /// </summary>
+    /// <summary>
+    /// <c>x ?&gt; f(a)</c>: on an Option, <c>f(v, a)</c> when x is <c>Some(v)</c>, otherwise None, giving an optional
+    /// (flattened when f returns one, as <c>?.</c> does). On a Result, <c>f(v, a)</c> when x is <c>Ok(v)</c>, as an
+    /// <c>Ok</c> unless f returns a Result itself, with an <c>Err</c> passing through unchanged.
+    /// </summary>
+    private BoundExpression BindOptionalPipe(PipeExpressionSyntax syntax)
+    {
+        var target = RequireValue(BindExpression(syntax.Left), syntax.Left.Span);
+        var call = syntax with { Left = new ImplicitReceiverSyntax(syntax.Left.Span), IsOptional = false };
+        if (target.Type.IsResult)
+            return BindResultPipe(target, call);
+
+        bool valid = target.Type.IsOption;
+        if (!valid && target.Type != TypeSymbol.Error)
+            _diagnostics.ReportRequiresOptional(syntax.Operator.Span, "?>", target.Type);
+        var receiver = new VariableSymbol("value", valid ? target.Type.TypeArguments[0] : target.Type, isMutable: false, VariableKind.Temporary);
+        _implicitReceivers.Push(new BoundVariableExpression(receiver));
+        var whenSome = BindExpression(call);
+        _implicitReceivers.Pop();
+        if (!valid || whenSome.Type == TypeSymbol.Error)
+            return new BoundErrorExpression();
+        return new BoundConditionalAccessExpression(target, receiver, whenSome, WhenSomeType(whenSome.Type));
+    }
+
+    /// <summary><c>result ?&gt; f</c>: <c>match result { Ok(v) =&gt; Ok(f(v)), Err(e) =&gt; Err(e) }</c>, without the inner Ok when f gives a Result.</summary>
+    private BoundExpression BindResultPipe(BoundExpression target, PipeExpressionSyntax call)
+    {
+        var (okType, errorType) = (target.Type.TypeArguments[0], target.Type.TypeArguments[1]);
+        var value = new VariableSymbol("value", okType, isMutable: false, VariableKind.PatternVariable);
+        _implicitReceivers.Push(new BoundVariableExpression(value));
+        var whenOk = BindExpression(call);
+        _implicitReceivers.Pop();
+        if (whenOk.Type == TypeSymbol.Error)
+            return new BoundErrorExpression();
+
+        var (ok, err) = (_result.FindVariant("Ok")!, _result.FindVariant("Err")!);
+        var error = new VariableSymbol("error", errorType, isMutable: false, VariableKind.PatternVariable);
+        TypeSymbol type;
+        BoundExpression okBody, errBody;
+        if (whenOk.Type == TypeSymbol.Unit)
+        {
+            // `result ?> Print`: run it for an Ok, and do nothing for an Err.
+            (type, okBody, errBody) = (TypeSymbol.Unit, whenOk, new BoundBlockExpression([], null, TypeSymbol.Unit));
+        }
+        else if (whenOk.Type.IsResult)
+        {
+            type = whenOk.Type;
+            if (whenOk.Type.TypeArguments[1] != errorType)
+            {
+                _diagnostics.ReportCannotConvert(call.Right.Span, whenOk.Type, _result.Construct([whenOk.Type.TypeArguments[0], errorType]));
+                return new BoundErrorExpression();
+            }
+            (okBody, errBody) = (whenOk, new BoundVariantCreationExpression(err, [new BoundVariableExpression(error)], type));
+        }
+        else
+        {
+            type = _result.Construct([whenOk.Type, errorType]);
+            (okBody, errBody) = (new BoundVariantCreationExpression(ok, [whenOk], type), new BoundVariantCreationExpression(err, [new BoundVariableExpression(error)], type));
+        }
+        return new BoundMatchExpression(target, [
+            new BoundMatchArm(new BoundConstructorPattern(ok, [new BoundBindingPattern(value)], target.Type), null, okBody),
+            new BoundMatchArm(new BoundConstructorPattern(err, [new BoundBindingPattern(error)], target.Type), null, errBody),
+        ], type);
+    }
+
+    /// <summary>The type of <c>x?.member</c> or <c>x ?&gt; f</c>: an optional of what it gives, unless that's already optional (or unit).</summary>
+    private TypeSymbol WhenSomeType(TypeSymbol type) => type switch
+    {
+        { IsValueType: false } => TypeSymbol.Unit,
+        { IsOption: true } optional => optional,
+        var value => _option.Construct([value]),
+    };
+
     private BoundExpression BindConditionalAccess(ConditionalAccessExpressionSyntax syntax)
     {
         var target = RequireValue(BindExpression(syntax.Target), syntax.Target.Span);
@@ -1528,13 +1603,7 @@ public sealed partial class Binder
         if (!valid || whenNotNull.Type == TypeSymbol.Error)
             return new BoundErrorExpression();
 
-        var type = whenNotNull.Type switch
-        {
-            { IsValueType: false } => TypeSymbol.Unit,
-            { IsOption: true } optional => optional,
-            var value => _option.Construct([value]),
-        };
-        return new BoundConditionalAccessExpression(target, receiver, whenNotNull, type);
+        return new BoundConditionalAccessExpression(target, receiver, whenNotNull, WhenSomeType(whenNotNull.Type));
     }
 
     /// <summary><c>operand?</c>: unwraps, or returns the None/Err to the caller (the function must return the same kind).</summary>

@@ -880,6 +880,13 @@ public class BinderTests
     [InlineData("PIP0203", "record V(a: int); fn Main() { Print(V(1) < V(2)); }")]
     public void Enumerable_and_comparison_errors(string code, string program) => AssertSingleError(code, program);
 
+    [Theory]
+    [InlineData("PIP0261", "fn Abs(n: int) => int = n; fn Main() { let x = 1 ?> Abs; }")]
+    [InlineData("PIP0210", "fn Main() { let x = 5 ? 1 : 2; }")]
+    [InlineData("PIP0221", "fn Main() { let x = true ? 1 : \"a\"; }")]
+    [InlineData("PIP0202", "fn Bad(n: int) => Result<int, int> = Ok(n); fn Main() { let r: Result<int, string> = Ok(1); let s = r ?> Bad; }")]
+    [InlineData("PIP0200", "fn Main() { let x: int? = Some(1); let y = x ?> Missing; }")]
+    public void Conditional_and_optional_pipe_errors(string code, string program) => AssertSingleError(code, program);
     [Fact]
     public void Comparing_without_IComparable_suggests_it()
     {

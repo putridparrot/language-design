@@ -84,7 +84,8 @@ using           = [ "await" ] "using" ( "let" | "mut" ) IDENT [ ":" type ] "=" e
                 | "using" "(" [ ( "let" | "mut" ) IDENT [ ":" type ] "=" ] expression ")" block ;
 
 expression      = assignment ;
-assignment      = binary [ ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" ) assignment ] ;
+assignment      = conditional [ ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" ) assignment ] ;
+conditional     = binary [ "?" expression ":" conditional ] ;  (* if binary { expression } else { conditional } *)
 binary          = unary { binaryOp unary | "is" pattern } ;   (* precedence table below *)
 unary           = ( "-" | "!" | "await" ) unary | "(" type ")" unary | postfix ;   (* a cast, by C#'s rule; see below *)
 postfix         = primary { "(" [ arguments ] ")" [ trailingClosure ] | "[" arguments "]" | "." IDENT [ typeArguments ] | "?" | "?." IDENT postfix }
@@ -133,13 +134,14 @@ literalPattern  = [ "-" ] ( INT | DOUBLE ) | CHAR | STRING | "true" | "false" ;
 | 10 | unary `-` `!` | prefix |
 | 9 | `*` `/` `%` | left |
 | 8 | `+` `-` | left |
-| 7 | `\|>` | left |
+| 7 | `\|>` `?>` | left |
 | 6 | `<` `<=` `>` `>=` `is` | left |
 | 5 | `==` `!=` | left |
 | 4 | `&&` | left |
 | 3 | `\|\|` | left |
 | 2 | `??` | right |
 | 1 | `..` `..<` | left (only valid in `for`) |
+| — | `? :` (parsed between `..` and assignment) | right |
 | 0 | `=` `+=` `-=` `*=` `/=` `%=` | right |
 
 The table lives in [SyntaxFacts.cs](../src/Piper.Compiler/Syntax/SyntaxFacts.cs); changing a
@@ -847,11 +849,14 @@ fn Copy(from: string, to: string) {
 
 - **Blocks are expressions.** A block's value is its final expression, written without a `;`: `let y = { let t = 2; t * 3 };`.
 - **`if` is an expression.** `let s = if c { "a" } else { "b" };` gives both branches' common type. An `if` without `else` has type unit.
+- **`c ? a : b`** is shorthand for `if c { a } else { b }`, as in C#: `count == 1 ? "item" : "items"`. It binds looser than everything but assignment, nests to the right (`n < low ? low : n > high ? high : n`), and has the same typing as the `if`.
+  - A `?` is the conditional only when a `:` follows it in the same expression. Otherwise it's the `?` operator: `parse(s)? + 1`, `if x? { … }`.
+  - Inside an interpolation hole, the `:` of `c ? a : b` isn't taken as a format specifier, as long as the `?` has a space after it: `"{n == 1 ? "item" : "items"}"`, `"{big ? price : 0.0:F2}"`.
 - **Function bodies follow the same rule.** A function body's final expression is its return value. A function with a return type must end in a value or return on every path; as in C#, a `while true` loop with no `break` never ends, so a function may end with one.
 - **Assignment is a statement-like expression of type unit,** so `a = b = c` is rejected.
 - **Conditions must be `bool`.** There is no truthiness.
 
-### The pipe operator: `|>`
+### The pipe operators: `|>` and `?>`
 
 `x |> F(a, b)` is `F(x, a, b)`: the value on the left becomes the first argument of the call on the right, and
 `x |> F` is `F(x)`. A chain of calls then reads in the order it runs.
@@ -866,6 +871,22 @@ let total = orders
 - The right side is anything that can be called: a function, a function value, a record, or a .NET method (`|> Math.Abs`, `|> Enumerable.ToList()`).
 - It binds looser than arithmetic and tighter than comparison, so `a + b |> F == c` is `F(a + b) == c`. Chains go left to right.
 - It is plain call syntax, so it emits an ordinary C# call.
+
+**`?>`** pipes only a value that's there. `x ?> F(a)` is `F(v, a)` when `x` is `Some(v)`, and `None` when it's `None`, so a chain of steps on an optional reads like one with `|>`:
+
+```piper
+let port = Environment.GetEnvironmentVariable("PORT")   // string?
+    ?> int.Parse                                        // int?, skipped if None
+    ?> Clamp(1024, 65535)
+    ?? 8080;
+```
+
+- The result is optional. A step that already returns an optional isn't wrapped again (`Some(8) ?> Half ?> Half` is an `int?`), as with `?.`.
+- On a `Result`, an `Ok(v)` goes into the step and an `Err` passes through unchanged: `ParsePort(text) ?> CheckRange`. A step returning a plain value gives `Ok` of it; one returning a `Result` (with the same error type) is used as it is.
+- A step with no value (`?> Print`) runs only when there's a value, and the whole expression has type unit.
+- It has `|>`'s precedence, so they mix: in `x ?> F |> G`, G receives the optional.
+- The left side must be an optional or a `Result`; for anything else, use `|>`.
+- Write it without a space: `x? > y`, with one, is still the `?` operator followed by a comparison.
 
 ### Evaluation order
 

@@ -109,7 +109,7 @@
     },
     "operators": {
       "patterns": [
-        { "name": "keyword.operator.arrow.piper", "match": "=>|\\|>" },
+        { "name": "keyword.operator.arrow.piper", "match": "=>|\\|>|\\?>" },
         { "name": "keyword.operator.range.piper", "match": "\\.\\.\\.|\\.\\.<?" },
         { "name": "keyword.operator.null.piper", "match": "\\?\\?|\\?\\.|\\?" },
         { "name": "keyword.operator.comparison.piper", "match": "==|!=|<=|>=" },

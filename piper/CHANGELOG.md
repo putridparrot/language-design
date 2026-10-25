@@ -32,6 +32,10 @@
   - New errors PIP0109 and PIP0349–PIP0354.
 - **Better error:** a collection literal whose elements have no common type says so, rather than calling the element a
   match arm.
+- **Conditional expressions:** `c ? a : b`, shorthand for `if c { a } else { b }`, as in C#. A `?` is the conditional
+  only when a `:` follows, so `x? + 1` keeps its meaning, and it works inside interpolation holes.
+- **`?>`, the optional pipe:** `x ?> F(a)` calls `F(v, a)` when `x` is `Some(v)` (or `Ok(v)`), and passes `None` (or
+  the `Err`) along otherwise, flattening steps that return an optional (or Result).
 - **`ToString` on records and enums:** `extend Money { override fn ToString() => string = "£{this.amount}"; }` chooses
   how a record or enum prints.
 - **.NET implicit conversions** apply as in C#: `BigInteger.Pow(2, 70)`, `let big: BigInteger = 5;`,

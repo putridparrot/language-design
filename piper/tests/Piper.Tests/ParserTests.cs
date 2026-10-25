@@ -464,4 +464,52 @@ public class ParserTests
         Assert.IsType<TypePatternSyntax>(Assert.IsType<TuplePatternSyntax>(arms[2].Pattern).Elements[0]);
         Assert.IsType<WildcardPatternSyntax>(arms[3].Pattern);
     }
+
+    [Fact]
+    public void Conditional_expression_is_an_if()
+    {
+        var body = Body(ParseClean("fn f() { a ? b : c ? d : e }"));
+        var outer = Assert.IsType<IfExpressionSyntax>(body.Trailing);
+        Assert.NotNull(outer.Question);
+        var inner = Assert.IsType<IfExpressionSyntax>(Assert.IsType<BlockExpressionSyntax>(outer.Else).Trailing);
+        Assert.Equal("c", Assert.IsType<NameExpressionSyntax>(inner.Condition).Identifier.Text);
+    }
+
+    [Theory]
+    [InlineData("fn f() { x? + 1 }")]
+    [InlineData("fn f() { x? > 1 }")]
+    [InlineData("fn f() { if x? { } }")]
+    [InlineData("fn f() { g(x?, y: 1) }")]
+    public void Question_without_a_colon_is_the_try_operator(string text)
+    {
+        var nodes = Descendants(ParseClean(text)).ToList();
+        Assert.Contains(nodes, n => n is TryExpressionSyntax);
+        Assert.DoesNotContain(nodes, n => n is IfExpressionSyntax { Question: not null });
+    }
+
+    private static IEnumerable<SyntaxNode> Descendants(object node)
+    {
+        if (node is SyntaxNode syntax)
+            yield return syntax;
+        foreach (var property in node.GetType().GetProperties().Where(p => p.GetIndexParameters().Length == 0 && p.Name != "EqualityContract"))
+        {
+            var children = property.GetValue(node) switch
+            {
+                SyntaxNode child => [child],
+                System.Collections.IEnumerable list and not string => list.OfType<SyntaxNode>(),
+                _ => [],
+            };
+            foreach (var descendant in children.SelectMany(Descendants))
+                yield return descendant;
+        }
+    }
+
+    [Fact]
+    public void Optional_pipe_needs_no_space_between_its_characters()
+    {
+        var piped = Assert.IsType<PipeExpressionSyntax>(Body(ParseClean("fn f() { x ?> g |> h }")).Trailing);
+        Assert.False(piped.IsOptional);
+        Assert.True(Assert.IsType<PipeExpressionSyntax>(piped.Left).IsOptional);
+        Assert.IsType<BinaryExpressionSyntax>(Body(ParseClean("fn f() { x? > g }")).Trailing);
+    }
 }
