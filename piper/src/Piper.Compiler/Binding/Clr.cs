@@ -6,52 +6,83 @@ using System.Runtime.Loader;
 namespace Piper.Binding;
 
 /// <summary>
-/// Every public, top-level .NET type a Piper program can use: those in the runtime's trusted platform
-/// assemblies, which is also what <see cref="Runner"/> compiles the generated C# against. Built once per process.
+/// Every public, top-level .NET type a Piper program can use: those in the runtime's trusted platform assemblies
+/// (<see cref="Platform"/>), plus those of the packages, frameworks and assemblies the program references
+/// (<see cref="For"/>). The same assemblies are what <see cref="Runner"/> compiles the generated C# against.
 /// </summary>
-public static class ClrTypeIndex
+public sealed class ClrTypeIndex
 {
     private sealed record Index(Dictionary<string, List<Type>> Types, HashSet<string> Namespaces, Dictionary<string, List<Type>> TypesByNamespace);
 
-    private static readonly ConcurrentDictionary<(string Namespace, string Name), MethodInfo[]> ExtensionMethodCache = new();
+    private static readonly Lazy<ClrTypeIndex> PlatformIndex = new(() => new ClrTypeIndex([]));
 
-    private static readonly Lazy<Index> Instance = new(Build);
+    private static readonly ConcurrentDictionary<string, ClrTypeIndex> ByReferences = new(StringComparer.OrdinalIgnoreCase);
+
+    private readonly ConcurrentDictionary<(string Namespace, string Name), MethodInfo[]> _extensionMethods = new();
+
+    private readonly Lazy<Index> _index;
+
+    private ClrTypeIndex(ImmutableArray<string> references)
+    {
+        References = references;
+        _index = new(() => Build(references));
+    }
+
+    /// <summary>The runtime's own assemblies, which every program can use. Built once per process.</summary>
+    public static ClrTypeIndex Platform => PlatformIndex.Value;
+
+    /// <summary>
+    /// The platform's types plus those in the assemblies at <paramref name="references"/> (implementation assemblies, as
+    /// <see cref="ProgramReferences"/> resolves them). Built once per process for each set of assemblies.
+    /// </summary>
+    public static ClrTypeIndex For(ImmutableArray<string> references) =>
+        references.IsDefaultOrEmpty
+            ? Platform
+            : ByReferences.GetOrAdd(string.Join(Path.PathSeparator, references.Order(StringComparer.OrdinalIgnoreCase)), _ => new ClrTypeIndex(references));
+
+    /// <summary>The assemblies beyond the platform's that this index has, and that the program is compiled against.</summary>
+    public ImmutableArray<string> References { get; }
+
+    /// <summary>The context <see cref="References"/> are loaded into, or null if there are none.</summary>
+    public AssemblyLoadContext? Context => References.IsEmpty ? null : ReferenceLoadContext.For(References);
 
     /// <summary>True if <paramref name="fullName"/> (e.g. "System.Text") is a .NET namespace.</summary>
-    public static bool IsNamespace(string fullName) => Instance.Value.Namespaces.Contains(fullName);
+    public bool IsNamespace(string fullName) => _index.Value.Namespaces.Contains(fullName);
 
     /// <summary>All types called <paramref name="name"/> in <paramref name="namespace"/>, of any generic arity.</summary>
-    public static IReadOnlyList<Type> FindTypes(string @namespace, string name) =>
-        Instance.Value.Types.TryGetValue($"{@namespace}.{name}", out var types) ? types : [];
+    public IReadOnlyList<Type> FindTypes(string @namespace, string name) =>
+        _index.Value.Types.TryGetValue($"{@namespace}.{name}", out var types) ? types : [];
 
     /// <summary>Extension methods called <paramref name="name"/> declared by static classes in <paramref name="namespace"/> (e.g. LINQ's Where in System.Linq).</summary>
-    public static IReadOnlyList<MethodInfo> ExtensionMethods(string @namespace, string name) =>
-        ExtensionMethodCache.GetOrAdd((@namespace, name), key =>
-            Instance.Value.TypesByNamespace.TryGetValue(key.Namespace, out var types)
+    public IReadOnlyList<MethodInfo> ExtensionMethods(string @namespace, string name) =>
+        _extensionMethods.GetOrAdd((@namespace, name), key =>
+            _index.Value.TypesByNamespace.TryGetValue(key.Namespace, out var types)
                 ? [.. types
                     .Where(t => t.IsAbstract && t.IsSealed && t.IsDefined(typeof(System.Runtime.CompilerServices.ExtensionAttribute), false))
                     .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Static))
                     .Where(m => m.Name == key.Name && m.IsDefined(typeof(System.Runtime.CompilerServices.ExtensionAttribute), false))]
                 : []);
 
-    private static Index Build()
+    private Index Build(ImmutableArray<string> references)
     {
         var types = new Dictionary<string, List<Type>>();
         var byNamespace = new Dictionary<string, List<Type>>();
         var namespaces = new HashSet<string>();
         var seen = new HashSet<Type>();
-        var paths = ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") ?? "")
-            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
+        var platform = ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") ?? "")
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .Select(path => (Func<Assembly>)(() => AssemblyLoadContext.Default.LoadFromAssemblyName(AssemblyName.GetAssemblyName(path))));
+        // The platform's assemblies are the process's own; a program's others are loaded into a context of their own.
+        var referenced = references.Select(path => (Func<Assembly>)(() => Context!.LoadFromAssemblyName(AssemblyName.GetAssemblyName(path))));
 
-        foreach (var path in paths)
+        foreach (var load in platform.Concat(referenced))
         {
             Type[] exported;
             try
             {
-                var assembly = AssemblyLoadContext.Default.LoadFromAssemblyName(AssemblyName.GetAssemblyName(path));
-                exported = assembly.GetExportedTypes();
+                exported = load().GetExportedTypes();
             }
-            catch (Exception ex) when (ex is BadImageFormatException or FileLoadException or FileNotFoundException or NotSupportedException)
+            catch (Exception ex) when (ex is BadImageFormatException or FileLoadException or FileNotFoundException or NotSupportedException or ReflectionTypeLoadException)
             {
                 continue;
             }

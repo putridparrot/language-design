@@ -51,6 +51,17 @@ public static class Lambdas
         names.Sort((string a_1, string b_1) => a_1.Length - b_1.Length);
         global::System.Console.WriteLine(string.Join(", ", names));
         global::System.Console.WriteLine(names.Exists((string name) => name.StartsWith("L")));
+        global::System.Collections.Generic.List<global::System.Func<int>> captured = new global::System.Collections.Generic.List<global::System.Func<int>>();
+        for (int i_1 = 0; i_1 < 3; i_1++)
+        {
+            int i = i_1;
+            captured.Add(() => i * 10);
+        }
+        foreach (int n_7 in new global::System.Collections.Generic.List<int> { 7, 8 })
+        {
+            captured.Add(() => n_7);
+        }
+        global::System.Console.WriteLine(string.Join<int>(" ", global::System.Linq.Enumerable.Select<global::System.Func<int>, int>(captured, (global::System.Func<int> f) => f())));
     }
 }
 

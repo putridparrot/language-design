@@ -55,4 +55,14 @@ fn Main() {
     names.Sort((a, b) => a.Length - b.Length);
     Print(string.Join(", ", names));
     Print(names.Exists(name => name.StartsWith("L")));
+
+    // Each iteration of a loop has its own variable, so lambdas capture that iteration's value, over a range too.
+    let captured: List<() => int> = [];
+    for i in 0..<3 {
+        captured.Add(() => i * 10);
+    }
+    for n in [7, 8] {
+        captured.Add(() => n);
+    }
+    Print(string.Join(" ", captured.Select(f => f())));
 }

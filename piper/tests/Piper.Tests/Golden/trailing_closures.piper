@@ -1,0 +1,73 @@
+// Trailing closures: a block after a call is its last argument, a lambda. Library functions can then read like
+// built-in statements, without changing the language.
+
+using System;
+using System.Linq;
+using System.Collections.Generic;
+
+fn Repeat(times: int, body: (int) => unit) {
+    for i in 0..<times {
+        body(i);
+    }
+}
+
+fn Measure(label: string, body: () => int) => int {
+    let result = body();
+    Print("{label}: {result}");
+    result
+}
+
+fn Guarded(body: () => unit) {
+    try {
+        body();
+    } catch (e: InvalidOperationException) {
+        Print("caught: {e.Message}");
+    }
+}
+
+fn IsSmall(n: int, check: (int) => bool) => bool = check(n);
+
+fn Main() {
+    // `f(args) { x => … }` is `f(args, x => { … })`; a statement ending with one needs no `;`.
+    Repeat(3) { i =>
+        Print("tick {i}");
+    }
+
+    // Without parentheses the closure is the only argument; without `=>` it has no parameters.
+    Guarded {
+        throw InvalidOperationException("oops");
+    }
+
+    // The block's last expression is the closure's value.
+    let total = Measure("sum") {
+        let numbers = [1, 2, 3, 4];
+        numbers.Sum()
+    };
+    Print(total);
+
+    // Several parameters, with optional types.
+    let names: List<string> = ["Grace", "Ada", "Linus"];
+    names.Sort() { (a: string, b: string) => a.Length - b.Length }
+    Print(string.Join(", ", names));
+
+    // Members and LINQ calls take them too.
+    let evens = [5, 3, 8, 1, 6].Where() { n => n % 2 == 0 }.ToList();
+    Print(string.Join(", ", evens));
+
+    // In an `if`, `while`, `for` or `match` head the `{` is the body, so a closure there goes inside the parentheses.
+    if IsSmall(3, n => n < 5) {
+        Print("small");
+    }
+    let ready = true;
+    if ready {
+        Print("ready");
+    }
+    for name in names {
+        Print(name);
+    }
+    mut count = 0;
+    while count < 2 {
+        count += 1;
+    }
+    Print(count);
+}

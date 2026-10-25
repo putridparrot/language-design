@@ -35,7 +35,8 @@ Notation: `{ x }` is zero or more, `[ x ]` is optional, `|` separates alternativ
 compilationUnit = { using } [ "namespace" qualifiedName ";" ] { using } { attributes [ "private" ] declaration } EOF ;
 using           = "using" qualifiedName ";" ;                (* a Piper or .NET namespace *)
 qualifiedName   = IDENT { "." IDENT } ;
-declaration     = function | record | enum | trait | extend | test ;
+declaration     = function | record | enum | trait | extend | test | pluginDeclaration ;
+pluginDeclaration = KEYWORD … ;                               (* a plugin's syntax: see plugins.md *)
 test            = [ "async" ] "test" STRING block ;            (* run by piper test, left out of other builds *)
 attributes      = { "[" attribute { "," attribute } [ "," ] "]" } ;
 attribute       = qualifiedName [ "(" [ expression { "," expression } [ "," ] ] ")" ] ;   (* constants, then Name = value *)
@@ -60,8 +61,9 @@ namedType       = qualifiedName [ "<" type { "," type } [ "," ] ">" ] ;   (* e.g
 
 block           = "{" { statement } [ expression ] "}" ;      (* final expression = block's value *)
 statement       = variableDecl | while | for | return | try | using | defer | yield | "break" ";" | "continue" ";"
-                | blockLike [ ";" ] | expression ";" | ";" ;
-blockLike       = if | match | block ;                        (* ends at its '}', no ';' needed *)
+                | blockLike [ ";" ] | expression ";" | ";" | pluginStatement ;
+blockLike       = if | match | block | (* an expression ending with a trailingClosure *) ;   (* ends at its '}', no ';' needed *)
+pluginStatement = KEYWORD … ;                                 (* a plugin's syntax: see plugins.md *)
 variableDecl    = ( "let" | "mut" ) ( IDENT [ ":" type ] | designation ) "=" expression ";"
                 | "let" pattern "=" expression "else" block [ ";" ] ;   (* let ... else: the pattern starts with "[" or a name followed by "(", "." or "{" *)
 designation     = "(" ( IDENT | designation ) "," ( IDENT | designation ) { "," ( IDENT | designation ) } ")" ;   (* "_" discards *)
@@ -79,8 +81,11 @@ expression      = assignment ;
 assignment      = binary [ ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" ) assignment ] ;
 binary          = unary { binaryOp unary | "is" pattern } ;   (* precedence table below *)
 unary           = ( "-" | "!" | "await" ) unary | "(" type ")" unary | postfix ;   (* a cast, by C#'s rule; see below *)
-postfix         = primary { "(" [ arguments ] ")" | "[" arguments "]" | "." IDENT [ typeArguments ] | "?" | "?." IDENT postfix } ;
+postfix         = primary { "(" [ arguments ] ")" [ trailingClosure ] | "[" arguments "]" | "." IDENT [ typeArguments ] | "?" | "?." IDENT postfix }
+                | ( IDENT | postfix "." IDENT ) trailingClosure ;
                                                               (* after "?." the rest of the chain is skipped on None *)
+trailingClosure = "{" [ ( IDENT | "(" [ lambdaParam { "," lambdaParam } [ "," ] ] ")" ) "=>" ] { statement } [ expression ] "}" ;
+                                                              (* the call's last argument; not in an if/while/for/match/requires head *)
 arguments       = argument { "," argument } [ "," ] ;
 argument        = [ IDENT ":" ] ( expression | "out" [ "let" | "mut" ] IDENT | "ref" expression ) ;   (* name: a named argument; out and ref: only for .NET out and ref parameters *)
 primary         = INT | DOUBLE | CHAR | STRING | "true" | "false" | "null" | IDENT [ typeArguments ] | "this"
@@ -388,8 +393,16 @@ private fn Square(x: double) => double = x * x;   // visible only in this file
 
 ### .NET interop
 
-Any public type in the .NET base libraries can be used. Builtin Piper types are the corresponding .NET types,
-so their members are available too.
+Any public type in the .NET base libraries can be used. So can the types of the NuGet packages, shared frameworks
+(such as ASP.NET Core) and assemblies a program folder's `piper.json` lists in `"packages"`, `"frameworks"` and
+`"references"`. Builtin Piper types are the corresponding .NET types, so their members are available too.
+
+A lambda whose parameters all have types can be passed where .NET takes any `Delegate`, as in C#. ASP.NET Core's
+minimal APIs rely on this:
+
+```piper
+app.MapGet("/hello/\{name}", (name: string) => "Hello {name}");   // \{ is a literal brace, as {…} interpolates
+```
 
 ```piper
 using System;
@@ -487,7 +500,41 @@ names.Sort((a, b) => a.Length - b.Length);    // a .NET delegate type
 
 - A lambda's return type is the expected one, or else the common type of its body's value and its `return`s.
 - Lambdas capture variables by reference, as in C#, so `n => { total += n; }` updates `total`.
+- Each iteration of a `for` loop has its own loop variable, over a range as over a collection, so
+  `for i in 0..<3 { actions.Add(() => i); }` captures 0, 1 and 2.
+- An error in a lambda passed to an overloaded .NET method is reported in the lambda, not as "no overload accepts
+  these arguments", when its parameters say which overload is meant.
 - A lambda without annotations needs an expected function type; a lambda with too few or many parameters for it is an error.
+
+### Trailing closures
+
+A block after a call is its last argument, as a lambda, as in Kotlin and Swift. This lets a library function read like
+a statement:
+
+```piper
+Repeat(3) { i => Print(i); }                  // Repeat(3, i => { Print(i); })
+Guarded { RiskyWork(); }                      // Guarded(() => { RiskyWork(); }): the closure is the only argument
+let total = Measure("sum") { numbers.Sum() }; // the block's value is the closure's
+names.Sort() { (a, b) => a.Length - b.Length }
+```
+
+- The block may start with lambda parameters and `=>`. Without them, the closure has none.
+- A statement ending with a trailing closure needs no `;`.
+- In an `if`, `while`, `for`, `match` or `requires` head, a `{` is the body (`if ready { … }`). A closure there must be
+  inside brackets.
+- After the closure, `.`, `?.` and `?` continue the expression. A `(`, `[` or `{` starts the next statement.
+
+- A closure that awaits (outside a lambda of its own) is async, as if written `async () => { … }`. One that doesn't is
+  synchronous, even in an `async fn`.
+
+It's only syntax: the call is bound exactly as if the lambda were written in the parentheses.
+
+### Plugins
+
+A compiler plugin, listed in `piper.json`'s `"plugins"`, adds keywords that start a statement or a top-level
+declaration, such as `parallel for x in items { … }`. The plugin rewrites its construct into ordinary Piper as it's
+parsed, so everything after parsing, including type checking and errors, works as for code the user wrote. A plugin
+keyword is still an ordinary name wherever its construct can't start. See [plugins.md](plugins.md).
 
 ### Collections
 

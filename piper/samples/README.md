@@ -18,6 +18,9 @@ correct.
 | [operators.piper](operators.piper) | Arithmetic operators on records, including unary minus and a static operator for `2 * v`, and `+=` |
 | [testing.piper](testing.piper) | `test` blocks, `Assert` and `AssertEqual`, next to the code they test |
 | [library/](library) | A program of several files with a `piper.json`: namespaces, `using` and qualified names, `private` functions, types and methods (and what a public signature can't expose), extending a type from another file, and tests |
+| [web/](web) | ASP.NET Core from `piper.json`'s `"frameworks"`: a minimal API with dependency injection, which serves on a free port, calls itself and stops |
+| [webapp/](webapp) | The same kind of web API declared with the web plugin's `services { }` and `endpoints { }` (build `plugins/Piper.Plugins.Web` first), whose piper.json lists only the plugin |
+| [plugins/](plugins) | Extending the language without changing the compiler: `parallel for` and `concurrency { }` from a compiler plugin listed in `piper.json` (build `plugins/Piper.Plugins.Parallel` first), and a trailing closure (`Retry(3) { … }`) |
 
 ## Visibility in brief
 

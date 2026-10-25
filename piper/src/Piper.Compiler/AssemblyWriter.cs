@@ -24,9 +24,14 @@ public static class AssemblyWriter
     /// <summary>The space the apphost template reserves for that path.</summary>
     private const int AppHostPathCapacity = 1024;
 
-    public static AssemblyOutput Write(IEnumerable<GeneratedFile> files, string directory, string name, bool executable)
+    /// <param name="references">
+    /// What the program references beyond the platform: package and other assemblies are copied next to it, and an
+    /// executable's runtimeconfig.json names the shared frameworks.
+    /// </param>
+    public static AssemblyOutput Write(IEnumerable<GeneratedFile> files, string directory, string name, bool executable, ProgramReferences? references = null)
     {
-        var build = Runner.Build(files, name, executable);
+        references ??= ProgramReferences.None;
+        var build = Runner.Build(files, name, executable, references);
         if (!build.Success)
             return new AssemblyOutput([], null, build.Errors);
 
@@ -47,28 +52,41 @@ public static class AssemblyWriter
         var runtime = typeof(Piper.Runtime.PiperInterop).Assembly.Location;
         Write(Path.GetFileName(runtime), File.ReadAllBytes(runtime));
 
+        // Package and referenced assemblies go next to the program, where .NET looks for them.
+        foreach (var assembly in references.CopiedAssemblies)
+            Write(Path.GetFileName(assembly), File.ReadAllBytes(assembly));
+
         if (!executable)
             return new AssemblyOutput([.. written], null, []);
 
-        Write(name + ".runtimeconfig.json", Encoding.UTF8.GetBytes(RuntimeConfig()));
+        Write(name + ".runtimeconfig.json", Encoding.UTF8.GetBytes(RuntimeConfig(references.Frameworks)));
         var launcher = WriteLauncher(directory, name);
         if (launcher is not null)
             written.Add(launcher);
         return new AssemblyOutput([.. written], launcher, []);
     }
 
-    /// <summary>Tells the .NET host which runtime to run the program on: this one's major and minor version, or later patches.</summary>
-    private static string RuntimeConfig()
+    /// <summary>
+    /// Tells the .NET host which runtime to run the program on: this one's major and minor version, or later patches,
+    /// with any other shared <paramref name="frameworks"/> the program uses.
+    /// </summary>
+    private static string RuntimeConfig(ImmutableArray<FrameworkReference> frameworks)
     {
         var version = Environment.Version;
+        var names = frameworks.Select(f => f.Name).Prepend(ProgramReferences.CoreFramework);
+        var entries = string.Join(",\n", names.Select(framework => $$"""
+                  {
+                    "name": "{{framework}}",
+                    "version": "{{version.Major}}.{{version.Minor}}.0"
+                  }
+            """));
         return $$"""
             {
               "runtimeOptions": {
                 "tfm": "net{{version.Major}}.{{version.Minor}}",
-                "framework": {
-                  "name": "Microsoft.NETCore.App",
-                  "version": "{{version.Major}}.{{version.Minor}}.0"
-                }
+                "frameworks": [
+            {{entries}}
+                ]
               }
             }
 

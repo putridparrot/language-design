@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Reflection;
+using Piper.Diagnostics;
 using Piper.Syntax;
 using Piper.Text;
 
@@ -129,7 +130,7 @@ public sealed partial class Binder
             .Where(n => !n.IsGlobal)
             .Select(n => n.FullName)
             .Distinct()
-            .SelectMany(n => ClrTypeIndex.ExtensionMethods(n, name))];
+            .SelectMany(n => _globalNamespace.Clr.ExtensionMethods(n, name))];
 
     /// <summary>Public instance methods, including those an interface type inherits from its base interfaces.</summary>
     private static IEnumerable<MethodInfo> InstanceMethods(Type type)
@@ -293,38 +294,46 @@ public sealed partial class Binder
         if (arguments.Any(a => a.Type == TypeSymbol.Error || (a.Out is { Declaration: null, IsDiscard: false } && a.OutVariable is null)))
             return null;
 
-        var applicable = new List<(ClrCandidate Candidate, int[] Scores, bool Expanded, int[]? Positions)>();
-        foreach (var member in members)
+        List<(ClrCandidate Candidate, int[] Scores, bool Expanded, int[]? Positions)> Applicable(bool lambdaShapesOnly)
         {
-            var memberMap = map;
-            if (explicitTypeArguments is { } written)
+            var applicable = new List<(ClrCandidate Candidate, int[] Scores, bool Expanded, int[]? Positions)>();
+            foreach (var member in members)
             {
-                // `Enumerable.Empty<Int>()`: only generic methods with that many type parameters, and nothing to infer.
-                if (member is not MethodInfo { IsGenericMethodDefinition: true } generic || generic.GetGenericArguments().Length != written.Length)
-                    continue;
-                memberMap = new Dictionary<Type, TypeSymbol>(map.Concat(generic.GetGenericArguments().Zip(written, KeyValuePair.Create)));
-            }
-            else if (member is MethodInfo { IsGenericMethodDefinition: true } inferable)
-            {
-                if (InferMethodTypeArguments(inferable, arguments, map) is not { } inferred)
-                    continue;
-                memberMap = inferred;
-            }
+                var memberMap = map;
+                if (explicitTypeArguments is { } written)
+                {
+                    // `Enumerable.Empty<Int>()`: only generic methods with that many type parameters, and nothing to infer.
+                    if (member is not MethodInfo { IsGenericMethodDefinition: true } generic || generic.GetGenericArguments().Length != written.Length)
+                        continue;
+                    memberMap = new Dictionary<Type, TypeSymbol>(map.Concat(generic.GetGenericArguments().Zip(written, KeyValuePair.Create)));
+                }
+                else if (member is MethodInfo { IsGenericMethodDefinition: true } inferable)
+                {
+                    if (InferMethodTypeArguments(inferable, arguments, map) is not { } inferred)
+                        continue;
+                    memberMap = inferred;
+                }
 
-            if (Describe(member, container, memberMap) is not { } candidate)
-                continue;
-            if (!Positions(candidate, arguments, out var positions))
-                continue;
-            if (Score(candidate, arguments, expanded: false, positions) is { } normal)
-                applicable.Add((candidate, normal, false, positions));
-            else if (positions is null && candidate.ParamsElement is not null && Score(candidate, arguments, expanded: true, null) is { } expanded)
-                applicable.Add((candidate, expanded, true, null));
+                if (Describe(member, container, memberMap) is not { } candidate)
+                    continue;
+                if (!Positions(candidate, arguments, out var positions))
+                    continue;
+                if (Score(candidate, arguments, expanded: false, positions, lambdaShapesOnly) is { } normal)
+                    applicable.Add((candidate, normal, false, positions));
+                else if (positions is null && candidate.ParamsElement is not null && Score(candidate, arguments, expanded: true, null, lambdaShapesOnly) is { } expanded)
+                    applicable.Add((candidate, expanded, true, null));
+            }
+            return applicable;
         }
 
+        var applicable = Applicable(lambdaShapesOnly: false);
         if (applicable.Count == 0)
         {
-            var described = arguments.Select(a => a.Type ?? (TypeSymbol)ClrTypeSymbol.For(typeof(Delegate)));
-            _diagnostics.ReportNoApplicableOverload(span, displayName, described);
+            if (!ReportLambdaErrors(Applicable(lambdaShapesOnly: true), arguments))
+            {
+                var described = arguments.Select(a => a.Type ?? (TypeSymbol)ClrTypeSymbol.For(typeof(Delegate)));
+                _diagnostics.ReportNoApplicableOverload(span, displayName, described);
+            }
             return null;
         }
 
@@ -557,7 +566,51 @@ public sealed partial class Binder
         expanded && index >= candidate.Parameters.Length - 1 ? candidate.ParamsElement! : candidate.Parameters[index];
 
     /// <summary>One score per argument (lower is a better conversion), or null if the candidate can't take these arguments.</summary>
-    private int[]? Score(ClrCandidate candidate, List<ClrArgument> arguments, bool expanded, int[]? positions)
+    /// <summary>
+    /// When no overload accepts the arguments because a lambda's body has errors (<paramref name="byShape"/> are the
+    /// overloads that would accept them judging lambdas by their parameters alone), reports the lambdas' errors where
+    /// they are rather than "no overload". A lambda that could be one of several delegate types (`Task.Run(() => …)` is
+    /// an Action or a Func&lt;Task&gt;) gets the errors it has as every one of them, which are the user's, not a mismatch
+    /// with one overload. False if there are none to report.
+    /// </summary>
+    private bool ReportLambdaErrors(List<(ClrCandidate Candidate, int[] Scores, bool Expanded, int[]? Positions)> byShape, List<ClrArgument> arguments)
+    {
+        if (byShape.Count == 0)
+            return false;
+
+        var errors = new List<Diagnostic>();
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            if (arguments[i].Lambda is not { } lambda)
+                continue;
+            var delegateTypes = byShape.Select(c => ParameterFor(c.Candidate, c.Positions?[i] ?? i, c.Expanded).Type).Distinct();
+            var common = delegateTypes
+                .Select(type => TrialDiagnostics(() => BindLambda(lambda, type)).Where(d => d.Severity == DiagnosticSeverity.Error))
+                .Aggregate((all, next) => all.Intersect(next).ToList());
+            errors.AddRange(common);
+        }
+        _diagnostics.AddRange(errors);
+        return errors.Count > 0;
+    }
+
+    /// <summary>The diagnostics <paramref name="bind"/> reports, without reporting them.</summary>
+    private List<Diagnostic> TrialDiagnostics(Action bind)
+    {
+        var real = _diagnostics;
+        _diagnostics = new DiagnosticBag { CurrentSource = real.CurrentSource };
+        try
+        {
+            bind();
+            return [.. _diagnostics];
+        }
+        finally
+        {
+            _diagnostics = real;
+        }
+    }
+
+    /// <param name="lambdaShapesOnly">Accept a lambda whose parameters fit the delegate, without binding its body.</param>
+    private int[]? Score(ClrCandidate candidate, List<ClrArgument> arguments, bool expanded, int[]? positions, bool lambdaShapesOnly = false)
     {
         int fixedCount = expanded ? candidate.Parameters.Length - 1 : candidate.Parameters.Length;
         if (positions is null && (expanded ? arguments.Count < fixedCount : arguments.Count < candidate.RequiredCount || arguments.Count > fixedCount))
@@ -578,6 +631,7 @@ public sealed partial class Binder
                 { Out: not null, OutVariable: { } variable } => variable.Type == OutType(parameter) ? 0 : null,
                 { Out: not null } => 0,
                 { Ref: not null, Bound: var target } => target!.Type == parameter.Type ? 0 : null,
+                { Lambda: { } lambda } when lambdaShapesOnly => FitsShape(lambda, parameter.Type) ? 0 : null,
                 { Lambda: { } lambda } => LambdaScore(lambda, parameter.Type),
                 var argument => ConversionScore(argument.Bound!, parameter),
             };
@@ -594,6 +648,10 @@ public sealed partial class Binder
     /// </summary>
     private int? LambdaScore(LambdaExpressionSyntax lambda, TypeSymbol delegateType)
     {
+        // `app.MapGet("/", (id: int) => …)`: as in C#, a lambda whose parameters are all typed has a natural type (a Func
+        // or Action), so it can be any Delegate. A specific delegate type matches better.
+        if (TakesAnyDelegate(delegateType, lambda))
+            return Trial(() => BindLambda(lambda, null), out bool natural) is BoundLambdaExpression && !natural ? 15 : null;
         if (DelegateSignature(delegateType) is not { } signature || signature.Parameters.Length != lambda.Parameters.Length)
             return null;
         var bound = Trial(() => BindLambda(lambda, delegateType), out bool failed);
@@ -607,6 +665,25 @@ public sealed partial class Binder
             return returns == TypeSymbol.Long ? 1 : 2;
         return 3;
     }
+
+    /// <summary>
+    /// Whether the lambda's parameters fit <paramref name="delegateType"/>, ignoring its body: as many of them, and any
+    /// types they're annotated with the delegate's (so `(clock: Clock) => …` isn't a RequestDelegate's HttpContext).
+    /// </summary>
+    private bool FitsShape(LambdaExpressionSyntax lambda, TypeSymbol delegateType)
+    {
+        if (TakesAnyDelegate(delegateType, lambda))
+            return true;
+        if (DelegateSignature(delegateType) is not { } signature || signature.Parameters.Length != lambda.Parameters.Length)
+            return false;
+        return lambda.Parameters.Zip(signature.Parameters).All(pair =>
+            pair.First.Type is not { } annotation || Trial(() => BindType(annotation), out _) is var type && (type == pair.Second || type == TypeSymbol.Error));
+    }
+
+    /// <summary>Whether <paramref name="type"/> is <c>System.Delegate</c> (or MulticastDelegate) and the lambda has a natural type there.</summary>
+    private static bool TakesAnyDelegate(TypeSymbol type, LambdaExpressionSyntax lambda) =>
+        ClrTypes.ToClr(type) is { } clr && (clr == typeof(Delegate) || clr == typeof(MulticastDelegate)) &&
+        lambda.Parameters.All(p => p.Type is not null);
 
     private int? ConversionScore(BoundExpression bound, ClrParameter parameter)
     {

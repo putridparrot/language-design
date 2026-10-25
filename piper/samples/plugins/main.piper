@@ -1,0 +1,86 @@
+// Language features from a plugin and from a library, without changing the compiler. See docs/plugins.md.
+
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Collections.Generic;
+
+// A trailing closure lets a plain function read like a statement: `Retry(3) { … }` is `Retry(3, () => { … })`.
+fn Retry(times: int, body: () => bool) => bool {
+    for attempt in 1..times {
+        if body() {
+            return true;
+        }
+        Print("attempt {attempt} failed");
+    }
+    false
+}
+
+// A closure that awaits is async, so it can be passed where a `() => Task` is wanted.
+async fn Timed(label: string, body: () => Task) {
+    await body();
+    Print("{label}: done");
+}
+
+fn Square(n: int) => int {
+    Thread.Sleep(10);
+    n * n
+}
+
+async fn Fetch(n: int) => Task<int> {
+    await Task.Delay(20);
+    n * 10
+}
+
+// In ordinary code, `concurrency` waits for its statements on this thread.
+fn Squares() {
+    // `parallel for` (from the plugin) runs the body for every item at once: it becomes Parallel.ForEach.
+    mut total = 0;
+    parallel for n in [1, 2, 3, 4, 5] {
+        Interlocked.Add(ref total, Square(n));
+    }
+    Print("sum of squares: {total}");
+
+    // `concurrency` (from the plugin) runs each statement at once, and waits until all have finished.
+    mut first = 0;
+    mut second = 0;
+    concurrency {
+        first = Square(6);
+        second = Square(7);
+    }
+    Print("{first} and {second}");
+}
+
+async fn Main() {
+    Squares();
+
+    // In async code, `concurrency` is awaited and its statements can await: both fetches run at once.
+    mut a = 0;
+    mut b = 0;
+    await Timed("two fetches") {
+        concurrency {
+            a = await Fetch(1);
+            b = await Fetch(2);
+        }
+    };
+    Print("{a} and {b}");
+
+    // The plugin's keywords are still ordinary names elsewhere.
+    let parallel = "not a keyword here";
+    Print(parallel);
+
+    mut tries = 0;
+    let ok = Retry(3) {
+        tries += 1;
+        tries == 2
+    };
+    Print("succeeded: {ok} after {tries} tries");
+}
+
+test "parallel for visits every item" {
+    let seen = System.Collections.Concurrent.ConcurrentBag<int>();
+    parallel for n in [1, 2, 3] {
+        seen.Add(n);
+    }
+    Assert(seen.Count == 3);
+}

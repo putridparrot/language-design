@@ -1,11 +1,13 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Reflection;
-using Piper.Syntax;
 
-namespace Piper.LanguageServer;
+namespace Piper.Syntax;
 
-/// <summary>Enumerates a syntax tree's nodes, finding each node type's children (its node and node-array properties) by reflection.</summary>
+/// <summary>
+/// Enumerates a syntax tree's nodes, finding each node type's children (its node and node-array properties) by reflection.
+/// Used by the language server, and by plugins to look into the user's syntax (does this block `await`?).
+/// </summary>
 public static class SyntaxWalker
 {
     private static readonly ConcurrentDictionary<Type, Func<SyntaxNode, IEnumerable<SyntaxNode>>> ChildAccessors = new();
@@ -25,6 +27,15 @@ public static class SyntaxWalker
     }
 
     public static IEnumerable<SyntaxNode> ChildrenOf(SyntaxNode node) => ChildAccessors.GetOrAdd(node.GetType(), ChildAccessor)(node);
+
+    /// <summary>
+    /// Whether <paramref name="node"/> awaits (with `await`, `await for` or `await using`), other than in a lambda inside
+    /// it, which awaits for itself. Code that does must be in an async function or lambda.
+    /// </summary>
+    public static bool Awaits(SyntaxNode node) =>
+        node is AwaitExpressionSyntax or ForStatementSyntax { Await: not null } or UsingStatementSyntax { Await: not null }
+            or VariableDeclarationSyntax { Await: not null } ||
+        (node is not LambdaExpressionSyntax && ChildrenOf(node).Any(Awaits));
 
     private static Func<SyntaxNode, IEnumerable<SyntaxNode>> ChildAccessor(Type type)
     {

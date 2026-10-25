@@ -95,6 +95,10 @@ public class ParserTests
     [InlineData("{ p }", "{}")]
     [InlineData("(x) => x", "LambdaExpressionSyntax")]
     [InlineData("f<(int) => int>(g)", "f<1>(g)")]
+    [InlineData("f(a) { x => x }", "f(a, LambdaExpressionSyntax)")]
+    [InlineData("run { 1 }", "run(LambdaExpressionSyntax)")]
+    [InlineData("xs.each { x => x }.count", "xs.each(LambdaExpressionSyntax).count")]
+    [InlineData("a + f { 1 }", "(a + f(LambdaExpressionSyntax))")]
     public void Expressions_respect_precedence_and_associativity(string text, string expected)
     {
         var diagnostics = new DiagnosticBag();
@@ -336,6 +340,68 @@ public class ParserTests
     {
         Parse("fn Main() { let a = ; }", out var diagnostics);
         Assert.Equal("PIP0101", Assert.Single(diagnostics).Code);
+    }
+
+    [Fact]
+    public void Trailing_closure_parameters_and_body()
+    {
+        var call = Assert.IsType<CallExpressionSyntax>(Body(ParseClean("fn Main() { sort(xs) { (a: int, b) => a - b } }")).Trailing);
+        var closure = Assert.IsType<LambdaExpressionSyntax>(call.Arguments[1]);
+        Assert.Equal(["a", "b"], closure.Parameters.Select(p => p.Name.Text));
+        Assert.NotNull(closure.Parameters[0].Type);
+        Assert.Equal("(a - b)", Show(Assert.IsType<BlockExpressionSyntax>(closure.Body).Trailing!));
+    }
+
+    [Fact]
+    public void Statement_ending_with_a_trailing_closure_needs_no_semicolon()
+    {
+        var body = Body(ParseClean("fn Main() { repeat(3) { i => print(i); } done(); }"));
+        Assert.Equal(2, body.Statements.Length);
+    }
+
+    [Theory]
+    [InlineData("fn Main() { if ready { go(); } }")]
+    [InlineData("fn Main() { while ready { go(); } }")]
+    [InlineData("fn Main() { for x in ready { go(); } }")]
+    [InlineData("fn Main() { match ready { _ => 1 } }")]
+    [InlineData("fn Main() requires ready { }")]
+    public void A_brace_after_a_heads_name_is_the_body_not_a_trailing_closure(string text)
+    {
+        var function = (FunctionDeclarationSyntax)ParseClean(text).Declarations[0];
+        var body = function.BlockBody!;
+        var head = body.Trailing switch
+        {
+            IfExpressionSyntax e => e.Condition,
+            MatchExpressionSyntax e => e.Scrutinee,
+            _ => body.Statements.FirstOrDefault() switch
+            {
+                WhileStatementSyntax s => s.Condition,
+                ForStatementSyntax s => s.Range,
+                _ => Assert.Single(function.Requires),
+            },
+        };
+        Assert.Equal("ready", Show(head));
+    }
+
+    [Fact]
+    public void Trailing_closures_are_allowed_inside_brackets_in_a_head()
+    {
+        var unit = ParseClean("fn Main() { if all(items.map { x => x }) { go(); } }");
+        var @if = Assert.IsType<IfExpressionSyntax>(Body(unit).Trailing);
+        Assert.Equal("all(items.map(LambdaExpressionSyntax))", Show(@if.Condition));
+    }
+
+    [Theory]
+    [InlineData("fn Main() { run { await go(); } }", true)]
+    [InlineData("fn Main() { run { await for x in xs { } } }", true)]
+    [InlineData("fn Main() { run { await (go()); } }", true)]
+    [InlineData("fn Main() { run { go(); } }", false)]
+    [InlineData("async fn Main() { run { go(); } }", false)]
+    [InlineData("fn Main() { run { let f = async () => await go(); } }", false)]
+    public void A_trailing_closure_is_async_when_it_awaits(string text, bool isAsync)
+    {
+        var call = Assert.IsType<CallExpressionSyntax>(Body(ParseClean(text)).Trailing);
+        Assert.Equal(isAsync, Assert.IsType<LambdaExpressionSyntax>(call.Arguments[^1]).Async is not null);
     }
 
     [Fact]

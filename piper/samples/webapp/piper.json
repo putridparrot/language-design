@@ -1,0 +1,5 @@
+{
+  // The web plugin adds `services` and `endpoints`, and brings in ASP.NET Core, which the code they become uses.
+  // Build it first (`dotnet build plugins/Piper.Plugins.Web`), then `piper run samples/webapp`.
+  "plugins": ["../../plugins/Piper.Plugins.Web/bin/plugin/Piper.Plugins.Web.dll"]
+}

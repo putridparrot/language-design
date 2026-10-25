@@ -1,4 +1,6 @@
+using System.Collections.Immutable;
 using Piper;
+using Piper.Plugins;
 using Piper.Text;
 
 const string Usage = """
@@ -89,14 +91,19 @@ if (files.Count == 0)
     return 2;
 }
 
-// A folder's piper.json says what to build it into; --exe, --library and --name override it.
+// A folder's piper.json says what to build it into (--exe, --library and --name override it), which plugins it uses, and
+// what packages, frameworks and assemblies it references.
+ImmutableArray<IPiperPlugin> plugins = [];
+var references = ProgramReferences.None;
 if (inputs is [var folder] && Directory.Exists(folder) && File.Exists(Path.Combine(folder, PiperProject.FileName)))
 {
-    var (project, errors) = PiperProject.Load(Path.Combine(folder, PiperProject.FileName));
+    var (loaded, errors) = LoadedProject.Load(folder);
     foreach (var error in errors)
         Console.Error.WriteLine(error.Format());
-    if (project is null)
+    if (loaded is null)
         return 2;
+    var project = loaded.Project;
+    (plugins, references) = (loaded.Plugins, loaded.References);
     if (command == "run" && project.Output == PiperOutput.Library)
     {
         Console.Error.WriteLine($"{PiperProject.FileName} says this program is a library, which can't be run; build it with 'piper build'.");
@@ -113,7 +120,7 @@ if (inputs is [var folder] && Directory.Exists(folder) && File.Exists(Path.Combi
 // An assembly's PDB names its source files, which debuggers find breakpoints' files by, so those need full paths.
 var sources = files.Select(path => new SourceText(File.ReadAllText(path), executable || library ? Path.GetFullPath(path) : path)).ToList();
 // `emit` is for reading the C#; `build` and `run` map it back to the Piper source for errors and debugging.
-var result = Compilation.Compile(sources, new CompilationOptions(LineDirectives: command != "emit", IncludeTests: command == "test"));
+var result = Compilation.Compile(sources, new CompilationOptions(LineDirectives: command != "emit", IncludeTests: command == "test") { Plugins = plugins, References = references });
 foreach (var diagnostic in result.FormattedDiagnostics)
     Console.Error.WriteLine(diagnostic);
 
@@ -133,7 +140,7 @@ switch (command)
             Console.WriteLine("No tests found; write them as test \"name\" { … } blocks.");
             return 0;
         }
-        var tests = Runner.RunTests(result.Files, filter);
+        var tests = Runner.RunTests(result.Files, filter, result.References);
         foreach (var error in tests.Errors)
             Console.Error.WriteLine(error);
         foreach (var test in tests.Results)
@@ -165,7 +172,7 @@ switch (command)
         var first = Path.GetFullPath(inputs[0]).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var name = assemblyName ?? Path.GetFileNameWithoutExtension(first);
         var directory = outputDirectory ?? Path.Combine(Directory.Exists(first) ? first : Path.GetDirectoryName(first)!, "bin");
-        var output = AssemblyWriter.Write(result.Files, directory, name, executable);
+        var output = AssemblyWriter.Write(result.Files, directory, name, executable, result.References);
         foreach (var error in output.Errors)
             Console.Error.WriteLine(error);
         if (!output.Success)
@@ -188,7 +195,7 @@ switch (command)
         return 0;
 
     default:
-        var run = Runner.Run(result.Files, captureOutput: false);
+        var run = Runner.Run(result.Files, captureOutput: false, result.References);
         foreach (var error in run.Errors)
             Console.Error.WriteLine(error);
         return run.Success ? 0 : 3;

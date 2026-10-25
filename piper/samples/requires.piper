@@ -12,8 +12,35 @@ fn RequiredFunction(i: int?) => unit
     //Print(i ?? 0);
 }
 
+enum MathError {
+    DivideByZero,
+    Negative(value: int),
+}
+
+// fn Compute(a: int, b: int) => Result<int> {
+//     return Ok((a + b) * 10);
+// }
+
+fn F(a: int, b: int) => Result<int, MathError> {
+    return Ok(a + b);
+}
+
 fn Main() 
 {
+    match F(b: 5, a: 3) { 
+        Ok(value) => value
+            |> (x: int) => x * 2
+            |> Print,
+        Err(_) => Print(0),
+    }   
+
+    // worth thinking about ?> as a way to use a result
+
+
+    // F(b: 5, a: 3)
+    //     |> (x: int) => x * 2
+    //     |> Print;
+
     //RequiredFunction(0);
-    RequiredFunction(5);
+    //RequiredFunction(5);
 }

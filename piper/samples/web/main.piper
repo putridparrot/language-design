@@ -1,0 +1,34 @@
+// A web API with dependency injection, using ASP.NET Core from piper.json's "frameworks". It serves on a free port,
+// calls itself and stops, so it can run as a sample; a real server would end with `app.Run()`.
+
+using System.Linq;
+using System.Net.Http;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+
+record Greeter(greeting: string);
+
+extend Greeter {
+    fn Greet(name: string) => string = "{this.greeting}, {name}!";
+}
+
+async fn Main() {
+    let builder = WebApplication.CreateBuilder();
+    builder.Logging.ClearProviders();
+    builder.WebHost.UseUrls("http://127.0.0.1:0");
+    builder.Services.AddSingleton<Greeter>(Greeter("Hello"));
+
+    let app = builder.Build();
+    // Route parameters are written \{name}, since {…} in a Piper string is interpolation. The Greeter comes from DI.
+    app.MapGet("/hello/\{name}", (name: string, greeter: Greeter) => greeter.Greet(name));
+    app.MapGet("/add", (a: int, b: int) => a + b);
+
+    await app.StartAsync();
+    let address = app.Urls.First();
+    using let client = HttpClient();
+    Print(await client.GetStringAsync("{address}/hello/Ada"));
+    Print("2 + 40 = {await client.GetStringAsync("{address}/add?a=2&b=40")}");
+    await app.StopAsync();
+}

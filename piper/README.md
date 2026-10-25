@@ -6,6 +6,8 @@ C#'s types, numeric rules and the whole of .NET underneath.
 
 - **New to Piper?** Start with [the tour](docs/tour.md), written for C# developers.
 - **The reference:** [docs/language.md](docs/language.md) has the grammar, semantics and how each construct maps to C#.
+- **Extending the language:** [docs/plugins.md](docs/plugins.md) covers trailing closures and compiler plugins, which add
+  keywords such as `parallel for` without changing the compiler.
 - **Examples:** [samples/](samples) has a runnable program for each area of the language.
 - **What's in each release:** [CHANGELOG.md](CHANGELOG.md).
 
@@ -23,18 +25,35 @@ piper test src/               # run the program's test blocks (--filter picks so
 piper emit hello.piper        # print the C#
 ```
 
-A program folder can say what it builds into with a `piper.json`, which `piper build src/` then follows (flags override it):
+A program folder can say what it builds into, and what it uses, with a `piper.json`, which `piper build src/` then
+follows (flags override it):
 
 ```json
-{ "name": "app", "output": "exe" }
+{
+  "name": "app",
+  "output": "exe",
+  "packages": { "Humanizer.Core": "2.14.1" },
+  "frameworks": ["Microsoft.AspNetCore.App"],
+  "references": ["lib/My.Library.dll"],
+  "plugins": ["../plugins/My.Plugin.dll"]
+}
 ```
 
-`output` is `"exe"` or `"library"`, and both keys are optional; an empty file is fine. Any other key is an error, so
-future versions can add keys without changing what today's files mean.
+- **`output`** is `"exe"` or `"library"`.
+- **`packages`** are NuGet packages. They're restored with the .NET SDK, using your NuGet configuration, and remembered
+  in the folder's `obj/piper`, so that only happens again when they change.
+- **`frameworks`** are shared frameworks such as ASP.NET Core, which come with .NET rather than as packages. On .NET 10,
+  `Microsoft.Extensions.DependencyInjection` and the other `Microsoft.Extensions` libraries are part of ASP.NET Core's.
+- **`references`** are .NET assemblies, with paths relative to the folder.
+- **`plugins`** add keywords to the language (see [docs/plugins.md](docs/plugins.md)).
+
+Every key is optional; an empty file is fine. Any other key is an error, so future versions can add keys without
+changing what today's files mean. `piper run`, `piper test` and the editor use the packages, frameworks and references
+too, and `piper build --exe` copies the packages' and references' assemblies next to the program.
 
 `--exe` makes a native launcher from the .NET SDK's apphost, as `dotnet build` does; with only a runtime installed you get
-the DLL, which runs with `dotnet app.dll`. For NuGet packages, publishing (single-file, AOT) or mixing with C#, use a project:
-to compile `.piper` files as part of a .NET project, alongside its C#, reference the `Piper.Build` package:
+the DLL, which runs with `dotnet app.dll`. For publishing (single-file, AOT) or mixing with C#, use a project: to compile
+`.piper` files as part of a .NET project, alongside its C#, reference the `Piper.Build` package:
 
 ```xml
 <ItemGroup>
@@ -103,6 +122,7 @@ producing one `.cs` file per `.piper` file. The generated code needs C# 14 (.NET
 | [src/Piper.Compiler/Binding](src/Piper.Compiler/Binding) | Name resolution, type checking, Piper's semantic rules → bound tree |
 | [src/Piper.Compiler/Lowering](src/Piper.Compiler/Lowering) | Rewrites block/if expressions into C#-shaped statements |
 | [src/Piper.Compiler/Emit](src/Piper.Compiler/Emit) | Bound tree → C# source text |
+| [src/Piper.Compiler/Plugins](src/Piper.Compiler/Plugins) | The plugin API (`IPiperPlugin`, `PluginParser`, `SyntaxTemplate`) and loader |
 | [src/Piper.Compiler/Runner.cs](src/Piper.Compiler/Runner.cs) | In-memory Roslyn compile and run |
 | [src/Piper.Compiler/Binding/SemanticModel.cs](src/Piper.Compiler/Binding/SemanticModel.cs) | What the binder records for tooling: each name's symbol, declarations, expression types and scopes |
 | [src/Piper.LanguageServer](src/Piper.LanguageServer) | The language server (`piper lsp`) |
@@ -110,9 +130,14 @@ producing one `.cs` file per `.piper` file. The generated code needs C# 14 (.NET
 | [editors/vscode](editors/vscode) | The VS Code extension: highlighting, and a client for the language server |
 | [src/Piper.Runtime](src/Piper.Runtime) | The `Piper.Runtime` package: `Option`, `Result` and the interop helpers, shared by all compiled Piper code |
 | [src/Piper.Build](src/Piper.Build) | The `Piper.Build` package: MSBuild targets that compile a project's `.piper` files |
+| [plugins/Piper.Plugins.Parallel](plugins/Piper.Plugins.Parallel) | A sample compiler plugin: `parallel for` and `concurrency { }` |
+| [plugins/Piper.Plugins.Web](plugins/Piper.Plugins.Web) | A sample compiler plugin for ASP.NET Core: `services { }` and `endpoints { }` |
 | [tests/Piper.Tests](tests/Piper.Tests) | Lexer, parser and binder unit tests, plus golden tests |
 
 ## Adding a language feature
+
+First check whether the feature needs the compiler at all. A library function with a trailing closure, or a plugin,
+may do (see [docs/plugins.md](docs/plugins.md)). For a change to the core language:
 
 1. **Lexer and parser:** add the syntax and update the `Parse*` doc comment and the grammar in [docs/language.md](docs/language.md).
 2. **Binder:** add the semantic rules, with a diagnostic per error and a `BinderTests` case for each.

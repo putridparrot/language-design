@@ -26,10 +26,18 @@ from tests. The binary should hold the bare minimum the program needs.
 - **Later:** extend the same analysis to remove anything unreachable, test-only or not, behind an option, since a
   library's public API must stay intact.
 
-### Package references in piper.json
+### References in a Piper.Build project
 
-`"packages": { "Newtonsoft.Json": "13.0.3" }` and `"references": [...]`, so `piper run` and `piper build` on a folder can
-use NuGet packages without a `.csproj`. The compiler and language server must load the extra assemblies.
+`piper.json`'s `"packages"`, `"frameworks"` and `"references"` work for a program folder. In a project using Piper.Build,
+the `.piper` files are still only checked against .NET's own assemblies, not the project's `PackageReference`s. The
+build should pass the project's resolved references (`@(ReferencePath)`) to the compiler, so Piper code there can use
+them too.
+
+### .NET generics instantiated with Piper traits
+
+`services.AddSingleton<Clock>(SystemClock())`, where `Clock` is a Piper trait and `SystemClock` a record implementing it
+with `extend`, reports no matching overload. A Piper type should convert to a trait it implements when the trait is a
+.NET method's type argument.
 
 ## Language
 

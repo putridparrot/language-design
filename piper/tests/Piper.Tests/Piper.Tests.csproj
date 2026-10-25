@@ -24,6 +24,9 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Piper.Compiler\Piper.Compiler.csproj" />
     <ProjectReference Include="..\..\src\Piper.LanguageServer\Piper.LanguageServer.csproj" />
+    <!-- Not referenced: built first so samples can load them from their piper.json, as the CLI would. -->
+    <ProjectReference Include="..\..\plugins\Piper.Plugins.Parallel\Piper.Plugins.Parallel.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\plugins\Piper.Plugins.Web\Piper.Plugins.Web.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

@@ -197,23 +197,18 @@ public sealed class PiperLanguageServer
         await PublishProjectAsync(Workspace.ProgramRoot(path));
     }
 
-    /// <summary>Publishes the errors in the piper.json of the program in <paramref name="root"/>, if it has one.</summary>
+    /// <summary>
+    /// Publishes the errors in the piper.json of the program in <paramref name="root"/>, if it has one, including those
+    /// loading its plugins.
+    /// </summary>
     private async Task PublishProjectAsync(string? root)
     {
         if (root is null)
             return;
         var path = Path.Combine(root, PiperProject.FileName);
-        ImmutableArray<Diagnostic> errors;
-        try
-        {
-            if (!File.Exists(path))
-                return;
-            errors = PiperProject.Load(path).Errors;
-        }
-        catch (IOException)
-        {
+        if (!File.Exists(path))
             return;
-        }
+        var errors = Workspace.ProjectOf(root).Errors;
         if (errors.Length > 0 || _published.Contains(path))
             await SendDiagnosticsAsync(path, errors);
     }

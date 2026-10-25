@@ -782,6 +782,24 @@ public class BinderTests
             """);
     }
 
+    [Theory]
+    // Parallel.ForEach has many overloads, but only one takes a one-parameter lambda with a List.
+    [InlineData("fn Main() { System.Threading.Tasks.Parallel.ForEach([1, 2], n => {\n    let s: string = n;\n}); }")]
+    [InlineData("fn Main() { let xs = [1, 2]; xs.ForEach(n => {\n    let s: string = n;\n}); }")]
+    [InlineData("fn Main() { System.Threading.Tasks.Task.Run(() => {\n    let s: string = 1;\n}); }")]
+    public void An_error_in_a_lambda_passed_to_dotnet_is_reported_where_it_is(string program)
+    {
+        var error = Assert.Single(Compilation.Compile(program).Diagnostics);
+        Assert.Equal("PIP0202", error.Code);
+        Assert.Equal(program.IndexOf("let s", StringComparison.Ordinal) + "let s: string = ".Length, error.Span.Start);
+    }
+
+    [Fact]
+    public void A_lambda_fitting_no_overload_is_still_reported_as_no_overload()
+    {
+        AssertSingleError("PIP0274", "fn Main() { let xs = [1, 2]; xs.ForEach((a, b) => { }); }");
+    }
+
     [Fact]
     public void Diagnostics_are_formatted_with_file_line_and_column()
     {

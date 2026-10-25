@@ -124,7 +124,7 @@ public sealed partial class Binder
         public IReadOnlyList<string> Sources { get; } = sources;
     }
 
-    private Binder(DiagnosticBag diagnostics, SemanticModel? semantic)
+    private Binder(DiagnosticBag diagnostics, SemanticModel? semantic, ClrTypeIndex clr)
     {
         _diagnostics = diagnostics;
         _semantic = semantic;
@@ -146,11 +146,12 @@ public sealed partial class Binder
                 _builtins.TryDeclare(variant);
         }
 
-        _globalNamespace = new NamespaceSymbol("", null, new Scope(null));
+        _globalNamespace = new NamespaceSymbol("", null, new Scope(null), clr);
     }
 
-    public static BoundProgram BindProgram(ImmutableArray<CompilationUnitSyntax> units, DiagnosticBag diagnostics, SemanticModel? semantic = null) =>
-        new Binder(diagnostics, semantic).Bind(units);
+    /// <param name="clr">The .NET types the program can use (default: the platform's).</param>
+    public static BoundProgram BindProgram(ImmutableArray<CompilationUnitSyntax> units, DiagnosticBag diagnostics, SemanticModel? semantic = null, ClrTypeIndex? clr = null) =>
+        new Binder(diagnostics, semantic, clr ?? ClrTypeIndex.Platform).Bind(units);
 
     /// <param name="Traits">The traits it declares, bound in its type-parameter scope (`extend Box: Convert<T>`), with their syntax.</param>
     private sealed record ExtendInfo(

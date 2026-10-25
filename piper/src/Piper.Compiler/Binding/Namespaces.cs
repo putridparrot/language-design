@@ -8,14 +8,19 @@ public sealed class NamespaceSymbol : Symbol
 {
     private readonly Dictionary<string, NamespaceSymbol> _children = [];
 
-    public NamespaceSymbol(string name, NamespaceSymbol? parent, Scope members) : base(name)
+    /// <param name="clr">The program's .NET types; a child namespace has its parent's, and the global one the platform's by default.</param>
+    public NamespaceSymbol(string name, NamespaceSymbol? parent, Scope members, ClrTypeIndex? clr = null) : base(name)
     {
         Parent = parent;
         Members = members;
         FullName = parent is null || parent.IsGlobal ? name : $"{parent.FullName}.{name}";
+        Clr = clr ?? parent?.Clr ?? ClrTypeIndex.Platform;
     }
 
     public NamespaceSymbol? Parent { get; }
+
+    /// <summary>The .NET types the program can use: the platform's, and those of the packages and assemblies it references.</summary>
+    public ClrTypeIndex Clr { get; }
 
     public string FullName { get; }
 
@@ -47,12 +52,12 @@ public sealed class NamespaceSymbol : Symbol
             return child;
 
         var childName = IsGlobal ? name : $"{FullName}.{name}";
-        if (ClrTypeIndex.IsNamespace(childName))
+        if (Clr.IsNamespace(childName))
             return GetOrAddChild(name, createMembers);
 
         if (IsGlobal)
             return null;
-        var types = ClrTypeIndex.FindTypes(FullName, name);
+        var types = Clr.FindTypes(FullName, name);
         return types.Count switch
         {
             0 => null,

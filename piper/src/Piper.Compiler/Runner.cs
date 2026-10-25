@@ -34,11 +34,40 @@ public sealed record TestRunResult(ImmutableArray<TestResult> Results, Immutable
 /// <summary>Compiles generated C# in memory with Roslyn and runs it.</summary>
 public static class Runner
 {
-    private static readonly Lazy<ImmutableArray<MetadataReference>> References = new(() =>
+    private static readonly Lazy<ImmutableArray<MetadataReference>> PlatformReferences = new(() =>
         ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
             .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path))
             .ToImmutableArray());
+
+    /// <summary>The platform's assemblies, then the program's others (those named like a platform one are the platform's).</summary>
+    private static ImmutableArray<MetadataReference> References(ProgramReferences? references)
+    {
+        if (references is null || references.CompileAssemblies.IsEmpty)
+            return PlatformReferences.Value;
+        var platform = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .Select(Path.GetFileNameWithoutExtension)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var aliases = references.Aliases;
+        return PlatformReferences.Value.AddRange(references.CompileAssemblies
+            .Where(path => !platform.Contains(Path.GetFileNameWithoutExtension(path)))
+            .Select(path => aliases.TryGetValue(Path.GetFileNameWithoutExtension(path), out var alias)
+                ? MetadataReference.CreateFromFile(path).WithAliases([alias])
+                : (MetadataReference)MetadataReference.CreateFromFile(path)));
+    }
+
+    /// <summary>
+    /// A context to run a program in, which finds its referenced assemblies (<see cref="ReferenceLoadContext"/>), as the
+    /// binder did. Collectible, so the program can be unloaded.
+    /// </summary>
+    private sealed class ProgramLoadContext(string name, ProgramReferences? references) : AssemblyLoadContext(name, isCollectible: true)
+    {
+        private readonly ReferenceLoadContext? _references = references is { Assemblies.IsEmpty: false } ? ReferenceLoadContext.For(references.Assemblies) : null;
+
+        protected override Assembly? Load(AssemblyName assemblyName) =>
+            _references is not null && _references.Has(assemblyName) ? _references.LoadFromAssemblyName(assemblyName) : null;
+    }
 
     // Console.Out is process-wide, so capturing it must be serialized.
     private static readonly Lock ConsoleLock = new();
@@ -47,7 +76,8 @@ public static class Runner
         Build([new GeneratedFile("Program.cs", csharp)], assemblyName);
 
     /// <param name="executable">Build a console application whose entry point is the program's `main`, rather than a library.</param>
-    public static CSharpBuildResult Build(IEnumerable<GeneratedFile> files, string assemblyName = "PiperProgram", bool executable = false)
+    /// <param name="references">What the program references beyond the platform (<see cref="CompilationResult.References"/>).</param>
+    public static CSharpBuildResult Build(IEnumerable<GeneratedFile> files, string assemblyName = "PiperProgram", bool executable = false, ProgramReferences? references = null)
     {
         // Parse doc comments, so `///` comments go into the XML documentation file (without warnings for missing ones).
         var options = new CSharpParseOptions(LanguageVersion.Latest, DocumentationMode.Parse);
@@ -55,7 +85,7 @@ public static class Runner
         var compilation = CSharpCompilation.Create(
             assemblyName,
             trees,
-            References.Value,
+            References(references),
             new CSharpCompilationOptions(
                 executable ? OutputKind.ConsoleApplication : OutputKind.DynamicallyLinkedLibrary,
                 mainTypeName: executable ? CSharpEmitter.EntryPointClassName : null,
@@ -91,13 +121,13 @@ public static class Runner
     public static RunResult Run(string csharp, bool captureOutput = true) =>
         Run([new GeneratedFile("Program.cs", csharp)], captureOutput);
 
-    public static RunResult Run(IEnumerable<GeneratedFile> files, bool captureOutput = true)
+    public static RunResult Run(IEnumerable<GeneratedFile> files, bool captureOutput = true, ProgramReferences? references = null)
     {
-        var build = Build(files);
+        var build = Build(files, references: references);
         if (!build.Success)
             return new RunResult(false, "", build.Errors);
 
-        var context = new AssemblyLoadContext("Piper", isCollectible: true);
+        var context = new ProgramLoadContext("Piper", references);
         try
         {
             var assembly = context.LoadFromStream(new MemoryStream(build.Assembly!), new MemoryStream(build.Pdb!));
@@ -117,13 +147,13 @@ public static class Runner
     /// Runs the program's tests (compiled with <see cref="CompilationOptions.IncludeTests"/>) in declaration order, each
     /// whose name contains <paramref name="filter"/>, if one is given.
     /// </summary>
-    public static TestRunResult RunTests(IEnumerable<GeneratedFile> files, string? filter = null)
+    public static TestRunResult RunTests(IEnumerable<GeneratedFile> files, string? filter = null, ProgramReferences? references = null)
     {
-        var build = Build(files);
+        var build = Build(files, references: references);
         if (!build.Success)
             return new TestRunResult([], build.Errors);
 
-        var context = new AssemblyLoadContext("PiperTests", isCollectible: true);
+        var context = new ProgramLoadContext("PiperTests", references);
         var culture = Thread.CurrentThread.CurrentCulture;
         try
         {

@@ -1,0 +1,4 @@
+{
+  // ASP.NET Core is a shared framework that comes with .NET, so it's referenced by name rather than as a package.
+  "frameworks": ["Microsoft.AspNetCore.App"]
+}

@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Piper.Diagnostics;
+using Piper.Plugins;
 using Piper.Text;
 
 namespace Piper.Syntax;
@@ -10,7 +11,7 @@ namespace Piper.Syntax;
 /// error node, and resynchronizes so later errors are still found. The grammar of each construct is
 /// given (informally, EBNF-style) in the doc comment of its Parse method.
 /// </summary>
-public sealed class Parser
+public sealed partial class Parser
 {
     private readonly SourceText _source;
     private readonly DiagnosticBag _diagnostics;
@@ -24,6 +25,22 @@ public sealed class Parser
 
     /// <summary>Set when a `yield` is parsed, so the enclosing function can be marked an iterator.</summary>
     private bool _sawYield;
+
+    /// <summary>
+    /// Whether the innermost function, lambda or closure being parsed is async: an `async fn` or `async` lambda is, other
+    /// functions and lambdas aren't, and a trailing closure is if it turns out to await (for plugins: see
+    /// <see cref="Plugins.PluginParser.AsyncContext"/>).
+    /// </summary>
+    private AsyncContext _asyncContext;
+
+    /// <summary>
+    /// In the head of an `if`, `while`, `for`, `match` or `requires`, where a `{` starts the body rather than a trailing
+    /// closure: `if ready(x) { … }`. Cleared again inside brackets and blocks.
+    /// </summary>
+    private bool _noTrailingClosure;
+
+    /// <summary>Where the most recent trailing closure ended, so a statement ending with one needs no `;`.</summary>
+    private int _trailingClosureEnd = -1;
 
     private Parser(SourceText source, DiagnosticBag diagnostics, ImmutableArray<Token> tokens)
     {
@@ -46,17 +63,17 @@ public sealed class Parser
         return parser.ParseStandaloneExpression();
     }
 
-    private Token Current => Peek(0);
+    internal Token Current => Peek(0);
 
-    private Token Peek(int offset)
+    internal Token Peek(int offset)
     {
         int index = Math.Min(_position + offset, _tokens.Length - 1);
         return _tokens[index];
     }
 
-    private Token Previous => _tokens[Math.Max(_position - 1, 0)];
+    internal Token Previous => _tokens[Math.Max(_position - 1, 0)];
 
-    private Token NextToken()
+    internal Token NextToken()
     {
         var token = Current;
         if (token.Kind != TokenKind.EndOfFile)
@@ -64,7 +81,7 @@ public sealed class Parser
         return token;
     }
 
-    private Token Expect(TokenKind kind)
+    internal Token Expect(TokenKind kind)
     {
         if (Current.Kind == kind)
             return NextToken();
@@ -146,6 +163,10 @@ public sealed class Parser
                         @namespace = declaration;
                     break;
                 }
+                // `endpoints "/api" { … }`: a plugin's declaration.
+                case TokenKind.Identifier when PluginKeywordAt<DeclarationKeyword>() is var (plugin, keyword):
+                    declarations.AddRange(ExpandPlugin(plugin, keyword.Expand));
+                    break;
                 default:
                 {
                     var documentation = DocumentationBefore(Current.Span.Start);
@@ -162,7 +183,7 @@ public sealed class Parser
     }
 
     /// <summary>declaration = function | record | enum | trait | extend ;  optionally preceded by attributes and "private".</summary>
-    private DeclarationSyntax? ParseDeclaration()
+    internal DeclarationSyntax? ParseDeclaration()
     {
         if (Current.Kind == TokenKind.OpenBracket)
         {
@@ -318,8 +339,9 @@ public sealed class Parser
         }
         var requires = ParseRequires();
 
-        var (outerAsync, outerYield) = (_inAsync, _sawYield);
+        var (outerAsync, outerYield, outerContext) = (_inAsync, _sawYield, _asyncContext);
         _inAsync = @async is not null;
+        _asyncContext = _inAsync ? AsyncContext.Async : AsyncContext.Sync;
         _sawYield = false;
         BlockExpressionSyntax? block = null;
         ExpressionSyntax? expression = null;
@@ -339,7 +361,7 @@ public sealed class Parser
         }
 
         bool isIterator = _sawYield;
-        (_inAsync, _sawYield) = (outerAsync, outerYield);
+        (_inAsync, _sawYield, _asyncContext) = (outerAsync, outerYield, outerContext);
         return new FunctionDeclarationSyntax(SpanFrom(first), name, typeParameters, @static, parameters, returnType, block, expression)
         {
             Async = @async,
@@ -360,11 +382,11 @@ public sealed class Parser
         while (Current is { Kind: TokenKind.Identifier, Text: "requires" })
         {
             NextToken();
-            conditions.Add(ParseBinary(0));
+            conditions.Add(ParseHead(() => ParseBinary(0)));
             while (Current.Kind == TokenKind.Comma)
             {
                 NextToken();
-                conditions.Add(ParseBinary(0));
+                conditions.Add(ParseHead(() => ParseBinary(0)));
             }
         }
         return conditions.ToImmutable();
@@ -384,10 +406,11 @@ public sealed class Parser
         var name = NextToken();
         if (name.Kind == TokenKind.InterpolatedStringLiteral)
             _diagnostics.ReportInterpolatedTestName(name.Span);
-        var outerAsync = _inAsync;
+        var (outerAsync, outerContext) = (_inAsync, _asyncContext);
         _inAsync = @async is not null;
+        _asyncContext = _inAsync ? AsyncContext.Async : AsyncContext.Sync;
         var body = ParseBlock();
-        _inAsync = outerAsync;
+        (_inAsync, _asyncContext) = (outerAsync, outerContext);
         var testName = name.Value as string ?? name.Text;
         // The body becomes a function that nothing can call, since its name isn't declared in any scope.
         var functionName = new Token(TokenKind.Identifier, name.Span, $"PiperTest_{name.Span.Start}");
@@ -586,7 +609,7 @@ public sealed class Parser
     /// type = ( namedType | functionType ) { "?" | "[" { "," } "]" } ;
     /// (* T? is Option&lt;T&gt;; the lexer's "??" counts as two. Int[] is an array, Int[,] a two-dimensional one *)
     /// </summary>
-    private TypeSyntax ParseType()
+    internal TypeSyntax ParseType()
     {
         TypeSyntax type = Current.Kind == TokenKind.OpenParen ? ParseParenthesizedType() : ParseNamedType();
         while (true)
@@ -743,9 +766,13 @@ public sealed class Parser
     /// block = "{" { statement } [ expression ] "}" ;
     /// The optional final expression (no ';') is the block's value.
     /// </summary>
-    private BlockExpressionSyntax ParseBlock()
+    internal BlockExpressionSyntax ParseBlock() => ParseBlockBody(Expect(TokenKind.OpenBrace));
+
+    /// <summary>The rest of a block after its `{` (<paramref name="open"/>), which has already been read.</summary>
+    private BlockExpressionSyntax ParseBlockBody(Token open)
     {
-        var open = Expect(TokenKind.OpenBrace);
+        var noTrailingClosure = _noTrailingClosure;
+        _noTrailingClosure = false;
         var statements = ImmutableArray.CreateBuilder<StatementSyntax>();
         ExpressionSyntax? trailing = null;
 
@@ -823,6 +850,10 @@ public sealed class Parser
                     statements.Add(new ContinueStatementSyntax(SpanFrom(keyword), keyword));
                     break;
                 }
+                // `parallel for x in items { … }`: a plugin's statement.
+                case TokenKind.Identifier when PluginKeywordAt<StatementKeyword>() is var (plugin, keyword):
+                    statements.AddRange(ExpandPlugin(plugin, keyword.Expand));
+                    break;
                 default:
                     trailing = ParseExpressionStatementOrTrailing(statements);
                     break;
@@ -835,6 +866,7 @@ public sealed class Parser
         }
 
         Expect(TokenKind.CloseBrace);
+        _noTrailingClosure = noTrailingClosure;
         return new BlockExpressionSyntax(SpanFrom(open), statements.ToImmutable(), trailing);
     }
 
@@ -842,7 +874,8 @@ public sealed class Parser
     /// expressionStatement = blockLike [ ";" ] | expression ";" ;
     /// blockLike = if | match | block ;
     /// Returns the expression if it is the block's trailing value (immediately followed by '}').
-    /// Like Rust, a statement that starts with 'if', 'match' or '{' ends at its closing brace.
+    /// Like Rust, a statement that starts with 'if', 'match' or '{' ends at its closing brace, and so (like Kotlin) does
+    /// one that ends with a trailing closure: `parallel(items) { x => … }`.
     /// </summary>
     private ExpressionSyntax? ParseExpressionStatementOrTrailing(ImmutableArray<StatementSyntax>.Builder statements)
     {
@@ -854,6 +887,7 @@ public sealed class Parser
             TokenKind.OpenBrace when !AtRecordSpread() => ParseBlock(),
             _ => ParseExpression(),
         };
+        isBlockLike |= expression.Span.End == _trailingClosureEnd;
 
         if (Current.Kind == TokenKind.Semicolon)
         {
@@ -964,7 +998,7 @@ public sealed class Parser
     private WhileStatementSyntax ParseWhile()
     {
         var keyword = NextToken();
-        var condition = ParseExpression();
+        var condition = ParseHead(ParseExpression);
         var body = ParseBlock();
         return new WhileStatementSyntax(Span(keyword, body), condition, body);
     }
@@ -985,7 +1019,7 @@ public sealed class Parser
             variable = Expect(TokenKind.Identifier);
         }
         Expect(TokenKind.InKeyword);
-        var range = ParseExpression();
+        var range = ParseHead(ParseExpression);
         var body = ParseBlock();
         return new ForStatementSyntax(Span(keyword, body), variable, range, body) { Deconstruction = deconstruction };
     }
@@ -1030,7 +1064,7 @@ public sealed class Parser
     }
 
     /// <summary>expression = assignment ;</summary>
-    private ExpressionSyntax ParseExpression() => ParseAssignment();
+    internal ExpressionSyntax ParseExpression() => ParseAssignment();
 
     /// <summary>assignment = binary [ assignOp assignment ] ;   (right-associative)</summary>
     private ExpressionSyntax ParseAssignment()
@@ -1115,7 +1149,8 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// postfix = primary { "(" [ expression { "," expression } [ "," ] ] ")" | "." IDENT | "?" | "?." IDENT postfixChain } ;
+    /// postfix = primary { "(" [ expression { "," expression } [ "," ] ] ")" [ trailingClosure ] | "." IDENT | "?" | "?." IDENT postfixChain }
+    ///         | ( IDENT | postfix "." IDENT ) trailingClosure ;
     /// After "?." the rest of the chain is parsed on an implicit receiver, so `a?.b.c()` skips `.c()` too when `a` is None.
     /// </summary>
     private ExpressionSyntax ParsePostfix(ExpressionSyntax expression)
@@ -1139,23 +1174,33 @@ public sealed class Parser
                 case TokenKind.OpenParen:
                 {
                     NextToken();
-                    // Lambdas are fine inside an argument list, even within a match guard.
-                    var inGuard = _inGuard;
-                    _inGuard = false;
+                    // Lambdas (and trailing closures) are fine inside an argument list, even within a match guard or an `if`'s head.
+                    var (inGuard, noTrailingClosure) = (_inGuard, _noTrailingClosure);
+                    (_inGuard, _noTrailingClosure) = (false, false);
                     var arguments = ParseSeparatedList(ParseArgument, TokenKind.CloseParen);
-                    _inGuard = inGuard;
+                    (_inGuard, _noTrailingClosure) = (inGuard, noTrailingClosure);
                     Expect(TokenKind.CloseParen);
                     expression = new CallExpressionSyntax(
                         TextSpan.FromBounds(expression.Span.Start, Previous.Span.End), expression, arguments);
+                    if (AtTrailingClosure())
+                        return ParseTrailingClosure(expression);
                     break;
                 }
+                // `concurrency { … }`, `items.each { x => … }`: a call whose only argument is a trailing closure.
+                case TokenKind.OpenBrace when expression is NameExpressionSyntax or MemberAccessExpressionSyntax && AtTrailingClosure():
+                    return ParseTrailingClosure(expression);
                 case TokenKind.OpenBracket:
+                {
                     NextToken();
+                    var noTrailingClosure = _noTrailingClosure;
+                    _noTrailingClosure = false;
                     var indices = ParseSeparatedList(ParseExpression, TokenKind.CloseBracket);
+                    _noTrailingClosure = noTrailingClosure;
                     Expect(TokenKind.CloseBracket);
                     expression = new IndexExpressionSyntax(
                         TextSpan.FromBounds(expression.Span.Start, Previous.Span.End), expression, indices);
                     break;
+                }
                 case TokenKind.Dot:
                 {
                     NextToken();
@@ -1169,6 +1214,49 @@ public sealed class Parser
                     return expression;
             }
         }
+    }
+
+    /// <summary>
+    /// A `{` that starts a trailing closure: not in an `if`/`while`/`for`/`match` head (where it's the body), and not a
+    /// record spread.
+    /// </summary>
+    private bool AtTrailingClosure() => Current.Kind == TokenKind.OpenBrace && !_noTrailingClosure && !AtRecordSpread();
+
+    /// <summary>
+    /// trailingClosure = "{" [ lambdaParameters "=>" ] { statement } [ expression ] "}" ;
+    /// Like Kotlin's and Swift's: `f(a) { x => … }` is `f(a, x => { … })`, and `f { … }` is `f(() => { … })`. A closure
+    /// that awaits is async: `Retry(3) { await Fetch() }` is `Retry(3, async () => { await Fetch() })`.
+    /// <paramref name="callee"/> is the call it's added to, or (when there are no parentheses) the function.
+    /// </summary>
+    private ExpressionSyntax ParseTrailingClosure(ExpressionSyntax callee)
+    {
+        var open = NextToken();
+        ImmutableArray<LambdaParameterSyntax> parameters = [];
+        if ((Current.Kind == TokenKind.Identifier && Peek(1).Kind == TokenKind.FatArrow) ||
+            (Current.Kind == TokenKind.OpenParen && IsParenthesizedLambda()))
+        {
+            parameters = ParseLambdaParameters();
+            Expect(TokenKind.FatArrow);
+        }
+
+        // Whether it's async isn't known until its end, so `await` is read as an operator throughout. It's async if its
+        // body, as plugins have rewritten it, awaits other than in a lambda of its own.
+        var (outerYield, outerAsync, outerContext) = (_sawYield, _inAsync, _asyncContext);
+        (_inAsync, _asyncContext) = (true, AsyncContext.IfAwaited);
+        var body = ParseBlockBody(open);
+        (_sawYield, _inAsync, _asyncContext) = (outerYield, outerAsync, outerContext);
+        var closure = new LambdaExpressionSyntax(body.Span, parameters, body)
+        {
+            Async = SyntaxWalker.Awaits(body) ? new Token(TokenKind.Identifier, new TextSpan(open.Span.Start, 0), "async") : null,
+        };
+
+        var call = callee is CallExpressionSyntax withArguments
+            ? withArguments with { Span = Span(callee, closure), Arguments = withArguments.Arguments.Add(closure) }
+            : new CallExpressionSyntax(Span(callee, closure), callee, [closure]);
+        _trailingClosureEnd = call.Span.End;
+
+        // `f { … }.Wait()` carries on, but a `(`, `[` or `{` on the next line starts a new statement.
+        return Current.Kind is TokenKind.Dot or TokenKind.QuestionDot or TokenKind.Question ? ParsePostfix(call) : call;
     }
 
     /// <summary>
@@ -1206,7 +1294,7 @@ public sealed class Parser
                 var asyncKeyword = NextToken();
                 var outerAsync = _inAsync;
                 _inAsync = true;
-                var lambda = ParseLambda();
+                var lambda = ParseLambda(isAsync: true);
                 _inAsync = outerAsync;
                 return lambda with { Span = TextSpan.FromBounds(asyncKeyword.Span.Start, lambda.Span.End), Async = asyncKeyword };
             }
@@ -1467,38 +1555,56 @@ public sealed class Parser
     /// lambda          = ( IDENT | "(" [ lambdaParameter { "," lambdaParameter } [ "," ] ] ")" ) "=>" ( block | expression ) ;
     /// lambdaParameter = IDENT [ ":" type ] ;
     /// </summary>
-    private LambdaExpressionSyntax ParseLambda()
+    private LambdaExpressionSyntax ParseLambda(bool isAsync = false)
     {
         var first = Current;
-        ImmutableArray<LambdaParameterSyntax> parameters;
+        var parameters = ParseLambdaParameters();
+        Expect(TokenKind.FatArrow);
+        // A lambda's `yield` doesn't make the enclosing function an iterator (it's reported: lambdas can't be iterators),
+        // and its `await` doesn't make an enclosing trailing closure async.
+        var (outerYield, outerContext) = (_sawYield, _asyncContext);
+        _asyncContext = isAsync ? AsyncContext.Async : AsyncContext.Sync;
+        ExpressionSyntax body = Current.Kind == TokenKind.OpenBrace && !AtRecordSpread() ? ParseBlock() : ParseExpression();
+        (_sawYield, _asyncContext) = (outerYield, outerContext);
+        return new LambdaExpressionSyntax(TextSpan.FromBounds(first.Span.Start, body.Span.End), parameters, body);
+    }
+
+    /// <summary>lambdaParameters = IDENT | "(" [ lambdaParameter { "," lambdaParameter } [ "," ] ] ")" ;</summary>
+    internal ImmutableArray<LambdaParameterSyntax> ParseLambdaParameters()
+    {
         if (Current.Kind == TokenKind.Identifier)
         {
             var name = NextToken();
-            parameters = [new LambdaParameterSyntax(name.Span, name, null)];
-        }
-        else
-        {
-            Expect(TokenKind.OpenParen);
-            parameters = ParseSeparatedList(() =>
-            {
-                var name = Expect(TokenKind.Identifier);
-                TypeSyntax? type = null;
-                if (Current.Kind == TokenKind.Colon)
-                {
-                    NextToken();
-                    type = ParseType();
-                }
-                return new LambdaParameterSyntax(SpanFrom(name), name, type);
-            }, TokenKind.CloseParen);
-            Expect(TokenKind.CloseParen);
+            return [new LambdaParameterSyntax(name.Span, name, null)];
         }
 
-        Expect(TokenKind.FatArrow);
-        // A lambda's `yield` doesn't make the enclosing function an iterator (it's reported: lambdas can't be iterators).
-        var outerYield = _sawYield;
-        ExpressionSyntax body = Current.Kind == TokenKind.OpenBrace && !AtRecordSpread() ? ParseBlock() : ParseExpression();
-        _sawYield = outerYield;
-        return new LambdaExpressionSyntax(TextSpan.FromBounds(first.Span.Start, body.Span.End), parameters, body);
+        Expect(TokenKind.OpenParen);
+        var parameters = ParseSeparatedList(() =>
+        {
+            var name = Expect(TokenKind.Identifier);
+            TypeSyntax? type = null;
+            if (Current.Kind == TokenKind.Colon)
+            {
+                NextToken();
+                type = ParseType();
+            }
+            return new LambdaParameterSyntax(SpanFrom(name), name, type);
+        }, TokenKind.CloseParen);
+        Expect(TokenKind.CloseParen);
+        return parameters;
+    }
+
+    /// <summary>
+    /// Parses the head of an `if`, `while`, `for`, `match` or `requires`, where a `{` ends the head rather than starting
+    /// a trailing closure.
+    /// </summary>
+    internal T ParseHead<T>(Func<T> parse)
+    {
+        var noTrailingClosure = _noTrailingClosure;
+        _noTrailingClosure = true;
+        var head = parse();
+        _noTrailingClosure = noTrailingClosure;
+        return head;
     }
 
     /// <summary>defer = "defer" ( block [ ";" ] | expression ";" ) ;</summary>
@@ -1565,7 +1671,7 @@ public sealed class Parser
     private IfExpressionSyntax ParseIf()
     {
         var keyword = Expect(TokenKind.IfKeyword);
-        var condition = ParseExpression();
+        var condition = ParseHead(ParseExpression);
         var then = ParseBlock();
         ExpressionSyntax? @else = null;
         if (Current.Kind == TokenKind.ElseKeyword)
@@ -1584,7 +1690,7 @@ public sealed class Parser
     private MatchExpressionSyntax ParseMatch()
     {
         var keyword = Expect(TokenKind.MatchKeyword);
-        var scrutinee = ParseExpression();
+        var scrutinee = ParseHead(ParseExpression);
         Expect(TokenKind.OpenBrace);
 
         var arms = ImmutableArray.CreateBuilder<MatchArmSyntax>();
@@ -1632,7 +1738,7 @@ public sealed class Parser
     }
 
     /// <summary>pattern = primaryPattern { "|" primaryPattern } ;</summary>
-    private PatternSyntax ParsePattern()
+    internal PatternSyntax ParsePattern()
     {
         var first = ParsePrimaryPattern();
         if (Current.Kind != TokenKind.Pipe)

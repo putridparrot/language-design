@@ -6,6 +6,10 @@
     <Project Path="src/Piper.LanguageServer/Piper.LanguageServer.csproj" />
     <Project Path="src/Piper.Runtime/Piper.Runtime.csproj" />
   </Folder>
+  <Folder Name="/plugins/">
+    <Project Path="plugins/Piper.Plugins.Parallel/Piper.Plugins.Parallel.csproj" />
+    <Project Path="plugins/Piper.Plugins.Web/Piper.Plugins.Web.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Piper.Tests/Piper.Tests.csproj" />
   </Folder>

@@ -1,3 +1,6 @@
+using System.Collections.Immutable;
+using Piper.Diagnostics;
+using Piper.Plugins;
 using Piper.Text;
 
 namespace Piper.LanguageServer;
@@ -94,10 +97,33 @@ public sealed class Workspace
             .Where(f => f.Text is not null)
             .Select(f => new SourceText(f.Text!, f.File))
             .ToList();
-        var analysis = Compilation.Analyze(sources);
+        var project = ProjectOf(ProgramRoot(path));
+        var analysis = Compilation.Analyze(sources, project.Plugins, project.References);
         foreach (var source in sources)
             _analyses[source.FileName] = analysis;
         return analysis;
+    }
+
+    /// <summary>
+    /// The plugins and references that <paramref name="root"/>'s piper.json lists (so the editor understands their
+    /// keywords and types, as the CLI does), with any errors in the file, loading plugins or resolving references. None
+    /// when there's no piper.json.
+    /// </summary>
+    public static (ImmutableArray<IPiperPlugin> Plugins, ProgramReferences References, ImmutableArray<Diagnostic> Errors) ProjectOf(string? root)
+    {
+        if (root is null)
+            return ([], ProgramReferences.None, []);
+        try
+        {
+            if (!File.Exists(Path.Combine(root, PiperProject.FileName)))
+                return ([], ProgramReferences.None, []);
+            var (project, errors) = LoadedProject.Load(root);
+            return project is null ? ([], ProgramReferences.None, errors) : (project.Plugins, project.References, []);
+        }
+        catch (IOException)
+        {
+            return ([], ProgramReferences.None, []);
+        }
     }
 
     /// <summary>The latest analysis containing <paramref name="path"/>, analyzing it if there is none.</summary>

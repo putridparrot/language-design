@@ -7,7 +7,7 @@ namespace Piper.Diagnostics;
 
 /// <summary>
 /// Collects diagnostics from every compiler phase. Each kind of error has its own Report method
-/// so codes and wording stay consistent. Codes: PIP00xx lexer, PIP01xx parser, PIP02xx binder.
+/// so codes and wording stay consistent. Codes: PIP00xx lexer, PIP01xx parser, PIP02xx binder, PIP05xx plugins.
 /// </summary>
 public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 {
@@ -23,6 +23,9 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     /// <summary>The file that spans in newly reported diagnostics refer to; set by whichever phase is processing a file.</summary>
     public SourceText? CurrentSource { get; set; }
+
+    /// <summary>Adds diagnostics already reported elsewhere, such as in a trial binding whose result is kept.</summary>
+    public void AddRange(IEnumerable<Diagnostic> diagnostics) => _diagnostics.AddRange(diagnostics);
 
     private void Error(string code, TextSpan span, string message) =>
         _diagnostics.Add(new Diagnostic(code, DiagnosticSeverity.Error, span, message) { Source = CurrentSource });
@@ -562,4 +565,22 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportEmptyRangePattern(TextSpan span) =>
         Error("PIP0239", span, "This range pattern is empty: its lower bound is above its upper bound (or equal to it, with '..<').");
+
+    // Plugins
+
+    public void ReportPluginLoadFailed(string path, string reason) =>
+        Error("PIP0500", default, $"Can't load plugin '{path}': {reason}");
+
+    public void ReportPluginKeywordInvalid(string plugin, string keyword) =>
+        Error("PIP0501", default, $"Plugin '{plugin}' can't add the keyword '{keyword}': a plugin keyword must be a name that isn't already a Piper keyword or reserved word.");
+
+    public void ReportPluginKeywordClash(string keyword, string first, string second) =>
+        Error("PIP0502", default, $"Plugins '{first}' and '{second}' both add the keyword '{keyword}'.");
+
+    /// <summary>An error a plugin found in its own syntax.</summary>
+    public void ReportPluginError(TextSpan span, string plugin, string message) =>
+        Error("PIP0503", span, $"{message} ({plugin})");
+
+    public void ReportPluginFailed(TextSpan span, string plugin, string keyword, string reason) =>
+        Error("PIP0504", span, $"Plugin '{plugin}' failed while reading '{keyword}': {reason}");
 }

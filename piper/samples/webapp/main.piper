@@ -1,0 +1,69 @@
+// A web API declared with the web plugin's `services` and `endpoints`. It serves on a free port, calls itself and
+// stops, so it can run as a sample; a real server would end with `app.Run()`. Compare samples/web, which writes the
+// same kind of calls out by hand.
+
+using System.Linq;
+using System.Net.Http;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Logging;
+
+trait Clock {
+    fn Now() => string;
+}
+
+record FixedClock(time: string);
+
+extend FixedClock: Clock {
+    fn Now() => string = this.time;
+}
+
+trait Greeter {
+    fn Greet(name: string) => string;
+}
+
+record FriendlyGreeter();
+
+extend FriendlyGreeter: Greeter {
+    fn Greet(name: string) => string = "Hello, {name}!";
+}
+
+record Todo(id: int, title: string);
+
+// Becomes `fn AppServices(services: IServiceCollection) => IServiceCollection`, registering each service.
+services AppServices {
+    singleton Clock = FixedClock("noon");   // made by this expression, when first needed
+    scoped Greeter => FriendlyGreeter;      // a trait, and the type implementing it, which DI constructs
+}
+
+// Becomes `fn Api(app: IEndpointRouteBuilder)`, mapping each route under /api. Routes are written as ASP.NET Core
+// documents them: {name} is a route parameter, and the handler takes it by name. Other parameters come from the query
+// string or, like `greeter`, from the services.
+endpoints Api "/api" {
+    get "/hello/{name}" (name: string, greeter: Greeter) => greeter.Greet(name);
+    get "/time" (clock: Clock) => "It's {clock.Now()}";
+    get "/add" (a: int, b: int) => a + b;
+    get "/todos/{id:int}" async (id: int) => {
+        await Task.Delay(1);
+        Todo(id, "Write more Piper")
+    }
+}
+
+async fn Main() {
+    let builder = WebApplication.CreateBuilder();
+    builder.Logging.ClearProviders();
+    builder.WebHost.UseUrls("http://127.0.0.1:0");
+    AppServices(builder.Services);
+
+    let app = builder.Build();
+    Api(app);
+
+    await app.StartAsync();
+    let address = app.Urls.First();
+    using let client = HttpClient();
+    for path in ["/api/hello/Ada", "/api/time", "/api/add?a=2&b=40", "/api/todos/7"] {
+        Print("{path} → {await client.GetStringAsync(address + path)}");
+    }
+    await app.StopAsync();
+}

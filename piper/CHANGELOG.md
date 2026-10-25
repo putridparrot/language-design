@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+- **Trailing closures:** a block after a call is its last argument, as a lambda: `Repeat(3) { i => … }`,
+  `Guarded { … }`. In an `if`, `while`, `for`, `match` or `requires` head, a `{` is still the body. A closure that
+  awaits is async.
+- **Fix:** a lambda capturing a range loop's variable (`for i in 0..<3 { actions.Add(() => i); }`) now captures each
+  iteration's value, as it already did when looping over a collection, rather than the last one.
+- **Better errors:** an error in a lambda passed to an overloaded .NET method (`Parallel.ForEach`, `Task.Run`,
+  `List.ForEach`) is reported where it is, rather than as "no overload accepts these arguments".
+- **Packages, frameworks and assemblies:**
+  - `piper.json` can list `"packages"` (NuGet), `"frameworks"` (such as `Microsoft.AspNetCore.App`) and `"references"`
+    (.NET assemblies).
+  - The binder, `piper run`, `piper test` and the editor use them, and `piper build --exe` copies the package and
+    referenced assemblies next to the program, naming the frameworks in its runtimeconfig.json.
+  - Packages are restored with the .NET SDK and cached in the folder's `obj/piper`.
+  - New errors PIP0401–PIP0403.
+  - See `samples/web`, a minimal API with dependency injection.
+- **Web plugin:** `plugins/Piper.Plugins.Web` adds two declarations, `services Name { singleton Clock = …; scoped
+  Greeter => FriendlyGreeter; }` for dependency injection and `endpoints Name "/api" { get "/hello/{name}" (name:
+  string) => …; }` for minimal APIs. It checks for duplicate services and routes, route parameters without a handler
+  parameter, and untyped handler parameters, and brings in ASP.NET Core itself. See `samples/webapp`.
+- **Lambdas as `Delegate`:** a lambda whose parameters have types can be passed where .NET takes any `Delegate`, as
+  ASP.NET Core's `MapGet` does.
+- **Compiler plugins:** .NET assemblies listed in `piper.json`'s `"plugins"` add statement and declaration keywords,
+  which they rewrite into ordinary Piper as it's parsed. Everything after parsing works as for code the user wrote,
+  including type checking, error locations and the language server. The new diagnostics are PIP0500–PIP0504. See
+  [docs/plugins.md](docs/plugins.md), the sample plugin in `plugins/Piper.Plugins.Parallel` (`parallel for`,
+  `concurrency { }`, which is awaited in async code) and `samples/plugins`. `SyntaxWalker` moved from the language
+  server to `Piper.Syntax`, so plugins can use it.
+
 ## 1.0.0
 
 The first release. From here on, a program that compiles with one 1.x release compiles with every later 1.x release

@@ -34,13 +34,20 @@ public class PiperProjectTests
     }
 
     [Theory]
-    [InlineData("{ \"packages\": {} }", "Unknown key \"packages\"")]
+    [InlineData("{ \"sources\": {} }", "Unknown key \"sources\"")]
+    [InlineData("{ \"packages\": [\"Humanizer\"] }", "\"packages\" must map NuGet package names to versions")]
+    [InlineData("{ \"packages\": { \"Humanizer\": 2 } }", "\"packages\" must map NuGet package names to versions")]
+    [InlineData("{ \"frameworks\": \"Microsoft.AspNetCore.App\" }", "\"frameworks\" must be a list")]
+    [InlineData("{ \"references\": [\"\"] }", "\"references\" must be a list")]
     [InlineData("{ \"output\": \"dll\" }", "\"output\" must be \"exe\" or \"library\"")]
     [InlineData("{ \"name\": \"\" }", "\"name\" must be a non-empty string")]
     [InlineData("{ \"name\": \"a/b\" }", "\"name\" must be a non-empty string")]
     [InlineData("{ \"name\": 3 }", "\"name\" must be a non-empty string")]
     [InlineData("[]", "must hold a JSON object")]
     [InlineData("{ \"name\": ", "isn't valid JSON")]
+    [InlineData("{ \"plugins\": \"a.dll\" }", "\"plugins\" must be a list of paths")]
+    [InlineData("{ \"plugins\": [\"\"] }", "\"plugins\" must be a list of paths")]
+    [InlineData("{ \"plugins\": [1] }", "\"plugins\" must be a list of paths")]
     public void Anything_else_is_an_error(string text, string message)
     {
         var (project, errors) = Parse(text);
@@ -48,6 +55,30 @@ public class PiperProjectTests
         var error = Assert.Single(errors);
         Assert.Equal("PIP0400", error.Code);
         Assert.Contains(message, error.Message);
+    }
+
+    [Fact]
+    public void Reads_plugin_paths()
+    {
+        var (project, errors) = Parse("""{ "plugins": ["../plugins/A.dll", "B.dll"] }""");
+        Assert.Empty(errors);
+        Assert.Equal(["../plugins/A.dll", "B.dll"], project!.Plugins.ToArray());
+    }
+
+    [Fact]
+    public void Reads_packages_frameworks_and_references()
+    {
+        var (project, errors) = Parse("""
+            {
+              "packages": { "Humanizer.Core": "2.14.1" },
+              "frameworks": ["Microsoft.AspNetCore.App"],
+              "references": ["lib/My.dll"],
+            }
+            """);
+        Assert.Empty(errors);
+        Assert.Equal("2.14.1", project!.Packages["humanizer.core"]);
+        Assert.Equal(["Microsoft.AspNetCore.App"], project.Frameworks.ToArray());
+        Assert.Equal(["lib/My.dll"], project.References.ToArray());
     }
 
     [Fact]

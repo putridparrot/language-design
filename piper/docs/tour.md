@@ -170,6 +170,18 @@ for (name, age) in ages { Print("{name} is {age}"); }
 Function types are written `(int, int) => int` and are .NET delegates, so lambdas go straight into LINQ and any
 other .NET API.
 
+A block after a call is a *trailing closure*, the call's last argument, so a function taking a lambda reads like a
+statement:
+
+```piper
+Retry(3) { attempt =>             // Retry(3, attempt => { … })
+    Download(url)
+}
+```
+
+Keywords that can't be written as calls, such as `parallel for x in items { … }`, can come from a compiler plugin
+listed in `piper.json`, without changing the compiler. See [plugins.md](plugins.md).
+
 ## Async
 
 As in C#: an `async fn` returns a `Task<T>` (or `Task`), and `await` waits for anything awaitable.
