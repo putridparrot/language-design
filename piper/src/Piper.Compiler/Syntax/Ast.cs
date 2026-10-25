@@ -86,6 +86,49 @@ public sealed record FunctionDeclarationSyntax(
 
     /// <summary>The body contains `yield`, so (as in C#) the function is an iterator.</summary>
     public bool IsIterator { get; init; }
+
+    /// <summary>A class method's `virtual`, `override` or `abstract`.</summary>
+    public Token? Modifier { get; init; }
+
+    /// <summary>A class method's `public`, which it is anyway.</summary>
+    public Token? Public { get; init; }
+}
+
+/// <summary>
+/// <c>abstract class Shape(name: string): Base(name), Named { fields and methods }</c>: a mutable reference type with
+/// identity, whose fields are private unless <c>public</c> and whose methods are public unless <c>private</c>.
+/// <see cref="Parameters"/> are its primary constructor's, usable in field initializers, the base's arguments and its
+/// methods, as in C# 12.
+/// </summary>
+public sealed record ClassDeclarationSyntax(
+    TextSpan Span,
+    Token Name,
+    ImmutableArray<TypeParameterSyntax> TypeParameters,
+    ImmutableArray<ParameterSyntax> Parameters,
+    ImmutableArray<BaseTypeSyntax> Bases,
+    ImmutableArray<ClassFieldSyntax> Fields,
+    ImmutableArray<FunctionDeclarationSyntax> Methods) : DeclarationSyntax(Span, Name)
+{
+    public Token? Abstract { get; init; }
+
+    public Token? Sealed { get; init; }
+}
+
+/// <summary>
+/// An entry in a class's base list: its base class, with the base constructor's <see cref="Arguments"/>
+/// (<c>Exception("No item {id}")</c>), or a trait or interface it implements (no arguments).
+/// </summary>
+public sealed record BaseTypeSyntax(TextSpan Span, TypeSyntax Type, ImmutableArray<ExpressionSyntax>? Arguments) : SyntaxNode(Span);
+
+/// <summary><c>mut balance: decimal = opening;</c> in a class: a field, private unless <see cref="Public"/>.</summary>
+public sealed record ClassFieldSyntax(TextSpan Span, Token Keyword, Token Name, TypeSyntax? Type, ExpressionSyntax Initializer) : SyntaxNode(Span)
+{
+    public Token? Public { get; init; }
+
+    /// <summary>The text of the `///` comment lines directly above it, if any.</summary>
+    public string? Documentation { get; init; }
+
+    public bool IsMutable => Keyword.Kind == TokenKind.MutKeyword;
 }
 
 public sealed record RecordDeclarationSyntax(
@@ -236,6 +279,12 @@ public sealed record SingleDesignationSyntax(TextSpan Span, Token Name) : Design
 public sealed record ParenthesizedDesignationSyntax(TextSpan Span, ImmutableArray<DesignationSyntax> Elements) : DesignationSyntax(Span);
 
 public sealed record ExpressionStatementSyntax(TextSpan Span, ExpressionSyntax Expression) : StatementSyntax(Span);
+
+/// <summary>
+/// `fn Helper(x: int) => int { … }` inside a block: a function usable throughout that block (even before it, so local
+/// functions can call each other), which captures the variables around it, as C#'s local functions do.
+/// </summary>
+public sealed record LocalFunctionStatementSyntax(TextSpan Span, FunctionDeclarationSyntax Function) : StatementSyntax(Span);
 
 public sealed record WhileStatementSyntax(TextSpan Span, ExpressionSyntax Condition, BlockExpressionSyntax Body)
     : StatementSyntax(Span);

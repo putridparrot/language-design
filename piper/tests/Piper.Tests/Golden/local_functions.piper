@@ -1,0 +1,64 @@
+// Local functions: a function declared in a block, usable throughout it (even before it, so local functions can call
+// each other), which captures the variables around it by reference, as C#'s do.
+
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
+fn Main() {
+    let total = 10;
+
+    // Recursion, and calls before the declaration.
+    Print(Fib(10));
+    fn Fib(n: int) => int = if n < 2 { n } else { Fib(n - 1) + Fib(n - 2) };
+
+    // Capturing a variable, by reference.
+    mut count = 0;
+    fn Bump(by: int) { count += by; }
+    Bump(2);
+    Bump(3);
+    Print(count);
+    fn AddTotal(x: int) => int { x + total }
+    Print(AddTotal(5));
+
+    // Mutual recursion.
+    fn IsEven(n: int) => bool = if n == 0 { true } else { IsOdd(n - 1) };
+    fn IsOdd(n: int) => bool = if n == 0 { false } else { IsEven(n - 1) };
+    Print(IsEven(10));
+
+    // Generic, iterator and async.
+    fn First<T>(items: List<T>) => T = items[0];
+    Print(First(["a", "b"]));
+    fn Upto(n: int) => IEnumerable<int> {
+        for i in 1..n { yield return i; }
+    }
+    Print(string.Join(",", Upto(3)));
+    async fn Later() => Task<int> { await Task.Yield(); 7 }
+    Print(Later().Result);
+
+    // As a value.
+    let squares = System.Linq.Enumerable.Select([1, 2, 3], Square);
+    fn Square(n: int) => int = n * n;
+    Print(string.Join(",", squares));
+
+    // A name a local variable also has, and nested blocks.
+    let Helper = 1;
+    if true {
+        fn Helper2() => int = Helper + 1;
+        Print(Helper2());
+    }
+
+    // Each iteration's variable, as lambdas capture it.
+    let actions: List<() => int> = [];
+    for i in 0..<3 {
+        fn Current() => int = i;
+        actions.Add(Current);
+    }
+    Print(string.Join(",", actions.ConvertAll(a => a())));
+
+    // `return` leaves the local function, not the one around it.
+    fn Describe(n: int) => string {
+        if n < 0 { return "negative"; }
+        "fine"
+    }
+    Print(Describe(-1));
+}

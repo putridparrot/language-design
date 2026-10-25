@@ -183,6 +183,7 @@ public sealed partial class CSharpEmitter
                 sections.Add(type switch
                 {
                     RecordSymbol record => () => EmitRecord(record, file),
+                    ClassSymbol @class => () => EmitClass(@class, file),
                     EnumSymbol @enum => () => EmitEnum(@enum, file),
                     TraitSymbol trait => () => EmitTrait(trait, file),
                     _ => throw new InvalidOperationException(),
@@ -339,6 +340,48 @@ public sealed partial class CSharpEmitter
     }
 
     /// <summary>
+    /// <c>public abstract partial class Shape(string name) : Base(name), Named</c>, with its fields (private ones as
+    /// fields, public ones as properties) and methods. Its primary constructor is C# 12's: the parameters are usable in
+    /// the initializers, the base's arguments and the methods.
+    /// </summary>
+    private void EmitClass(ClassSymbol @class, SourceText file)
+    {
+        var modifiers = @class.IsAbstract ? "abstract " : @class.IsSealed ? "sealed " : "";
+        // Base arguments need a primary constructor, so a class passing some has one, if only an empty one.
+        var parameters = @class.Parameters.IsEmpty && @class.BaseArguments.IsEmpty
+            ? ""
+            : $"({string.Join(", ", @class.Parameters.Select(p => $"{TypeName(p.Type)} {Escape(p.Name)}{DefaultValue(p.Default)}"))})";
+        _names = new NameAllocator(@class.Parameters.Select(p => p.Name));
+
+        var bases = new List<string>();
+        if (@class.Base is { } @base)
+            bases.Add(TypeName(@base) + (@class.BaseArguments.IsEmpty ? "" : $"({Arguments(@class.BaseArguments)})"));
+        bases.AddRange(TraitsFrom(@class, file).Select(t => TypeName(t)));
+        var baseList = bases.Count == 0 ? "" : $" : {string.Join(", ", bases)}";
+
+        EmitDocumentation(@class, @class.Parameters);
+        EmitAttributes(@class);
+        _writer.WriteLine($"{Visibility(@class)} {modifiers}partial class {Escape(@class.Name)}{TypeParameterList(@class.TypeParameters)}{parameters}{baseList}{Constraints(@class.TypeParameters)}");
+        _writer.OpenBrace();
+        foreach (var field in @class.Fields)
+        {
+            var type = TypeName(field.Type);
+            var initializer = Expr(field.Initializer!, AssignmentPrecedence);
+            _writer.WriteLine(field.IsPublic
+                ? $"public {type} {Escape(field.Name)} {{ get;{(field.IsMutable ? " set;" : "")} }} = {initializer};"
+                : $"private {(field.IsMutable ? "" : "readonly ")}{type} {Escape(field.Name)} = {initializer};");
+        }
+        var methods = MethodsFrom(@class, file).ToList();
+        if (methods.Count > 0)
+        {
+            if (!@class.Fields.IsEmpty)
+                _writer.WriteLine();
+            EmitMembers(methods);
+        }
+        _writer.CloseBrace();
+    }
+
+    /// <summary>
     /// A record's `requires` conditions, checked on construction. Its properties are redeclared, in order (so
     /// printing and deconstruction keep the fields' order), and the first one's initializer checks the conditions
     /// before giving it its value: property initializers run in the primary constructor and can read all its parameters.
@@ -408,6 +451,7 @@ public sealed partial class CSharpEmitter
         var keyword = type switch
         {
             TraitSymbol => "partial interface",
+            ClassSymbol => "partial class",
             EnumSymbol { BuiltinKind: not BuiltinEnumKind.None } => "readonly partial record struct",
             _ => "partial record",
         };
@@ -466,10 +510,26 @@ public sealed partial class CSharpEmitter
         {
             if (i > 0)
                 _writer.WriteLine();
-            var access = methods[i].IsPrivate ? "internal " : "public ";
+            var method = methods[i];
+            // A class's private method is private to it; an extend block's is visible to the program (it's private to
+            // its file in Piper). An override of a protected .NET method must be protected too.
+            var access = method.IsPrivate ? method.ContainingType is ClassSymbol ? "private " : "internal "
+                : method.Overridden is MethodInfo { IsFamily: true } ? "protected "
+                : method.Overridden is MethodInfo { IsFamilyOrAssembly: true } ? "protected internal "
+                : "public ";
+            var modifier = method.ContainingType is not ClassSymbol ? ""
+                : method.IsOverride ? "override "
+                : method.IsAbstract ? "abstract "
+                : method.IsVirtual ? "virtual " : "";
             // An instance-form operator is a static C# operator whose first parameter, `self`, is Piper's `this`.
-            _thisName = methods[i].IsOperator ? "self" : "this";
-            EmitFunction(_methodBodies[methods[i]], access + (methods[i].IsStatic ? "static " : ""));
+            _thisName = method.IsOperator ? "self" : "this";
+            if (method.ContainingType is ClassSymbol && method.IsAbstract)
+            {
+                _names = NewNameAllocator(method);
+                _writer.WriteLine(Signature(method, access + modifier) + ";");
+                continue;
+            }
+            EmitFunction(_methodBodies[method], access + (method.IsStatic ? "static " : "") + modifier);
         }
         _thisName = "this";
 
@@ -659,6 +719,15 @@ public sealed partial class CSharpEmitter
             .Where(p => p.Constraints.Any(c => c is ClrTypeSymbol))
             .Select(p => $" where {Escape(p.Name)} : {string.Join(", ", p.Constraints.OfType<ClrTypeSymbol>().Select(c => TypeName(c)))}"));
 
+    /// <summary>
+    /// How to name a function from the current position: a local function by the name it has in the method (unique
+    /// among its locals), a top-level one through its module class, qualified as needed.
+    /// </summary>
+    private string FunctionName(FunctionSymbol function) =>
+        function.IsLocal
+            ? Escape(_names.Get(function))
+            : $"{(InCurrentClass(function) ? "" : FunctionContainer(function) + ".")}{Escape(function.Name)}";
+
     /// <summary>How to reach a top-level function from the current position: its module class, qualified as needed.</summary>
     private string FunctionContainer(FunctionSymbol function)
     {
@@ -674,12 +743,16 @@ public sealed partial class CSharpEmitter
         IEnumerable<string> typeParameters = function.TypeParameters.Select(p => p.Name);
         if (function is MethodSymbol { ContainingType: NamedTypeDefinition definition })
             typeParameters = typeParameters.Concat(definition.TypeParameters.Select(p => p.Name));
+        // A class's methods name its constructor parameters bare, so no local may take their names.
+        if (function is MethodSymbol { ContainingType: ClassSymbol @class })
+            typeParameters = typeParameters.Concat(@class.SelfAndBases().SelectMany(c => c.Parameters).Select(p => p.Name));
         // In an extension block the receiver parameter is called `self` (C# can't name it `this`), so keep that name free.
         return new NameAllocator([.. _topLevelNames, "_", "self", .. typeParameters]);
     }
 
     /// <summary>e.g. <c>public static T first&lt;T&gt;(Pair&lt;T, T&gt; pair) where T : Show</c>; declares the parameter names.</summary>
-    private string Signature(FunctionSymbol symbol, string modifiers)
+    /// <param name="name">The C# name, if not the function's own (a local function's, made unique among its method's locals).</param>
+    private string Signature(FunctionSymbol symbol, string modifiers, string? name = null)
     {
         var parameters = string.Join(", ", symbol.Parameters.Select(p => $"{InlineAttributes(p)}{TypeName(p.Type)} {Escape(_names.Declare(p))}{DefaultValue(p.Default)}"));
         // `async` belongs to a body, so a required trait (interface) method never has it.
@@ -696,7 +769,7 @@ public sealed partial class CSharpEmitter
             return $"{modifiers}{@async}{TypeName(symbol.ReturnType)} {TypeName(parent)}.{Escape(symbol.Name)}{TypeParameterList(symbol.TypeParameters)}" +
                    $"({parameters})";
         }
-        return $"{modifiers}{@async}{TypeName(symbol.ReturnType)} {Escape(symbol.Name)}{TypeParameterList(symbol.TypeParameters)}" +
+        return $"{modifiers}{@async}{TypeName(symbol.ReturnType)} {name ?? Escape(symbol.Name)}{TypeParameterList(symbol.TypeParameters)}" +
                $"({parameters}){Constraints(symbol.TypeParameters)}";
     }
 
@@ -753,7 +826,7 @@ public sealed partial class CSharpEmitter
 
     /// <summary>C# only allows calls and assignments as expression statements.</summary>
     private static bool IsStatementExpression(BoundExpression expression) =>
-        expression is BoundCallExpression or BoundMethodCallExpression or BoundClrInvocationExpression or BoundAssignmentExpression
+        expression is BoundCallExpression or BoundMethodCallExpression or BoundClrInvocationExpression or BoundAssignmentExpression or BoundFieldAssignmentExpression or BoundObjectCreationExpression
             or BoundDelegateInvocationExpression or BoundClrAssignmentExpression or BoundDeconstructionExpression or BoundAwaitExpression;
 
     // Statements
@@ -910,6 +983,23 @@ public sealed partial class CSharpEmitter
                 _writer.WriteLine($"throw {Expr(thrown.Exception, AssignmentPrecedence)};");
                 break;
 
+            // A C# local function, under the name the method's other code calls it by.
+            case BoundLocalFunctionStatement { Function: var function }:
+            {
+                var signature = Signature(function.Symbol, "", Escape(_names.Get(function.Symbol)));
+                var body = (BoundBlockStatement)function.Body;
+                if (function.IsExpressionBodied && ExpressionBody(body) is { } expression)
+                {
+                    _writer.WriteLine($"{signature} => {Expr(expression, AssignmentPrecedence)};");
+                }
+                else
+                {
+                    _writer.WriteLine(signature);
+                    EmitBlock(body);
+                }
+                break;
+            }
+
             case BoundUnreachableStatement:
                 _writer.WriteLine("throw new global::System.Diagnostics.UnreachableException();");
                 break;
@@ -990,7 +1080,11 @@ public sealed partial class CSharpEmitter
         {
             BoundLiteralExpression literal => (Literal(literal.Value), PrimaryPrecedence),
             BoundVariableExpression { Variable.Kind: VariableKind.This } => (_thisName, PrimaryPrecedence),
-            BoundVariableExpression variable => (Escape(_names.Get(variable.Variable)), PrimaryPrecedence),
+            BoundVariableExpression variable => (VariableName(variable.Variable), PrimaryPrecedence),
+            BoundObjectCreationExpression creation =>
+                ($"new {TypeName(creation.Type)}({Arguments(creation.Arguments, creation.ArgumentNames)})", PrimaryPrecedence),
+            BoundFieldAssignmentExpression assignment =>
+                ($"{Expr(assignment.Target, PrimaryPrecedence)}.{Escape(assignment.Field.Name)} {(assignment.CompoundOperator is { } op ? Operators.GetText(op) + "=" : "=")} {Expr(assignment.Value, AssignmentPrecedence)}", AssignmentPrecedence),
             BoundUnaryExpression unary => (Unary(unary), UnaryPrecedence),
             BoundBinaryExpression binary => Binary(binary),
             BoundAssignmentExpression assignment => (Assignment(assignment), AssignmentPrecedence),
@@ -1038,7 +1132,7 @@ public sealed partial class CSharpEmitter
             BoundLambdaExpression lambda => (Lambda(lambda), AssignmentPrecedence),
             // A method group; it converts to the delegate type the context gives it.
             BoundFunctionReferenceExpression reference =>
-                ($"{(InCurrentClass(reference.Function) ? "" : FunctionContainer(reference.Function) + ".")}{Escape(reference.Function.Name)}{TypeArgumentList(reference.TypeArguments)}", PrimaryPrecedence),
+                ($"{FunctionName(reference.Function)}{TypeArgumentList(reference.TypeArguments)}", PrimaryPrecedence),
             BoundDelegateInvocationExpression invocation => (DelegateInvocation(invocation), PrimaryPrecedence),
             // Lowering leaves throw expressions only where C# allows them (a ?: branch, the right of ??), which can't be parenthesized.
             BoundThrowExpression thrown => ($"throw {Expr(thrown.Exception, LogicalOrPrecedence)}", PrimaryPrecedence),
@@ -1104,8 +1198,19 @@ public sealed partial class CSharpEmitter
     private string Assignment(BoundAssignmentExpression assignment)
     {
         var op = assignment.CompoundOperator is { } compound ? Operators.GetText(compound) + "=" : "=";
-        return $"{Escape(_names.Get(assignment.Variable))} {op} {Expr(assignment.Value, AssignmentPrecedence)}";
+        return $"{VariableName(assignment.Variable)} {op} {Expr(assignment.Value, AssignmentPrecedence)}";
     }
+
+    /// <summary>
+    /// A variable's C# name: a class field named bare is <c>this.name</c> (so no local can hide it), a class's
+    /// constructor parameter keeps its own name (which locals can't take), and others get unique ones.
+    /// </summary>
+    private string VariableName(VariableSymbol variable) => variable.Kind switch
+    {
+        VariableKind.Field => $"{_thisName}.{Escape(variable.Name)}",
+        VariableKind.ClassParameter => Escape(variable.Name),
+        _ => Escape(_names.Get(variable)),
+    };
 
     private string LabelName(BoundLabel label)
     {
@@ -1251,8 +1356,7 @@ public sealed partial class CSharpEmitter
             return $"global::Piper.Runtime.PiperContract.Require({Arguments(call.Arguments)})";
         if (call.Function == BuiltinFunctions.AssertEqual)
             return $"global::Piper.Runtime.PiperAssert.Equal{TypeArgumentList(call.TypeArguments)}({Arguments(call.Arguments)})";
-        var qualifier = InCurrentClass(call.Function) ? "" : FunctionContainer(call.Function) + ".";
-        return $"{qualifier}{Escape(call.Function.Name)}{TypeArgumentList(call.TypeArguments)}({Arguments(call.Arguments, call.ArgumentNames)})";
+        return $"{FunctionName(call.Function)}{TypeArgumentList(call.TypeArguments)}({Arguments(call.Arguments, call.ArgumentNames)})";
     }
 
     /// <summary>
@@ -1564,13 +1668,13 @@ public sealed partial class CSharpEmitter
         return builder.ToString();
     }
 
-    /// <summary>Gives each variable in a method a unique C# name that doesn't collide with top-level names.</summary>
+    /// <summary>Gives each variable (and local function) in a method a unique C# name that doesn't collide with top-level names.</summary>
     private sealed class NameAllocator(IEnumerable<string> reserved)
     {
         private readonly HashSet<string> _used = [.. reserved];
-        private readonly Dictionary<VariableSymbol, string> _names = [];
+        private readonly Dictionary<Symbol, string> _names = [];
 
-        public string Declare(VariableSymbol variable)
+        public string Declare(Symbol variable)
         {
             var name = variable.Name;
             for (int n = 1; !_used.Add(name); n++)
@@ -1579,6 +1683,6 @@ public sealed partial class CSharpEmitter
             return name;
         }
 
-        public string Get(VariableSymbol variable) => _names.TryGetValue(variable, out var name) ? name : Declare(variable);
+        public string Get(Symbol variable) => _names.TryGetValue(variable, out var name) ? name : Declare(variable);
     }
 }

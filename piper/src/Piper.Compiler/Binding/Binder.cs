@@ -154,8 +154,10 @@ public sealed partial class Binder
         new Binder(diagnostics, semantic, clr ?? ClrTypeIndex.Platform).Bind(units);
 
     /// <param name="Traits">The traits it declares, bound in its type-parameter scope (`extend Box: Convert<T>`), with their syntax.</param>
+    /// <param name="MemberScope">For a class's methods: where its instance methods are bound, seeing its fields by bare name.</param>
     private sealed record ExtendInfo(
-        ExtendDeclarationSyntax Syntax, FileContext File, TypeSymbol Target, Scope TypeParameterScope, IReadOnlyList<(TypeSymbol Trait, TypeSyntax Syntax)> Traits);
+        ExtendDeclarationSyntax Syntax, FileContext File, TypeSymbol Target, Scope TypeParameterScope, IReadOnlyList<(TypeSymbol Trait, TypeSyntax Syntax)> Traits,
+        Scope? MemberScope = null, Scope? StaticScope = null);
 
     private sealed record FunctionInfo(FunctionSymbol Symbol, FunctionDeclarationSyntax Syntax, FileContext File, Scope SignatureScope);
 
@@ -215,6 +217,7 @@ public sealed partial class Binder
             var (syntax, reserved) = definition switch
             {
                 RecordSymbol r => (r.Declaration.TypeParameters, new HashSet<string> { r.Name }),
+                ClassSymbol c => (c.Declaration.TypeParameters, new HashSet<string> { c.Name }),
                 EnumSymbol e => (e.Declaration!.TypeParameters, [e.Name, .. e.Declaration.Variants.Select(v => v.Name.Text)]),
                 TraitSymbol t => (t.Declaration.TypeParameters, new HashSet<string> { t.Name }),
                 _ => throw new InvalidOperationException(),
@@ -234,6 +237,8 @@ public sealed partial class Binder
 
         // Conformances must be known before any generic type is instantiated, to check constraints.
         var extends = _files.SelectMany(BindExtendHeaders).ToList();
+        extends.AddRange(_files.SelectMany(file => BindClassHeaders(file, types)));
+        CheckClassCycles(types.OfType<ClassSymbol>());
         var deferred = _deferredConstraintChecks;
         _deferredConstraintChecks = null;
         deferred.ForEach(check => check());
@@ -247,6 +252,8 @@ public sealed partial class Binder
             {
                 if (definition is RecordSymbol record)
                     record.Fields = BindFields(record.Declaration.Fields, record.Name);
+                else if (definition is ClassSymbol @class)
+                    BindClassParameters(@class);
                 else
                     BindVariants((EnumSymbol)definition);
             });
@@ -275,6 +282,10 @@ public sealed partial class Binder
                 functions.Add(info);
             }
         }
+
+        // Field initializers can call functions, so classes' members come once every function is declared.
+        BindClassMembers(types.OfType<ClassSymbol>());
+        CheckClassMethods(types.OfType<ClassSymbol>());
 
         // Tests are functions no scope declares, so nothing can call them, marked for `piper test` to find.
         var tests = new List<(string Name, FunctionInfo Info)>();
@@ -458,6 +469,7 @@ public sealed partial class Binder
             TypeSymbol? type = declaration switch
             {
                 RecordDeclarationSyntax record => new RecordSymbol(record),
+                ClassDeclarationSyntax @class => new ClassSymbol(@class),
                 EnumDeclarationSyntax @enum => new EnumSymbol(@enum),
                 TraitDeclarationSyntax trait => new TraitSymbol(trait),
                 _ => null,
@@ -916,10 +928,15 @@ public sealed partial class Binder
         var infos = new List<FunctionInfo>();
         foreach (var syntax in extend.Syntax.Methods)
         {
-            var info = BindFunctionSignature(syntax, extend.File, extend.TypeParameterScope, target, thisType);
+            // A class's instance methods see its fields and constructor parameters by bare name.
+            var outer = (syntax.Static is null ? extend.MemberScope : extend.StaticScope) ?? extend.TypeParameterScope;
+            var info = BindFunctionSignature(syntax, extend.File, outer, target, thisType);
             var method = (MethodSymbol)info.Symbol;
-            if (!syntax.HasBody)
+            // A class's bodiless methods are checked with its other methods; nothing else may lack a body.
+            if (!syntax.HasBody && target is not ClassSymbol)
                 _diagnostics.ReportMissingBody(syntax.Name.Span, syntax.Name.Text);
+            if (target is not ClassSymbol && syntax.Modifier is { } modifier)
+                _diagnostics.ReportInvalidOverride(modifier.Span, $"'{modifier.Text}' applies to a class's methods.");
             if (target is TraitSymbol && syntax.Static is { } @static)
             {
                 // A static method would make the trait usable only as a bound, which belongs in its declaration.
@@ -951,7 +968,9 @@ public sealed partial class Binder
         // The emitted Option/Result structs also have IsSome/IsOk/Value/Error members.
         bool reservedOnBuiltin = target is EnumSymbol { BuiltinKind: not BuiltinEnumKind.None } &&
                                  method.Name is "IsSome" or "IsOk" or "Value" or "Error";
-        if (ReservedMemberNames.Contains(method.Name) || reservedOnBuiltin)
+        // A class can override object's virtual methods (`override fn ToString() => string`), which records generate.
+        bool overridesObject = target is ClassSymbol && method.IsOverride && method.Name is "ToString" or "Equals" or "GetHashCode";
+        if ((ReservedMemberNames.Contains(method.Name) && !overridesObject) || reservedOnBuiltin)
         {
             _diagnostics.ReportReservedMemberName(name.Span, method.Name);
             return false;
@@ -975,6 +994,7 @@ public sealed partial class Binder
                          definition.Methods.Any(m => m.Name == method.Name) ||
                          definition.TypeParameters.Any(p => p.Name == method.Name) ||
                          (definition is RecordSymbol record && record.Fields.Any(f => f.Name == method.Name)) ||
+                         (definition is ClassSymbol @class && @class.Declaration.Fields.Any(f => f.Name.Text == method.Name)) ||
                          // Variants inherit the enum's methods, so a method can't share a name with a variant's field either.
                          (definition is EnumSymbol @enum &&
                           (@enum.FindVariant(method.Name) is not null || @enum.Variants.Any(v => v.Fields.Any(f => f.Name == method.Name))));
@@ -1167,12 +1187,14 @@ public sealed partial class Binder
 
     /// <param name="containingType">The trait, record/enum definition or builtin a method belongs to; null for a top-level function.</param>
     /// <param name="thisType">The type of <c>this</c> inside an instance method.</param>
+    /// <param name="isLocal">A local function, declared in a block.</param>
     private FunctionInfo BindFunctionSignature(
         FunctionDeclarationSyntax declaration,
         FileContext file,
         Scope outer,
         TypeSymbol? containingType,
-        TypeSymbol? thisType)
+        TypeSymbol? thisType,
+        bool isLocal = false)
     {
         var scope = new Scope(outer);
         var typeParameters = BindTypeParameters(declaration.TypeParameters, scope, new HashSet<string> { declaration.Name.Text });
@@ -1237,6 +1259,7 @@ public sealed partial class Binder
                 BodyReturnType = bodyReturnType,
                 IteratorElementType = iteratorElement,
                 Documentation = declaration.Documentation,
+                IsLocal = isLocal,
             };
             return new FunctionInfo(function, declaration, file, scope);
         }
@@ -1267,6 +1290,11 @@ public sealed partial class Binder
             return null;
 
         InFile(file);
+        // A class's private members are usable in its methods (and in a local function or lambda inside one).
+        if (function is MethodSymbol { ContainingType: ClassSymbol owner })
+            _currentClass = owner;
+        else if (!function.IsLocal)
+            _currentClass = null;
         _return = new ReturnContext(function.BodyReturnType, function.Name, IsAsync: function.IsAsync, IteratorElement: function.IteratorElementType);
         (_yieldReturnForbidden, _yieldBreakForbidden) = (null, null);
         _sawAwait = false;
@@ -1560,7 +1588,9 @@ public sealed partial class Binder
     /// </summary>
     private bool Implements(TypeSymbol type, TypeSymbol trait) =>
         type == TypeSymbol.Error || trait == TypeSymbol.Error || type == trait || TraitsOf(type).Contains(trait) ||
-        (trait is ClrTypeSymbol && IsClrBacked(type) && SelfAndBaseTypes(type).Contains(trait));
+        (trait is ClrTypeSymbol && IsClrBacked(type) && SelfAndBaseTypes(type).Contains(trait)) ||
+        // A class implements what its base classes do: their traits, and a .NET base class's interfaces.
+        (type.OriginalDefinition is ClassSymbol @class && SelfAndBaseTypes(type).Skip(1).Any(@base => Implements(@base, trait)));
 
     /// <summary>A trait or a .NET interface: what a type parameter can be bounded by and an <c>extend</c> can implement.</summary>
     private static bool IsInterfaceType(TypeSymbol type) => type.IsTrait || type is ClrTypeSymbol { Type.IsInterface: true };
@@ -1616,6 +1646,11 @@ public sealed partial class Binder
         var outer = _scope;
         _scope = new Scope(outer);
 
+        // A local function can be called anywhere in its block, even before it (so local functions can call each
+        // other), so the signatures come first; each body is bound where it's declared, seeing the variables before it.
+        foreach (var local in syntax.Statements.OfType<LocalFunctionStatementSyntax>())
+            DeclareLocalFunction(local);
+
         var statements = syntax.Statements.Select(BindStatement).ToImmutableArray();
         var trailing = syntax.Trailing is null ? null : BindExpression(syntax.Trailing, expected);
 
@@ -1660,8 +1695,45 @@ public sealed partial class Binder
         DeferStatementSyntax s => BindDefer(s),
         BreakStatementSyntax s => BindLoopJump(s.Keyword, new BoundBreakStatement()),
         ContinueStatementSyntax s => BindLoopJump(s.Keyword, new BoundContinueStatement()),
+        LocalFunctionStatementSyntax s => BindLocalFunction(s),
         _ => throw new InvalidOperationException($"Unexpected statement {syntax.GetType().Name}"),
     };
+
+    /// <summary>The local functions of the blocks being bound, declared (their signatures bound) as each block starts.</summary>
+    private readonly Dictionary<LocalFunctionStatementSyntax, FunctionInfo> _localFunctions = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>Binds a local function's signature, and declares it in the current block's scope.</summary>
+    private void DeclareLocalFunction(LocalFunctionStatementSyntax syntax)
+    {
+        var declaration = syntax.Function;
+        if (declaration.Operator is { } @operator)
+            _diagnostics.ReportLocalFunction(@operator.Span, "An operator can't be declared in a block; declare it in an extend block.");
+        if (declaration.Private is { } @private)
+            _diagnostics.ReportLocalFunction(@private.Span, "A local function is visible only in its block already; remove 'private'.");
+
+        var (scope, file) = (_scope, _file);
+        var info = BindFunctionSignature(declaration, _file, _scope, containingType: null, thisType: null, isLocal: true);
+        info.Symbol.DeclaringFile = file.Source;
+        info.Symbol.Namespace = file.Namespace;
+        BindContracts([], [info]);
+        (_scope, _file, _diagnostics.CurrentSource) = (scope, file, file.Source);
+
+        Record(declaration.Name, info.Symbol, declaration: true);
+        if (!declaration.Name.IsMissing && !_scope.TryDeclare(info.Symbol))
+            _diagnostics.ReportDuplicateDeclaration(declaration.Name.Span, declaration.Name.Text);
+        _localFunctions[syntax] = info;
+    }
+
+    /// <summary>A local function's body, bound as a function of its own whose scope is inside the block, so it captures.</summary>
+    private BoundStatement BindLocalFunction(LocalFunctionStatementSyntax syntax)
+    {
+        var saved = (_scope, _file, _return, _yieldReturnForbidden, _yieldBreakForbidden, _sawAwait, _finallyLoopDepth, _loopDepth, _outScope);
+        _outScope = null;
+        var function = BindFunctionBody(_localFunctions[syntax]);
+        (_scope, _file, _return, _yieldReturnForbidden, _yieldBreakForbidden, _sawAwait, _finallyLoopDepth, _loopDepth, _outScope) = saved;
+        _diagnostics.CurrentSource = _file.Source;
+        return function is null ? new BoundBlockStatement([]) : new BoundLocalFunctionStatement(function);
+    }
 
     /// <summary>
     /// `let Some(user) = Find(id) else { return; };`: the else block is bound first, so it can't see the pattern's

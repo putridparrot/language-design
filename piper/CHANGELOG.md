@@ -17,6 +17,18 @@
   - Packages are restored with the .NET SDK and cached in the folder's `obj/piper`.
   - New errors PIP0401–PIP0403.
   - See `samples/web`, a minimal API with dependency injection.
+- **Classes:** `class Account(owner: string) { mut balance = 0m; fn Deposit(amount: decimal) { balance += amount; } }`
+  declares a reference type with identity and state that can change, as a C# class with a primary constructor.
+  - Fields (`let`, `mut`) are private and methods public unless marked otherwise; inside methods, fields, constructor
+    parameters and other methods are named bare, or through `this`.
+  - A class derives from one Piper or .NET class (`class NotFound(id: int): Exception("No item {id}")`), then any
+    traits and .NET interfaces. `abstract`, `sealed`, `virtual`, `override` and `abstract fn` work as in C#, and
+    overriding public and protected .NET methods (`ToString`, `Collection<T>.InsertItem`) is checked against their
+    signatures.
+  - New errors PIP0109 and PIP0349–PIP0354.
+- **Local functions:** `fn` inside a block declares a function usable throughout it (recursively, and before its
+  declaration), which captures the variables around it, as C#'s local functions do. It can be generic, `async` or an
+  iterator.
 - **Remote actors plugin:** `plugins/Piper.Plugins.Actors.Remote` reads the same `actor` syntax on Proto.Actor, so actors
   can be used from other processes and machines: `Account.Spawn(system, "ada", …)` hosts one,
   `Account.Connect(system, "host:port", "ada")` reaches it, messages travel as JSON over gRPC, and faults and timeouts

@@ -26,6 +26,10 @@ public static class BoundTreeWalker
                             pending.Push(child);
                     }
                     break;
+                // A local function's body.
+                case BoundFunction function:
+                    pending.Push(function.Body);
+                    break;
                 case ITuple tuple:
                     for (int i = 0; i < tuple.Length; i++)
                     {
@@ -46,16 +50,18 @@ public static class BoundTreeWalker
         }
     }
 
-    /// <summary>Whether a lambda under <paramref name="node"/> uses <paramref name="variable"/>, so captures it.</summary>
+    /// <summary>Whether a lambda or local function under <paramref name="node"/> uses <paramref name="variable"/>, so captures it.</summary>
     public static bool IsCapturedIn(VariableSymbol variable, BoundNode node) =>
-        DescendantsAndSelf(node).OfType<BoundLambdaExpression>().Any(lambda =>
-            DescendantsAndSelf(lambda.Body).Any(n => n is BoundVariableExpression { Variable: var used } && used == variable));
+        DescendantsAndSelf(node)
+            .Select(n => n switch { BoundLambdaExpression lambda => lambda.Body, BoundLocalFunctionStatement local => local.Function.Body, _ => null })
+            .OfType<BoundNode>()
+            .Any(body => DescendantsAndSelf(body).Any(n => n is BoundVariableExpression { Variable: var used } && used == variable));
 
     /// <summary>The properties that can hold nodes: of a node type, or a list or tuple (which may hold them).</summary>
     private static PropertyInfo[] ChildProperties(Type type) =>
         [.. type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(p => p.GetIndexParameters().Length == 0 && p.Name != nameof(BoundNode.SourceSpan) &&
-                        (typeof(BoundNode).IsAssignableFrom(p.PropertyType) ||
+                        (typeof(BoundNode).IsAssignableFrom(p.PropertyType) || p.PropertyType == typeof(BoundFunction) ||
                          (typeof(IEnumerable).IsAssignableFrom(p.PropertyType) && p.PropertyType != typeof(string)) ||
                          typeof(ITuple).IsAssignableFrom(p.PropertyType)))];
 }

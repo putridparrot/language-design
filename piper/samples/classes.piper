@@ -1,0 +1,112 @@
+// Classes: reference types with identity and state that changes, for the objects records don't suit.
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+
+// A primary constructor, then fields and methods. Fields are private and methods public unless marked otherwise.
+class Account(owner: string, opening: decimal) {
+    mut balance = opening;
+    public let name = owner;
+    mut history: List<string> = [];
+
+    fn Deposit(amount: decimal) {
+        balance += amount;
+        Record("deposit {amount}");
+    }
+
+    fn Withdraw(amount: decimal) {
+        if amount > balance {
+            throw InsufficientFunds(name, amount - balance);
+        }
+        balance -= amount;
+        Record("withdraw {amount}");
+    }
+
+    // Methods of Account can use any Account's private members.
+    fn Transfer(to: Account, amount: decimal) {
+        Withdraw(amount);
+        to.Deposit(amount);
+    }
+
+    fn Balance() => decimal = balance;
+    fn History() => string = string.Join(", ", history);
+
+    private fn Record(entry: string) { history.Add(entry); }
+
+    override fn ToString() => string = "{name}: {balance}";
+}
+
+// Deriving from a .NET class, passing its constructor arguments.
+class InsufficientFunds(who: string, shortfall: decimal): Exception("{who} is {shortfall} short") {
+    public let shortBy = shortfall;
+}
+
+// Abstract classes, virtual methods and overrides.
+abstract class Shape(name: string) {
+    abstract fn Area() => double;
+    virtual fn Describe() => string = "{name} with area {Math.Round(Area(), 2)}";
+}
+
+class Rect(width: double, height: double): Shape("rect") {
+    override fn Area() => double = width * height;
+}
+
+sealed class Circle(radius: double): Shape("circle") {
+    override fn Area() => double = Math.PI * radius * radius;
+    override fn Describe() => string = "a circle of radius {radius}";
+}
+
+// Overriding a protected .NET method: every item added goes through InsertItem.
+class UpperCaseList: Collection<string> {
+    override fn InsertItem(index: int, item: string) {
+        // There's no base.InsertItem yet, so this adds through the protected Items list, named bare as in C#.
+        Items.Insert(index, item.ToUpper());
+    }
+}
+
+// A generic class.
+class Stack<T> {
+    let items: List<T> = [];
+    fn Push(item: T) { items.Add(item); }
+    fn Pop() => T? {
+        if items.Count == 0 { return None; }
+        let last = items[items.Count - 1];
+        items.RemoveAt(items.Count - 1);
+        Some(last)
+    }
+}
+
+fn Main() {
+    let ada = Account("Ada", 100m);
+    let bob = Account("Bob", 0m);
+    ada.Deposit(25m);
+    ada.Transfer(bob, 50m);
+    Print(ada);
+    Print(bob);
+    Print(ada.History());
+    try {
+        bob.Withdraw(80m);
+    } catch (e: InsufficientFunds) {
+        Print("{e.Message} (by {e.shortBy})");
+    }
+
+    // The same object, not a copy.
+    let alias = bob;
+    alias.Deposit(1m);
+    Print(bob.Balance());
+
+    let shapes: List<Shape> = [Rect(2.0, 3.0), Circle(1.0)];
+    for shape in shapes {
+        Print(shape.Describe());
+    }
+
+    let names = UpperCaseList();
+    names.Add("ada");
+    names.Add("bob");
+    Print(string.Join(" ", names));
+
+    let stack = Stack<int>();
+    stack.Push(1);
+    stack.Push(2);
+    Print(stack.Pop());
+}

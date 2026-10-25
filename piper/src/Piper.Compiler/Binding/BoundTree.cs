@@ -169,6 +169,12 @@ public sealed class BoundForStatement(
 /// <summary>Produced only by lowering: the impossible fall-through at the end of an exhaustive match.</summary>
 public sealed class BoundUnreachableStatement : BoundStatement;
 
+/// <summary>A local function's declaration, where it stands in its block.</summary>
+public sealed class BoundLocalFunctionStatement(BoundFunction function) : BoundStatement
+{
+    public BoundFunction Function { get; } = function;
+}
+
 /// <summary>
 /// Stands for a value that's never produced, made by lowering: in <c>F(a, { throw E() })</c> the throw becomes a
 /// statement before the call, which is then never reached, and the argument becomes this (C#'s <c>default!</c>).
@@ -372,6 +378,35 @@ public sealed class BoundMethodCallExpression(
 
     /// <summary>For a trait method, the trait it is called through as instantiated for the receiver: <c>Convert&lt;int&gt;</c>.</summary>
     public TypeSymbol? TraitType { get; init; }
+}
+
+/// <summary><c>Account("Ada", 100m)</c>: a new instance of a class, through its primary constructor.</summary>
+public sealed class BoundObjectCreationExpression(ClassSymbol @class, ImmutableArray<BoundExpression> arguments, TypeSymbol type) : BoundExpression
+{
+    /// <summary>The names of named arguments, by position; empty when all are positional.</summary>
+    public ImmutableArray<string?> ArgumentNames { get; init; } = [];
+
+    public ClassSymbol Class { get; } = @class;
+
+    public ImmutableArray<BoundExpression> Arguments { get; } = arguments;
+
+    /// <summary>The class itself, or its instantiation for a generic class.</summary>
+    public override TypeSymbol Type { get; } = type;
+}
+
+/// <summary><c>other.balance = 5</c>, <c>this.count += 1</c>: setting a class's mutable field through an instance.</summary>
+public sealed class BoundFieldAssignmentExpression(BoundExpression target, FieldSymbol field, BoundBinaryOperatorKind? compoundOperator, BoundExpression value)
+    : BoundExpression
+{
+    public BoundExpression Target { get; } = target;
+
+    public FieldSymbol Field { get; } = field;
+
+    public BoundBinaryOperatorKind? CompoundOperator { get; } = compoundOperator;
+
+    public BoundExpression Value { get; } = value;
+
+    public override TypeSymbol Type => Value.Type;
 }
 
 public sealed class BoundRecordCreationExpression(RecordSymbol record, ImmutableArray<BoundExpression> arguments, TypeSymbol type)

@@ -32,6 +32,18 @@ public sealed class FieldSymbol(string name, TypeSymbol type) : Symbol(name)
 
     /// <summary>The value a construction that leaves this field out gets.</summary>
     public ParameterDefault? Default { get; internal set; }
+
+    /// <summary>A class's `mut` field, which its methods can change.</summary>
+    public bool IsMutable { get; init; }
+
+    /// <summary>A class's `public` field, which code outside the class can read (and, if mutable, change).</summary>
+    public bool IsPublic { get; init; } = true;
+
+    /// <summary>The class a class field belongs to; null for a record's or variant's.</summary>
+    public ClassSymbol? Owner { get; init; }
+
+    /// <summary>A class field's value when an instance is made, bound in a scope of the primary constructor's parameters.</summary>
+    public BoundExpression? Initializer { get; internal set; }
 }
 
 public enum VariableKind
@@ -45,6 +57,12 @@ public enum VariableKind
 
     /// <summary>The receiver of an instance method.</summary>
     This,
+
+    /// <summary>A class's field, named bare inside the class (see <see cref="VariableSymbol.Field"/>).</summary>
+    Field,
+
+    /// <summary>A class's primary constructor parameter, usable throughout the class, as in C# 12.</summary>
+    ClassParameter,
 
     /// <summary>Introduced by the lowerer; never visible to Piper code.</summary>
     Temporary,
@@ -67,6 +85,9 @@ public sealed class VariableSymbol(string name, TypeSymbol type, bool isMutable,
     public bool IsMutable { get; } = isMutable;
 
     public VariableKind Kind { get; } = kind;
+
+    /// <summary>For a <see cref="VariableKind.Field"/>: the class field it names.</summary>
+    public FieldSymbol? Field { get; init; }
 }
 
 public class FunctionSymbol(
@@ -100,6 +121,9 @@ public class FunctionSymbol(
     /// </summary>
     public TypeSymbol? IteratorElementType { get; init; }
 
+    /// <summary>A local function, declared in a block: called by its bare name, and able to use the variables around it.</summary>
+    public bool IsLocal { get; init; }
+
     /// <summary>Null for builtins.</summary>
     public FunctionDeclarationSyntax? Declaration { get; } = declaration;
 }
@@ -129,8 +153,20 @@ public sealed class MethodSymbol(
 
     public TraitSymbol? Trait => ContainingType as TraitSymbol;
 
-    /// <summary>A required trait method, declared without a body.</summary>
+    /// <summary>A required trait method, or a class's `abstract fn`: declared without a body.</summary>
     public bool IsAbstract => !Declaration!.HasBody;
+
+    /// <summary>A class's `virtual fn`, which derived classes may override.</summary>
+    public bool IsVirtual => Declaration?.Modifier?.Text == "virtual";
+
+    /// <summary>A class's `override fn`, replacing a base class's virtual or abstract method.</summary>
+    public bool IsOverride => Declaration?.Modifier?.Text == "override";
+
+    /// <summary>
+    /// For a class's override: the base method it overrides, a Piper method or a .NET one (<c>object.ToString</c>,
+    /// <c>BackgroundService.ExecuteAsync</c>).
+    /// </summary>
+    public object? Overridden { get; internal set; }
 
     /// <summary>
     /// For a trait method that overrides one it inherits: that method, and the parent trait declaring it as seen from

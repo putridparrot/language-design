@@ -345,7 +345,7 @@ public sealed partial class Binder
         if (syntax.Name is not null || expected == TypeSymbol.Error)
             return Unchecked();
 
-        if (!IsClrBacked(expected))
+        if (!HasClrMembers(expected))
         {
             _diagnostics.ReportPropertyPatternType(syntax.Span, expected);
             return Unchecked();

@@ -60,7 +60,13 @@ public sealed partial class Binder
 
     private void CheckAccessible(MethodSymbol method, Token name)
     {
-        if (method.IsPrivate && method.DeclaringFile != _file.Source)
+        // A class's private method is private to the class; an extend block's, to its file.
+        if (method.ContainingType is ClassSymbol owner)
+        {
+            if (method.IsPrivate && _currentClass != owner)
+                _diagnostics.ReportPrivateMember(name.Span, method.Name, owner.Name);
+        }
+        else if (method.IsPrivate && method.DeclaringFile != _file.Source)
             _diagnostics.ReportPrivateDeclaration(name.Span, method.Name, method.DeclaringFile!.FileName);
     }
 
@@ -68,6 +74,8 @@ public sealed partial class Binder
     private static (Type Type, IReadOnlyDictionary<Type, TypeSymbol> Map) ClrContext(TypeSymbol type) => type switch
     {
         ClrTypeSymbol clr => (clr.Type, clr.GenericMap),
+        // A class's .NET members are its .NET base class's: an Exception subclass's Message.
+        _ when type.OriginalDefinition is ClassSymbol @class => (@class.ClrBase.Type, @class.ClrBase.GenericMap),
         _ => (ClrTypes.BuiltinTypes[type], new Dictionary<Type, TypeSymbol>()),
     };
 
@@ -108,7 +116,7 @@ public sealed partial class Binder
         ImmutableArray<TypeSymbol>? explicitTypeArguments)
     {
         var (clrType, map) = ClrContext(receiver.Type);
-        var methods = InstanceMethods(clrType).Where(m => m.Name == member.Text).ToList();
+        var methods = InstanceMethods(clrType, SeesProtected(receiver.Type)).Where(m => m.Name == member.Text).ToList();
         // Extension methods from the namespaces this file imports: `numbers.Where(n => n > 2)`.
         var extensions = ImportedExtensionMethods(member.Text);
         BoundExpression Instance() => BindClrInvocation(receiver, receiver.Type, methods, member.Text, arguments, [], span, map, explicitTypeArguments, member.Span);
@@ -148,10 +156,15 @@ public sealed partial class Binder
             .Distinct()
             .SelectMany(n => _globalNamespace.Clr.ExtensionMethods(n, name))];
 
-    /// <summary>Public instance methods, including those an interface type inherits from its base interfaces.</summary>
-    private static IEnumerable<MethodInfo> InstanceMethods(Type type)
+    /// <summary>
+    /// Public instance methods, including those an interface type inherits from its base interfaces, and protected ones
+    /// when <paramref name="protectedToo"/>.
+    /// </summary>
+    private static IEnumerable<MethodInfo> InstanceMethods(Type type, bool protectedToo = false)
     {
-        var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Instance).AsEnumerable();
+        var methods = protectedToo
+            ? type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance).Where(m => m.IsPublic || IsProtected(m))
+            : type.GetMethods(BindingFlags.Public | BindingFlags.Instance).AsEnumerable();
         if (type.IsInterface)
             methods = methods.Concat(type.GetInterfaces().SelectMany(i => i.GetMethods())).Concat(typeof(object).GetMethods());
         return WithoutHidden(methods);
@@ -170,7 +183,9 @@ public sealed partial class Binder
     private BoundExpression BindClrInstanceMember(BoundExpression receiver, Token member)
     {
         var (clrType, map) = ClrContext(receiver.Type);
-        var members = clrType.GetMember(member.Text, BindingFlags.Public | BindingFlags.Instance);
+        var members = SeesProtected(receiver.Type)
+            ? clrType.GetMember(member.Text, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance).Where(IsPublicOrProtected).ToArray()
+            : clrType.GetMember(member.Text, BindingFlags.Public | BindingFlags.Instance);
         // An interface's properties include those of the interfaces it inherits (`IContext.Message`), which reflection leaves out.
         if (clrType.IsInterface && members.Length == 0)
             members = [.. clrType.GetInterfaces().SelectMany(i => i.GetMember(member.Text, BindingFlags.Public | BindingFlags.Instance))];
@@ -190,7 +205,8 @@ public sealed partial class Binder
         {
             (Type Type, NullabilityInfo Info)? read = member switch
             {
-                PropertyInfo { CanRead: true } property when property.GetIndexParameters().Length == 0 && property.GetMethod!.IsPublic =>
+                PropertyInfo { CanRead: true } property when property.GetIndexParameters().Length == 0 &&
+                                                             (property.GetMethod!.IsPublic || (receiver is not null && SeesProtected(receiver.Type) && IsProtected(property.GetMethod))) =>
                     (property.PropertyType, nullability.Create(property)),
                 FieldInfo field => (field.FieldType, nullability.Create(field)),
                 _ => null,

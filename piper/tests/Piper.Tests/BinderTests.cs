@@ -802,6 +802,58 @@ public class BinderTests
         AssertSingleError("PIP0274", "fn Main() { let xs = [1, 2]; xs.ForEach((a, b) => { }); }");
     }
 
+    [Theory]
+    [InlineData("PIP0348", "fn Main() { private fn f() { } }")]
+    [InlineData("PIP0244", "fn Main() { static fn f() { } }")]
+    [InlineData("PIP0201", "fn Main() { fn f() { } fn f() { } }")]
+    [InlineData("PIP0200", "fn Main() { if true { fn f() { } } f(); }")]
+    [InlineData("PIP0209", "fn Main() { fn f() => int { } }")]
+    public void Local_function_errors(string code, string program) => AssertSingleError(code, program);
+
+    [Theory]
+    [InlineData("PIP0349", "sealed class A { } class B: A { } fn Main() { }")]
+    [InlineData("PIP0349", "class A: int { } fn Main() { }")]
+    [InlineData("PIP0349", "class A: System.IComparable<int>, System.Exception { fn CompareTo(other: int) => int = 0; } fn Main() { }")]
+    [InlineData("PIP0349", "class A: B { } class B: A { } fn Main() { }")]
+    [InlineData("PIP0350", "abstract class A { } fn Main() { let a = A(); }")]
+    [InlineData("PIP0351", "class A { mut x = 1; } fn Main() { Print(A().x); }")]
+    [InlineData("PIP0351", "class A { private fn F() { } } fn Main() { A().F(); }")]
+    [InlineData("PIP0352", "class A { fn F() { } } class B: A { override fn F() { } } fn Main() { }")]
+    [InlineData("PIP0352", "class A { virtual fn F() { } } class B: A { override fn F(x: int) { } } fn Main() { }")]
+    [InlineData("PIP0352", "class A { virtual fn F() { } } class B: A { fn F() { } } fn Main() { }")]
+    [InlineData("PIP0352", "class A { override fn F() { } } fn Main() { }")]
+    [InlineData("PIP0352", "class A { abstract fn F(); } fn Main() { }")]
+    [InlineData("PIP0352", "class A { fn F(); } fn Main() { }")]
+    [InlineData("PIP0352", "abstract class A { abstract fn F() { } } fn Main() { }")]
+    [InlineData("PIP0352", "class A { static virtual fn F() { } } fn Main() { }")]
+    [InlineData("PIP0352", "class A: System.Collections.ObjectModel.Collection<string> { override fn InsertItem(index: int, item: int) { } } fn Main() { }")]
+    [InlineData("PIP0353", "abstract class A { abstract fn F(); } class B: A { } fn Main() { }")]
+    [InlineData("PIP0354", "class A { mut x = 1; static fn F() => int = x; } fn Main() { }")]
+    [InlineData("PIP0354", "class A { let x = 1; let y = x; } fn Main() { }")]
+    [InlineData("PIP0354", "class A { fn F() { } static fn G() { F(); } } fn Main() { }")]
+    [InlineData("PIP0207", "class A { let x = 1; fn F() { x = 2; } } fn Main() { }")]
+    [InlineData("PIP0201", "class A { let x = 1; fn x() { } } fn Main() { }")]
+    [InlineData("PIP0205", "class A(x: int) { } fn Main() { let a = A(); }")]
+    [InlineData("PIP0212", "class A: System.Collections.ObjectModel.Collection<int> { } fn Main() { Print(A().Items); }")]
+    [InlineData("PIP0200", "class A: System.Exception { static fn F() => string = Message; } fn Main() { }")]    public void Class_errors(string code, string program) => AssertSingleError(code, program);
+
+    [Fact]
+    public void A_class_names_inherited_dotnet_members_bare_including_protected_ones()
+    {
+        var result = Compilation.Compile(
+            "class Upper: System.Collections.ObjectModel.Collection<string> {\n    override fn InsertItem(index: int, item: string) { Items.Insert(index, item.ToUpper()); }\n    fn Size() => int = Count;\n}\nclass Oops: System.Exception(\"oops\") { fn Shout() => string = Message.ToUpper(); }\nfn Main() { let u = Upper(); u.Add(\"a\"); Print(\"{u[0]} {u.Size()} {Oops().Shout()}\"); }");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Equal("A 1 OOPS", Runner.Run(result.Files).Output.Trim());
+    }
+
+    [Fact]    public void A_class_overrides_a_protected_dotnet_method_of_a_generic_base()
+    {
+        var result = Compilation.Compile(
+            "class Recording: System.Collections.ObjectModel.Collection<string> {\n    public mut inserted = 0;\n    override fn InsertItem(index: int, item: string) { inserted += 1; }\n}\nfn Main() { let r = Recording(); r.Add(\"a\"); r.Add(\"b\"); Print(r.inserted); }");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Equal("2", Runner.Run(result.Files).Output.Trim());
+    }
+
     [Fact]
     public void An_interfaces_inherited_properties_can_be_read()
     {

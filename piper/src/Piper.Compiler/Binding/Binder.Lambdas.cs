@@ -264,6 +264,19 @@ public sealed partial class Binder
     /// <summary>The type itself, then (for .NET-backed types) its base classes and interfaces, in Piper terms.</summary>
     private IEnumerable<TypeSymbol> SelfAndBaseTypes(TypeSymbol type)
     {
+        // A class, its Piper base classes, then its .NET base class's own bases and interfaces.
+        if (type.OriginalDefinition is ClassSymbol @class)
+        {
+            foreach (var self in @class.SelfAndBases())
+                yield return self == @class ? type : self;
+            if (@class.ClrBase is var clrBase)
+            {
+                foreach (var @base in SelfAndBaseTypes(clrBase))
+                    yield return @base;
+            }
+            yield break;
+        }
+
         yield return type;
 
         (Type Type, IReadOnlyDictionary<Type, TypeSymbol> Map)? clr = type switch
@@ -449,7 +462,7 @@ public sealed partial class Binder
             return new BoundIndexExpression(target, null, [.. indices], element);
         }
 
-        if (IsClrBacked(target.Type))
+        if (HasClrMembers(target.Type))
         {
             var (clrType, map) = ClrContext(target.Type);
             var indexers = clrType.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
@@ -518,7 +531,7 @@ public sealed partial class Binder
                 var receiver = RequireValue(BindExpression(member.Target), member.Target.Span);
                 if (receiver.Type == TypeSymbol.Error || member.Member.IsMissing)
                     return new BoundErrorExpression();
-                if (FindField(receiver.Type, member.Member.Text) is not null || !IsClrBacked(receiver.Type))
+                if (FindField(receiver.Type, member.Member.Text) is not null || !HasClrMembers(receiver.Type))
                     return null;
                 if (FindClrEvent(receiver.Type, member.Member.Text, System.Reflection.BindingFlags.Instance) is { } instanceEvent)
                     return BindEventAssignment(syntax, receiver, receiver.Type, instanceEvent);
@@ -613,7 +626,9 @@ public sealed partial class Binder
     // Exceptions
 
     private static bool IsException(TypeSymbol type) =>
-        type is ClrTypeSymbol clr && typeof(Exception).IsAssignableFrom(clr.Type);
+        (type is ClrTypeSymbol clr && typeof(Exception).IsAssignableFrom(clr.Type)) ||
+        // A class deriving from Exception: `class NotFound(id: int): Exception("No item {id}")`.
+        (type.OriginalDefinition is ClassSymbol @class && typeof(Exception).IsAssignableFrom(@class.ClrBase.Type));
 
     private BoundExpression BindThrow(ThrowExpressionSyntax syntax)
     {

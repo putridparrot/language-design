@@ -33,6 +33,12 @@ the `.piper` files are still only checked against .NET's own assemblies, not the
 build should pass the project's resolved references (`@(ReferencePath)`) to the compiler, so Piper code there can use
 them too.
 
+### Functions as values for other delegate types
+
+A function passed by name is a `Func` or `Action`, so `numbers.ConvertAll(Square)` reports no matching overload: `List<T>.ConvertAll` takes a
+`Converter<T, TOutput>`. A function, like a lambda, should convert to any delegate type it fits, including one a generic
+method's type arguments are inferred for.
+
 ### .NET generics instantiated with Piper traits
 
 `services.AddSingleton<Clock>(SystemClock())`, where `Clock` is a Piper trait and `SystemClock` a record implementing it
@@ -41,10 +47,13 @@ with `extend`, reports no matching overload. A Piper type should convert to a tr
 
 ## Language
 
-- **Classes:** mutable reference types with identity and private state, for objects whose fields change. They could
-  derive from .NET base classes with `override`, for custom exceptions, `BackgroundService` and the like.
-  Polymorphism would stay with traits, and closed hierarchies with enums. `class`, `override`, `abstract`, `virtual`
-  and `sealed` are already reserved.
+- **More for classes:**
+  - `base.F()`, to call the method an override replaces.
+  - Type tests on classes in `match` and `is` (`match shape { c: Circle => … }`), and casts down to a derived class.
+  - Properties with getters and setters, which would also let a class complete a .NET base with abstract properties
+    (`Stream`), and `protected` members.
+  - Constructors besides the primary one, and attributes on fields.
+  - Bare calls to a trait's own methods in its defaults (`Name()` rather than `this.Name()`), as classes allow.
 - **Custom `ToString` on records:** today `ToString` is reserved on records, so a record can't choose how it prints.
 - **Comparison operators** on records and enums (`<`, `<=`, `>`, `>=`), generating the pairs C# requires.
 - **`const` declarations,** usable in patterns and attribute arguments (`const` is reserved).

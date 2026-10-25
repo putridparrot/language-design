@@ -297,6 +297,17 @@ public class ParserTests
         Assert.Equal(["a", "b"], unit.Declarations.Select(d => d.Name.Text));
     }
 
+    [Theory]
+    [InlineData("fn a() {\n    fn b() => int = 1;\n    b()\n}")]
+    [InlineData("fn a() { fn b() => int = 1; b() }")]
+    [InlineData("fn a() {\n    async fn b() { }\n}")]
+    public void An_indented_fn_in_a_block_is_a_local_function(string text)
+    {
+        var body = Body(ParseClean(text));
+        var local = Assert.IsType<LocalFunctionStatementSyntax>(body.Statements[0]);
+        Assert.Equal("b", local.Function.Name.Text);
+    }
+
     [Fact]
     public void Function_types_use_fat_arrows_and_nest_to_the_right()
     {
@@ -409,5 +420,36 @@ public class ParserTests
     {
         Parse("fn a() { let x = ; }\nfn b() { let y = 1 }\nfn c() { foo(1 2); }", out var diagnostics);
         Assert.Equal(3, diagnostics.Count);
+    }
+
+    [Fact]
+    public void Class_declaration()
+    {
+        var unit = ParseClean("abstract class Shape<T>(name: string): Base(name, 1), Named {\n    /// The area.\n    mut area: double = 0.0;\n    public let label = name;\n    abstract fn Area() => double;\n    virtual fn Describe() => string = name;\n    private fn Helper() { }\n    static override fn Odd() { }\n}");
+        var @class = Assert.IsType<ClassDeclarationSyntax>(Assert.Single(unit.Declarations));
+        Assert.NotNull(@class.Abstract);
+        Assert.Null(@class.Sealed);
+        Assert.Single(@class.TypeParameters);
+        Assert.Equal("name", Assert.Single(@class.Parameters).Name.Text);
+        Assert.Equal(2, @class.Bases[0].Arguments!.Value.Length);
+        Assert.Null(@class.Bases[1].Arguments);
+        Assert.Equal(["area", "label"], @class.Fields.Select(f => f.Name.Text));
+        Assert.True(@class.Fields[0].IsMutable);
+        Assert.Null(@class.Fields[0].Public);
+        Assert.NotNull(@class.Fields[1].Public);
+        Assert.Equal(["abstract", "virtual", null, "override"], @class.Methods.Select(m => m.Modifier?.Text));
+        Assert.False(@class.Methods[0].HasBody);
+        Assert.NotNull(@class.Methods[2].Private);
+        Assert.NotNull(@class.Methods[3].Static);
+    }
+
+    [Fact]
+    public void An_unexpected_class_member_is_reported_once()
+    {
+        var unit = Parse("class A { type T = int; fn F() { } let x = 1; }", out var diagnostics);
+        Assert.Equal("PIP0109", Assert.Single(diagnostics).Code);
+        var @class = Assert.IsType<ClassDeclarationSyntax>(Assert.Single(unit.Declarations));
+        Assert.Single(@class.Methods);
+        Assert.Single(@class.Fields);
     }
 }

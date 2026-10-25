@@ -15,6 +15,7 @@ correct.
 | [async.piper](async.piper) | `async`/`await`, `Task.WhenAll`, `yield` iterators, async iterators with `await for`, `using let` and `defer`, async `Main` |
 | [interop.piper](interop.piper) | Calling .NET: constructing types, nullable APIs as optionals, `out` parameters, events, implementing `IComparer<T>`, JSON with attributes, catching exceptions |
 | [contracts.piper](contracts.piper) | `requires`: preconditions on functions and invariants on records, checked on every call and copy, and at compile time for constant arguments |
+| [classes.piper](classes.piper) | Classes: a primary constructor, private and public fields, private methods, identity, an `Exception` subclass, abstract and virtual methods with overrides, overriding a protected .NET method, a generic class |
 | [operators.piper](operators.piper) | Arithmetic operators on records, including unary minus and a static operator for `2 * v`, and `+=` |
 | [testing.piper](testing.piper) | `test` blocks, `Assert` and `AssertEqual`, next to the code they test |
 | [library/](library) | A program of several files with a `piper.json`: namespaces, `using` and qualified names, `private` functions, types and methods (and what a public signature can't expose), extending a type from another file, and tests |
@@ -27,6 +28,7 @@ correct.
 ## Visibility in brief
 
 Declarations are public by default. `private` restricts a function, record, enum, trait or extend-block method to its
-own file. There's no `public`, `internal` or `protected` keyword, as there's no inheritance between Piper types. Those
-words are reserved, though, so later versions can use them. Namespaces group declarations across files; see
+own file. Classes differ: their fields are private to the class unless marked `public`, and their methods public
+unless marked `private` (see [classes.piper](classes.piper)). There's no `internal` or `protected` keyword yet; those
+words are reserved so later versions can use them. Namespaces group declarations across files; see
 [library/](library).

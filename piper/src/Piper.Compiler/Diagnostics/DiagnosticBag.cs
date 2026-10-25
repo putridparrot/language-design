@@ -95,6 +95,10 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportUsingDeconstruction(TextSpan span) =>
         Error("PIP0108", span, "A 'using' declaration declares a single variable; it can't deconstruct.");
 
+    /// <summary>A syntax error in a class's body.</summary>
+    public void ReportClassMember(TextSpan span, string message) =>
+        Error("PIP0109", span, message);
+
     public void ReportTupleTooShort(TextSpan span) =>
         Error("PIP0107", span, "A tuple needs at least two elements; for a function type, add a return type, e.g. '(int) => bool'.");
 
@@ -258,6 +262,29 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportThisOutsideInstanceMethod(TextSpan span) =>
         Error("PIP0244", span, "'this' can only be used inside instance (non-static) methods of a trait or extend block.");
+
+    public void ReportLocalFunction(TextSpan span, string message) =>
+        Error("PIP0348", span, message);
+
+    // Classes
+
+    public void ReportInvalidBase(TextSpan span, string message) =>
+        Error("PIP0349", span, message);
+
+    public void ReportAbstractInstantiation(TextSpan span, string name) =>
+        Error("PIP0350", span, $"'{name}' is abstract, so it can't be made itself; make one of the classes that derive from it.");
+
+    public void ReportPrivateMember(TextSpan span, string member, string owner) =>
+        Error("PIP0351", span, $"'{member}' is private to class '{owner}'; mark it 'public' to use it elsewhere.");
+
+    public void ReportInvalidOverride(TextSpan span, string message) =>
+        Error("PIP0352", span, message);
+
+    public void ReportAbstractNotImplemented(TextSpan span, string name, string method, string owner) =>
+        Error("PIP0353", span, $"'{name}' must override '{method}', which '{owner}' declares abstract, or be abstract itself.");
+
+    public void ReportInvalidClassMember(TextSpan span, string message) =>
+        Error("PIP0354", span, message);
 
     public void ReportStaticOutsideExtend(TextSpan span) =>
         Error("PIP0244", span, "'static' can only be used on methods in an extend block; top-level functions are already static.");

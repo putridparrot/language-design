@@ -35,7 +35,7 @@ Notation: `{ x }` is zero or more, `[ x ]` is optional, `|` separates alternativ
 compilationUnit = { using } [ "namespace" qualifiedName ";" ] { using } { attributes [ "private" ] declaration } EOF ;
 using           = "using" qualifiedName ";" ;                (* a Piper or .NET namespace *)
 qualifiedName   = IDENT { "." IDENT } ;
-declaration     = function | record | enum | trait | extend | test | pluginDeclaration ;
+declaration     = function | record | class | enum | trait | extend | test | pluginDeclaration ;
 pluginDeclaration = KEYWORD … ;                               (* a plugin's syntax: see plugins.md *)
 test            = [ "async" ] "test" STRING block ;            (* run by piper test, left out of other builds *)
 attributes      = { "[" attribute { "," attribute } [ "," ] "]" } ;
@@ -44,6 +44,11 @@ attribute       = qualifiedName [ "(" [ expression { "," expression } [ "," ] ] 
 function        = [ "static" ] [ "async" ] ( "fn" IDENT [ typeParameters ] | "operator" ( "+" | "-" | "*" | "/" | "%" ) ) "(" [ parameters ] ")" [ "=>" type ]
                   { requires } ( block | "=" expression ";" | ";" ) ;      (* ";" only for required trait methods; "static" only in traits and extend blocks *)
 record          = "record" IDENT [ typeParameters ] "(" [ parameters ] ")" { requires } ";" ;
+class           = [ "abstract" | "sealed" ] "class" IDENT [ typeParameters ] [ "(" [ parameters ] ")" ]
+                  [ ":" baseType { "," baseType } ] "{" { classMember } "}" ;
+baseType        = type [ "(" [ arguments ] ")" ] ;               (* a base class first, with its constructor arguments; then traits and interfaces *)
+classMember     = attributes [ "public" | "private" ] ( field | [ "static" ] [ "virtual" | "override" | "abstract" ] function ) ;
+field           = ( "let" | "mut" ) IDENT [ ":" type ] "=" expression ";" ;   (* private unless "public"; methods are public unless "private" *)
 requires        = "requires" condition { "," condition } ;    (* condition: an expression without assignment, of type bool *)
 enum            = "enum" IDENT [ typeParameters ] "{" [ variant { "," variant } [ "," ] ] "}" ;
 variant         = IDENT [ "(" [ parameters ] ")" ] ;
@@ -61,7 +66,8 @@ namedType       = qualifiedName [ "<" type { "," type } [ "," ] ">" ] ;   (* e.g
 
 block           = "{" { statement } [ expression ] "}" ;      (* final expression = block's value *)
 statement       = variableDecl | while | for | return | try | using | defer | yield | "break" ";" | "continue" ";"
-                | blockLike [ ";" ] | expression ";" | ";" | pluginStatement ;
+                | blockLike [ ";" ] | expression ";" | ";" | pluginStatement | localFunction ;
+localFunction   = function ;                                  (* indented: an `fn` starting a line is taken to be the next top-level function *)
 blockLike       = if | match | block | (* an expression ending with a trailingClosure *) ;   (* ends at its '}', no ';' needed *)
 pluginStatement = KEYWORD … ;                                 (* a plugin's syntax: see plugins.md *)
 variableDecl    = ( "let" | "mut" ) ( IDENT [ ":" type ] | designation ) "=" expression ";"
@@ -146,7 +152,7 @@ generic call `a<b, c>(d)`, as in C#.
 ### Lexical structure
 
 - **Identifiers:** ASCII letters, digits and `_`, not starting with a digit.
-- **Reserved words:** `requires` is a keyword only after a signature, but can't be a name anywhere. `const operator test where type impl module import self public internal protected sealed abstract override virtual class struct interface` aren't keywords yet but may become ones, so they can't be used as names (of variables, parameters, fields, functions or types). They can still follow a dot, to reach a .NET member of that name.
+- **Reserved words:** `requires` is a keyword only after a signature, but can't be a name anywhere. `const operator test where type impl module import self public internal protected sealed abstract override virtual class struct interface` aren't keywords yet but may become ones, so they can't be used as names (of variables, parameters, fields, functions or types). `class`, `abstract`, `sealed`, `virtual` and `override` are used by [classes](#classes) and still can't be names. They can still follow a dot, to reach a .NET member of that name.
 - **Keywords:** `fn let mut if else while for in return break continue record enum match trait extend static this null is namespace using private try catch finally defer throw out true false`; `async`, `await`, `yield` and `ref`, which are contextual as in C# (still usable as names); and the builtin type names `int long double bool string char object byte sbyte short ushort uint ulong float decimal unit`.
 - **Comments:** `// line` and `/* block */`. Block comments nest. `///` lines directly above a declaration, method, parameter, field or enum variant are its documentation: the editor shows it, and the generated C# carries it as XML documentation (`piper build --exe` and `--library` also write the `.xml` file).
 - **Integers:** `42`, `1_000_000`, `0xFF`, `0b1010`. Suffixes as in C#: `L` long (`3_000_000_000L`), `U` uint (or ulong if it doesn't fit), `UL` ulong. An unsuffixed literal must fit in int (C# would make a larger one a uint or long; Piper asks for the suffix); as in C#, `-2147483648` and `-9223372036854775808L` are allowed too.
@@ -324,6 +330,87 @@ let s = Option.Some(5).GetOr(0);
 - **Generic types:** write `extend Option`, not `extend Option<int>`. Methods apply to every instantiation.
 - **Name clashes are errors.** A method can't share a name with a field, a variant, a variant's field (variants inherit their enum's methods) or another method.
 - **Builtin members:** on builtin types, a method can't reuse a name the .NET type already has (such as `string.Length`), because the .NET member would silently win.
+
+### Classes
+
+A class is a reference type with identity and state that can change, for the objects records don't suit: a bank
+account, a cache, a connection. It follows C#: a primary constructor, then fields and methods in the body.
+
+```piper
+class Account(owner: string, opening: decimal) {
+    mut balance = opening;                 // private
+    public let name = owner;               // readable from outside
+    public mut deposits = 0;               // readable and settable from outside
+
+    fn Deposit(amount: decimal) {          // public
+        balance += amount;
+        deposits += 1;
+        Log("deposit {amount}");
+    }
+
+    fn Transfer(to: Account, amount: decimal) {
+        balance -= amount;
+        to.balance += amount;              // another Account's private field: visible inside Account
+    }
+
+    private fn Log(message: string) { Print("{owner}: {message}"); }
+
+    static fn Empty(owner: string) => Account = Account(owner, 0m);
+}
+
+let ada = Account("Ada", 100m);
+ada.Deposit(25m);
+```
+
+- **Making one:** call the class like a function, `Account("Ada", 100m)`, with named and default arguments as for any
+  call. A class without parameters is made with `Counter()`. Generic classes take their type arguments explicitly or
+  from the expected type: `Stack<int>()`, `let t: Stack<string> = Stack();`.
+- **Constructor parameters** are in scope in every field initializer and instance method, as in a C# primary
+  constructor. A field initializer can use the parameters but not other fields.
+- **Fields:** `let` fields are read-only, `mut` fields can be assigned in methods (`balance += amount`). Fields are
+  private unless marked `public`; a public field is a C# property, settable from outside when it's `mut`. The type
+  may be left to the initializer.
+- **Methods** are public unless marked `private`. Inside an instance method, fields, parameters and the other methods
+  are named bare (`balance`, `Log(…)`), or through `this` (`this.name`), which is needed only when a parameter of the
+  method hides a field. Static methods have no instance, so using a field or an instance method in one is an error.
+- **Privacy is per class,** as in C#: methods of `Account` can use the private members of any `Account`.
+- **Identity:** classes compare by reference. Two accounts with the same balance aren't equal, and passing one around
+  passes the same object.
+- **Inheritance:** a class can derive from one class, a Piper class or a .NET one, passing its constructor arguments:
+
+  ```piper
+  abstract class Shape(name: string) {
+      abstract fn Area() => double;                                   // no body: derived classes supply it
+      virtual fn Describe() => string = "{name} with area {Area()}";  // a default they may replace
+  }
+
+  class Circle(radius: double): Shape("circle") {
+      override fn Area() => double = 3.0 * radius * radius;
+  }
+
+  class NotFound(id: int): System.Exception("No item {id}") { public let item = id; }
+  ```
+
+  - A class converts implicitly to its base classes (`let shapes: List<Shape> = [Circle(1.0)];`), and calls through
+    the base dispatch to the override.
+  - Only `virtual` and `abstract` methods can be overridden, by a method marked `override` with the same signature.
+    Redeclaring an inherited method without `override` is an error, rather than C#'s warning and hiding.
+  - `abstract fn` has no body, and only an `abstract class` can declare one. An abstract class can't be made itself,
+    and a class deriving from it must override every abstract method or be abstract too.
+  - A `sealed class` can't be derived from.
+  - Overriding a .NET method works for public and protected virtual ones, such as `ToString`, `Equals`, or
+    `Collection<T>.InsertItem`. The signature is the .NET method's, with the base class's type arguments substituted
+    (`InsertItem(index: int, item: string)` for a `Collection<string>`).
+  - Inside its methods, a class names the .NET members it inherits bare, as C# does (`Message`, `Items.Add(x)`), and
+    can use protected ones (on itself, or another instance of its class). Outside, protected members stay hidden.
+  - A class deriving from a .NET collection can be indexed, iterated and queried with LINQ like the collection.
+  - A class deriving from `Exception` can be thrown and caught by its type.
+  - A .NET base whose abstract members are properties (`Stream`) can't be completed yet, since classes can't declare
+    properties.
+- **Traits and interfaces** follow the base class in the list, and are implemented by the class's methods:
+  `class Dog(name: string): Named { fn Name() => string = name; }`, or
+  `class Version(major: int): IComparable<Version> { … }`. A class gets the traits' defaults like any implementer.
+- **`extend`** can add methods to a class from elsewhere, as for records.
 
 ### Null safety: `Option` and `T?`
 
@@ -506,6 +593,29 @@ names.Sort((a, b) => a.Length - b.Length);    // a .NET delegate type
 - An error in a lambda passed to an overloaded .NET method is reported in the lambda, not as "no overload accepts
   these arguments", when its parameters say which overload is meant.
 - A lambda without annotations needs an expected function type; a lambda with too few or many parameters for it is an error.
+
+### Local functions
+
+A function can be declared inside a block, as in C#:
+
+```piper
+fn Report(items: List<int>) {
+    let limit = 10;
+    fn Fib(n: int) => int = if n < 2 { n } else { Fib(n - 1) + Fib(n - 2) };   // can call itself
+    fn Over(n: int) => bool { n > limit }                                       // captures `limit`
+    for item in items {
+        if Over(item) { Print("{item}: too big"); } else { Print(Fib(item)); }
+    }
+}
+```
+
+- **Scope:** usable anywhere in its block, even before the declaration, so local functions can call each other.
+- **Captures:** the variables around it, by reference, as a lambda does. In a loop, each iteration's variable.
+- **Signatures:** can be generic, `async` or iterators, take defaults and `requires` clauses, and be passed as values,
+  like any function. `return` leaves the local function.
+- **Layout:** write it indented. An `fn` at the very start of a line inside a block is taken to be the next top-level
+  function, so a forgotten `}` gives one clear error rather than swallowing the rest of the file.
+- **In C#:** each is a C# local function.
 
 ### Trailing closures
 
@@ -803,6 +913,8 @@ As in C#, functions and methods are PascalCase (`Print`, `Main`, `Area()`), and 
 | Piper | C# |
 |---|---|
 | `record P(x: int)` | `public sealed record P(int x);` |
+| `class A(x: int): B(x), Named { mut n = x; public let m = 1; … }` | `public partial class A(int x) : B(x), Named { private int n = x; public int m { get; } = 1; … }` |
+| `virtual fn F()`, `override fn F()`, `abstract fn F();` | `public virtual void F()`, `public override void F()` (`protected` for a protected .NET method), `public abstract void F();` |
 | `{ ...p, y: 5 }` | `p with { y = 5 }` |
 | `[0, ...xs]` | `(List<int>)[0, .. xs]` |
 | `enum Shape { Circle(r: double), Empty }` | `public abstract record Shape` with a private constructor and nested `public sealed record Circle(double r) : Shape;`, `public sealed record Empty() : Shape;` |

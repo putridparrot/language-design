@@ -26,6 +26,12 @@ public sealed class Lowerer
         var lowerer = new Lowerer();
         ImmutableArray<BoundFunction> LowerAll(ImmutableArray<BoundFunction> functions) =>
             [.. functions.Select(f => new BoundFunction(f.Symbol, lowerer.LowerFunction(f), f.IsExpressionBodied))];
+        foreach (var @class in program.Types.OfType<ClassSymbol>())
+        {
+            foreach (var field in @class.Fields.Where(f => f.Initializer is not null))
+                field.Initializer = lowerer.LowerInitializer(field.Initializer!);
+            @class.BaseArguments = [.. @class.BaseArguments.Select(lowerer.LowerInitializer)];
+        }
         return new BoundProgram(program.Files, program.FileNamespaces, program.Types, program.BuiltinTypes, LowerAll(program.Functions), LowerAll(program.Methods), program.Main)
         {
             Tests = [.. program.Tests.Select(t => t with { Function = LowerAll([t.Function])[0] })],
@@ -35,6 +41,21 @@ public sealed class Lowerer
 
     private BoundBlockStatement LowerFunction(BoundFunction function) =>
         LowerBody((BoundBlockExpression)function.Body, function.Symbol.BodyReturnType);
+
+    /// <summary>
+    /// A class field's initializer, or a base constructor argument: an expression C# runs in the constructor. One that
+    /// lowers to statements (a `match` with blocks, say) runs them in a lambda called on the spot.
+    /// </summary>
+    private BoundExpression LowerInitializer(BoundExpression value)
+    {
+        var prelude = new List<BoundStatement>();
+        var lowered = LowerForValue(value, prelude);
+        if (prelude.Count == 0 && lowered is not BoundThrowExpression)
+            return lowered;
+        var delegateType = ClrTypeSymbol.For(typeof(Func<>)).Construct([value.Type]);
+        var lambda = new BoundLambdaExpression([], new BoundBlockExpression([], value, value.Type), value.Type, value.Type, isExpressionBodied: false, delegateType);
+        return new BoundDelegateInvocationExpression(LowerForValue(lambda, prelude), [], value.Type);
+    }
 
     /// <summary>A function or lambda body: Unit ones run for effect, others return their value.</summary>
     private BoundBlockStatement LowerBody(BoundBlockExpression body, TypeSymbol returnType)
@@ -121,6 +142,11 @@ public sealed class Lowerer
 
             case BoundYieldStatement:
                 output.Add(statement);
+                break;
+
+            case BoundLocalFunctionStatement local:
+                output.Add(new BoundLocalFunctionStatement(
+                    new BoundFunction(local.Function.Symbol, LowerFunction(local.Function), local.Function.IsExpressionBodied)));
                 break;
 
             case BoundUsingStatement usingStatement:
@@ -593,6 +619,18 @@ public sealed class Lowerer
                 {
                     ArgumentNames = creation.ArgumentNames,
                 };
+
+            case BoundObjectCreationExpression creation:
+                return new BoundObjectCreationExpression(creation.Class, LowerOperands(creation.Arguments, prelude), creation.Type)
+                {
+                    ArgumentNames = creation.ArgumentNames,
+                };
+
+            case BoundFieldAssignmentExpression assignment:
+            {
+                var operands = LowerOperands([assignment.Target, assignment.Value], prelude);
+                return new BoundFieldAssignmentExpression(operands[0], assignment.Field, assignment.CompoundOperator, operands[1]);
+            }
 
             case BoundVariantCreationExpression creation:
                 return new BoundVariantCreationExpression(creation.Variant, LowerOperands(creation.Arguments, prelude), creation.Type);

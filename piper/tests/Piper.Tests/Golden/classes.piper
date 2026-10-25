@@ -1,0 +1,129 @@
+// Classes: reference types with identity, mutable state and inheritance. A class has a primary constructor; its fields
+// and methods are declared in its body. Fields are private and methods public unless marked otherwise.
+
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+
+class Account(owner: string, opening: decimal) {
+    mut balance = opening;
+    public let name = owner;
+    public mut deposits = 0;
+
+    fn Deposit(amount: decimal) {
+        balance += amount;
+        deposits += 1;
+        Log("deposit {amount}");
+    }
+
+    fn Balance() => decimal = balance;
+
+    // A parameter hides a field; 'this.' still reaches it.
+    fn Rename(owner: string) => string {
+        "{this.name} → {owner}"
+    }
+
+    // Another Account's private fields are visible inside Account.
+    fn Transfer(to: Account, amount: decimal) {
+        balance -= amount;
+        to.balance += amount;
+    }
+
+    private fn Log(message: string) { Print("{owner}: {message}"); }
+
+    static fn Empty(owner: string) => Account = Account(owner, 0m);
+}
+
+// Abstract and virtual methods, and overrides.
+abstract class Shape(name: string) {
+    abstract fn Area() => double;
+    virtual fn Describe() => string = "{name} with area {Area()}";
+    fn Name() => string = name;
+}
+
+class Square(side: double): Shape("square") {
+    override fn Area() => double = side * side;
+}
+
+class Circle(radius: double): Shape("circle") {
+    override fn Area() => double = 3.0 * radius * radius;
+    override fn Describe() => string = "a round {Name()}";
+}
+
+// Deriving from .NET classes.
+class NotFound(id: int): System.Exception("No item {id}") {
+    public let item = id;
+}
+
+class Point(x: int, y: int) {
+    override fn ToString() => string = "({x}, {y})";
+}
+
+class Recording: Collection<string> {
+    public mut inserted = 0;
+    override fn InsertItem(index: int, item: string) {
+        inserted += 1;
+        Print("inserting {item} at {index}");
+    }
+}
+
+// Traits and .NET interfaces follow the base class.
+trait Named {
+    fn Name() => string;
+    fn Greeting() => string = "Hello, {this.Name()}";
+}
+
+class Dog(name: string): Named {
+    fn Name() => string = name;
+}
+
+class Cat: Named {
+    fn Name() => string = "Tom";
+    fn Greeting() => string = "Purr";
+}
+
+fn Greet(n: Named) => string = n.Greeting();
+
+class Version(major: int): System.IComparable<Version> {
+    public let number = major;
+    fn CompareTo(other: Version?) => int = match other {
+        Some(v) => number - v.number,
+        None => 1,
+    };
+}
+
+fn Main() {
+    let ada = Account("Ada", 100m);
+    ada.Deposit(25m);
+    Print(ada.Balance());
+    Print(ada.name);
+    ada.deposits = 10;
+    Print(ada.deposits);
+    Print(ada.Rename("Lovelace"));
+    let bob = Account.Empty("Bob");
+    ada.Transfer(bob, 50m);
+    Print("{ada.Balance()} {bob.Balance()}");
+    let same = ada;
+    Print(same == ada);
+
+    let shapes: List<Shape> = [Square(2.0), Circle(1.0)];
+    for shape in shapes {
+        Print(shape.Describe());
+    }
+
+    try {
+        throw NotFound(7);
+    } catch (e: NotFound) {
+        Print("{e.Message} ({e.item})");
+    }
+    Print(Point(1, 2));
+
+    let recording = Recording();
+    recording.Add("a");
+    Print("{recording.inserted} inserted, {recording.Count} kept");
+
+    Print(Greet(Dog("Rex")));
+    Print(Greet(Cat()));
+    let versions = [Version(3), Version(1), Version(2)];
+    versions.Sort();
+    Print(string.Join(",", versions.ConvertAll(v => v.number)));
+}

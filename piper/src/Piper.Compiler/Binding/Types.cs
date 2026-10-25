@@ -164,6 +164,59 @@ public sealed class RecordSymbol : NamedTypeDefinition
     public ImmutableArray<VariableSymbol> InvariantFields { get; internal set; } = [];
 }
 
+/// <summary>
+/// A class: a mutable reference type with identity. Its primary constructor's <see cref="Parameters"/> are usable in
+/// its field initializers, its base's arguments and its methods; its <see cref="Fields"/> are private unless public;
+/// its methods (in <see cref="NamedTypeDefinition.Methods"/>) public unless private. It can derive from a Piper or .NET
+/// class (<see cref="Base"/>) and implement traits and .NET interfaces.
+/// </summary>
+public sealed class ClassSymbol : NamedTypeDefinition
+{
+    public ClassSymbol(ClassDeclarationSyntax declaration) : base(declaration.Name.Text)
+    {
+        Declaration = declaration;
+    }
+
+    public ClassDeclarationSyntax Declaration { get; }
+
+    public bool IsAbstract => Declaration.Abstract is not null;
+
+    public bool IsSealed => Declaration.Sealed is not null;
+
+    /// <summary>The primary constructor's parameters.</summary>
+    public ImmutableArray<VariableSymbol> Parameters { get; internal set; } = [];
+
+    public ImmutableArray<FieldSymbol> Fields { get; internal set; } = [];
+
+    /// <summary>The class it derives from: a <see cref="ClassSymbol"/>, a .NET class, or null for <c>object</c>.</summary>
+    public TypeSymbol? Base { get; internal set; }
+
+    /// <summary>The base constructor's arguments, converted to its parameters' types.</summary>
+    public ImmutableArray<BoundExpression> BaseArguments { get; internal set; } = [];
+
+    /// <summary>The .NET interfaces it lists (its traits are in <see cref="NamedTypeDefinition.Conformances"/>).</summary>
+    public ImmutableArray<TypeSymbol> Interfaces { get; internal set; } = [];
+
+    /// <summary>Where its methods are bound: the fields and primary constructor parameters, by bare name.</summary>
+    internal Scope? MemberScope { get; set; }
+
+    /// <summary>Where its static methods are bound: its members by name, so instance ones are reported as needing an instance.</summary>
+    internal Scope? StaticScope { get; set; }
+
+    /// <summary>Itself and its Piper base classes, nearest first.</summary>
+    public IEnumerable<ClassSymbol> SelfAndBases()
+    {
+        for (ClassSymbol? type = this; type is not null; type = type.Base as ClassSymbol)
+            yield return type;
+    }
+
+    /// <summary>
+    /// The .NET class at the root of its bases: <c>Exception</c> for <c>class NotFound: Exception</c>, or <c>object</c>,
+    /// which every class derives from (giving it <c>ToString</c>, <c>Equals</c> and <c>GetHashCode</c>).
+    /// </summary>
+    public ClrTypeSymbol ClrBase => SelfAndBases().Last().Base as ClrTypeSymbol ?? ClrTypeSymbol.For(typeof(object));
+}
+
 public enum BuiltinEnumKind
 {
     None,

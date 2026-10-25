@@ -174,6 +174,11 @@ public sealed partial class Binder
 
         switch (symbol)
         {
+            // A class's field, where there's no instance: in a static method or a field initializer.
+            case VariableSymbol { Kind: VariableKind.Field } field when _scope.Lookup("this") is null:
+                _diagnostics.ReportInvalidClassMember(span,
+                    $"'{field.Name}' is a field of an instance, which a static method or field initializer has none of; a field initializer can use the class's parameters.");
+                return new BoundErrorExpression();
             case VariableSymbol variable:
                 return new BoundVariableExpression(variable);
             case VariantSymbol variant:
@@ -200,6 +205,8 @@ public sealed partial class Binder
             default:
                 if (name.Kind == TokenKind.ThisKeyword)
                     _diagnostics.ReportThisOutsideInstanceMethod(name.Span);
+                else if (InheritedClrMember(name) is { } inherited)
+                    return BindExpression(inherited, expected);
                 else if (!ReportIfPrivateElsewhere(name))
                     _diagnostics.ReportUndefinedName(name.Span, name.Text);
                 return new BoundErrorExpression();
@@ -323,6 +330,17 @@ public sealed partial class Binder
         if (syntax.Target is TupleExpressionSyntax tupleTarget)
             return BindDeconstructionAssignment(syntax, tupleTarget);
 
+        // `this.owner = owner`, `other.count += 1`: a class's mutable field, through an instance.
+        if (syntax.Target is MemberAccessExpressionSyntax memberTarget && ClassFieldTarget(memberTarget) is { } classField)
+        {
+            var receiver = RequireValue(BindExpression(memberTarget.Target), memberTarget.Target.Span);
+            Record(memberTarget.Member, classField);
+            CheckFieldAccessible(classField, memberTarget.Member);
+            return BindAssignmentTo(FieldVariable(classField), syntax, memberTarget.Member.Span) is BoundAssignmentExpression assignment
+                ? new BoundFieldAssignmentExpression(receiver, classField, assignment.CompoundOperator, assignment.Value)
+                : new BoundErrorExpression();
+        }
+
         // .NET properties and indexers can be assigned: `sb.Length = 0`, `ages["Ada"] = 37`.
         if (syntax.Target is IndexExpressionSyntax or MemberAccessExpressionSyntax && BindClrAssignment(syntax) is { } clrAssignment)
             return clrAssignment;
@@ -348,9 +366,21 @@ public sealed partial class Binder
                 _diagnostics.ReportInvalidAssignmentTarget(syntax.Target.Span);
             return new BoundErrorExpression();
         }
+        return BindAssignmentTo(variable, syntax, name.Span);
+    }
 
+    /// <summary>A class's field named by <paramref name="target"/> (<c>this.count</c>), if that's what it names.</summary>
+    private FieldSymbol? ClassFieldTarget(MemberAccessExpressionSyntax target)
+    {
+        var receiver = Trial(() => BindExpression(target.Target), out bool failed);
+        return !failed && FindField(receiver.Type, target.Member.Text) is { Owner: not null } field ? field : null;
+    }
+
+    /// <summary>`x = value` or `x op= value` into <paramref name="variable"/>, which must be mutable.</summary>
+    private BoundExpression BindAssignmentTo(VariableSymbol variable, AssignmentExpressionSyntax syntax, TextSpan targetSpan)
+    {
         if (!variable.IsMutable)
-            _diagnostics.ReportCannotAssignImmutable(name.Span, variable);
+            _diagnostics.ReportCannotAssignImmutable(targetSpan, variable);
 
         var value = RequireValue(BindExpression(syntax.Value, variable.Type), syntax.Value.Span);
 
@@ -530,6 +560,7 @@ public sealed partial class Binder
             return type switch
             {
                 ConstructedTypeSymbol { Definition: RecordSymbol record } => BindRecordCreation(record, syntax, type),
+                ConstructedTypeSymbol { Definition: ClassSymbol @class } => BindClassCreation(@class, syntax, type),
                 ClrTypeSymbol clr => BindClrConstruction(clr, syntax.Arguments, syntax.Span, expected),
                 _ when type == TypeSymbol.Error => BindArgumentsForDiagnostics(syntax.Arguments),
                 _ => BindCallTo(type, name, syntax, expected),
@@ -566,6 +597,13 @@ public sealed partial class Binder
             // A variable holding a function: `f(1)`.
             case VariableSymbol variable when DelegateSignature(variable.Type) is not null:
                 return BindDelegateInvocation(new BoundVariableExpression(variable), syntax, calleeName);
+
+            // Inside a class, its own (or an inherited) method by bare name: `Area()` is `this.Area()`.
+            case MethodSymbol { ContainingType: ClassSymbol } method:
+                return BindBareMethodCall(method, syntax, name, expected);
+
+            case ClassSymbol @class:
+                return BindClassCreation(@class, syntax, expected);
 
             case FunctionSymbol function:
             {
@@ -612,6 +650,9 @@ public sealed partial class Binder
 
             case ErrorSymbol:
                 return BindArgumentsForDiagnostics(syntax.Arguments);
+
+            case null when InheritedClrMember(name) is { } inherited:
+                return BindExpression(syntax with { Callee = inherited with { TypeArguments = syntax.Callee is NameExpressionSyntax n ? n.TypeArguments : [] } }, expected);
 
             case null:
                 BindArgumentsForDiagnostics(syntax.Arguments);
@@ -755,7 +796,7 @@ public sealed partial class Binder
             return BindDelegateInvocation(field, syntax, member.Text);
         }
 
-        if (method is null && IsClrBacked(receiver.Type))
+        if (method is null && HasClrMembers(receiver.Type))
             return BindClrInstanceCall(receiver, member, syntax.Arguments, syntax.Span, explicitArguments);
 
         // `a.CompareTo(b)` on a `T: IComparable<T>`: a method of a .NET interface it is bounded by.
@@ -816,6 +857,15 @@ public sealed partial class Binder
     {
         if (type.OriginalDefinition is NamedTypeDefinition definition && definition.Methods.FirstOrDefault(m => m.Name == name) is { } own)
             return (own, type);
+        // A method a class inherits from a Piper base class.
+        if (type.OriginalDefinition is ClassSymbol @class)
+        {
+            foreach (var @base in SelfAndBaseTypes(type).Skip(1).Where(b => b.OriginalDefinition is ClassSymbol))
+            {
+                if (((ClassSymbol)@base.OriginalDefinition).Methods.FirstOrDefault(m => m.Name == name) is { } inherited)
+                    return (inherited, @base);
+            }
+        }
         if (_builtinMethods.TryGetValue(type, out var methods) && methods.FirstOrDefault(m => m.Name == name) is { } builtin)
             return (builtin, type);
         foreach (var trait in TraitsOf(type))
@@ -826,8 +876,16 @@ public sealed partial class Binder
         return null;
     }
 
-    private static FieldSymbol? FindField(TypeSymbol type, string name) =>
-        (type.OriginalDefinition as RecordSymbol)?.Fields.FirstOrDefault(f => f.Name == name);
+    private static FieldSymbol? FindField(TypeSymbol type, string name) => type.OriginalDefinition switch
+    {
+        RecordSymbol record => record.Fields.FirstOrDefault(f => f.Name == name),
+        // A class's own field, or one it inherits from a Piper base class.
+        ClassSymbol @class => @class.SelfAndBases().SelectMany(c => c.Fields).FirstOrDefault(f => f.Name == name),
+        _ => null,
+    };
+
+    /// <summary>Whether members can be found on <paramref name="type"/> through .NET reflection: a .NET or builtin type, or a class with a .NET base.</summary>
+    private static bool HasClrMembers(TypeSymbol type) => IsClrBacked(type) || type.OriginalDefinition is ClassSymbol;
 
     /// <summary>
     /// <c>Option.Some(1)</c> or <c>Option.None</c>. Fieldless variants are written without parentheses,
@@ -1179,6 +1237,7 @@ public sealed partial class Binder
         if (FindField(target.Type, syntax.Member.Text) is { } field)
         {
             Record(syntax.Member, field);
+            CheckFieldAccessible(field, syntax.Member);
             return new BoundFieldAccessExpression(target, field, TypeSubstitution.FieldType(field, target.Type));
         }
         if (_semantic is not null)
@@ -1189,7 +1248,7 @@ public sealed partial class Binder
             return new BoundTupleElementExpression(target, index, tuple.ElementTypes[index]);
 
         // sb.Length, list.Count, "abc".Length
-        if (FindMethod(target.Type, syntax.Member.Text) is null && IsClrBacked(target.Type))
+        if (FindMethod(target.Type, syntax.Member.Text) is null && HasClrMembers(target.Type))
             return BindClrInstanceMember(target, syntax.Member);
 
         if (FindMethod(target.Type, syntax.Member.Text) is not null)
@@ -1522,6 +1581,8 @@ public sealed partial class Binder
         (to.IsOption && from.IsValueType && IsConvertible(from, to.TypeArguments[0])) ||
         // .NET reference conversions: List<Int> to IEnumerable<Int>, String to IEnumerable<Char>, anything to object.
         (to is ClrTypeSymbol && from.IsValueType && (ClrTypes.ToClr(to) == typeof(object) || SelfAndBaseTypes(from).Contains(to))) ||
+        // A class to one of its Piper base classes.
+        (from.OriginalDefinition is ClassSymbol && to.OriginalDefinition is ClassSymbol && SelfAndBaseTypes(from).Contains(to)) ||
         (from is TupleTypeSymbol fromTuple && to is TupleTypeSymbol toTuple && IsTupleConvertible(fromTuple, toTuple)) ||
         // List<(Int, Int)> to List<(a: Int, b: Int)>: tuple names don't matter, at any depth.
         (from.IsValueType && TypeSubstitution.WithoutTupleNames(from) == TypeSubstitution.WithoutTupleNames(to));

@@ -207,6 +207,8 @@ public sealed partial class Parser
                 return ParseTest();
             case TokenKind.RecordKeyword:
                 return ParseRecord();
+            case TokenKind.Identifier when IsClassStart():
+                return ParseClass();
             case TokenKind.EnumKeyword:
                 return ParseEnum();
             case TokenKind.TraitKeyword:
@@ -215,7 +217,7 @@ public sealed partial class Parser
                 return ParseExtend();
             default:
                 ReportOnce(Current.Span, () => _diagnostics.ReportExpectedDeclaration(Current.Span, Current));
-                while (!IsDeclarationStart(Current.Kind) && Current.Kind != TokenKind.EndOfFile)
+                while (!IsDeclarationStart(Current.Kind) && !IsClassStart() && Current.Kind != TokenKind.EndOfFile)
                     NextToken();
                 return null;
         }
@@ -422,6 +424,9 @@ public sealed partial class Parser
         Peek(offset) is { Kind: TokenKind.Identifier, Text: "async" } &&
         (Peek(offset + 1).Kind is TokenKind.FnKeyword || (Peek(offset + 1).Kind == TokenKind.StaticKeyword && Peek(offset + 2).Kind == TokenKind.FnKeyword));
 
+    /// <summary>Whether <paramref name="token"/> is the first thing on its line, with nothing (not even spaces) before it.</summary>
+    private bool StartsLine(Token token) => token.Span.Start == 0 || _source[token.Span.Start - 1] is '\n' or '\r';
+
     /// <summary>A function declaration starts here: `fn`, `static fn`, `async fn`, `static async fn`, `operator +`, ….</summary>
     private bool AtFunctionStart(int offset = 0) =>
         Peek(offset).Kind is TokenKind.FnKeyword || IsAsyncModifier(offset) || IsOperatorStart(offset) ||
@@ -475,6 +480,139 @@ public sealed partial class Parser
         var requires = ParseRequires();
         Expect(TokenKind.Semicolon);
         return new RecordDeclarationSyntax(SpanFrom(keyword), name, typeParameters, fields) { Requires = requires };
+    }
+
+    /// <summary>
+    /// `class` (and `abstract`/`sealed` before it) is a keyword only here, at the start of a declaration; the words are
+    /// reserved, so they can't be names.
+    /// </summary>
+    private bool IsClassStart(int offset = 0) =>
+        Peek(offset) is { Kind: TokenKind.Identifier, Text: "class" } ? Peek(offset + 1).Kind == TokenKind.Identifier
+        : Peek(offset) is { Kind: TokenKind.Identifier, Text: "abstract" or "sealed" } && IsClassStart(offset + 1);
+
+    /// <summary>
+    /// class    = [ "abstract" | "sealed" ] "class" IDENT [ typeParameters ] [ "(" [ parameters ] ")" ]
+    ///            [ ":" baseType { "," baseType } ] ( ";" | "{" { member } "}" ) ;
+    /// baseType = type [ "(" [ arguments ] ")" ] ;
+    /// member   = attributes [ "public" | "private" ] ( ( "let" | "mut" ) IDENT [ ":" type ] "=" expression ";"
+    ///                                               | [ "virtual" | "override" | "abstract" ] function ) ;
+    /// </summary>
+    private ClassDeclarationSyntax ParseClass()
+    {
+        var first = Current;
+        Token? @abstract = Current.Text == "abstract" ? NextToken() : null;
+        Token? @sealed = Current.Text == "sealed" ? NextToken() : null;
+        NextToken();
+        var name = Expect(TokenKind.Identifier);
+        var typeParameters = ParseTypeParameters();
+
+        ImmutableArray<ParameterSyntax> parameters = [];
+        if (Current.Kind == TokenKind.OpenParen)
+        {
+            NextToken();
+            parameters = ParseSeparatedList(ParseParameter, TokenKind.CloseParen);
+            Expect(TokenKind.CloseParen);
+        }
+
+        var bases = ImmutableArray.CreateBuilder<BaseTypeSyntax>();
+        if (Current.Kind == TokenKind.Colon)
+        {
+            do
+            {
+                NextToken();
+                var type = ParseType();
+                ImmutableArray<ExpressionSyntax>? arguments = null;
+                if (Current.Kind == TokenKind.OpenParen)
+                {
+                    NextToken();
+                    arguments = ParseSeparatedList(ParseArgument, TokenKind.CloseParen);
+                    Expect(TokenKind.CloseParen);
+                }
+                bases.Add(new BaseTypeSyntax(TextSpan.FromBounds(type.Span.Start, Previous.Span.End), type, arguments));
+            }
+            while (Current.Kind == TokenKind.Comma);
+        }
+
+        var fields = ImmutableArray.CreateBuilder<ClassFieldSyntax>();
+        var methods = ImmutableArray.CreateBuilder<FunctionDeclarationSyntax>();
+        if (Current.Kind == TokenKind.Semicolon)
+        {
+            NextToken();
+        }
+        else
+        {
+            Expect(TokenKind.OpenBrace);
+            while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
+            {
+                int start = _position;
+                ParseClassMember(fields, methods);
+                if (_position == start)
+                    NextToken();
+            }
+            Expect(TokenKind.CloseBrace);
+        }
+
+        return new ClassDeclarationSyntax(SpanFrom(first), name, typeParameters, parameters, bases.ToImmutable(), fields.ToImmutable(), methods.ToImmutable())
+        {
+            Abstract = @abstract,
+            Sealed = @sealed,
+        };
+    }
+
+    private bool IsMethodModifier(int offset) => Peek(offset) is { Kind: TokenKind.Identifier, Text: "virtual" or "override" or "abstract" };
+
+    private void ParseClassMember(ImmutableArray<ClassFieldSyntax>.Builder fields, ImmutableArray<FunctionDeclarationSyntax>.Builder methods)
+    {
+        var documentation = DocumentationBefore(Current.Span.Start);
+        var attributes = Current.Kind == TokenKind.OpenBracket ? ParseAttributes() : [];
+        Token? @public = Current is { Kind: TokenKind.Identifier, Text: "public" } ? NextToken() : null;
+        Token? @private = @public is null && Current.Kind == TokenKind.PrivateKeyword ? NextToken() : null;
+
+        if (Current.Kind is TokenKind.LetKeyword or TokenKind.MutKeyword)
+        {
+            var keyword = NextToken();
+            var fieldName = Expect(TokenKind.Identifier);
+            TypeSyntax? type = null;
+            if (Current.Kind == TokenKind.Colon)
+            {
+                NextToken();
+                type = ParseType();
+            }
+            Expect(TokenKind.Equals);
+            var initializer = ParseExpression();
+            Expect(TokenKind.Semicolon);
+            if (!attributes.IsEmpty)
+                _diagnostics.ReportClassMember(attributes[0].Span, "Fields can't have attributes yet.");
+            fields.Add(new ClassFieldSyntax(SpanFrom(keyword), keyword, fieldName, type, initializer) { Public = @public, Documentation = documentation });
+            return;
+        }
+
+        // `static` may come before the modifier as well as after it; the binder reports the combination.
+        Token? @static = Current.Kind == TokenKind.StaticKeyword && IsMethodModifier(1) && AtFunctionStart(2) ? NextToken() : null;
+        Token? modifier = IsMethodModifier(0) && AtFunctionStart(1) ? NextToken() : null;
+        if (!AtFunctionStart())
+        {
+            ReportOnce(Current.Span, () => _diagnostics.ReportClassMember(Current.Span,
+                $"Expected a field ('let' or 'mut') or a method ('fn') in the class, but found '{Current.Text}'."));
+            // Skip the rest of the member, so one mistake is one error.
+            while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile or TokenKind.LetKeyword or TokenKind.MutKeyword) &&
+                   !AtFunctionStart() && !IsMethodModifier(0))
+            {
+                if (NextToken().Kind == TokenKind.Semicolon)
+                    break;
+            }
+            return;
+        }
+        var function = ParseFunction();
+        methods.Add(function with
+        {
+            Static = @static ?? function.Static,
+            Private = @private,
+            Public = @public,
+            Modifier = modifier,
+            Attributes = attributes,
+            Documentation = documentation,
+        });
     }
 
     /// <summary>
@@ -778,14 +916,29 @@ public sealed partial class Parser
 
         while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
         {
-            // A declaration keyword inside a block almost always means a missing '}' (but `using let`/`using (` is a statement).
-            if (IsDeclarationStart(Current.Kind) &&
+            // A declaration keyword inside a block almost always means a missing '}' (but `using let`/`using (` is a
+            // statement, and an indented `fn` a local function: one at the start of a line is taken to be the next
+            // top-level function, as declarations are written there, so a missing '}' doesn't swallow it).
+            bool localFunction = (AtFunctionStart() || (Current.Kind == TokenKind.PrivateKeyword && AtFunctionStart(1))) && !StartsLine(Current);
+            if ((IsDeclarationStart(Current.Kind) || IsAsyncModifier(0)) && !localFunction &&
                 !(Current.Kind == TokenKind.UsingKeyword && Peek(1).Kind is TokenKind.LetKeyword or TokenKind.MutKeyword or TokenKind.OpenParen))
                 break;
 
             int start = _position;
             switch (Current.Kind)
             {
+                // `fn Helper(x: int) => int { … }`, `async fn Fetch() { … }`: a local function.
+                case TokenKind.FnKeyword:
+                case TokenKind.StaticKeyword when AtFunctionStart():
+                case TokenKind.Identifier when IsAsyncModifier(0):
+                case TokenKind.PrivateKeyword when localFunction:
+                {
+                    // `private` means nothing here, which the binder says; parsing it keeps the error to that.
+                    var @private = Current.Kind == TokenKind.PrivateKeyword ? NextToken() : null;
+                    var function = ParseFunction() with { Private = @private };
+                    statements.Add(new LocalFunctionStatementSyntax(function.Span, function));
+                    break;
+                }
                 case TokenKind.Semicolon:
                     NextToken();
                     break;

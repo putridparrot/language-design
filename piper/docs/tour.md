@@ -149,6 +149,36 @@ extend Point {
 let moved = Point(1.0, 2.0) + Point(0.5, 0.5);
 ```
 
+## Classes
+
+Records are values. For an object with identity and state that changes, write a class: a C# class with a primary
+constructor, its fields and methods in the body.
+
+```piper
+class Account(owner: string) {
+    mut balance = 0m;                       // fields are private unless marked public
+    public let name = owner;
+
+    fn Deposit(amount: decimal) { balance += amount; }   // methods are public unless marked private
+    fn Balance() => decimal = balance;
+}
+
+abstract class Shape {
+    abstract fn Area() => double;
+    virtual fn Describe() => string = "area {Area()}";
+}
+
+class Square(side: double): Shape {
+    override fn Area() => double = side * side;
+}
+
+class NotFound(id: int): Exception("No item {id}") { }
+```
+
+Fields and parameters are named bare in methods (`this.` works too). A class derives from one class, Piper or .NET,
+then lists traits and interfaces. `virtual`, `abstract`, `override` and `sealed` mean what they do in C#, but
+redeclaring an inherited method without `override` is an error rather than a warning.
+
 ## Collections, lambdas and LINQ
 
 ```piper
