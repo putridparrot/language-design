@@ -143,6 +143,12 @@ public abstract class NamedTypeDefinition : GenericTypeDefinition
 
     /// <summary>Methods implementing .NET interface methods whose C# signatures differ from theirs by nullability.</summary>
     public List<ClrInterfaceBridge> InterfaceBridges { get; } = [];
+
+    /// <summary>
+    /// The method implementing <c>IComparable&lt;T&gt;</c> for the type itself, when it does: the type then has
+    /// <c>&lt;</c>, <c>&lt;=</c>, <c>&gt;</c> and <c>&gt;=</c>, emitted as C# operators that call it.
+    /// </summary>
+    public MethodSymbol? CompareTo { get; internal set; }
 }
 
 public sealed class RecordSymbol : NamedTypeDefinition

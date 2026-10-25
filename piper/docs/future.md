@@ -48,16 +48,14 @@ with `extend`, reports no matching overload. A Piper type should convert to a tr
 ## Language
 
 - **More for classes:**
-  - `base.F()`, to call the method an override replaces.
-  - Type tests on classes in `match` and `is` (`match shape { c: Circle => … }`), and casts down to a derived class.
+
   - Properties with getters and setters, which would also let a class complete a .NET base with abstract properties
     (`Stream`), and `protected` members.
   - Constructors besides the primary one, and attributes on fields.
   - Bare calls to a trait's own methods in its defaults (`Name()` rather than `this.Name()`), as classes allow.
-- **Custom `ToString` on records:** today `ToString` is reserved on records, so a record can't choose how it prints.
-- **Comparison operators** on records and enums (`<`, `<=`, `>`, `>=`), generating the pairs C# requires.
+
 - **`const` declarations,** usable in patterns and attribute arguments (`const` is reserved).
-- **.NET implicit conversions** (`op_Implicit`), so `BigInteger.Pow(2, 70)` works without writing `BigInteger(2)`.
+- **Spans:** `Span<T>` and `ReadOnlySpan<T>` (and ref structs generally), so APIs such as `AsSpan` and span overloads can be called. They can't be captured by lambdas or live across `await`, as in C#.
 - **Namespace-qualified variants in patterns** (`Library.Loans.LoanError.UnknownBook(code)`).
 - **Attributes on enum variants,** and explicit targets (`[return: …]`).
 - **More contracts:** `requires` on trait methods (implementations must not demand more than the trait does), invariants on

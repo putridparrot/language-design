@@ -66,7 +66,12 @@ public sealed partial class Binder
         foreach (var type in operands.Select(o => o.Type).Distinct())
         {
             if (type.OriginalDefinition is NamedTypeDefinition definition)
+            {
                 candidates.AddRange(PiperOperators(definition, type, symbol));
+                // `a < b` on a type that implements IComparable<T> for itself.
+                if (definition.CompareTo is not null && operands.Count == 2 && symbol is "<" or "<=" or ">" or ">=")
+                    candidates.Add(([type, type], TypeSymbol.Bool));
+            }
             else if (IsClrBacked(type))
                 candidates.AddRange(ClrOperators(type, symbol, operands.Count));
         }

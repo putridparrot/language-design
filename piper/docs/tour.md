@@ -72,6 +72,16 @@ case. Patterns nest, take guards (`Circle(_, r) if r > 10.0 => …`), match lite
 (`< 0`), and combine with `|`. As in C#, there are list patterns, `[first, ...rest]` (Piper writes C#'s `..` as `...`,
 as in its spreads), and property patterns, `Point { x: 0 }` or `{ Length: > 5 }`.
 
+Records print as C# records do (`Point { x = 1, y = 2 }`) unless you replace `ToString`, and they join in .NET's
+protocols through `extend`: implementing `IComparable<Version>` gives `<` and `>` as well as sorting, and implementing
+`IEnumerable<int>` with a `yield return` iterator makes a record usable with `for` and LINQ.
+
+```piper
+extend Point {
+    override fn ToString() => string = "({this.x}, {this.y})";
+}
+```
+
 ## No null: Option and Result
 
 A `string` is never null. A value that might be missing has type `string?`, which is `Option<string>`: either
@@ -177,7 +187,18 @@ class NotFound(id: int): Exception("No item {id}") { }
 
 Fields and parameters are named bare in methods (`this.` works too). A class derives from one class, Piper or .NET,
 then lists traits and interfaces. `virtual`, `abstract`, `override` and `sealed` mean what they do in C#, but
-redeclaring an inherited method without `override` is an error rather than a warning.
+redeclaring an inherited method without `override` is an error rather than a warning. `base.Describe()` calls the
+version an override replaces.
+
+To get the derived class back, test for it in a pattern with `name: Type` (C#'s `Type name`), or cast:
+
+```piper
+let label = match shape {
+    s: Square => "square of area {s.Area()}",
+    _ => "something else",
+};
+let square = (Square)shape;     // throws InvalidCastException if it isn't one
+```
 
 ## Collections, lambdas and LINQ
 

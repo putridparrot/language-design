@@ -261,7 +261,10 @@ public sealed partial class Binder
 
     // Collections
 
-    /// <summary>The type itself, then (for .NET-backed types) its base classes and interfaces, in Piper terms.</summary>
+    /// <summary>
+    /// The type itself, then its base classes and the .NET interfaces it implements, in Piper terms: for a Piper type,
+    /// those its class header and extend blocks name (an <c>IEnumerable&lt;int&gt;</c> is iterated and queried like one).
+    /// </summary>
     private IEnumerable<TypeSymbol> SelfAndBaseTypes(TypeSymbol type)
     {
         // A class, its Piper base classes, then its .NET base class's own bases and interfaces.
@@ -274,10 +277,18 @@ public sealed partial class Binder
                 foreach (var @base in SelfAndBaseTypes(clrBase))
                     yield return @base;
             }
+            foreach (var @interface in TraitsOf(type).OfType<ClrTypeSymbol>())
+                yield return @interface;
             yield break;
         }
 
         yield return type;
+        if (type.OriginalDefinition is NamedTypeDefinition { IsRuntimeType: false })
+        {
+            foreach (var @interface in TraitsOf(type).OfType<ClrTypeSymbol>())
+                yield return @interface;
+            yield break;
+        }
 
         (Type Type, IReadOnlyDictionary<Type, TypeSymbol> Map)? clr = type switch
         {
@@ -342,7 +353,7 @@ public sealed partial class Binder
             elementType = CommonType(itemTypes, null, out int failed);
             if (elementType is null)
             {
-                _diagnostics.ReportIncompatibleArms(syntax.Elements[failed].Span, itemTypes[0], itemTypes[failed]);
+                _diagnostics.ReportIncompatibleElements(syntax.Elements[failed].Span, itemTypes[0], itemTypes[failed]);
                 return new BoundErrorExpression();
             }
         }

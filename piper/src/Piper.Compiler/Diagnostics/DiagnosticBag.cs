@@ -76,7 +76,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0101", span, $"Expected an expression but found {Describe(actual)}.");
 
     public void ReportExpectedDeclaration(TextSpan span, Token actual) =>
-        Error("PIP0102", span, $"Expected 'fn', 'record', 'enum', 'trait' or 'extend' but found {Describe(actual)}.");
+        Error("PIP0102", span, $"Expected 'fn', 'record', 'class', 'enum', 'trait' or 'extend' but found {Describe(actual)}.");
 
     public void ReportExpectedType(TextSpan span, Token actual) =>
         Error("PIP0103", span, $"Expected a type but found {Describe(actual)}.");
@@ -121,8 +121,8 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportCannotConvert(TextSpan span, TypeSymbol from, TypeSymbol to) =>
         Error("PIP0202", span, $"Cannot convert type '{from}' to '{to}'.");
 
-    public void ReportUndefinedBinaryOperator(TextSpan span, string op, TypeSymbol left, TypeSymbol right) =>
-        Error("PIP0203", span, $"Operator '{op}' is not defined for types '{left}' and '{right}'.");
+    public void ReportUndefinedBinaryOperator(TextSpan span, string op, TypeSymbol left, TypeSymbol right, string hint = "") =>
+        Error("PIP0203", span, $"Operator '{op}' is not defined for types '{left}' and '{right}'.{hint}");
 
     public void ReportUndefinedUnaryOperator(TextSpan span, string op, TypeSymbol operand) =>
         Error("PIP0204", span, $"Operator '{op}' is not defined for type '{operand}'.");
@@ -196,6 +196,9 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportIncompatibleBranches(TextSpan span, TypeSymbol thenType, TypeSymbol elseType) =>
         Error("PIP0221", span, $"The 'if' and 'else' branches have incompatible types '{thenType}' and '{elseType}'.");
+
+    public void ReportIncompatibleElements(TextSpan span, TypeSymbol expected, TypeSymbol actual) =>
+        Error("PIP0221", span, $"This element has type '{actual}', which is incompatible with the earlier elements' type '{expected}'; give the collection a type if they share one, as in 'let items: List<Shape> = [...]'.");
 
     public void ReportIncompatibleArms(TextSpan span, TypeSymbol expected, TypeSymbol actual) =>
         Error("PIP0221", span, $"This match arm has type '{actual}', which is incompatible with the earlier arms' type '{expected}'.");

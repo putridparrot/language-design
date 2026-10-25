@@ -452,4 +452,16 @@ public class ParserTests
         Assert.Single(@class.Methods);
         Assert.Single(@class.Fields);
     }
+
+    [Fact]
+    public void Type_patterns()
+    {
+        var body = Body(ParseClean("fn f() { match x { c: Circle => 1, _: List<int> => 2, (a: string, _) => 3, _ => 4 } }"));
+        var arms = Assert.IsType<MatchExpressionSyntax>(body.Trailing).Arms;
+        var circle = Assert.IsType<TypePatternSyntax>(arms[0].Pattern);
+        Assert.Equal("c", circle.Name.Text);
+        Assert.Equal("_", Assert.IsType<TypePatternSyntax>(arms[1].Pattern).Name.Text);
+        Assert.IsType<TypePatternSyntax>(Assert.IsType<TuplePatternSyntax>(arms[2].Pattern).Elements[0]);
+        Assert.IsType<WildcardPatternSyntax>(arms[3].Pattern);
+    }
 }

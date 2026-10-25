@@ -58,6 +58,12 @@ public enum VariableKind
     /// <summary>The receiver of an instance method.</summary>
     This,
 
+    /// <summary>
+    /// <c>base</c> in a class's instance method: the instance as its base class, so a call through it runs the base
+    /// class's version of a method.
+    /// </summary>
+    Base,
+
     /// <summary>A class's field, named bare inside the class (see <see cref="VariableSymbol.Field"/>).</summary>
     Field,
 

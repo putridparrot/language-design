@@ -56,11 +56,17 @@ sealed class Circle(radius: double): Shape("circle") {
     override fn Describe() => string = "a circle of radius {radius}";
 }
 
+// Type patterns get the derived class back: 'name: Type', C#'s 'Type name'.
+fn Corners(shape: Shape) => int = match shape {
+    _: Rect => 4,
+    _: Circle => 0,
+    _ => -1,
+};
+
 // Overriding a protected .NET method: every item added goes through InsertItem.
 class UpperCaseList: Collection<string> {
     override fn InsertItem(index: int, item: string) {
-        // There's no base.InsertItem yet, so this adds through the protected Items list, named bare as in C#.
-        Items.Insert(index, item.ToUpper());
+        base.InsertItem(index, item.ToUpper());
     }
 }
 
@@ -97,8 +103,13 @@ fn Main() {
 
     let shapes: List<Shape> = [Rect(2.0, 3.0), Circle(1.0)];
     for shape in shapes {
-        Print(shape.Describe());
+        Print("{shape.Describe()}, {Corners(shape)} corners");
+        if shape is r: Rect {
+            Print("  a rect of area {r.Area()}");
+        }
     }
+    let first = (Rect)shapes[0];      // a cast throws InvalidCastException if it isn't one
+    Print(first.Area());
 
     let names = UpperCaseList();
     names.Add("ada");

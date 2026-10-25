@@ -488,6 +488,9 @@ public abstract record PatternSyntax(TextSpan Span) : SyntaxNode(Span);
 
 public sealed record WildcardPatternSyntax(TextSpan Span) : PatternSyntax(Span);
 
+/// <summary><c>c: Circle</c> or <c>_: Circle</c>: a type test, binding the value as that type unless the name is <c>_</c>.</summary>
+public sealed record TypePatternSyntax(TextSpan Span, Token Name, TypeSyntax Type) : PatternSyntax(Span);
+
 /// <summary>A bare name: a fieldless variant of the matched enum if one has that name, otherwise a new binding.</summary>
 public sealed record IdentifierPatternSyntax(TextSpan Span, Token Identifier) : PatternSyntax(Span);
 

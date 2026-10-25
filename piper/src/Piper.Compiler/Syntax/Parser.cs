@@ -695,6 +695,14 @@ public sealed partial class Parser
                 continue;
             }
 
+            // `override fn ToString() => string` on a record or enum; the binder reports other modifiers.
+            if (IsMethodModifier(0) && AtFunctionStart(1))
+            {
+                var modifier = NextToken();
+                methods.Add(ParseFunction() with { Modifier = modifier, Documentation = documentation });
+                continue;
+            }
+
             if (Current.Kind == TokenKind.PrivateKeyword && AtFunctionStart(1))
             {
                 var @private = NextToken();
@@ -1455,6 +1463,13 @@ public sealed partial class Parser
             case TokenKind.Identifier or TokenKind.ThisKeyword or TokenKind.PredefinedTypeKeyword:
             {
                 var identifier = NextToken();
+                // `base` only reaches the base class's members, as in C#.
+                if (identifier.Text == "base" && Current.Kind != TokenKind.Dot)
+                {
+                    ReportOnce(identifier.Span, () => _diagnostics.ReportClassMember(identifier.Span,
+                        "'base' isn't a value; it calls the base class's version of a method, as in 'base.F()'."));
+                    return new ErrorExpressionSyntax(identifier.Span);
+                }
                 var typeArguments = identifier.Kind == TokenKind.Identifier ? ParseTypeArgumentsIfGeneric() : [];
                 return new NameExpressionSyntax(SpanFrom(identifier), identifier) { TypeArguments = typeArguments };
             }
@@ -1908,7 +1923,7 @@ public sealed partial class Parser
     }
 
     /// <summary>
-    /// primaryPattern = "_" | IDENT | [ IDENT "." ] IDENT [ "(" [ pattern { "," pattern } [ "," ] ] ")" | properties ]
+    /// primaryPattern = "_" | IDENT | IDENT ":" type | [ IDENT "." ] IDENT [ "(" [ pattern { "," pattern } [ "," ] ] ")" | properties ]
     ///                | properties | "[" [ listElement { "," listElement } [ "," ] ] "]"
     ///                | ( "<" | "<=" | ">" | ">=" ) literalPattern
     ///                | literalPattern [ ( ".." | "..<" ) literalPattern ] ;
@@ -1956,6 +1971,13 @@ public sealed partial class Parser
         if (Current.Kind == TokenKind.Identifier)
         {
             var name = NextToken();
+            // `c: Circle`, `_: Circle`: a type test.
+            if (Current.Kind == TokenKind.Colon)
+            {
+                NextToken();
+                var type = ParseType();
+                return new TypePatternSyntax(SpanFrom(name), name, type);
+            }
             if (name.Text == "_")
                 return new WildcardPatternSyntax(name.Span);
 

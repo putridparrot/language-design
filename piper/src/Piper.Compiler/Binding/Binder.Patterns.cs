@@ -134,6 +134,9 @@ public sealed partial class Binder
             case ConstructorPatternSyntax constructor:
                 return BindConstructorPattern(constructor, expected, allowBindings);
 
+            case TypePatternSyntax typed:
+                return BindTypePattern(typed, expected, allowBindings);
+
             case LiteralPatternSyntax literal:
                 return ConvertPatternLiteral(literal, expected) is { } value
                     ? new BoundLiteralPattern(value, expected)
@@ -206,6 +209,7 @@ public sealed partial class Binder
     private static IEnumerable<VariableSymbol> Bindings(BoundPattern pattern) => pattern switch
     {
         BoundBindingPattern binding => [binding.Variable],
+        BoundTypePattern { Variable: { } variable } => [variable],
         BoundConstructorPattern constructor => constructor.Arguments.SelectMany(Bindings),
         BoundTuplePattern tuple => tuple.Elements.SelectMany(Bindings),
         BoundListPattern list => list.Elements.SelectMany(Bindings).Concat(list.Slice is { } slice ? Bindings(slice) : []),
@@ -288,6 +292,38 @@ public sealed partial class Binder
             return null;
         }
         return (constructor, fields, expected, displayName);
+    }
+
+    /// <summary>
+    /// <c>c: Circle</c> on a <c>Shape</c>: a type test, as C#'s <c>shape is Circle c</c>. The matched value must be able
+    /// to hold a <c>Circle</c>: it's a base class, a trait or interface the type implements, or object. On an optional,
+    /// None doesn't match, as null doesn't in C#.
+    /// </summary>
+    private BoundPattern BindTypePattern(TypePatternSyntax syntax, TypeSymbol expected, bool allowBindings)
+    {
+        var tested = BindValueType(syntax.Type, "pattern");
+        if (expected.IsOption && !tested.IsOption)
+            return new BoundConstructorPattern(_option.FindVariant("Some")!, [BindTypePattern(syntax, expected.TypeArguments[0], allowBindings)], expected);
+
+        bool always = tested == expected || IsConvertible(expected, tested);
+        // Builtin and .NET types implement Piper traits through generated wrappers, which C#'s type tests don't see.
+        static bool IsPiperType(TypeSymbol type) => type.OriginalDefinition is RecordSymbol or EnumSymbol or ClassSymbol;
+        bool isObject = expected is ClrTypeSymbol { Type: var clr } && clr == typeof(object);
+        bool throughWrapper = (expected.IsTrait && !tested.IsTrait && !IsPiperType(tested)) ||
+                              (tested.IsTrait && !expected.IsTrait && !IsPiperType(expected) && !isObject);
+        if (tested != TypeSymbol.Error && expected != TypeSymbol.Error &&
+            (tested.IsOption || throughWrapper || !(always || IsDowncast(expected, tested))))
+        {
+            _diagnostics.ReportPatternTypeMismatch(syntax.Span, $"A '{tested}' pattern", expected);
+            tested = TypeSymbol.Error;
+        }
+
+        var binding = syntax.Name.Text == "_"
+            ? null
+            : BindPattern(new IdentifierPatternSyntax(syntax.Name.Span, syntax.Name), tested, allowBindings) as BoundBindingPattern;
+        return tested == TypeSymbol.Error && binding is null
+            ? new BoundWildcardPattern(expected)
+            : new BoundTypePattern(tested, binding?.Variable, always, expected);
     }
 
     /// <summary>Whether a value of type <paramref name="expected"/> can be a <paramref name="definition"/>: it's `object`, or a trait or interface the type implements.</summary>

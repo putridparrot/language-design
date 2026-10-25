@@ -9,7 +9,7 @@ public static class SyntaxFacts
     /// </summary>
     public static readonly IReadOnlySet<string> ReservedWords = new HashSet<string>
     {
-        "const", "operator", "test", "requires", "where", "type", "impl", "module", "import", "self",
+        "base", "const", "operator", "test", "requires", "where", "type", "impl", "module", "import", "self",
         "public", "internal", "protected", "sealed", "abstract", "override", "virtual", "class", "struct", "interface",
     };
 

@@ -21,6 +21,11 @@ public sealed record Money(int pence) : global::System.IComparable<Money>
     }
 
     int global::System.IComparable<Money>.CompareTo(Money? other) => CompareTo(global::Piper.Runtime.PiperInterop.FromNullableReference(other));
+
+    public static bool operator <(Money left, Money right) => ((global::System.IComparable<Money>)left).CompareTo(right) < 0;
+    public static bool operator <=(Money left, Money right) => ((global::System.IComparable<Money>)left).CompareTo(right) <= 0;
+    public static bool operator >(Money left, Money right) => ((global::System.IComparable<Money>)left).CompareTo(right) > 0;
+    public static bool operator >=(Money left, Money right) => ((global::System.IComparable<Money>)left).CompareTo(right) >= 0;
 }
 
 public sealed record Connection(string name) : global::System.IDisposable

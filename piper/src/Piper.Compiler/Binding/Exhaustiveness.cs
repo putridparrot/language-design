@@ -331,7 +331,7 @@ public static class Exhaustiveness
     /// <summary>Patterns every value matches: a property pattern only tests what it contains, since values aren't null.</summary>
     private static bool IsWildcard(BoundPattern pattern) => pattern switch
     {
-        BoundWildcardPattern or BoundBindingPattern => true,
+        BoundWildcardPattern or BoundBindingPattern or BoundTypePattern { AlwaysMatches: true } => true,
         BoundPropertyPattern properties => properties.Properties.All(p => IsWildcard(p.Pattern)),
         _ => false,
     };
@@ -343,7 +343,7 @@ public static class Exhaustiveness
     private static object? KeyOf(BoundPattern pattern) => pattern switch
     {
         _ when IsWildcard(pattern) => null,
-        BoundRelationalPattern or BoundPropertyPattern => pattern,
+        BoundRelationalPattern or BoundPropertyPattern or BoundTypePattern => pattern,
         BoundConstructorPattern constructor => constructor.Constructor,
         BoundTuplePattern tuple => tuple.Type,
         BoundLiteralPattern literal => literal.Value,

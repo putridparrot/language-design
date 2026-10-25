@@ -301,9 +301,29 @@ public sealed partial class Binder
         return new MemberAccessExpressionSyntax(name.Span, new NameExpressionSyntax(name.Span, new Token(TokenKind.ThisKeyword, name.Span, "this")), name);
     }
 
-    /// <summary>Whether protected .NET members are visible through a <paramref name="receiver"/>: in a class's methods, on that class or one derived from it, as in C#.</summary>
-    private bool SeesProtected(TypeSymbol receiver) =>
-        _currentClass is { } current && receiver is ClassSymbol @class && @class.SelfAndBases().Contains(current);
+    /// <summary>
+    /// <c>base</c>, in a class's instance method: the instance typed as its base class (a Piper class, or the .NET one),
+    /// so <c>base.F()</c> calls the base class's version of F, as in C#.
+    /// </summary>
+    private BoundExpression BindBase(Token name)
+    {
+        if (_currentClass is not { } @class || _scope.Lookup("this") is null)
+        {
+            _diagnostics.ReportInvalidClassMember(name.Span, "'base' can only be used in a class's instance methods.");
+            return new BoundErrorExpression();
+        }
+        var type = @class.Base ?? @class.ClrBase;
+        return new BoundVariableExpression(new VariableSymbol("base", type, isMutable: false, VariableKind.Base));
+    }
+
+    /// <summary>
+    /// Whether protected .NET members are visible through a <paramref name="receiver"/>: in a class's methods, on that
+    /// class or one derived from it, or through <c>base</c>, as in C#.
+    /// </summary>
+    private bool SeesProtected(BoundExpression receiver) =>
+        _currentClass is { } current &&
+        (receiver is BoundVariableExpression { Variable.Kind: VariableKind.Base } ||
+         (receiver.Type is ClassSymbol @class && @class.SelfAndBases().Contains(current)));
 
     private static bool IsProtected(MethodBase method) => method.IsFamily || method.IsFamilyOrAssembly;
 

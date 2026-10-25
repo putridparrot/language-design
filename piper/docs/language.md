@@ -114,6 +114,7 @@ primaryPattern  = "_"                                         (* wildcard *)
                 | "null"                                      (* None *)
                 | "(" pattern "," pattern { "," pattern } ")"     (* tuple *)
                 | IDENT                                       (* fieldless variant, else a binding *)
+                | ( IDENT | "_" ) ":" type                     (* type test: c: Circle *)
                 | [ IDENT "." ] IDENT [ "(" [ pattern { "," pattern } [ "," ] ] ")" ]   (* variant / record *)
                 | [ [ IDENT "." ] IDENT ] properties                      (* property pattern *)
                 | "[" [ listElement { "," listElement } [ "," ] ] "]"     (* list pattern *)
@@ -152,7 +153,7 @@ generic call `a<b, c>(d)`, as in C#.
 ### Lexical structure
 
 - **Identifiers:** ASCII letters, digits and `_`, not starting with a digit.
-- **Reserved words:** `requires` is a keyword only after a signature, but can't be a name anywhere. `const operator test where type impl module import self public internal protected sealed abstract override virtual class struct interface` aren't keywords yet but may become ones, so they can't be used as names (of variables, parameters, fields, functions or types). `class`, `abstract`, `sealed`, `virtual` and `override` are used by [classes](#classes) and still can't be names. They can still follow a dot, to reach a .NET member of that name.
+- **Reserved words:** `requires` is a keyword only after a signature, but can't be a name anywhere. `const operator test where type impl module import self base public internal protected sealed abstract override virtual class struct interface` aren't keywords yet but may become ones, so they can't be used as names (of variables, parameters, fields, functions or types). `class`, `abstract`, `sealed`, `virtual`, `override` and `base` are used by [classes](#classes) and still can't be names. They can still follow a dot, to reach a .NET member of that name.
 - **Keywords:** `fn let mut if else while for in return break continue record enum match trait extend static this null is namespace using private try catch finally defer throw out true false`; `async`, `await`, `yield` and `ref`, which are contextual as in C# (still usable as names); and the builtin type names `int long double bool string char object byte sbyte short ushort uint ulong float decimal unit`.
 - **Comments:** `// line` and `/* block */`. Block comments nest. `///` lines directly above a declaration, method, parameter, field or enum variant are its documentation: the editor shows it, and the generated C# carries it as XML documentation (`piper build --exe` and `--library` also write the `.xml` file).
 - **Integers:** `42`, `1_000_000`, `0xFF`, `0b1010`. Suffixes as in C#: `L` long (`3_000_000_000L`), `U` uint (or ulong if it doesn't fit), `UL` ulong. An unsuffixed literal must fit in int (C# would make a larger one a uint or long; Piper asks for the suffix); as in C#, `-2147483648` and `-9223372036854775808L` are allowed too.
@@ -173,7 +174,7 @@ anything else, and .NET's names for them (`String`, `Int32` with `using System;`
 - **Records:** `record Point(x: int, y: int);` declares an immutable value type with value equality. Construct one with `Point(1, 2)` and read fields with `p.x`. To change fields, copy with a spread, as in TypeScript: `{ ...p, y: 5 }` is `p` with `y` replaced, and a field written alone takes the variable of that name (`{ ...p, height }`).
 - **Implicit conversions:** C#'s implicit numeric conversions, which never lose magnitude: int → long → float → double, byte → int, char → int, int → decimal and so on. Narrowing needs a cast. As in C#, a constant that fits converts implicitly to a smaller integer type: `let b: byte = 200;`, `stream.WriteByte(7)`.
 - **Arithmetic:** C#'s numeric promotion: mixed operands are converted to the wider type, so `1 + 2.5` is a double, and anything smaller than int is done as int, so `byte + byte` is an int and `'a' + 1` is 98. decimal doesn't mix with float or double, nor ulong with signed types, without a cast. `/` on integers truncates. `b += 1` on a byte works, as in C#.
-- **Casts:** `(int)2.7` is 2, `(byte)300` wraps to 44 (unless it's a constant, when it's an error), `(char)65` is `'A'`, as in C#. Casts also go from a trait, `object` or a .NET base type to something more specific (throwing `InvalidCastException` if the value isn't one). As in C#, `(T)` is a cast only if the token after it can start an operand (an identifier, literal, `(`, `!`, …), so `(a) - b` is a subtraction.
+- **Casts:** `(int)2.7` is 2, `(byte)300` wraps to 44 (unless it's a constant, when it's an error), `(char)65` is `'A'`, as in C#. Casts also go from a trait, `object`, a base class or a .NET base type to something more specific (throwing `InvalidCastException` if the value isn't one). As in C#, `(T)` is a cast only if the token after it can start an operand (an identifier, literal, `(`, `!`, …), so `(a) - b` is a subtraction.
 - **Never:** the internal type of a block that always returns, breaks or continues. It fits wherever any type is expected, so `let x = if ok { 1 } else { return; };` type-checks.
 - **Overflow:** integer arithmetic wraps around on overflow, as in C#'s default (unchecked) context: with `let max = int.MaxValue;`, `max + 1 == int.MinValue`. Constant expressions are checked, as in C#: `int.MaxValue + 1`, `(byte)300` and `1 / 0` are compile errors.
 - **Tuples and arrays:** `(int, string)` is a tuple and `int[]` an array, both as in C#; see [Tuples](#tuples-and-deconstruction) and [Collections](#collections).
@@ -219,6 +220,7 @@ fn Area(s: Shape) => double = match s {
 | `Circle(p)`, `Shape.Circle(p)` | that variant, matching its fields against the sub-patterns |
 | `Empty`, `Shape.Empty` | a fieldless variant; a bare name is a variant if the matched enum has one by that name, otherwise a binding |
 | `Point(x, 0)` | a record, deconstructed positionally |
+| `c: Circle`, `s: string`, `_: Circle` | a type test, as C#'s `shape is Circle c`: a value of that type, bound to the name as one (unless it's `_`). The matched value must be able to hold one: of a base class, a trait or interface the type implements, or `object`. Other values fall through, so a match needs a later arm for them |
 | `Point(x, y)`, `Message.Add(n)` on an `object`, trait or interface | a type test, as C#'s `o is Point(var x, var y)`: a value of that record or variant (of a non-generic type that the matched type can hold), deconstructed. A match on such a value needs a `_` arm |
 | `42`, `-1`, `2.5`, `'c'`, `"text"`, `true` | that literal; an int literal also matches long and double values |
 | `1..10`, `0..<10`, `'a'..'z'` | a range of integer or char values; `..` includes the end, as in Swift, and `..<` stops before it |
@@ -292,6 +294,8 @@ extend Circle: Shape {
 - **Generic methods:** a trait method can take type parameters of its own, `fn MapAll<U>(f: (T) => U) => List<U>;`. An implementation has as many type parameters, with the same bounds, under any names: `fn MapAll<R>(f: (int) => R) => List<R>`.
 - **Adding methods to a trait:** `extend Named { fn Shout() => string = this.Greet().ToUpper(); }` adds default methods to a trait, including one declared in another file or namespace, and every implementer gets them. They must have bodies and can't be static or private, and the block can't make the trait implement other traits (list parents in its declaration).
 - **.NET interfaces:** `extend` can implement a .NET interface too, and one can be a bound. Each method of `extend Money: IComparable<Money> { fn CompareTo(other: Money?) => int = … }` has the interface's signature as Piper sees it: a parameter or result .NET marks as possibly null is an Option, as when calling .NET. Then `wallet.Sort()` uses it, `using let c = Connection(…)` works for an `IDisposable`, and the record passes wherever .NET expects the interface (`words.Sort(ByLength())` for an `IComparer<string>`). `fn Largest<T: IComparable<T>>(items: List<T>)` accepts Piper types that implement it and .NET types such as `int` and `string`, and calls `a.CompareTo(b)` on them. Only interfaces made of instance methods (no properties, events, static or generic methods, or ref and out parameters) can be implemented.
+  - **Comparison operators:** a type that implements `IComparable<T>` for itself (`extend Version: IComparable<Version>`, or a class listing it) has `<`, `<=`, `>` and `>=`, which call its `CompareTo`. They're C# operators, so C# code can use them too, and sorting, `Max` and `Order` use the same `CompareTo`.
+  - **Sequences:** a record, enum or class can implement `IEnumerable<T>` with one method, an iterator: `fn GetEnumerator() => IEnumerator<int> { … yield return i; … }`. Piper supplies the non-generic `IEnumerable.GetEnumerator` that C# also requires. The type then works with `for`, LINQ (`countdown.Where(n => n > 2)`) and anything that takes a sequence (`string.Join`, `List<int>(countdown)`).
 - **Static methods:** `static fn Empty() => T;` in a trait is a C# static abstract member, and one with a body a default (`static virtual`). Implementers write `static fn Empty() => Total = …`. They are called through a type parameter bounded by the trait, as in C#: `fn Concat<T: Monoid<T>>(items: List<T>) => T { mut result = T.Empty(); … }`. They can also be called on a type that implements the trait, including a default it doesn't override (`Total.Describe()`), but not on the trait itself. A trait with static methods can only be a bound, not the type of a value.
 - **Builtin, .NET and runtime types implement traits too:** `extend int: Shape { fn Area() => double = … }`, and likewise `string`, `StringBuilder` or `Option` (`extend Option: Convert<string> { … }`). They get the trait's defaults (`3.Describe()`), convert to the trait (`let shapes: List<Shape> = [Circle(1.0), 2, 3];`), cast back from it (`(int)s`), and satisfy bounds (`Total([1, 2, 3])` for `fn Total<T: Shape>(items: List<T>)`, `Concat(["a", "b"])` for a `Monoid<T>` with static methods). Only Piper traits, not .NET interfaces: C# has no way to make `int` implement an interface, so a value used as a trait is wrapped in a generated box (see [How bounds are compiled](#how-trait-bounds-are-compiled)).
 
@@ -324,11 +328,20 @@ let s = Option.Some(5).GetOr(0);
   }
   ```
 
-  Operands convert as for a call (`2 * v` widens the int), the overload whose operand types match exactly wins, and `+=` and the other compound assignments use the operator. Comparisons and `==` can't be declared (records already compare by value); nor can operators on traits, builtin or .NET types.
+  Operands convert as for a call (`2 * v` widens the int), the overload whose operand types match exactly wins, and `+=` and the other compound assignments use the operator. Comparisons and `==` can't be declared: records already compare by value, and implementing `IComparable<T>` gives `<`, `<=`, `>` and `>=` (see [Traits](#traits)). Nor can operators be declared on traits, builtin or .NET types.
 - **Instance and static methods:** as in C#, a method is an instance method by default, with `this` referring to the receiver. Mark it `static fn` to call it on the type instead, e.g. `int.Zero()`. There is no explicit receiver parameter.
 - **`this` is immutable.** Using it in a static method or a top-level function is an error.
 - **Generic types:** write `extend Option`, not `extend Option<int>`. Methods apply to every instantiation.
 - **Name clashes are errors.** A method can't share a name with a field, a variant, a variant's field (variants inherit their enum's methods) or another method.
+- **Printing:** records print as `Point { x = 1, y = 2 }` and fieldless variants by name. To choose how a record or enum prints, replace its `ToString`, which `Print`, interpolation and .NET all use. As in C#, it's marked `override`:
+
+  ```piper
+  extend Money {
+      override fn ToString() => string = "£{this.amount}";
+  }
+  ```
+
+  It's the only method an extend block can mark `override`. On an enum it covers every variant.
 - **Builtin members:** on builtin types, a method can't reuse a name the .NET type already has (such as `string.Length`), because the .NET member would silently win.
 
 ### Classes
@@ -395,6 +408,23 @@ ada.Deposit(25m);
     the base dispatch to the override.
   - Only `virtual` and `abstract` methods can be overridden, by a method marked `override` with the same signature.
     Redeclaring an inherited method without `override` is an error, rather than C#'s warning and hiding.
+  - `base.F()` calls the base class's version of F, as in C#, from an override or any other instance method (and
+    lambdas inside one). It works for Piper and .NET base classes, protected .NET methods included
+    (`base.InsertItem(index, item)`). An abstract method has no base version to call.
+  - **Getting the derived class back:** a type pattern tests for it, and a cast insists on it:
+
+    ```piper
+    fn Describe(shape: Shape) => string = match shape {
+        c: Circle if c.Radius() > 1.0 => "big circle",
+        _: Circle => "small circle",
+        other => other.Describe(),
+    };
+
+    if shape is s: Square { Print(s.Area()); }
+    let circle = (Circle)shape;            // InvalidCastException if it isn't one
+    ```
+
+    Classes can always be derived from, so a match on one needs a final arm for the rest.
   - `abstract fn` has no body, and only an `abstract class` can declare one. An abstract class can't be made itself,
     and a class deriving from it must override every abstract method or be abstract too.
   - A `sealed class` can't be derived from.
@@ -407,6 +437,7 @@ ada.Deposit(25m);
   - A class deriving from `Exception` can be thrown and caught by its type.
   - A .NET base whose abstract members are properties (`Stream`) can't be completed yet, since classes can't declare
     properties.
+  - A collection literal of different classes needs a type, as in C#: `let shapes: List<Shape> = [Square(1.0), Circle(1.0)];`.
 - **Traits and interfaces** follow the base class in the list, and are implemented by the class's methods:
   `class Dog(name: string): Named { fn Name() => string = name; }`, or
   `class Version(major: int): IComparable<Version> { … }`. A class gets the traits' defaults like any implementer.
@@ -530,7 +561,9 @@ points.Add(Point(1, 2));                   // and can hold Piper values
   Where .NET may write null (`out string?`), the variable is optional. `[MaybeNullWhen(false)]`, as on `Dictionary.TryGetValue`, means null only when the call returns false, so where it returned true the variable is a plain value: in the body of `if names.TryGetValue(key, out let name) { Print(name.Length); }` (or a `while`, or later in an `&&` chain), and after a guard `if !names.TryGetValue(key, out let name) { return; }`. Anywhere else it is optional. Piper functions have no `out` parameters; they return several values as a [tuple](#tuples-and-deconstruction).
 - **`in` parameters** take ordinary arguments.
 - **`ref` parameters** take `ref x`, where x is a `mut` variable of exactly the parameter's type, or an array element: `Interlocked.Increment(ref counter)`, `Array.Resize(ref items, 10)`. .NET's nullability on a ref parameter is ignored, since the variable already has a type.
-- **Operators** a .NET type declares work as in C#: `date > other` on DateOnly, `end - start` on DateTime (a TimeSpan), `span += TimeSpan.FromHours(1)`, BigInteger arithmetic. Its implicit conversions don't apply yet, so write `BigInteger(2)` rather than passing `2` where a BigInteger is expected.
+- **Operators** a .NET type declares work as in C#: `date > other` on DateOnly, `end - start` on DateTime (a TimeSpan), `span += TimeSpan.FromHours(1)`, BigInteger arithmetic.
+- **Implicit conversions** a .NET type declares (C#'s `implicit operator`) apply as in C#: `BigInteger.Pow(2, 70)`, `let big: BigInteger = 5;`, `big + 1`, and `XElement("root", …)`, where a string becomes an `XName`. In overload resolution they come last, after exact matches, widening and base types.
+- **Spans** (`Span<T>`, `ReadOnlySpan<T>`) aren't supported yet, so methods that take or return them, such as `AsSpan`, can't be called. Most have an overload taking an array or string.
 - **Events:** `list.CollectionChanged += handler` adds a handler and `-=` removes it, as in C#. The handler is a lambda or a function, converted to the event's delegate type. An event can't be read or assigned with `=`.
 
 ### Attributes
@@ -914,6 +947,8 @@ As in C#, functions and methods are PascalCase (`Print`, `Main`, `Area()`), and 
 |---|---|
 | `record P(x: int)` | `public sealed record P(int x);` |
 | `class A(x: int): B(x), Named { mut n = x; public let m = 1; … }` | `public partial class A(int x) : B(x), Named { private int n = x; public int m { get; } = 1; … }` |
+| `extend R { override fn ToString() => string = … }`, `extend R: IComparable<R>` | `public override string ToString() => …` (`sealed override` on an enum), and `public static bool operator <(R left, R right) => ((IComparable<R>)left).CompareTo(right) < 0;` with `<=`, `>`, `>=` |
+| `base.F()`, `c: Circle` (pattern), `(Circle)shape` | `base.F()`, `Circle c`, `(Circle)shape` |
 | `virtual fn F()`, `override fn F()`, `abstract fn F();` | `public virtual void F()`, `public override void F()` (`protected` for a protected .NET method), `public abstract void F();` |
 | `{ ...p, y: 5 }` | `p with { y = 5 }` |
 | `[0, ...xs]` | `(List<int>)[0, .. xs]` |

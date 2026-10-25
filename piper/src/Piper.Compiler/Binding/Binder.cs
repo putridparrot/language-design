@@ -935,8 +935,13 @@ public sealed partial class Binder
             // A class's bodiless methods are checked with its other methods; nothing else may lack a body.
             if (!syntax.HasBody && target is not ClassSymbol)
                 _diagnostics.ReportMissingBody(syntax.Name.Span, syntax.Name.Text);
-            if (target is not ClassSymbol && syntax.Modifier is { } modifier)
-                _diagnostics.ReportInvalidOverride(modifier.Span, $"'{modifier.Text}' applies to a class's methods.");
+            if (target is not ClassSymbol && syntax.Modifier is { } modifier && !OverridesToString(target, method))
+            {
+                _diagnostics.ReportInvalidOverride(modifier.Span, $"'{modifier.Text}' applies to a class's methods, and to a record's or enum's 'ToString'.");
+                continue;
+            }
+            if (OverridesToString(target, method) && (method.IsStatic || !method.Parameters.IsEmpty || !method.TypeParameters.IsEmpty || method.ReturnType != TypeSymbol.String))
+                _diagnostics.ReportInvalidOverride(syntax.Name.Span, "'ToString' must be 'override fn ToString() => string'.");
             if (target is TraitSymbol && syntax.Static is { } @static)
             {
                 // A static method would make the trait usable only as a bound, which belongs in its declaration.
@@ -962,6 +967,13 @@ public sealed partial class Binder
         return infos;
     }
 
+    /// <summary>
+    /// <c>override fn ToString() => string</c> in an extend block for a record or (non-builtin) enum, replacing the one
+    /// C# generates.
+    /// </summary>
+    private static bool OverridesToString(TypeSymbol target, MethodSymbol method) =>
+        method.IsOverride && method.Name == "ToString" && target is RecordSymbol or EnumSymbol { BuiltinKind: BuiltinEnumKind.None };
+
     /// <summary>Adds an extend method to its type, rejecting names that clash with existing members.</summary>
     private bool RegisterMethod(TypeSymbol target, MethodSymbol method, Token name)
     {
@@ -969,7 +981,13 @@ public sealed partial class Binder
         bool reservedOnBuiltin = target is EnumSymbol { BuiltinKind: not BuiltinEnumKind.None } &&
                                  method.Name is "IsSome" or "IsOk" or "Value" or "Error";
         // A class can override object's virtual methods (`override fn ToString() => string`), which records generate.
-        bool overridesObject = target is ClassSymbol && method.IsOverride && method.Name is "ToString" or "Equals" or "GetHashCode";
+        bool overridesObject = (target is ClassSymbol && method.IsOverride && method.Name is "ToString" or "Equals" or "GetHashCode") ||
+                               OverridesToString(target, method);
+        if (method.Name == "ToString" && !overridesObject && target is RecordSymbol or EnumSymbol { BuiltinKind: BuiltinEnumKind.None })
+        {
+            _diagnostics.ReportInvalidOverride(name.Span, "Every record has a 'ToString'; write 'override fn ToString() => string' to replace it.");
+            return false;
+        }
         if ((ReservedMemberNames.Contains(method.Name) && !overridesObject) || reservedOnBuiltin)
         {
             _diagnostics.ReportReservedMemberName(name.Span, method.Name);

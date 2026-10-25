@@ -59,6 +59,13 @@ public partial class Circle(double radius) : Shape("circle")
     public override double Area() => 3.0 * radius * radius;
 
     public override string Describe() => $"a round {this.Name()}";
+
+    public double Radius() => radius;
+}
+
+public partial class Ring(double radius, double width) : Circle(radius)
+{
+    public override string Describe() => $"{base.Describe()}, {width} wide";
 }
 
 public partial class NotFound(int id) : global::System.Exception($"No item {id}")
@@ -79,6 +86,7 @@ public partial class Recording : global::System.Collections.ObjectModel.Collecti
     {
         this.inserted += 1;
         global::System.Console.WriteLine($"inserting {item} at {index}");
+        base.InsertItem(index, item.ToUpper());
     }
 }
 
@@ -139,10 +147,36 @@ public partial class Version(int major) : global::System.IComparable<Version>
     }
 
     int global::System.IComparable<Version>.CompareTo(Version? other) => CompareTo(global::Piper.Runtime.PiperInterop.FromNullableReference(other));
+
+    public static bool operator <(Version left, Version right) => ((global::System.IComparable<Version>)left).CompareTo(right) < 0;
+    public static bool operator <=(Version left, Version right) => ((global::System.IComparable<Version>)left).CompareTo(right) <= 0;
+    public static bool operator >(Version left, Version right) => ((global::System.IComparable<Version>)left).CompareTo(right) > 0;
+    public static bool operator >=(Version left, Version right) => ((global::System.IComparable<Version>)left).CompareTo(right) >= 0;
 }
 
 public static class Classes
 {
+    public static string Classify(Shape shape)
+    {
+        if (shape is Ring r)
+        {
+            return $"ring: {r.Describe()}";
+        }
+        else if (shape is Circle c && c.Radius() > 1.0)
+        {
+            return "big circle";
+        }
+        else if (shape is Circle)
+        {
+            return "small circle";
+        }
+        else
+        {
+            Shape other = shape;
+            return $"{other.Name()}";
+        }
+    }
+
     public static string Greet(Named n) => n.Greeting();
 
     public static void Main()
@@ -175,7 +209,19 @@ public static class Classes
         global::System.Console.WriteLine(new Point(1, 2));
         Recording recording = new Recording();
         recording.Add("a");
-        global::System.Console.WriteLine($"{recording.inserted} inserted, {recording.Count} kept");
+        global::System.Console.WriteLine($"{recording.inserted} inserted, {recording.Count} kept: {recording[0]}");
+        global::System.Collections.Generic.List<Shape> more = new global::System.Collections.Generic.List<Shape> { new Square(1.0), new Circle(0.5), new Circle(2.0), new Ring(1.0, 0.25) };
+        foreach (Shape shape_1 in more)
+        {
+            global::System.Console.WriteLine(Classify(shape_1));
+        }
+        object something = new Ring(3.0, 1.0);
+        if (something is Circle c && c.Radius() > 2.0)
+        {
+            global::System.Console.WriteLine($"an object holding a circle of radius {c.Radius()}");
+        }
+        Circle circle = (Circle)shapes[1];
+        global::System.Console.WriteLine(circle.Radius());
         global::System.Console.WriteLine(Greet(new Dog("Rex")));
         global::System.Console.WriteLine(Greet(new Cat()));
         global::System.Collections.Generic.List<Version> versions = new global::System.Collections.Generic.List<Version> { new Version(3), new Version(1), new Version(2) };

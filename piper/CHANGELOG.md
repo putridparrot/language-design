@@ -25,7 +25,22 @@
     traits and .NET interfaces. `abstract`, `sealed`, `virtual`, `override` and `abstract fn` work as in C#, and
     overriding public and protected .NET methods (`ToString`, `Collection<T>.InsertItem`) is checked against their
     signatures.
+  - `base.F()` calls the base class's version of a method, Piper or .NET (protected ones too).
+  - Type patterns test for a type and bind it: `match shape { c: Circle => …, _ => … }`, `if o is s: string { … }`,
+    as C#'s `shape is Circle c`. They work on classes, records, traits, interfaces, .NET types and `object`.
+  - Casts go down to a derived class: `(Circle)shape`.
   - New errors PIP0109 and PIP0349–PIP0354.
+- **Better error:** a collection literal whose elements have no common type says so, rather than calling the element a
+  match arm.
+- **`ToString` on records and enums:** `extend Money { override fn ToString() => string = "£{this.amount}"; }` chooses
+  how a record or enum prints.
+- **.NET implicit conversions** apply as in C#: `BigInteger.Pow(2, 70)`, `let big: BigInteger = 5;`,
+  `XElement("root", …)`.
+- **`IEnumerable<T>`:** a record, enum or class implements it with one iterator method,
+  `fn GetEnumerator() => IEnumerator<T> { … yield return x; … }`, and then works with `for`, LINQ and .NET APIs that
+  take sequences. Piper supplies the non-generic `GetEnumerator`.
+- **Comparison operators:** a type implementing `IComparable<T>` for itself gets `<`, `<=`, `>` and `>=`, as C#
+  operators calling its `CompareTo`. Comparing types without it suggests implementing it.
 - **Local functions:** `fn` inside a block declares a function usable throughout it (recursively, and before its
   declaration), which captures the variables around it, as C#'s local functions do. It can be generic, `async` or an
   iterator.

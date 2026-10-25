@@ -116,7 +116,7 @@ public sealed partial class Binder
         ImmutableArray<TypeSymbol>? explicitTypeArguments)
     {
         var (clrType, map) = ClrContext(receiver.Type);
-        var methods = InstanceMethods(clrType, SeesProtected(receiver.Type)).Where(m => m.Name == member.Text).ToList();
+        var methods = InstanceMethods(clrType, SeesProtected(receiver)).Where(m => m.Name == member.Text).ToList();
         // Extension methods from the namespaces this file imports: `numbers.Where(n => n > 2)`.
         var extensions = ImportedExtensionMethods(member.Text);
         BoundExpression Instance() => BindClrInvocation(receiver, receiver.Type, methods, member.Text, arguments, [], span, map, explicitTypeArguments, member.Span);
@@ -183,7 +183,7 @@ public sealed partial class Binder
     private BoundExpression BindClrInstanceMember(BoundExpression receiver, Token member)
     {
         var (clrType, map) = ClrContext(receiver.Type);
-        var members = SeesProtected(receiver.Type)
+        var members = SeesProtected(receiver)
             ? clrType.GetMember(member.Text, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance).Where(IsPublicOrProtected).ToArray()
             : clrType.GetMember(member.Text, BindingFlags.Public | BindingFlags.Instance);
         // An interface's properties include those of the interfaces it inherits (`IContext.Message`), which reflection leaves out.
@@ -206,7 +206,7 @@ public sealed partial class Binder
             (Type Type, NullabilityInfo Info)? read = member switch
             {
                 PropertyInfo { CanRead: true } property when property.GetIndexParameters().Length == 0 &&
-                                                             (property.GetMethod!.IsPublic || (receiver is not null && SeesProtected(receiver.Type) && IsProtected(property.GetMethod))) =>
+                                                             (property.GetMethod!.IsPublic || (receiver is not null && SeesProtected(receiver) && IsProtected(property.GetMethod))) =>
                     (property.PropertyType, nullability.Create(property)),
                 FieldInfo field => (field.FieldType, nullability.Create(field)),
                 _ => null,
@@ -458,6 +458,20 @@ public sealed partial class Binder
     private bool CheckClrConformance(NamedTypeDefinition definition, TypeSymbol @interface, TypeSyntax syntax)
     {
         var (clrType, map) = ClrContext(@interface);
+        // IEnumerable<T> inherits the non-generic IEnumerable, which C# implements by delegating to the generic
+        // GetEnumerator; so does Piper, rather than make the type declare both.
+        if (clrType == typeof(System.Collections.IEnumerable) &&
+            TraitsOf(definition).OfType<ClrTypeSymbol>().Any(t => t.Definition.Type == typeof(IEnumerable<>)))
+        {
+            // A missing or mismatched GetEnumerator is reported against IEnumerable<T>.
+            if (definition.Methods.FirstOrDefault(m => m.Name == "GetEnumerator") is { Parameters.IsEmpty: true, ReturnType: ClrTypeSymbol { TypeArguments.Length: 1 } returned } generic &&
+                returned.Definition.Type == typeof(IEnumerator<>))
+            {
+                definition.InterfaceBridges.Add(new ClrInterfaceBridge(
+                    generic, @interface, [], ClrTypeSymbol.For(typeof(System.Collections.IEnumerator)), ClrBoundary.None));
+            }
+            return true;
+        }
         var members = clrType.GetMembers(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
             .Where(m => m is not MethodInfo { IsAbstract: false })
             .ToList();
@@ -494,6 +508,13 @@ public sealed partial class Binder
                 _diagnostics.ReportTraitSignatureMismatch(implementation.Declaration!.Name.Span, required.Name, @interface, $"a public {expected}");
                 _diagnostics.CurrentSource = _file.Source;
                 continue;
+            }
+
+            // IComparable<T> for the type itself gives it comparison operators.
+            if (clrType.IsGenericType && clrType.GetGenericTypeDefinition() == typeof(IComparable<>) &&
+                @interface.TypeArguments[0] == (definition is GenericTypeDefinition generic ? generic.SelfType : definition))
+            {
+                definition.CompareTo = implementation;
             }
 
             // C#'s own types: an Option stands for a .NET `T?`.
@@ -750,7 +771,25 @@ public sealed partial class Binder
         // A Piper type implementing a .NET interface with extend: `words.Sort(ByLength())`.
         if (target is ClrTypeSymbol { Type.IsInterface: true } && Implements(argument, target))
             return 12;
+        // A .NET implicit conversion, the last resort as in C#: `BigInteger.Pow(2, 70)`.
+        if (ImplicitClrConversion(argument, target) is not null)
+            return 30;
         return null;
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Type, Type), MethodInfo?> ImplicitConversions = new();
+
+    /// <summary>
+    /// A .NET implicit conversion operator (C#'s <c>implicit operator</c>, <c>op_Implicit</c>) from one type to the
+    /// other, declared by either: int to BigInteger, string to ReadOnlySpan&lt;char&gt;, an array to Span&lt;T&gt;.
+    /// </summary>
+    private static MethodInfo? ImplicitClrConversion(TypeSymbol from, TypeSymbol to)
+    {
+        if (from == to || ClrTypes.ToClr(from) is not { } source || ClrTypes.ToClr(to) is not { } target || source == target)
+            return null;
+        return ImplicitConversions.GetOrAdd((source, target), key => key.Item1.GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Concat(key.Item2.GetMethods(BindingFlags.Public | BindingFlags.Static))
+            .FirstOrDefault(m => m.Name == "op_Implicit" && m.ReturnType == key.Item2 && m.GetParameters() is [var p] && p.ParameterType == key.Item1));
     }
 
     private static BoundExpression ConvertClrArgument(BoundExpression argument, ClrParameter parameter)
@@ -763,6 +802,9 @@ public sealed partial class Binder
         // Numeric widening; other conversions (to object, to a base type or interface) are implicit in C# too.
         if (argument.Type.IsNumeric && parameter.Type.IsNumeric && argument.Type != parameter.Type)
             return new BoundConversionExpression(parameter.Type, argument);
+        // A .NET implicit conversion is written out, so C# picks the overload Piper did.
+        if (ImplicitClrConversion(argument.Type, parameter.Type) is not null)
+            return new BoundCastExpression(parameter.Type, argument);
         return argument;
     }
 
@@ -872,7 +914,7 @@ public sealed partial class Binder
     /// <param name="map">Maps the containing type's generic parameters, and a generic method's own, to Piper types.</param>
     private ClrCandidate? Describe(MethodBase member, TypeSymbol container, IReadOnlyDictionary<Type, TypeSymbol> map)
     {
-        if (!member.IsPublic)
+        if (!member.IsPublic && !IsProtected(member))   // protected ones are only offered where they're visible
             return null;
 
         var typeArguments = ImmutableArray<TypeSymbol>.Empty;

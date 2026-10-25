@@ -837,6 +837,84 @@ public class BinderTests
     [InlineData("PIP0212", "class A: System.Collections.ObjectModel.Collection<int> { } fn Main() { Print(A().Items); }")]
     [InlineData("PIP0200", "class A: System.Exception { static fn F() => string = Message; } fn Main() { }")]    public void Class_errors(string code, string program) => AssertSingleError(code, program);
 
+    private const string ClassShapes = "abstract class Shape { } class Circle: Shape { } class Other { } trait T { fn F() => int; } extend int: T { fn F() => int = 1; }\n";
+
+    [Theory]
+    [InlineData("PIP0230", "fn F(s: Shape) => int = match s { c: Circle => 1 };")]
+    [InlineData("PIP0234", "fn F(s: Shape) => int = match s { o: Other => 1, _ => 2 };")]
+    [InlineData("PIP0234", "fn F(s: Shape) => int = match s { n: int => 1, _ => 2 };")]
+    [InlineData("PIP0234", "fn F(s: Shape) => int = match s { c: Circle? => 1, _ => 2 };")]
+    [InlineData("PIP0234", "fn F(t: T) => int = match t { n: int => 1, _ => 2 };")]
+    [InlineData("PIP0234", "fn F(n: int) => int = match n { t: T => 1, _ => 2 };")]
+    [InlineData("PIP0211", "fn F(s: Shape) => int = match s { c: Nope => 1, _ => 2 };")]
+    [InlineData("PIP0109", "fn F() { let b = base; }")]
+    [InlineData("PIP0354", "fn F() { base.ToString(); }")]
+    [InlineData("PIP0354", "abstract class A { abstract fn G() => int; } class B: A { override fn G() => int = base.G(); }")]
+    [InlineData("PIP0354", "class B { static fn G() => string = base.ToString() ?? \"\"; }")]
+    [InlineData("PIP0295", "fn F(o: Other) => Circle = (Circle)o;")]
+    [InlineData("PIP0221", "fn F() { let xs = [Circle(), Other()]; }")]
+    public void Type_test_base_and_downcast_errors(string code, string program) => AssertSingleError(code, ClassShapes + program);
+
+    [Fact]
+    public void Records_and_enums_can_override_ToString()
+    {
+        var result = Compilation.Compile(
+            "record Money(amount: decimal);\nextend Money { override fn ToString() => string = \"£{this.amount}\"; }\n" +
+            "enum Suit { Hearts, Joker(n: int) }\nextend Suit { override fn ToString() => string = match this { Hearts => \"H\", Joker(n) => \"J{n}\" }; }\n" +
+            "fn Main() { Print(\"{Money(2m)} {Suit.Hearts} {Suit.Joker(3)} {Option.Some(Money(1m))}\"); }");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Equal("£2 H J3 Some(£1)", Runner.Run(result.Files).Output.Trim());
+    }
+
+    [Theory]
+    [InlineData("PIP0352", "record M(a: int); extend M { fn ToString() => string = \"x\"; }")]
+    [InlineData("PIP0352", "record M(a: int); extend M { override fn ToString(x: int) => string = \"x\"; }")]
+    [InlineData("PIP0352", "record M(a: int); extend M { override fn Other() => string = \"x\"; }")]
+    [InlineData("PIP0352", "record M(a: int); extend M { virtual fn ToString() => string = \"x\"; }")]
+    [InlineData("PIP0352", "extend int { override fn ToString() => string = \"x\"; }")]
+    public void ToString_override_errors(string code, string program) => AssertSingleError(code, program);
+
+    [Theory]
+    [InlineData("PIP0245", "record R(a: int); extend R: System.Collections.Generic.IEnumerable<int> { } fn Main() { }")]
+    [InlineData("PIP0246", "record R(a: int); extend R: System.Collections.Generic.IEnumerable<int> { fn GetEnumerator() => System.Collections.Generic.IEnumerator<string> { yield return \"\"; } } fn Main() { }")]
+    [InlineData("PIP0203", "record V(a: int); fn Main() { Print(V(1) < V(2)); }")]
+    public void Enumerable_and_comparison_errors(string code, string program) => AssertSingleError(code, program);
+
+    [Fact]
+    public void Comparing_without_IComparable_suggests_it()
+    {
+        var result = Compilation.Compile("record V(a: int); fn Main() { Print(V(1) < V(2)); }");
+        Assert.Contains("Implement IComparable<V>", Assert.Single(result.Diagnostics).Message);
+    }
+    [Fact]
+    public void Dotnet_implicit_conversions_apply()
+    {
+        var result = Compilation.Compile(
+            "using System.Numerics;\nusing System.Xml.Linq;\nfn Twice(b: BigInteger) => BigInteger = b * 2;\n" +
+            "fn Main() {\n    let big: BigInteger = 5;\n    let e = XElement(\"root\", XElement(\"child\", \"hi\"));\n" +
+            "    Print(\"{BigInteger.Pow(2, 70)} {big + 1} {Twice(21)} {e.Element(\"child\")?.Value ?? \"\"}\");\n}");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Equal("1180591620717411303424 6 42 hi", Runner.Run(result.Files).Output.Trim());
+    }
+    [Fact]
+    public void An_always_matching_type_pattern_makes_later_arms_unreachable()
+    {
+        var result = Compilation.Compile(ClassShapes + "fn F(s: Shape) => int = match s { o: Shape => 1, c: Circle => 2 };\nfn Main() { }");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Equal("PIP0231", Assert.Single(result.Diagnostics).Code);
+    }
+
+    [Fact]
+    public void Base_calls_type_tests_and_downcasts_run()
+    {
+        var result = Compilation.Compile(
+            "class A { virtual fn Name() => string = \"A\"; }\n" +
+            "class B: A { override fn Name() => string = \"B<\" + base.Name() + \">\"; }\n" +
+            "fn Kind(o: object) => string = match o { b: B => b.Name(), _: A => \"plain A\", s: string => s, _ => \"?\" };\n" +
+            "fn Main() { let a: A = B(); Print(\"{Kind(a)} {Kind(A())} {Kind(\"s\")} {Kind(1)} {((B)a).Name()}\"); }");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Equal("B<A> plain A s ? B<A>", Runner.Run(result.Files).Output.Trim());
+    }
     [Fact]
     public void A_class_names_inherited_dotnet_members_bare_including_protected_ones()
     {

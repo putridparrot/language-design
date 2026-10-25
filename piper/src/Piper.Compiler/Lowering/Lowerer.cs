@@ -839,6 +839,9 @@ public sealed class Lowerer
         BoundBindingPattern binding => new BoundBindingPattern(copies.TryGetValue(binding.Variable, out var copy)
             ? copy
             : copies[binding.Variable] = new VariableSymbol(binding.Variable.Name, binding.Variable.Type, isMutable: false, VariableKind.PatternVariable)),
+        BoundTypePattern { Variable: { } variable } typed => new BoundTypePattern(typed.TestedType, copies.TryGetValue(variable, out var copy)
+            ? copy
+            : copies[variable] = new VariableSymbol(variable.Name, variable.Type, isMutable: false, VariableKind.PatternVariable), typed.AlwaysMatches, typed.Type),
         BoundConstructorPattern constructor => new BoundConstructorPattern(
             constructor.Constructor, [.. constructor.Arguments.Select(a => RenameBindings(a, copies))], constructor.Type),
         BoundTuplePattern tuple => new BoundTuplePattern([.. tuple.Elements.Select(e => RenameBindings(e, copies))], (TupleTypeSymbol)tuple.Type),

@@ -431,8 +431,9 @@ public sealed partial class CSharpEmitter
             _writer.WriteLine();
             EmitDocumentation(variant, variant.Fields);
             var header = $"public sealed record {Escape(variant.Name)}({Fields(variant.Fields, variantNames)}) : {selfType}";
-            // A fieldless variant prints like a C# enum member (`Food`), not as an empty record (`Food { }`).
-            _writer.WriteLine(variant.Fields.IsEmpty
+            // A fieldless variant prints like a C# enum member (`Food`), not as an empty record (`Food { }`), unless the
+            // enum has its own ToString.
+            _writer.WriteLine(variant.Fields.IsEmpty && !@enum.Methods.Any(m => m.Name == "ToString")
                 ? $"{header} {{ public override string ToString() => {Literal(variant.Name)}; }}"
                 : $"{header};");
         }
@@ -517,7 +518,9 @@ public sealed partial class CSharpEmitter
                 : method.Overridden is MethodInfo { IsFamily: true } ? "protected "
                 : method.Overridden is MethodInfo { IsFamilyOrAssembly: true } ? "protected internal "
                 : "public ";
-            var modifier = method.ContainingType is not ClassSymbol ? ""
+            // An enum's ToString is sealed, so its variants (C# records deriving from it) don't generate their own.
+            var modifier = method.ContainingType is EnumSymbol && method.IsOverride ? "sealed override "
+                : method.ContainingType is not ClassSymbol ? method.IsOverride ? "override " : ""
                 : method.IsOverride ? "override "
                 : method.IsAbstract ? "abstract "
                 : method.IsVirtual ? "virtual " : "";
@@ -540,6 +543,15 @@ public sealed partial class CSharpEmitter
         {
             _writer.WriteLine();
             EmitInterfaceBridge(bridge);
+        }
+
+        // Comparison operators for a type implementing IComparable<T> for itself, next to the method they call.
+        foreach (var type in methods.Select(m => m.ContainingType).OfType<NamedTypeDefinition>().Distinct().Where(t => t.CompareTo is { } m && methods.Contains(m)))
+        {
+            var self = TypeName(type is GenericTypeDefinition generic ? generic.SelfType : type);
+            _writer.WriteLine();
+            foreach (var op in new[] { "<", "<=", ">", ">=" })
+                _writer.WriteLine($"public static bool operator {op}({self} left, {self} right) => ((global::System.IComparable<{self}>)left).CompareTo(right) {op} 0;");
         }
     }
 
@@ -1080,6 +1092,7 @@ public sealed partial class CSharpEmitter
         {
             BoundLiteralExpression literal => (Literal(literal.Value), PrimaryPrecedence),
             BoundVariableExpression { Variable.Kind: VariableKind.This } => (_thisName, PrimaryPrecedence),
+            BoundVariableExpression { Variable.Kind: VariableKind.Base } => ("base", PrimaryPrecedence),
             BoundVariableExpression variable => (VariableName(variable.Variable), PrimaryPrecedence),
             BoundObjectCreationExpression creation =>
                 ($"new {TypeName(creation.Type)}({Arguments(creation.Arguments, creation.ArgumentNames)})", PrimaryPrecedence),
@@ -1483,6 +1496,8 @@ public sealed partial class CSharpEmitter
     {
         BoundWildcardPattern => "_",
         BoundBindingPattern binding => $"var {Escape(_names.Declare(binding.Variable))}",
+        BoundTypePattern { Variable: { } variable } typed => $"{TypeName(typed.TestedType)} {Escape(_names.Declare(variable))}",
+        BoundTypePattern typed => TypeName(typed.TestedType),
         BoundLiteralPattern literal => Literal(literal.Value),
         BoundRangePattern range =>
             $">= {Literal(range.Lower)} and {(range.IsInclusive ? "<=" : "<")} {Literal(range.Upper)}",

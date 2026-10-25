@@ -10,7 +10,7 @@ public abstract class BoundPattern(TypeSymbol type)
 
     public bool HasBindings => this switch
     {
-        BoundBindingPattern => true,
+        BoundBindingPattern or BoundTypePattern { Variable: not null } => true,
         BoundConstructorPattern constructor => constructor.Arguments.Any(a => a.HasBindings),
         BoundTuplePattern tuple => tuple.Elements.Any(e => e.HasBindings),
         BoundOrPattern either => either.Alternatives.Any(a => a.HasBindings),
@@ -26,6 +26,19 @@ public sealed class BoundWildcardPattern(TypeSymbol type) : BoundPattern(type);
 public sealed class BoundBindingPattern(VariableSymbol variable) : BoundPattern(variable.Type)
 {
     public VariableSymbol Variable { get; } = variable;
+}
+
+/// <summary>
+/// <c>c: Circle</c>: the value is a <see cref="TestedType"/>, bound to <see cref="Variable"/> as one (unless it was
+/// <c>_</c>). <see cref="AlwaysMatches"/> when every value of the matched type is one.
+/// </summary>
+public sealed class BoundTypePattern(TypeSymbol testedType, VariableSymbol? variable, bool alwaysMatches, TypeSymbol type) : BoundPattern(type)
+{
+    public TypeSymbol TestedType { get; } = testedType;
+
+    public VariableSymbol? Variable { get; } = variable;
+
+    public bool AlwaysMatches { get; } = alwaysMatches;
 }
 
 /// <summary>The value has already been converted to <see cref="BoundPattern.Type"/> (e.g. an Int literal matching a Long).</summary>

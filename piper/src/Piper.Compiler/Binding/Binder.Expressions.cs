@@ -87,6 +87,8 @@ public sealed partial class Binder
         var name = syntax.Identifier;
         if (name.IsMissing)
             return new BoundErrorExpression();
+        if (name.Text == "base")
+            return BindBase(name);
 
         return BindSymbolAsValue(_scope.Lookup(name.Text), name, syntax.Span, expected, syntax.TypeArguments);
     }
@@ -290,7 +292,11 @@ public sealed partial class Binder
         }
         if (resolution is null)
         {
-            _diagnostics.ReportUndefinedBinaryOperator(syntax.Operator.Span, syntax.Operator.Text, left.Type, right.Type);
+            var hint = left.Type == right.Type && left.Type.OriginalDefinition is RecordSymbol or EnumSymbol { BuiltinKind: BuiltinEnumKind.None } or ClassSymbol &&
+                       syntax.Operator.Text is "<" or "<=" or ">" or ">="
+                ? $" Implement IComparable<{left.Type}> to compare them."
+                : "";
+            _diagnostics.ReportUndefinedBinaryOperator(syntax.Operator.Span, syntax.Operator.Text, left.Type, right.Type, hint);
             return new BoundErrorExpression();
         }
 
@@ -799,6 +805,11 @@ public sealed partial class Binder
         if (method is null && HasClrMembers(receiver.Type))
             return BindClrInstanceCall(receiver, member, syntax.Arguments, syntax.Span, explicitArguments);
 
+        // A .NET extension method on an interface a record or enum implements: `range.Select(i => i * i)` on an IEnumerable<int>.
+        if (method is null && receiver.Type.OriginalDefinition is NamedTypeDefinition { IsRuntimeType: false } &&
+            TraitsOf(receiver.Type).OfType<ClrTypeSymbol>().Any() && ImportedExtensionMethods(member.Text) is { Count: > 0 } extensions)
+            return BindClrInvocation(null, receiver.Type, extensions, member.Text, syntax.Arguments, [receiver], syntax.Span, new Dictionary<Type, TypeSymbol>(), explicitArguments);
+
         // `a.CompareTo(b)` on a `T: IComparable<T>`: a method of a .NET interface it is bounded by.
         if (method is null && receiver.Type is TypeParameterSymbol &&
             TraitsOf(receiver.Type).OfType<ClrTypeSymbol>().FirstOrDefault(i => ClrContext(i).Type.GetMethod(member.Text) is not null) is { } bound)
@@ -807,7 +818,15 @@ public sealed partial class Binder
         }
 
         if (method is not null)
+        {
             CheckAccessible(method, member);
+            if (receiver is BoundVariableExpression { Variable.Kind: VariableKind.Base } && method.IsAbstract)
+            {
+                BindArgumentsForDiagnostics(syntax.Arguments);
+                _diagnostics.ReportInvalidClassMember(member.Span, $"'{method.Name}' is abstract in '{method.ContainingType!.Name}', so there's no base version to call.");
+                return new BoundErrorExpression();
+            }
+        }
         else
         {
             BindArgumentsForDiagnostics(syntax.Arguments);
@@ -1583,6 +1602,8 @@ public sealed partial class Binder
         (to is ClrTypeSymbol && from.IsValueType && (ClrTypes.ToClr(to) == typeof(object) || SelfAndBaseTypes(from).Contains(to))) ||
         // A class to one of its Piper base classes.
         (from.OriginalDefinition is ClassSymbol && to.OriginalDefinition is ClassSymbol && SelfAndBaseTypes(from).Contains(to)) ||
+        // A .NET implicit conversion operator: `let big: BigInteger = 5;`.
+        (from.IsValueType && ImplicitClrConversion(from, to) is not null) ||
         (from is TupleTypeSymbol fromTuple && to is TupleTypeSymbol toTuple && IsTupleConvertible(fromTuple, toTuple)) ||
         // List<(Int, Int)> to List<(a: Int, b: Int)>: tuple names don't matter, at any depth.
         (from.IsValueType && TypeSubstitution.WithoutTupleNames(from) == TypeSubstitution.WithoutTupleNames(to));
@@ -1630,6 +1651,12 @@ public sealed partial class Binder
     /// <summary>A cast C# allows that may fail at run time: from a trait, object or .NET base type to a more specific type.</summary>
     private bool IsDowncast(TypeSymbol from, TypeSymbol to)
     {
+        // To a Piper class from one of its bases (Piper or .NET), or from a .NET interface it implements.
+        if (to.OriginalDefinition is ClassSymbol &&
+            (SelfAndBaseTypes(to).Contains(from) || (from is ClrTypeSymbol { Type.IsInterface: true } && Implements(to, from))))
+        {
+            return true;
+        }
         if (from.IsTrait && Implements(to, from))
             return true;
         if (ClrTypes.ToClr(from) is not { } source)

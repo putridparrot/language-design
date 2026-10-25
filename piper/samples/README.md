@@ -15,7 +15,7 @@ correct.
 | [async.piper](async.piper) | `async`/`await`, `Task.WhenAll`, `yield` iterators, async iterators with `await for`, `using let` and `defer`, async `Main` |
 | [interop.piper](interop.piper) | Calling .NET: constructing types, nullable APIs as optionals, `out` parameters, events, implementing `IComparer<T>`, JSON with attributes, catching exceptions |
 | [contracts.piper](contracts.piper) | `requires`: preconditions on functions and invariants on records, checked on every call and copy, and at compile time for constant arguments |
-| [classes.piper](classes.piper) | Classes: a primary constructor, private and public fields, private methods, identity, an `Exception` subclass, abstract and virtual methods with overrides, overriding a protected .NET method, a generic class |
+| [classes.piper](classes.piper) | Classes: a primary constructor, private and public fields, private methods, identity, an `Exception` subclass, abstract and virtual methods with overrides and `base` calls, type patterns (`c: Circle`) and casts, overriding a protected .NET method, a generic class |
 | [operators.piper](operators.piper) | Arithmetic operators on records, including unary minus and a static operator for `2 * v`, and `+=` |
 | [testing.piper](testing.piper) | `test` blocks, `Assert` and `AssertEqual`, next to the code they test |
 | [library/](library) | A program of several files with a `piper.json`: namespaces, `using` and qualified names, `private` functions, types and methods (and what a public signature can't expose), extending a type from another file, and tests |
