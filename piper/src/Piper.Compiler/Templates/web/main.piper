@@ -1,0 +1,71 @@
+// __NAME__: a web API. `piper run .` serves it on http://localhost:5080 until Ctrl+C (`piper run . --port 5090` for
+// another port; `piper run . --watch` restarts it whenever you save), and `piper test .` runs its tests. Try:
+//   curl "http://localhost:5080/api/hello?name=Ada"
+//   curl -X POST http://localhost:5080/api/notes -H "Content-Type: application/json" -d "{\"text\":\"Try Piper\"}"
+//   curl http://localhost:5080/api/notes
+
+using System.Collections.Generic;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+
+// What the API sends and receives. Records become JSON objects: { "id": 1, "text": "…" }.
+record Note(id: int, text: string);
+record NewNote(text: string);
+
+// One store for the whole app (a singleton), so what one request adds the next one sees.
+class NoteStore {
+    let notes: List<Note> = [];
+
+    fn All() => List<Note> = notes;
+
+    fn Add(text: string) => Note {
+        let note = Note(notes.Count + 1, text);
+        notes.Add(note);
+        note
+    }
+}
+
+// Becomes `fn AppServices(services: IServiceCollection) => IServiceCollection`.
+services AppServices {
+    singleton NoteStore;
+}
+
+// Becomes `fn Api(app: IEndpointRouteBuilder)`. A handler's parameters come from the query string (name), the
+// request's JSON body (a NewNote), or the services (store).
+endpoints Api "/api" {
+    get "/hello" (name: string) => "Hello, {name}!";
+
+    get "/notes" (store: NoteStore) => store.All();
+
+    post "/notes" (request: NewNote, store: NoteStore) => {
+        if request.text.Trim() == "" {
+            return Results.BadRequest("A note needs some text");
+        }
+        let note = store.Add(request.text.Trim());
+        Results.Created("/api/notes/{note.id}", note)
+    }
+}
+
+// The command line: `--help` lists these options, and a mistake is reported before anything starts.
+args Options "__NAME__: a web API." {
+    port: int = 5080 "The port to serve on";
+}
+
+async fn Main(args: string[]) {
+    let port = Options.FromArgs(args).port;
+
+    let builder = WebApplication.CreateBuilder();
+    AppServices(builder.Services);
+    let app = builder.Build();
+    Api(app);
+
+    Print("Serving on http://localhost:{port} (try /api/hello?name=Ada). Ctrl+C to stop.");
+    await app.RunAsync("http://localhost:{port}");
+}
+
+test "numbers notes in order" {
+    let store = NoteStore();
+    store.Add("first");
+    AssertEqual(2, store.Add("second").id);
+    AssertEqual(2, store.All().Count);
+}

@@ -1,0 +1,27 @@
+<Project>
+
+  <!--
+    The plugins that come with piper, named in a piper.json by these names ("plugins": ["services", "web"]). Each is
+    built first, then copied (with what it depends on) to plugins/<name>/ beside the importing project's output: the
+    CLI's, so the tool has them, and the tests', so the samples can name them.
+  -->
+  <ItemGroup>
+    <BundledPlugin Include="actors" Folder="Piper.Plugins.Actors" />
+    <BundledPlugin Include="args" Folder="Piper.Plugins.Args" />
+    <BundledPlugin Include="remote-actors" Folder="Piper.Plugins.Actors.Remote" />
+    <BundledPlugin Include="parallel" Folder="Piper.Plugins.Parallel" />
+    <BundledPlugin Include="services" Folder="Piper.Plugins.Services" />
+    <BundledPlugin Include="web" Folder="Piper.Plugins.Web" />
+    <ProjectReference Include="@(BundledPlugin->'$(MSBuildThisFileDirectory)..\plugins\%(Folder)\%(Folder).csproj')" ReferenceOutputAssembly="false" Private="false" />
+  </ItemGroup>
+
+  <Target Name="IncludeBundledPlugins" AfterTargets="ResolveProjectReferences">
+    <ItemGroup>
+      <_BundledPluginFile Include="$(MSBuildThisFileDirectory)..\plugins\%(BundledPlugin.Folder)\bin\plugin\*"
+                          Exclude="$(MSBuildThisFileDirectory)..\plugins\%(BundledPlugin.Folder)\bin\plugin\*.pdb" PluginName="%(BundledPlugin.Identity)" />
+      <ContentWithTargetPath Include="@(_BundledPluginFile)" TargetPath="plugins\%(PluginName)\%(Filename)%(Extension)"
+                             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+
+</Project>

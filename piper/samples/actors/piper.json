@@ -1,5 +1,4 @@
 {
-  // The actors plugin adds `actor` declarations. Build it first (`dotnet build plugins/Piper.Plugins.Actors`), then
-  // `piper run samples/actors`.
-  "plugins": ["../../plugins/Piper.Plugins.Actors/bin/plugin/Piper.Plugins.Actors.dll"]
+  // The actors plugin, which comes with piper, adds `actor` declarations: `piper run samples/actors`.
+  "plugins": ["actors"]
 }

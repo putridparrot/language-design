@@ -18,4 +18,6 @@
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
+  <Import Project="..\BundledPlugins.targets" />
+
 </Project>

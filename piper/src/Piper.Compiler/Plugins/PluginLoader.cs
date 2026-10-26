@@ -21,8 +21,19 @@ public static class PluginLoader
     private static readonly ConcurrentDictionary<string, (DateTime Written, ImmutableArray<IPiperPlugin> Plugins)> Loaded = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Where the plugins that come with piper are: a folder per plugin, named as a piper.json names it
+    /// (<c>plugins/web/Piper.Plugins.Web.dll</c>), beside the compiler.
+    /// </summary>
+    public static string BundledDirectory { get; set; } = Path.Combine(AppContext.BaseDirectory, "plugins");
+
+    /// <summary>The names of the plugins that come with piper, such as <c>web</c>.</summary>
+    public static ImmutableArray<string> BundledNames =>
+        Directory.Exists(BundledDirectory) ? [.. Directory.GetDirectories(BundledDirectory).Select(Path.GetFileName).OfType<string>().Order()] : [];
+
+    /// <summary>
     /// Loads the plugin assemblies at <paramref name="paths"/>, relative to <paramref name="directory"/> (the program's
-    /// folder). Errors are reported against <paramref name="project"/>, the piper.json, when given.
+    /// folder), or named, as <c>web</c>, for one that comes with piper. Errors are reported against
+    /// <paramref name="project"/>, the piper.json, when given.
     /// </summary>
     public static (ImmutableArray<IPiperPlugin> Plugins, ImmutableArray<Diagnostic> Errors) Load(
         string directory, IEnumerable<string> paths, SourceText? project = null)
@@ -31,7 +42,21 @@ public static class PluginLoader
         var plugins = ImmutableArray.CreateBuilder<IPiperPlugin>();
         foreach (var relative in paths)
         {
-            var path = Path.GetFullPath(Path.Combine(directory, relative));
+            string path;
+            if (IsBundledName(relative))
+            {
+                if (Bundled(relative) is not { } bundled)
+                {
+                    var names = BundledNames;
+                    diagnostics.ReportPluginLoadFailed(relative, names.IsEmpty
+                        ? "no plugins come with this copy of piper, so give the path to the plugin's assembly."
+                        : $"it isn't one that comes with piper ({string.Join(", ", names)}); for another, give the path to its assembly.");
+                    continue;
+                }
+                path = bundled;
+            }
+            else
+                path = Path.GetFullPath(Path.Combine(directory, relative));
             try
             {
                 if (!File.Exists(path))
@@ -52,6 +77,17 @@ public static class PluginLoader
             }
         }
         return (plugins.ToImmutable(), [.. diagnostics]);
+    }
+
+    /// <summary>`web` rather than `../plugins/Web.dll`: a name, without a folder or extension.</summary>
+    private static bool IsBundledName(string entry) =>
+        entry.Length > 0 && entry.IndexOfAny(['/', '\\', '.']) < 0;
+
+    /// <summary>The assembly of the bundled plugin <paramref name="name"/>: the Piper.Plugins one in its folder.</summary>
+    private static string? Bundled(string name)
+    {
+        var folder = Path.Combine(BundledDirectory, name);
+        return Directory.Exists(folder) && Directory.GetFiles(folder, "Piper.Plugins.*.dll") is [var assembly] ? assembly : null;
     }
 
     private static ImmutableArray<IPiperPlugin> LoadAssembly(string path)

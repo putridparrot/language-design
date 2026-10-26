@@ -1,5 +1,5 @@
 {
   // The remote actors plugin reads the same `actor` syntax as the actors plugin, on Proto.Actor, and brings in
-  // Proto.Remote and ASP.NET Core itself. Build it first (`dotnet build plugins/Piper.Plugins.Actors.Remote`).
-  "plugins": ["../../plugins/Piper.Plugins.Actors.Remote/bin/plugin/Piper.Plugins.Actors.Remote.dll"]
+  // Proto.Remote and ASP.NET Core itself.
+  "plugins": ["remote-actors"]
 }

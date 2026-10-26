@@ -54,8 +54,8 @@
           "captures": { "1": { "name": "keyword.declaration.property.piper" }, "2": { "name": "variable.other.property.piper" } }
         },
         {
-          "comment": "A property's accessors: `get;`, `get => …`, `private set { … }`. Contextual, so only before ; => or {.",
-          "match": "\\b(get|set|init)\\b(?=\\s*(;|=>|\\{))",
+          "comment": "A property's accessors: `get;`, `get = …`, `private set { … }`. Contextual, so only before ; = or {.",
+          "match": "\\b(get|set|init)\\b(?=\\s*(;|=(?!=)|\\{))",
           "name": "storage.type.accessor.piper"
         }
       ]

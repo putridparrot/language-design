@@ -205,7 +205,7 @@ constructors call the primary one first, as in C#, and can set `init` properties
 ```piper
 class Account(owner: string, opening: decimal) {
     mut balance = opening;
-    prop Balance: decimal => balance;                  // computed
+    prop Balance => decimal = balance;                  // computed
     prop Deposits: int { get; private set; } = 0;      // settable only inside Account
     prop Source: string { get; init; } = "opened";     // settable only while it's made
 
@@ -215,8 +215,12 @@ class Account(owner: string, opening: decimal) {
 }
 ```
 
-An indexer, `prop this[i: int]: T { get => …; set { … } }`, lets a class be used with `[]`. Traits and `extend`
-blocks can declare read-only properties too: `extend int { prop IsEven: bool => this % 2 == 0; }`.
+Properties and fields, `init` ones included, can also be set in braces after the call that makes the object, as
+C#'s object initializers do: `let a = Account("Ada") { Source: "imported" };`, or
+`let sb = StringBuilder("abc") { Capacity: 64 };` for a .NET type.
+
+An indexer, `prop this[i: int] => T { get = …; set { … } }`, lets a class be used with `[]`. Traits and `extend`
+blocks can declare read-only properties too: `extend int { prop IsEven => bool = this % 2 == 0; }`.
 
 To get the derived class back, test for it in a pattern with `name: Type` (C#'s `Type name`), or cast:
 

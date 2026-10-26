@@ -1,0 +1,7 @@
+{
+  "name": "__NAME__",
+  "output": "exe",
+  // `services` (dependency injection), `endpoints` (routes) and `args` (the command line) come with piper; the web
+  // plugin brings in ASP.NET Core.
+  "plugins": ["args", "services", "web"]
+}

@@ -1,0 +1,67 @@
+// Object initializers: properties and fields set in braces after the call that makes the object.
+using System;
+using System.Collections.Generic;
+using System.Text;
+
+class Window(title: string) {
+    prop Title: string { get; set; } = title;
+    prop Width: int { get; init; } = 800;
+    prop Height: int { get; init; } = 600;
+    public mut visible = false;
+
+    // A secondary constructor, which an initializer can follow too.
+    Window(): this("Untitled") { }
+
+    fn Describe() => string = "{Title} {Width}x{Height}{if visible { " (visible)" } else { "" }}";
+}
+
+class Settings {
+    prop Retries: int { get; init; } = 3;
+    prop Tags: List<string> { get; init; } = [];
+}
+
+fn Parse(text: string) => Result<int, string> =
+    if int.TryParse(text, out let n) { Ok(n) } else { Err("not a number: {text}") };
+
+// A value that needs statements first (here, `?`) is still evaluated after the constructor's arguments.
+fn FromText(width: string) => Result<Window, string> = Ok(Window(Name("sized")) { Width: Parse(width)?, Height: 200 });
+
+fn Name(prefix: string) => string {
+    Console.WriteLine("naming {prefix}");
+    "{prefix} window"
+}
+
+fn Main() {
+    let w = Window("Piper") { Width: 640, Height: 480, visible: true };
+    Console.WriteLine(w.Describe());
+
+    // Without a constructor argument, through the secondary constructor; a trailing comma is fine.
+    let blank = Window() {
+        Title: "Blank",
+    };
+    Console.WriteLine(blank.Describe());
+
+    // `init` properties keep their defaults when left out.
+    let s = Settings() { Tags: ["a", "b"] };
+    Console.WriteLine("{s.Retries} {s.Tags.Count}");
+
+    // .NET types.
+    let builder = UriBuilder() { Scheme: "https", Host: "example.com", Port: 8443 };
+    Console.WriteLine(builder.Uri);
+    let sb = StringBuilder("abc") { Length: 2 };
+    Console.WriteLine(sb.ToString());
+
+    // Read straight away, and inside a lambda.
+    Console.WriteLine(Window() { Title: "Inline" }.Title);
+    let make = (n: int) => Window() { Width: n };
+    Console.WriteLine(make(320).Describe());
+
+    match FromText("1024") {
+        Ok(sized) => Console.WriteLine(sized.Describe()),
+        Err(e) => Console.WriteLine(e),
+    }
+    match FromText("wide") {
+        Ok(sized) => Console.WriteLine(sized.Describe()),
+        Err(e) => Console.WriteLine(e),
+    }
+}

@@ -13,6 +13,9 @@ public static class PiperInterop
 
     public static T? ToNullableValue<T>(Option<T> value) where T : struct => value.IsSome ? value.Value : null;
 
+    /// <summary>An Option of a value type (or a type parameter) passed as <c>object?</c>: its value boxed, or null.</summary>
+    public static object? ToNullableObject<T>(Option<T> value) => value.IsSome ? value.Value : null;
+
     /// <summary>
     /// For <c>out let v</c> where .NET may write null: the call's own result passes through, and <paramref name="converted"/>
     /// gets the written value as an Option (<c>AfterOutReference(d.TryGetValue(k, out var t), t, out v)</c>).

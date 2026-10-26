@@ -25,7 +25,10 @@ The installed tool is a copy of the compiler as it was built; after changing the
 (`dotnet tool uninstall -g Piper`, then the install line above).
 
 ```
-piper run hello.piper         # transpile, compile and run
+piper new hello               # make a program folder: hello/piper.json and hello/main.piper (with a test)
+piper new api --template web  # or a web API, using the services and web plugins
+piper run hello               # transpile, compile and run a folder's program, or a file: piper run hello.piper
+piper run hello --watch       # and run it again whenever a .piper file or piper.json changes
 piper build src/ -o out/      # write the C# (one .cs per .piper file; it references the Piper.Runtime package)
 piper build app.piper --exe   # compile to bin/app.exe (plus app.dll, its .pdb and Piper.Runtime.dll)
 piper build src/ --library    # compile to bin/src.dll; --name and -o choose the name and folder
@@ -43,7 +46,7 @@ follows (flags override it):
   "packages": { "Humanizer.Core": "2.14.1" },
   "frameworks": ["Microsoft.AspNetCore.App"],
   "references": ["lib/My.Library.dll"],
-  "plugins": ["../plugins/My.Plugin.dll"]
+  "plugins": ["web", "../plugins/My.Plugin.dll"]
 }
 ```
 
@@ -53,7 +56,9 @@ follows (flags override it):
 - **`frameworks`** are shared frameworks such as ASP.NET Core, which come with .NET rather than as packages. On .NET 10,
   `Microsoft.Extensions.DependencyInjection` and the other `Microsoft.Extensions` libraries are part of ASP.NET Core's.
 - **`references`** are .NET assemblies, with paths relative to the folder.
-- **`plugins`** add keywords to the language (see [docs/plugins.md](docs/plugins.md)).
+- **`plugins`** add keywords to the language (see [docs/plugins.md](docs/plugins.md)). Those that come with piper are
+  named: `services` (dependency injection), `web` (ASP.NET Core endpoints), `args` (command-line options), `actors`,
+  `remote-actors` and `parallel`. Any other is the path of its assembly, relative to the folder.
 
 Every key is optional; an empty file is fine. Any other key is an error, so future versions can add keys without
 changing what today's files mean. `piper run`, `piper test` and the editor use the packages, frameworks and references

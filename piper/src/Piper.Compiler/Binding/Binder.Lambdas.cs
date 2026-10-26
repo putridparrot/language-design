@@ -613,6 +613,14 @@ public sealed partial class Binder
             _diagnostics.ReportReadOnlyMember(syntax.Target.Span, name);
             return new BoundErrorExpression();
         }
+        // A .NET `init` property: only in an object initializer, as Piper can't write the type's constructors.
+        if (target is BoundClrMemberExpression { Member: System.Reflection.PropertyInfo initProperty, Receiver: var initReceiver } &&
+            IsInitSetter(initProperty) && !IsInitializing(initReceiver))
+        {
+            BindExpression(syntax.Value);
+            _diagnostics.ReportInitOnly(syntax.Target.Span, name, initReceiver?.Type.ToString() ?? initProperty.DeclaringType!.Name, isPiper: false);
+            return new BoundErrorExpression();
+        }
 
         var value = RequireValue(BindExpression(syntax.Value, target.Type), syntax.Value.Span);
         if (SyntaxFacts.GetCompoundAssignmentOperator(syntax.Operator.Kind) is not { } compound)
@@ -634,6 +642,12 @@ public sealed partial class Binder
         }
         return new BoundClrAssignmentExpression(target, kind, Widen(value, resolution.OperandType));
     }
+
+    /// <summary>Whether a .NET setter is an <c>init</c> (C# marks it with a required <c>IsExternalInit</c> modifier).</summary>
+    private static bool IsInitAccessor(System.Reflection.MethodInfo setter) =>
+        setter.ReturnParameter.GetRequiredCustomModifiers().Any(m => m.FullName == "System.Runtime.CompilerServices.IsExternalInit");
+
+    private static bool IsInitSetter(System.Reflection.PropertyInfo property) => property.SetMethod is { } setter && IsInitAccessor(setter);
 
     private static System.Reflection.EventInfo? FindClrEvent(TypeSymbol container, string name, System.Reflection.BindingFlags kind) =>
         ClrContext(container).Type.GetEvent(name, System.Reflection.BindingFlags.Public | kind);

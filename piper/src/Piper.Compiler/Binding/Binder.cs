@@ -45,6 +45,9 @@ public sealed partial class Binder
     /// <summary>The unwrapped values that <c>?.</c> chains currently being bound refer to.</summary>
     private readonly Stack<BoundExpression> _implicitReceivers = new();
 
+    /// <summary>The object an initializer being bound is setting up, whose <c>init</c> properties can be set.</summary>
+    private VariableSymbol? _initializing;
+
     private FileContext _file = null!;
 
     /// <summary>Where names, declarations and expression types are recorded for editor tooling, if anyone asked.</summary>

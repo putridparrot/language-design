@@ -300,8 +300,18 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
             ? $"'{property}' can only be set inside class '{owner}' and classes deriving from it, as its 'set' is protected."
             : $"'{property}' can only be set inside class '{owner}', as its 'set' is private.");
 
-    public void ReportInitOnly(TextSpan span, string property, string owner) =>
-        Error("PIP0359", span, $"'{property}' has an 'init', so it can only be set while the object is made: in a constructor of '{owner}' (or a class deriving from it), on 'this'.");
+    /// <param name="isPiper">Whether <paramref name="owner"/> is a Piper class, whose constructors can set it too.</param>
+    public void ReportInitOnly(TextSpan span, string property, string owner, bool isPiper = true) =>
+        Error("PIP0359", span, $"'{property}' has an 'init', so it can only be set while the object is made: in braces after the call that makes it, '{owner}(…) {{ {property}: … }}'" +
+            (isPiper ? $", or in a constructor of '{owner}' (or a class deriving from it), on 'this'." : "."));
+
+    public void ReportInitializerNeedsCall(TextSpan span, string type) =>
+        Error("PIP0360", span, $"An object initializer follows the call that makes the object: '{type}() {{ … }}'.");
+
+    public void ReportInitializerNotConstruction(TextSpan span, TypeSymbol type) =>
+        Error("PIP0361", span, type.OriginalDefinition is RecordSymbol
+            ? $"A record's fields are given to its constructor, '{type}(…)', not set in braces after it; to change some, copy it: '{{ ...value, field: … }}'."
+            : $"Properties can be set in braces only after a call to a class's constructor; this call isn't one, though it gives a '{type}'.");
 
     public void ReportInvalidConstructor(TextSpan span, string message) =>
         Error("PIP0358", span, message);

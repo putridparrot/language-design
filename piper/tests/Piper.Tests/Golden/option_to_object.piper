@@ -1,0 +1,15 @@
+// An Option of a value type passed where .NET takes object?: its value boxed, or null.
+using System;
+using System.Collections.Generic;
+fn Show<T>(x: T?) { Console.WriteLine(x); }
+fn Main() {
+    let none: List<int>? = None;
+    let some: List<int>? = [1, 2, 3];
+    Console.WriteLine(none?.Count);
+    Console.WriteLine(some?.Count);
+    Console.WriteLine("[{none?.Count}]");
+    let name: string? = "Ada";
+    Console.WriteLine(name);
+    Show(5);
+    Show<int>(None);
+}

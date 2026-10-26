@@ -12,18 +12,22 @@ const string Usage = """
       piper build <inputs...> --library [-o <dir>] [--name <name>]
                                            Compile to a library: <name>.dll, .pdb and Piper.Runtime.dll
       piper emit  <inputs...>              Print the generated C# to stdout
-      piper run   <inputs...> [-- <args...>]
+      piper run   <inputs...> [--watch] [-- <args...>]
                                            Transpile, compile and run; <args> go to Main(args: string[]). The `--` can be
-                                           left out when the first starts with '-': piper run app --port 8001
+                                           left out when the first starts with '-': piper run app --port 8001.
+                                           --watch runs it again whenever a .piper file or piper.json changes
       piper test  <inputs...> [--filter <text>]
                                            Run the program's test blocks (those whose name contains <text>)
+      piper new   <folder> [--template <name>]
+                                           Make a program folder: console (the default), or web (an API using the
+                                           services and web plugins)
       piper lsp                            Run the language server (LSP over stdin and stdout), for editors
       piper --version                      Show the compiler's version
 
     Inputs are .piper files or directories (searched recursively for .piper files);
     all of them are compiled together as one program. A single directory may have a piper.json,
     { "name": "app", "output": "exe" | "library" }, which 'piper build' follows when given no --exe,
-    --library or --name.
+    --library or --name, and whose "plugins" can name those that come with piper: ["services", "web"].
     """;
 
 if (args is ["--version" or "-v"])
@@ -39,6 +43,9 @@ if (args is ["--version" or "-v"])
 if (args is ["lsp", ..])
     return await Piper.LanguageServer.PiperLanguageServer.RunAsync(Console.OpenStandardInput(), Console.OpenStandardOutput());
 
+if (args is ["new", .. var newArguments])
+    return New(newArguments);
+
 if (args.Length < 2 || args[0] is not ("build" or "emit" or "run" or "test"))
 {
     Console.Error.WriteLine(Usage);
@@ -50,7 +57,7 @@ var inputs = new List<string>();
 string? outputDirectory = null;
 string? assemblyName = null;
 string? filter = null;
-bool executable = false, library = false;
+bool executable = false, library = false, watch = false;
 string[] programArguments = [];
 for (int i = 1; i < args.Length; i++)
 {
@@ -70,6 +77,9 @@ for (int i = 1; i < args.Length; i++)
         executable = true;
     else if (args[i] == "--library" && command == "build")
         library = true;
+    // Before the program's own options, so `piper run app --watch --port 8001` watches; `--` passes a --watch of its own.
+    else if (args[i] == "--watch" && command == "run")
+        watch = true;
     // `piper run app --port 8001`: an option piper doesn't have, after the program, is the program's, as with
     // `dotnet run`. (So is everything after it.) That also covers shells that drop a bare `--`, as Windows PowerShell can.
     else if (command == "run" && inputs.Count > 0 && args[i].StartsWith('-'))
@@ -106,6 +116,11 @@ if (files.Count == 0)
     Console.Error.WriteLine("No .piper files to compile.");
     return 2;
 }
+
+if (watch)
+    return Watch.Run(inputs, programArguments);
+if (command == "run")
+    Watch.EndWithWatcher();
 
 // A folder's piper.json says what to build it into (--exe, --library and --name override it), which plugins it uses, and
 // what packages, frameworks and assemblies it references.
@@ -217,4 +232,57 @@ switch (command)
         foreach (var error in run.Errors)
             Console.Error.WriteLine(error);
         return run.Success ? 0 : 3;
+}
+
+// `piper new hello [--template web]`: a folder named after the program, with a piper.json and a main.piper.
+static int New(string[] arguments)
+{
+    string? folder = null;
+    var template = ProjectTemplates.Default;
+    for (int i = 0; i < arguments.Length; i++)
+    {
+        if (arguments[i] is "--template" or "-t" && i + 1 < arguments.Length)
+            template = arguments[++i];
+        else if (arguments[i].StartsWith('-') || folder is not null)
+        {
+            Console.Error.WriteLine($"Unknown argument '{arguments[i]}'.");
+            Console.Error.WriteLine(Usage);
+            return 2;
+        }
+        else
+            folder = arguments[i];
+    }
+    if (folder is null)
+    {
+        Console.Error.WriteLine("Say what to call the program: piper new <folder>, such as 'piper new hello'.");
+        return 2;
+    }
+    if (!ProjectTemplates.All.Any(t => t.Name == template))
+    {
+        Console.Error.WriteLine($"There's no template '{template}'; there are:");
+        foreach (var (name, description) in ProjectTemplates.All)
+            Console.Error.WriteLine($"  {name,-10}{description}");
+        return 2;
+    }
+
+    // Named after its folder: `piper new apps/hello` makes the program `hello` in apps/hello.
+    var directory = Path.GetFullPath(folder);
+    var programName = Path.GetFileName(Path.TrimEndingDirectorySeparator(directory));
+    if (!ProjectTemplates.IsValidName(programName))
+    {
+        Console.Error.WriteLine($"'{programName}' can't name a program: use letters, digits, '_', '-' and '.', starting with a letter or '_'.");
+        return 2;
+    }
+    if (Directory.Exists(directory) && Directory.EnumerateFileSystemEntries(directory).Any())
+    {
+        Console.Error.WriteLine($"{directory} already has files in it; choose a new folder or an empty one.");
+        return 2;
+    }
+
+    Directory.CreateDirectory(directory);
+    foreach (var (path, text) in ProjectTemplates.Files(template, programName))
+        File.WriteAllText(Path.Combine(directory, path), text);
+    Console.WriteLine($"Made {template} program '{programName}' in {directory}. Run it with:");
+    Console.WriteLine($"  piper run {folder}");
+    return 0;
 }

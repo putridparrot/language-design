@@ -1059,7 +1059,7 @@ public sealed partial class CSharpEmitter
     /// <summary>C# only allows calls and assignments as expression statements.</summary>
     private static bool IsStatementExpression(BoundExpression expression) =>
         expression is BoundCallExpression or BoundMethodCallExpression or BoundClrInvocationExpression or BoundAssignmentExpression or BoundFieldAssignmentExpression or BoundObjectCreationExpression
-            or BoundDelegateInvocationExpression or BoundClrAssignmentExpression or BoundDeconstructionExpression or BoundAwaitExpression;
+            or BoundObjectInitializerExpression or BoundDelegateInvocationExpression or BoundClrAssignmentExpression or BoundDeconstructionExpression or BoundAwaitExpression;
 
     // Statements
 
@@ -1316,6 +1316,11 @@ public sealed partial class CSharpEmitter
             BoundVariableExpression variable => (VariableName(variable.Variable), PrimaryPrecedence),
             BoundObjectCreationExpression creation =>
                 ($"new {TypeName(creation.Type)}({Arguments(creation.Arguments, creation.ArgumentNames)})", PrimaryPrecedence),
+            BoundObjectInitializerExpression initializer => (
+                initializer.Members.IsEmpty
+                    ? Expr(initializer.Creation, PrimaryPrecedence)
+                    : $"{Expr(initializer.Creation, PrimaryPrecedence)} {{ {string.Join(", ", initializer.Members.Select(m => $"{Escape(m.Member)} = {Expr(m.Value, AssignmentPrecedence)}"))} }}",
+                PrimaryPrecedence),
             BoundFieldAssignmentExpression assignment =>
                 ($"{Expr(assignment.Target, PrimaryPrecedence)}.{Escape(assignment.Field.Name)} {(assignment.CompoundOperator is { } op ? Operators.GetText(op) + "=" : "=")} {Expr(assignment.Value, AssignmentPrecedence)}", AssignmentPrecedence),
             BoundUnaryExpression unary => (Unary(unary), UnaryPrecedence),
@@ -1590,7 +1595,11 @@ public sealed partial class CSharpEmitter
     /// <summary>A call to one of the helpers that turn .NET's null into None and back.</summary>
     private string NullableBoundary(BoundNullableBoundaryExpression boundary)
     {
-        return $"global::{InteropClassName}.{boundary.Kind}({Expr(boundary.Operand, AssignmentPrecedence)})";
+        // `Console.WriteLine(xs?.Count)`: an int? passed as object? is boxed, as ToNullableReference needs a class.
+        var helper = boundary.Kind == NullableBoundaryKind.ToNullableReference && !ClrTypes.IsReferenceType(boundary.Operand.Type.TypeArguments[0])
+            ? "ToNullableObject"
+            : boundary.Kind.ToString();
+        return $"global::{InteropClassName}.{helper}({Expr(boundary.Operand, AssignmentPrecedence)})";
     }
 
     private string Call(BoundCallExpression call)

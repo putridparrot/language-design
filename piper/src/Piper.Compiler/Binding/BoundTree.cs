@@ -608,6 +608,22 @@ public sealed class BoundRecordSpreadExpression(BoundExpression source, Immutabl
     public override TypeSymbol Type => Source.Type;
 }
 
+/// <summary>
+/// <c>Window() { Title: "x" }</c>: a new object with some of its properties and fields set (emitted as C#'s object
+/// initializer). <see cref="Creation"/> is a <see cref="BoundObjectCreationExpression"/> or a .NET constructor's
+/// <see cref="BoundClrInvocationExpression"/>.
+/// </summary>
+public sealed class BoundObjectInitializerExpression(BoundExpression creation, ImmutableArray<(string Member, BoundExpression Value)> members)
+    : BoundExpression
+{
+    public BoundExpression Creation { get; } = creation;
+
+    /// <summary>In the order written, which is the order the values are evaluated and set in.</summary>
+    public ImmutableArray<(string Member, BoundExpression Value)> Members { get; } = members;
+
+    public override TypeSymbol Type => Creation.Type;
+}
+
 /// <summary><c>Int[5]</c> or <c>Double[2, 3]</c>: a new array of default values (C#'s <c>new int[5]</c>).</summary>
 public sealed class BoundArrayCreationExpression(ImmutableArray<BoundExpression> sizes, TypeSymbol type) : BoundExpression
 {

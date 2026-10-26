@@ -1651,10 +1651,15 @@ public sealed partial class Parser
                     Expect(TokenKind.CloseParen);
                     expression = new CallExpressionSyntax(
                         TextSpan.FromBounds(expression.Span.Start, Previous.Span.End), expression, arguments);
+                    if (AtObjectInitializer())
+                        return ParseObjectInitializer(expression);
                     if (AtTrailingClosure())
                         return ParseTrailingClosure(expression);
                     break;
                 }
+                // `Window { Title: … }`: read as an initializer so the binder can say it needs its `()`.
+                case TokenKind.OpenBrace when expression is NameExpressionSyntax or MemberAccessExpressionSyntax && AtObjectInitializer():
+                    return ParseObjectInitializer(expression);
                 // `concurrency { … }`, `items.each { x => … }`: a call whose only argument is a trailing closure.
                 case TokenKind.OpenBrace when expression is NameExpressionSyntax or MemberAccessExpressionSyntax && AtTrailingClosure():
                     return ParseTrailingClosure(expression);
@@ -1690,6 +1695,43 @@ public sealed partial class Parser
     /// record spread.
     /// </summary>
     private bool AtTrailingClosure() => Current.Kind == TokenKind.OpenBrace && !_noTrailingClosure && !AtRecordSpread();
+
+    /// <summary>
+    /// A `{` that starts an object initializer: `{ Name:` can't start a closure (a closure's typed parameters are in
+    /// parentheses) or a block. Not where a trailing closure couldn't be either, where the `{` is a body.
+    /// </summary>
+    private bool AtObjectInitializer() =>
+        Current.Kind == TokenKind.OpenBrace && !_noTrailingClosure &&
+        Peek(1).Kind == TokenKind.Identifier && Peek(2).Kind == TokenKind.Colon;
+
+    /// <summary>
+    /// objectInitializer = call "{" memberInit { "," memberInit } [ "," ] "}" ;
+    /// memberInit        = IDENT ":" expression ;
+    /// </summary>
+    private ExpressionSyntax ParseObjectInitializer(ExpressionSyntax creation)
+    {
+        NextToken();
+        var members = ImmutableArray.CreateBuilder<FieldUpdateSyntax>();
+        var noTrailingClosure = _noTrailingClosure;
+        _noTrailingClosure = false;
+        while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
+        {
+            var name = Expect(TokenKind.Identifier);
+            Expect(TokenKind.Colon);
+            var value = ParseExpression();
+            members.Add(new FieldUpdateSyntax(SpanFrom(name), name, value));
+            if (Current.Kind != TokenKind.Comma)
+                break;
+            NextToken();
+        }
+        _noTrailingClosure = noTrailingClosure;
+        Expect(TokenKind.CloseBrace);
+        var initializer = new ObjectInitializerExpressionSyntax(TextSpan.FromBounds(creation.Span.Start, Previous.Span.End), creation, members.ToImmutable());
+
+        // As after a trailing closure: `Window() { … }.Show()` carries on, but a `(`, `[` or `{` on the next line starts
+        // a new statement.
+        return Current.Kind is TokenKind.Dot or TokenKind.QuestionDot or TokenKind.Question ? ParsePostfix(initializer) : initializer;
+    }
 
     /// <summary>
     /// trailingClosure = "{" [ lambdaParameters "=>" ] { statement } [ expression ] "}" ;

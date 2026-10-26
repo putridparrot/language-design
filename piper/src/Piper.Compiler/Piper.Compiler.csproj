@@ -6,4 +6,9 @@
     <ProjectReference Include="..\Piper.Runtime\Piper.Runtime.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- What `piper new` makes (see ProjectTemplates), named by their paths: Templates/web/main.piper. -->
+    <EmbeddedResource Include="Templates\**" LogicalName="Templates/$([System.String]::Copy('%(RecursiveDir)').Replace('\', '/'))%(Filename)%(Extension)" />
+  </ItemGroup>
+
 </Project>

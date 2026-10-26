@@ -37,6 +37,7 @@ public sealed partial class Binder
         CollectionExpressionSyntax s => BindCollection(s, expected),
         TupleExpressionSyntax s => BindTuple(s, expected),
         RecordSpreadExpressionSyntax s => BindRecordSpread(s, expected),
+        ObjectInitializerExpressionSyntax s => BindObjectInitializer(s, expected),
         ThrowExpressionSyntax s => BindThrow(s),
         AwaitExpressionSyntax s => BindAwait(s),
         OutArgumentSyntax s => ReportMisplacedOut(s),
@@ -129,6 +130,62 @@ public sealed partial class Binder
         }
 
         return record is null ? new BoundErrorExpression() : new BoundRecordSpreadExpression(source, updates.ToImmutable());
+    }
+
+    /// <summary>
+    /// `Window() { Title: "x", Width: 640 }`: a new object with some of its properties and fields set, as C#'s object
+    /// initializers. Each is set as `w.Title = "x"` would be (so private setters and read-only properties are reported),
+    /// except that `init` properties can be set here too.
+    /// </summary>
+    private BoundExpression BindObjectInitializer(ObjectInitializerExpressionSyntax syntax, TypeSymbol? expected)
+    {
+        BoundExpression creation;
+        if (syntax.Creation is CallExpressionSyntax)
+            creation = RequireValue(BindExpression(syntax.Creation, expected), syntax.Creation.Span);
+        else
+        {
+            // `Window { … }`: binding the type name as a value would only say it isn't one.
+            var typeName = syntax.Creation is MemberAccessExpressionSyntax qualified ? qualified.Member.Text : ((NameExpressionSyntax)syntax.Creation).Identifier.Text;
+            _diagnostics.ReportInitializerNeedsCall(syntax.Creation.Span, typeName);
+            creation = new BoundErrorExpression();
+        }
+
+        bool constructs = creation is BoundObjectCreationExpression or BoundClrInvocationExpression { Member: System.Reflection.ConstructorInfo };
+        if (!constructs && creation.Type != TypeSymbol.Error)
+            _diagnostics.ReportInitializerNotConstruction(syntax.Creation.Span, creation.Type);
+
+        // Each member is bound as an assignment through a stand-in for the new object.
+        var initialized = new VariableSymbol("initialized", creation.Type, isMutable: false, VariableKind.Temporary);
+        var (outerInitializing, members, seen) = (_initializing, ImmutableArray.CreateBuilder<(string, BoundExpression)>(), new HashSet<string>());
+        _initializing = initialized;
+        _implicitReceivers.Push(new BoundVariableExpression(initialized));
+        foreach (var member in syntax.Members)
+        {
+            var value = member.Value ?? new ErrorExpressionSyntax(member.Name.Span);
+            if (!constructs || member.Name.IsMissing)
+            {
+                BindExpression(value);
+                continue;
+            }
+            if (!seen.Add(member.Name.Text))
+                _diagnostics.ReportFieldUpdatedTwice(member.Name.Span, member.Name.Text);
+
+            var target = new MemberAccessExpressionSyntax(member.Name.Span, new ImplicitReceiverSyntax(new TextSpan(member.Name.Span.Start, 0)), member.Name);
+            var equals = new Token(TokenKind.Equals, new TextSpan(member.Name.Span.End, 0), "=");
+            switch (BindAssignment(new AssignmentExpressionSyntax(member.Span, target, equals, value)))
+            {
+                case BoundFieldAssignmentExpression field:
+                    members.Add((field.Field.Name, field.Value));
+                    break;
+                case BoundClrAssignmentExpression { Target: BoundClrMemberExpression clr, CompoundOperator: null } assignment:
+                    members.Add((clr.Member.Name, assignment.Value));
+                    break;
+            }
+        }
+        _implicitReceivers.Pop();
+        _initializing = outerInitializing;
+
+        return constructs ? new BoundObjectInitializerExpression(creation, members.ToImmutable()) : new BoundErrorExpression();
     }
     /// <summary>The type arguments written in <c>f&lt;Int&gt;</c>, or null when there are none.</summary>
     private ImmutableArray<TypeSymbol>? ExplicitTypeArguments(ImmutableArray<TypeSyntax> syntax) =>
@@ -425,7 +482,7 @@ public sealed partial class Binder
             _diagnostics.ReportPrivateSetter(targetSpan, property.Name, owner.Name);
         else if (variable.Field is { HasProtectedSetter: true, Owner: { } baseOwner } protectedSet && !CanUseProtected(baseOwner, null))
             _diagnostics.ReportPrivateSetter(targetSpan, protectedSet.Name, baseOwner.Name, isProtected: true);
-        else if (variable.Field is { IsInitOnly: true, Owner: { } initOwner } initOnly &&
+        else if (variable.Field is { IsInitOnly: true, Owner: { } initOwner } initOnly && !IsInitializing(receiver) &&
                  !(_return?.Constructor is { } constructed && constructed.SelfAndBases().Contains(initOwner) &&
                    receiver is null or BoundVariableExpression { Variable.Kind: VariableKind.This }))
             _diagnostics.ReportInitOnly(targetSpan, initOnly.Name, initOwner.Name);
@@ -457,6 +514,10 @@ public sealed partial class Binder
 
         return new BoundAssignmentExpression(variable, kind, value);
     }
+
+    /// <summary>Whether <paramref name="receiver"/> is the new object an initializer is setting up.</summary>
+    private bool IsInitializing(BoundExpression? receiver) =>
+        receiver is BoundVariableExpression { Variable: var variable } && variable == _initializing;
 
     // Calls
 

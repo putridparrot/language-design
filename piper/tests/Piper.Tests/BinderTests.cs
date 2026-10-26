@@ -880,9 +880,9 @@ public class BinderTests
     [InlineData("PIP0355", "class A { prop X: int { get; } } fn Main() { }")]
     [InlineData("PIP0355", "class A { prop X => int { get = 1; } = 2; } fn Main() { }")]
     [InlineData("PIP0355", "class A { prop X => int { get = 1; set; } } fn Main() { }")]
-    [InlineData("PIP0355", "class A { prop X => 1; } fn Main() { }")]
+    [InlineData("PIP0355", "class A { prop X { get = 1; } } fn Main() { }")]
     [InlineData("PIP0355", "class A { virtual prop X: int { get; } = 1; } fn Main() { }")]
-    [InlineData("PIP0355", "abstract class A { abstract prop X: int { get; } = 1; } fn Main() { }")]
+    [InlineData("PIP0355", "abstract class A { abstract prop X => int { get; } = 1; } fn Main() { }")]
     [InlineData("PIP0352", "class A { override prop X => int = 1; } fn Main() { }")]
     [InlineData("PIP0352", "class A { virtual prop X => int = 1; } class B: A { override prop X => string = \"\"; } fn Main() { }")]
     [InlineData("PIP0352", "class A { virtual prop X => int = 1; } class B: A { prop X => int = 2; } fn Main() { }")]
@@ -896,6 +896,69 @@ public class BinderTests
     [InlineData("PIP0201", "class A { mut x = 0; prop x => int = 1; } fn Main() { }")]
     [InlineData("PIP0243", "class A { prop X => int = 1; } fn Main() { A().get_X(); }")]
     public void Property_errors(string code, string program) => AssertSingleError(code, program);
+
+    /// <summary>
+    /// What computes its value is written as a function is (`prop X => int = …`), what stores one as a field is
+    /// (`prop X: int { get; set; } = …`). C#'s spellings are read, and reported with Piper's.
+    /// </summary>
+    [Theory]
+    [InlineData("PIP0109", "class A { prop X: int => 1; } fn Main() { }", "'prop X => int = …;'")]
+    [InlineData("PIP0109", "class A { mut x = 0; prop X => int { get => x; set { x = value; } } } fn Main() { }", "'get = …;'")]
+    [InlineData("PIP0355", "class A { mut x = 0; prop X: int { get = x; set { x = value; } } } fn Main() { }", "'prop X => int = …'")]
+    [InlineData("PIP0355", "abstract class A { abstract prop X: int { get; } } fn Main() { }", "'prop X => int { get; … }'")]
+    [InlineData("PIP0355", "class A { prop X => int; } fn Main() { }", "'prop X: int { get; set; } = …;'")]
+    [InlineData("PIP0109", "trait T { prop X: int { get; } } fn Main() { }", "'prop X => Type;'")]
+    public void Properties_are_written_as_functions_or_fields(string code, string program, string suggestion)
+    {
+        var error = Assert.Single(Compilation.Compile(program).Diagnostics);
+        Assert.Equal(code, error.Code);
+        Assert.Contains(suggestion, error.Message);
+    }
+
+    /// <summary>An initializer sets each member as an assignment would, except that it can set `init` properties.</summary>
+    [Theory]
+    [InlineData("class A { prop X: int { get; init; } = 0; } fn Main() { let a = A() { X: 1 }; }")]
+    [InlineData("class A { prop X: int { get; set; } = 0; public mut y = 0; } fn Main() { let a = A() { X: 1, y: 2 }; Print(a.X + a.y); }")]
+    [InlineData("class A(n: int) { prop X: int { get; init; } = n; } fn Main() { let a = A(n: 1) { X: 2 }; }")]
+    [InlineData("using System; fn Main() { let u = UriBuilder() { Host: \"x\" }; }")]
+    [InlineData("class A { prop X: int { get; private set; } = 0; static fn Make() => A = A() { X: 1 }; } fn Main() { }")]
+    public void Object_initializers_set_members(string program) =>
+        Assert.Empty(Compilation.Compile(program).Diagnostics);
+
+    [Theory]
+    [InlineData("PIP0359", "class A { prop X: int { get; init; } = 0; } fn Main() { let a = A(); a.X = 1; }")]
+    [InlineData("PIP0356", "class A { prop X: int { get; private set; } = 0; } fn Main() { let a = A() { X: 1 }; }")]
+    [InlineData("PIP0207", "class A { prop X => int = 0; } fn Main() { let a = A() { X: 1 }; }")]
+    [InlineData("PIP0207", "class A { public let x = 0; } fn Main() { let a = A() { x: 1 }; }")]
+    [InlineData("PIP0351", "class A { mut x = 0; } fn Main() { let a = A() { x: 1 }; }")]
+    [InlineData("PIP0202", "class A { prop X: int { get; set; } = 0; } fn Main() { let a = A() { X: \"no\" }; }")]
+    [InlineData("PIP0212", "class A { } fn Main() { let a = A() { Y: 1 }; }")]
+    [InlineData("PIP0308", "class A { prop X: int { get; set; } = 0; } fn Main() { let a = A() { X: 1, X: 2 }; }")]
+    [InlineData("PIP0360", "class A { prop X: int { get; set; } = 0; } fn Main() { let a = A { X: 1 }; }")]
+    [InlineData("PIP0361", "class A { prop X: int { get; set; } = 0; } fn Make() => A = A(); fn Main() { let a = Make() { X: 1 }; }")]
+    [InlineData("PIP0361", "record P(x: int); fn Main() { let p = P(1) { x: 2 }; }")]
+    [InlineData("PIP0285", "using System; fn Main() { let u = Uri(\"http://x\") { Host: \"y\" }; }")]
+    public void Object_initializers_report_what_assignments_would(string code, string program)
+    {
+        var error = Assert.Single(Compilation.Compile(program).Diagnostics);
+        Assert.Equal(code, error.Code);
+    }
+
+    [Fact]
+    public void A_dotnet_init_property_is_set_only_in_an_initializer()
+    {
+        const string program = """
+            using System.Diagnostics.Metrics;
+            fn Main() {
+                let advice = InstrumentAdvice<double>() { HistogramBucketBoundaries: [1.0, 5.0] };
+                advice.HistogramBucketBoundaries = [2.0];
+            }
+            """;
+        var error = Assert.Single(Compilation.Compile(program).Diagnostics);
+        Assert.Equal("PIP0359", error.Code);
+        Assert.Contains("{ HistogramBucketBoundaries: … }", error.Message);
+        Assert.DoesNotContain("constructor", error.Message);
+    }
 
     [Theory]
     [InlineData("PIP0356", "class A { mut x = 0; prop this[i: int] => int { get = x; private set { x = value; } } } fn Main() { A()[0] = 1; }")]
@@ -966,7 +1029,7 @@ public class BinderTests
     [Theory]
     [InlineData("PIP0109", "trait T { prop X => int { get; set; } } fn Main() { }")]
     [InlineData("PIP0109", "extend int { prop X: int { get; } = 1; } fn Main() { }")]
-    [InlineData("PIP0109", "extend int { prop X => 1; } fn Main() { }")]
+    [InlineData("PIP0109", "extend int { prop X { get = 1; } } fn Main() { }")]
     [InlineData("PIP0109", "extend int { prop this[i: int] => int = i; } fn Main() { }")]
     [InlineData("PIP0245", "trait T { prop X => int; } record R(a: int); extend R: T { } fn Main() { }")]
     [InlineData("PIP0245", "trait T { prop X => int; } class C: T { public let X = \"\"; } fn Main() { }")]

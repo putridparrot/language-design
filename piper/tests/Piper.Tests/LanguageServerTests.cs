@@ -141,7 +141,7 @@ public sealed class LanguageServerTests : IDisposable
         Assert.DoesNotContain("balance", labels);      // private
         Assert.DoesNotContain("opened", labels);       // static
         Assert.DoesNotContain(labels, l => l.StartsWith("get_", StringComparison.Ordinal));
-        Assert.Equal("prop Count => int { get; private set; }", items.Single(i => i["label"]!.GetValue<string>() == "Count")["detail"]!.GetValue<string>());
+        Assert.Equal("prop Count: int { get; private set; }", items.Single(i => i["label"]!.GetValue<string>() == "Count")["detail"]!.GetValue<string>());
 
         var symbols = (JsonArray)(await _server.HandleAsync("textDocument/documentSymbol", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = uri } }))!;
         var account = symbols.Single(s => s!["name"]!.GetValue<string>() == "Account")!;

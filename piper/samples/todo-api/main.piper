@@ -115,15 +115,20 @@ endpoints TodoApi "/api" {
     get "/hello" (name: string, greeter: Greeter) => greeter.Welcome(name);
 }
 
-async fn Main(args: string[]) {
-    let serve = args.Contains("--serve");
+// The command line, from the args plugin: `--help` lists these, and a mistake is reported before anything starts.
+args Options "A small to-do REST API." {
+    serve: bool "Serve until Ctrl+C, rather than call each endpoint once and stop";
     // HTTPS uses ASP.NET Core's development certificate, which `dotnet dev-certs https --trust` creates and trusts.
-    let https = args.Contains("--https");
-    // `--port 5090` to use another port than 5080 (and the one after it for HTTPS).
-    let at = Array.IndexOf(args, "--port");
-    let port = at >= 0 && at + 1 < args.Length ? int.Parse(args[at + 1]) : 5080;
+    https: bool "Serve HTTPS too, on the port after --port";
+    port: int = 5080 "The port to serve HTTP on";
+}
+
+async fn Main(args: string[]) {
+    let options = Options.FromArgs(args);
+    let serve = options.serve;
+    let port = options.port;
     let urls: string[] = !serve ? ["http://127.0.0.1:0"]
-        : https ? ["http://localhost:{port}", "https://localhost:{port + 1}"]
+        : options.https ? ["http://localhost:{port}", "https://localhost:{port + 1}"]
         : ["http://localhost:{port}"];
 
     let builder = WebApplication.CreateBuilder();

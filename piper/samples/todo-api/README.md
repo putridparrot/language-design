@@ -6,20 +6,15 @@ with `endpoints { }`, from the [services](../../plugins/Piper.Plugins.Services) 
 
 ## Running it
 
-Build the two plugins once, from the `piper` folder:
-
-```
-dotnet build plugins/Piper.Plugins.Services
-dotnet build plugins/Piper.Plugins.Web
-```
-
-Then serve on <http://localhost:5080> until Ctrl+C:
+Both plugins come with piper, so `piper.json` names them, `"plugins": ["services", "web"]`. Serve on
+<http://localhost:5080> until Ctrl+C:
 
 ```
 piper run samples/todo-api --serve
 ```
 
-(`piper run samples/todo-api -- --serve` does the same.) From a clone without the `piper` tool installed, run the
+(`piper run samples/todo-api -- --serve` does the same.) `piper run samples/todo-api --watch --serve` restarts the
+server whenever you save a change to `main.piper`. From a clone without the `piper` tool installed, run the
 CLI through dotnet, from the `piper` folder:
 
 ```
@@ -29,7 +24,8 @@ dotnet run --project src/Piper.Cli -- run samples/todo-api --serve
 Without `--serve` it starts on a free port, calls each endpoint once, prints what comes back and stops, which is how
 the test suite runs it.
 
-Options, after `--serve`:
+Options, after `--serve` (`piper run samples/todo-api --help` lists them, and the
+[args](../../docs/plugins.md#args-command-line-options) plugin reads them):
 
 - `--port 5090` serves on another port than 5080 (if 5080 is taken, say by another copy still running).
 - `--https` serves HTTPS too, on the next port (<https://localhost:5081>). It uses ASP.NET Core's development

@@ -863,7 +863,7 @@ public sealed partial class Binder
                         bool inheritedInit = inherited switch
                         {
                             MethodSymbol piper => piper.IsInitAccessor,
-                            MethodInfo clr => clr.ReturnParameter.GetRequiredCustomModifiers().Any(m => m.FullName == "System.Runtime.CompilerServices.IsExternalInit"),
+                            MethodInfo clr => IsInitAccessor(clr),
                             _ => false,
                         };
                         if (isSetter && inheritedInit != method.IsInitAccessor)

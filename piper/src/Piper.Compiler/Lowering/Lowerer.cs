@@ -554,6 +554,28 @@ public sealed class Lowerer
                     collection.Type);
             }
 
+            case BoundObjectInitializerExpression initializer:
+            {
+                // The constructor's arguments, then the values, in order. If a value needs statements first, the
+                // arguments are spilled before them, so only the constructor's own work moves after the values (C#
+                // can't set an `init` property later, so the object can't be made first).
+                var (arguments, rebuild) = initializer.Creation switch
+                {
+                    BoundObjectCreationExpression creation => (creation.Arguments, (Func<ImmutableArray<BoundExpression>, BoundExpression>)(lowered =>
+                        new BoundObjectCreationExpression(creation.Class, lowered, creation.Type) { ArgumentNames = creation.ArgumentNames })),
+                    BoundClrInvocationExpression construction => (construction.Arguments, lowered =>
+                        new BoundClrInvocationExpression(null, construction.ContainerType, construction.Member, lowered, construction.Type, construction.TypeArguments)
+                        {
+                            ArgumentNames = construction.ArgumentNames,
+                        }),
+                    _ => throw new InvalidOperationException($"Unexpected initialized {initializer.Creation.GetType().Name}"),
+                };
+                var operands = LowerOperands([.. arguments, .. initializer.Members.Select(m => m.Value)], prelude);
+                return new BoundObjectInitializerExpression(
+                    rebuild(operands[..arguments.Length]),
+                    [.. initializer.Members.Select((m, i) => (m.Member, operands[arguments.Length + i]))]);
+            }
+
             case BoundArrayCreationExpression creation:
                 return new BoundArrayCreationExpression(LowerOperands(creation.Sizes, prelude), creation.Type);
 

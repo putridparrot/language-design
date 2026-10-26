@@ -546,6 +546,14 @@ public sealed record TupleElementSyntax(TextSpan Span, Token? Name, ExpressionSy
 public sealed record RecordSpreadExpressionSyntax(TextSpan Span, ExpressionSyntax Source, ImmutableArray<FieldUpdateSyntax> Updates)
     : ExpressionSyntax(Span);
 
+/// <summary>
+/// `Window() { Title: "x", Width: 640 }`: a new object with some of its properties and fields set (C#'s object
+/// initializer). <see cref="Creation"/> is the constructor call; each member has a value (there's no shorthand, as
+/// `{ Title }` is a closure).
+/// </summary>
+public sealed record ObjectInitializerExpressionSyntax(TextSpan Span, ExpressionSyntax Creation, ImmutableArray<FieldUpdateSyntax> Members)
+    : ExpressionSyntax(Span);
+
 /// <summary>`y: 5`, or `height` alone (<see cref="Value"/> null) for `height: height`.</summary>
 public sealed record FieldUpdateSyntax(TextSpan Span, Token Name, ExpressionSyntax? Value) : SyntaxNode(Span);
 

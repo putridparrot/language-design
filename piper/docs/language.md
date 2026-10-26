@@ -50,9 +50,10 @@ baseType        = type [ "(" [ arguments ] ")" ] ;               (* a base class
 classMember     = attributes [ "public" | "private" | "protected" ]
                   ( field | constructor | [ "static" ] [ "virtual" | "override" | "abstract" ] ( function | property ) ) ;
 field           = [ "static" ] ( "let" | "mut" ) IDENT [ ":" type ] "=" expression ";" ;   (* private unless "public"; methods are public unless "private" *)
-property        = "prop" ( IDENT | "this" "[" parameters "]" ) [ ":" type ]               (* "this[…]": an indexer; public unless "private" *)
-                  ( "=>" expression ";" | "{" { accessor } "}" [ "=" expression ";" ] ) ;
-accessor        = [ "private" | "protected" ] ( "get" | "set" | "init" ) ( ";" | "=>" expression ";" | block ) ;   (* prop, get, set and init are keywords only here *)
+property        = "prop" ( IDENT | "this" "[" parameters "]" )                            (* "this[…]": an indexer; public unless "private" *)
+                  ( "=>" type ( "=" expression ";" | ";" | "{" { accessor } "}" )             (* computes: written as a function is *)
+                  | [ ":" type ] "{" { accessor } "}" "=" expression ";" ) ;                  (* stores: written as a field is *)
+accessor        = [ "private" | "protected" ] ( "get" | "set" | "init" ) ( ";" | "=" expression ";" | block ) ;   (* prop, get, set and init are keywords only here *)
 constructor     = IDENT "(" [ parameters ] ")" [ ":" "this" "(" [ arguments ] ")" ] block ;   (* IDENT is the class's name *)
 requires        = "requires" condition { "," condition } ;    (* condition: an expression without assignment, of type bool *)
 enum            = "enum" IDENT [ typeParameters ] "{" [ variant { "," variant } [ "," ] ] "}" ;
@@ -94,9 +95,10 @@ assignment      = conditional [ ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" ) assig
 conditional     = binary [ "?" expression ":" conditional ] ;  (* if binary { expression } else { conditional } *)
 binary          = unary { binaryOp unary | "is" pattern } ;   (* precedence table below *)
 unary           = ( "-" | "!" | "await" ) unary | "(" type ")" unary | postfix ;   (* a cast, by C#'s rule; see below *)
-postfix         = primary { "(" [ arguments ] ")" [ trailingClosure ] | "[" arguments "]" | "." IDENT [ typeArguments ] | "?" | "?." IDENT postfix }
+postfix         = primary { "(" [ arguments ] ")" [ trailingClosure | initializer ] | "[" arguments "]" | "." IDENT [ typeArguments ] | "?" | "?." IDENT postfix }
                 | ( IDENT | postfix "." IDENT ) trailingClosure ;
                                                               (* after "?." the rest of the chain is skipped on None *)
+initializer     = "{" IDENT ":" expression { "," IDENT ":" expression } [ "," ] "}" ;   (* Window() { Title: "x" }: after a constructor call *)
 trailingClosure = "{" [ ( IDENT | "(" [ lambdaParam { "," lambdaParam } [ "," ] ] ")" ) "=>" ] { statement } [ expression ] "}" ;
                                                               (* the call's last argument; not in an if/while/for/match/requires head *)
 arguments       = argument { "," argument } [ "," ] ;
@@ -292,7 +294,7 @@ extend Circle: Shape {
 
 - **Implementing a trait:** `extend Type: Trait1, Trait2 { … }` declares that a record or enum implements traits. Every required method must be present, with exactly the trait's signature.
 - **Bare names in defaults:** a trait's methods (and those an `extend Trait` block adds) name its other instance methods and properties, and those it inherits, bare: `fn Describe() => string = "{Label}: {Area()}"` means `this.Label` and `this.Area()`.
-- **Properties:** a trait can declare read-only properties, required (`prop Area: double { get; }`) or with a default (`prop Label: string => "shape";`). A record or enum implements them in its `extend` block (`prop Area: double => …;`), a builtin or .NET type likewise, and a class with a property of the same name and type, or a public field or automatic property. They're read like fields, `shape.Area`, also through a bound `T: Shape`. C# sees them as interface properties. A trait's properties can't have a `set`, since a trait has nowhere to store a value.
+- **Properties:** a trait can declare read-only properties, required (`prop Area => double;`) or with a default (`prop Label => string = "shape";`). A record or enum implements them in its `extend` block (`prop Area => double = …;`), a builtin or .NET type likewise, and a class with a property of the same name and type, or a public field or automatic property. They're read like fields, `shape.Area`, also through a bound `T: Shape`. C# sees them as interface properties. A trait's properties can't have a `set`, since a trait has nowhere to store a value.
 - **Traits as types:** a trait is also a type. A `Circle` converts implicitly to `Shape`, and calls through a `Shape` value dispatch dynamically.
 - **Traits as bounds:** a type parameter bound by a trait gets static dispatch.
 - **Using the expected type:** when an `if` or `match` produces different types that all implement the expected trait, the trait is used, e.g. `let s: Shape = if c { circle } else { rect };`.
@@ -340,7 +342,7 @@ let s = Option.Some(5).GetOr(0);
 
   Operands convert as for a call (`2 * v` widens the int), the overload whose operand types match exactly wins, and `+=` and the other compound assignments use the operator. Comparisons and `==` can't be declared: records already compare by value, and implementing `IComparable<T>` gives `<`, `<=`, `>` and `>=` (see [Traits](#traits)). Nor can operators be declared on traits, builtin or .NET types.
 - **Instance and static methods:** as in C#, a method is an instance method by default, with `this` referring to the receiver. Mark it `static fn` to call it on the type instead, e.g. `int.Zero()`. There is no explicit receiver parameter.
-- **Properties:** an extend block can add read-only properties, computed each time they're read: `extend int { prop IsEven: bool => this % 2 == 0; static prop Answer: int => 42; }`, read as `4.IsEven` and `int.Answer`. Inside the block's methods they're named bare. On a builtin or .NET type they're C# 14 extension properties. They can't have a `set` or an initial value, since there's nowhere to store one.
+- **Properties:** an extend block can add read-only properties, computed each time they're read: `extend int { prop IsEven => bool = this % 2 == 0; static prop Answer => int = 42; }`, read as `4.IsEven` and `int.Answer`. Inside the block's methods they're named bare. On a builtin or .NET type they're C# 14 extension properties. They can't have a `set` or an initial value, since there's nowhere to store one.
 - **`this` is immutable.** Using it in a static method or a top-level function is an error.
 - **Generic types:** write `extend Option`, not `extend Option<int>`. Methods apply to every instantiation.
 - **Name clashes are errors.** A method can't share a name with a field, a variant, a variant's field (variants inherit their enum's methods) or another method.
@@ -443,41 +445,64 @@ ada.Deposit(25m);
       mut balance = 0m;
       mut name = owner;
 
-      prop Balance: decimal => balance;                  // computed: a getter alone
-      prop Deposits: int { get; private set; } = 0;      // automatic: stores its value; set only inside Account
-      prop Name: string {                                // both accessors; the setter is given `value`
-          get => name;
+      prop Balance => decimal = balance;                 // computes: written as a function is
+      prop Deposits: int { get; private set; } = 0;      // stores: written as a field is; set only inside Account
+      prop Name => string {                              // both accessors; the setter is given `value`
+          get = name;
           set { name = value.Trim(); }
       }
-      private prop Summary: string => "{name}: {balance}";
+      private prop Summary => string = "{name}: {balance}";
   }
 
   account.Name = " Ada ";
   Print("{account.Name} {account.Balance} {account.Deposits}");
   ```
 
-  - **Forms:** a getter alone, `prop P: T => expression;`. Accessors, `{ get … set … }`, each `=> expression;` or a
-    block. Or an automatic property, `{ get; }` or `{ get; set; }` with an initial value after it (`= 0;`), which stores
-    its value as a field does. A property with accessors needs its type; an automatic one can take it from its initial
-    value.
+  - **Forms:** what a property is decides how it's written, so it reads as a function or a field does.
+    - One that **computes** its value each time is written as a function is, `=> Type`, then its body: a getter alone,
+      `prop P => T = expression;`, or accessors, `prop P => T { get … set … }`, each `= expression;` or a block, as a
+      function's body is.
+    - One that **stores** its value (an automatic property) is written as a field is, `: Type`, with its accessors
+      without bodies and an initial value after them: `prop P: T { get; set; } = 0;`. It can take its type from the
+      initial value, as a field can.
+
+    The forms C# writes, `prop P: T => expression;` and `get => expression;`, are errors saying how to write them.
   - **Access:** properties are public unless marked `private` or `protected`, like methods. `private set` makes a public
     property settable only inside its class (not in derived classes, as in C#), and `protected set` in it and the classes
     deriving from it. Assigning to a property without a `set` is an error.
-  - **`init`** in place of `set` makes a property settable only while the object is made: in a constructor of its class
-    or of one deriving from it, on `this` (not in a lambda there), and by C# code's object initializers.
-    `prop Opened: DateOnly { get; init; } = DateOnly(2026, 1, 1);`
+  - **`init`** in place of `set` makes a property settable only while the object is made: in an object initializer
+    (below), or in a constructor of its class or of one deriving from it, on `this` (not in a lambda there).
+    `prop Opened: DateOnly { get; init; } = DateOnly(2026, 1, 1);` A .NET type's `init` properties are the same.
+- **Object initializers** set properties and fields in braces after the call that makes the object, as C#'s do:
+
+  ```piper
+  let w = Window("Piper") { Width: 640, Height: 480 };
+  let options = JsonSerializerOptions() {
+      WriteIndented: true,
+      PropertyNamingPolicy: JsonNamingPolicy.CamelCase,
+  };
+  ```
+
+  - Each is written `Name: value`, as named arguments and record copies are, and set as `w.Width = 640` would be,
+    so a private setter, a property without one or a `let` field is an error; but `init` properties can be set here
+    too. The values are evaluated in order, after the constructor's arguments.
+  - They follow a call to a class's or .NET type's constructor, its `()` included (`Window() { … }`, not
+    `Window { … }`). A record's fields are given to its constructor instead, or changed in a copy, `{ ...p, y: 5 }`.
+  - A `{` after a call starts an initializer when it's followed by `Name:`, and a trailing closure otherwise, so
+    `items.ForEach() { x => … }` and `Retry(3) { … }` are unchanged. Unlike a record copy, there's no shorthand
+    `{ Width }` for `Width: Width`, as that's a closure returning `Width`.
   - Inside the class they're named bare, like fields (`Balance`, `Deposits += 1`). `static prop` belongs to the class:
     `Account.Opened`.
   - `get` and `set` are bodies like a method's: `set` is given the new value as `value`, `get` can `yield` (making it an
     iterator), and neither can `await`. `prop` is a keyword only in a class, before the property's name.
-  - **Overriding:** `virtual prop`, `abstract prop P: T { get; set; }` (accessors without bodies, in an abstract class)
+  - **Overriding:** `virtual prop`, `abstract prop P => T { get; set; }` (accessors without bodies, in an abstract class)
     and `override prop` work as for methods, and must keep the property's type. An override can't add a `set` the
     property it overrides doesn't have.
-  - A class can override a .NET base's properties (`override prop Message: string => …` on an `Exception`), and must
+  - A class can override a .NET base's properties (`override prop Message => string = …` on an `Exception`), and must
     complete its abstract ones: a `Stream` needs `CanRead`, `CanSeek`, `CanWrite`, `Length` and `Position`.
   - A class implements a .NET interface's properties with its own, of the same name and type, with a public `set` if
-    the interface's has one: `class Countdown(n: int): IReadOnlyCollection<int> { prop Count: int => n; … }`. A
-    property .NET marks as possibly null is an Option, as for methods (`prop AsyncState: object? => None;`).
+    the interface's has one: `class Countdown(n: int): IReadOnlyCollection<int> { prop Count => int = n; … }`. A
+    property .NET marks as possibly null is an Option, as for methods (`prop AsyncState => object? = None;`).
   - Traits and `extend` blocks can declare read-only properties too (see [Traits](#traits) and
     [Methods and `extend`](#methods-and-extend)).
 - **Indexers** let a class be used with `[]`, as arrays and lists are. One is a property named `this` with parameters:
@@ -486,11 +511,11 @@ ada.Deposit(25m);
   class Grid(width: int, height: int) {
       let cells: int[] = int[width * height];
 
-      prop this[x: int, y: int]: int {
-          get => cells[y * width + x];
+      prop this[x: int, y: int] => int {
+          get = cells[y * width + x];
           set { cells[y * width + x] = value; }
       }
-      prop this[cell: string]: int => …;      // overloaded by parameter types
+      prop this[cell: string] => int = …;      // overloaded by parameter types
   }
 
   grid[1, 2] = 5;
@@ -502,7 +527,7 @@ ada.Deposit(25m);
   - Overloads must take different parameter types; `value[…]` chooses the one its arguments match exactly, otherwise
     the one they convert to.
   - A class implements a .NET interface's indexer with one of the same parameter and result types:
-    `class Ring<T>: IReadOnlyList<T>` with `prop this[i: int]: T`.
+    `class Ring<T>: IReadOnlyList<T>` with `prop this[i: int] => T = …`.
 - **Protected members:** `protected` fields, properties, methods, indexers and constructors are for the class and the
   classes deriving from it. As in C#, a derived class uses an instance member through an instance of its own class
   (`this`, or another of its kind), not through the base class. Overrides keep the access of what they override, so an
@@ -1139,11 +1164,12 @@ As in C#, functions and methods are PascalCase (`Print`, `Main`, `Area()`), and 
 | `record P(x: int)` | `public sealed record P(int x);` |
 | `class A(x: int): B(x), Named { mut n = x; public let m = 1; … }` | `public partial class A(int x) : B(x), Named { private int n = x; public int m { get; } = 1; … }` |
 | `static mut count = 0;`, `public static let Empty = A(0);` in a class | `private static int count = 0;`, `public static A Empty { get; } = new A(0);`, used as `A.count` |
-| `prop Total: decimal => t;`, `prop N: int { get; private set; } = 0;`, `prop Name: string { get => n; set { n = value; } }` | `public decimal Total => this.t;`, `public int N { get; private set; } = 0;`, `public string Name { get => this.n; set { this.n = value; } }` |
-| `prop this[i: int]: T { get => …; set { … } }` in a class | `public T this[int i] { get => …; set { … } }` |
+| `prop Total => decimal = t;`, `prop N: int { get; private set; } = 0;`, `prop Name => string { get = n; set { n = value; } }` | `public decimal Total => this.t;`, `public int N { get; private set; } = 0;`, `public string Name { get => this.n; set { this.n = value; } }` |
+| `prop this[i: int] => T { get = …; set { … } }` in a class | `public T this[int i] { get => …; set { … } }` |
 | `Account(owner: string): this(owner, 0m) { … }` in a class | `public Account(string owner) : this(owner, 0m) { … }`, and the class always has a primary constructor, `()` if need be |
 | `prop P: T { get; init; } = x;`, `protected fn F()` | `public T P { get; init; } = x;`, `protected void F()` |
-| `trait Shape { prop Area: double { get; } }`, `extend int { prop IsEven: bool => … }` | `double Area { get; }` in the interface, and a C# 14 extension property: `extension(int self) { public bool IsEven => … }` |
+| `Window("x") { Width: 640, Height: 480 }` | `new Window("x") { Width = 640, Height = 480 }` |
+| `trait Shape { prop Area => double; }`, `extend int { prop IsEven => bool = … }` | `double Area { get; }` in the interface, and a C# 14 extension property: `extension(int self) { public bool IsEven => … }` |
 | `extend R { override fn ToString() => string = … }`, `extend R: IComparable<R>` | `public override string ToString() => …` (`sealed override` on an enum), and `public static bool operator <(R left, R right) => ((IComparable<R>)left).CompareTo(right) < 0;` with `<=`, `>`, `>=` |
 | `base.F()`, `c: Circle` (pattern), `(Circle)shape` | `base.F()`, `Circle c`, `(Circle)shape` |
 | `virtual fn F()`, `override fn F()`, `abstract fn F();` | `public virtual void F()`, `public override void F()` (`protected` for a protected .NET method), `public abstract void F();` |

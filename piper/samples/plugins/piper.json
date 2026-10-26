@@ -1,5 +1,6 @@
 {
-  // This program uses a compiler plugin, which adds the `parallel for` and `concurrency` statements. Build the
-  // plugin first (`dotnet build plugins/Piper.Plugins.Parallel`), then `piper run samples/plugins`.
-  "plugins": ["../../plugins/Piper.Plugins.Parallel/bin/plugin/Piper.Plugins.Parallel.dll"]
+  // This program uses a compiler plugin that comes with piper, which adds the `parallel for` and `concurrency`
+  // statements: `piper run samples/plugins`. (A plugin of your own is named by its path:
+  // ["../my-plugin/bin/My.Plugin.dll"].)
+  "plugins": ["parallel"]
 }

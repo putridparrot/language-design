@@ -64,16 +64,19 @@ syntax**, which then goes through the binder, lowering and C# emitter like anyth
 
 ### Using a plugin
 
-List the plugin's assembly in the program folder's `piper.json`, with a path relative to the folder:
+List the plugin in the program folder's `piper.json`. The plugins in this repository's [plugins](../plugins) folder
+come with piper (in a `plugins` folder beside it), and are named: `actors`, `args`, `remote-actors`, `parallel`,
+`services` and `web`. Any other is given as the path of its assembly, relative to the folder:
 
 ```json
 {
-  "plugins": ["../plugins/Piper.Plugins.Parallel/bin/plugin/Piper.Plugins.Parallel.dll"]
+  "plugins": ["parallel", "../my-plugin/bin/My.Plugin.dll"]
 }
 ```
 
-`piper run`, `piper test`, `piper build` and `piper emit` on that folder load it, and so does the language server for
-files in the folder. [samples/plugins](../samples/plugins) is a runnable example, using
+`piper run`, `piper test`, `piper build` and `piper emit` on that folder load them, and so does the language server
+for files in the folder. `piper new <folder> --template web` makes a program using `services` and `web`.
+[samples/plugins](../samples/plugins) is a runnable example, using
 [plugins/Piper.Plugins.Parallel](../plugins/Piper.Plugins.Parallel):
 
 ```piper
@@ -319,6 +322,55 @@ A program calls them as `AppServices(builder.Services)` and `Api(app)`.
   - a handler parameter without a type (ASP.NET Core reads the types to bind the request)
 
   Errors in a handler's own code are reported in the handler, as for any lambda.
+
+### `args` (command-line options)
+
+[plugins/Piper.Plugins.Args](../plugins/Piper.Plugins.Args) declares what a program accepts on its command line, as a
+record ([samples/todo-api](../samples/todo-api) uses it, as does `piper new --template web`):
+
+```piper
+args Options "Greets people." {               // the description is optional, and shown by --help
+    greeting: string = "Hello" "What to say";  // --greeting Hi (or --greeting=Hi); a default, then a description
+    times: int = 1;                            // --times 3
+    loud: bool "Shout it";                     // --loud: a flag, false unless given
+    name: string? "Who to greet";              // optional: None unless given
+    dryRun: bool;                              // --dry-run: a field's name in kebab case
+    files: List<string> "Names to add";        // the arguments that aren't options (and all those after --)
+}
+
+fn Main(args: string[]) {
+    let options = Options.FromArgs(args);
+    …
+}
+```
+
+- **What it becomes:** `record Options(greeting: string, times: int, …)`, with `Options.Parse(args)`, a
+  `Result<Options, string>`, and `Options.FromArgs(args)`, which gives the options or ends the program: on `--help`
+  (or `-h`) it prints the usage and exits with 0, and on a mistake it prints the mistake and the usage and exits with 2.
+  Tests use `Parse`.
+- **Types:** `bool` (a flag), `string`, `int`, `long`, `double` and `decimal`, or one of those but `bool` made optional
+  with `?`; and one `List<string>` for the other arguments. A field with no default that isn't optional is required.
+- **Usage:** generated from the fields, with each one's type, description and default:
+
+  ```
+  Usage: greet [options] [files...]
+
+  Greets people.
+
+  Options:
+    --greeting <string>  What to say (default: Hello)
+    --times <int>        (default: 1)
+    --loud               Shout it
+    ...
+  ```
+
+- **Mistakes** on the command line are reported by name: an unknown option (suggesting the nearest, for a typo), a
+  missing or malformed value (`'--times' must be an int, not 'abc'`), a value given to a flag, a missing required
+  option, or an argument when the program takes only options.
+- **Mistakes in the declaration** are reported where they are: an unsupported type, a default on a flag or an optional
+  option, two fields with the same option name, or two `List<string>` fields.
+- **Reading** is done by `PiperArguments` in Piper.Runtime, which every Piper program already references, so the
+  plugin needs no package.
 
 ### `actor` (the actor model)
 

@@ -36,12 +36,12 @@
     over the constructor's arguments, and are checked whenever one is made, before the field initializers and the base
     constructor run, and at compile time for constant arguments (PIP0340), as for records.
   - Field initializers can call the class's static methods bare.
-  - **Properties:** `prop Balance: decimal => balance;`, `prop Count: int { get; private set; } = 0;`,
-    `prop Name: string { get => name; set { name = value.Trim(); } }`. Read and set like fields; public unless marked
+  - **Properties:** `prop Balance => decimal = balance;`, `prop Count: int { get; private set; } = 0;`,
+    `prop Name => string { get = name; set { name = value.Trim(); } }`. Read and set like fields; public unless marked
     `private`, with an optional `private set`. They can be static, `virtual`, `abstract` and `override`, override .NET
     properties, and implement .NET interfaces' properties (`IReadOnlyCollection<T>.Count`), so a class can now derive
     from a .NET base with abstract properties, such as `Stream`. New errors PIP0355 and PIP0356.
-  - **Indexers:** `prop this[x: int, y: int]: int { get => …; set { … } }`, used as `grid[1, 2] = 5`. They can be
+  - **Indexers:** `prop this[x: int, y: int] => int { get = …; set { … } }`, used as `grid[1, 2] = 5`. They can be
     overloaded by parameter types, be virtual, abstract or overridden, and implement .NET interfaces' indexers
     (`IReadOnlyList<T>`).
   - **Constructors** besides the primary one, written as in C#: `Account(owner: string): this(owner, 0m) { … }`. A
@@ -54,9 +54,33 @@
   - New errors PIP0357–PIP0359.
   - The editor's outline shows a class's fields, properties, indexers, constructors and methods; completion offers a
     class's public fields and properties; `prop`, `get`, `set`, `init` and `protected` are highlighted.
-- **Properties in traits and `extend` blocks:** read-only, `trait Shape { prop Area: double { get; } prop Label:
-  string => "shape"; }`, implemented in `extend` blocks or by a class's properties, and read through a bound like
-  methods. `extend int { prop IsEven: bool => this % 2 == 0; }` adds a C# 14 extension property.
+- **Properties in traits and `extend` blocks:** read-only, `trait Shape { prop Area => double; prop Label => string =
+  "shape"; }`, implemented in `extend` blocks or by a class's properties, and read through a bound like
+  methods. `extend int { prop IsEven => bool = this % 2 == 0; }` adds a C# 14 extension property.
+- **Properties are written as functions or fields are:** one that computes its value is written as a function is,
+  `prop Count => int = todos.Count;`, `prop Name => string { get = name; set { … } }`, `prop Area => double;` in a
+  trait; one that stores it is written as a field is, `prop Count: int { get; private set; } = 0;`. The C# forms,
+  `prop Count: int => …` and `get => …`, are errors saying how to write them.
+- **Object initializers:** `Window("Piper") { Width: 640, Height: 480 }` sets properties and fields after the call that
+  makes the object, as C#'s `new Window("Piper") { Width = 640, Height = 480 }` does, for Piper classes and .NET
+  types. Each is set as an assignment would set it, except that `init` properties can be set there too; a `{` after a
+  call that isn't followed by `Name:` is still a trailing closure. Setting a .NET type's `init` property elsewhere is now
+  reported (PIP0359) rather than failing in the C# compiler. New errors PIP0360 and PIP0361.
+- **`piper new`:** `piper new hello` makes a program folder with a `piper.json`, a `main.piper` (with a test) and a
+  `.gitignore`; `--template web` makes a small web API instead, using the services and web plugins.
+- **`piper run --watch`:** runs the program, and when a `.piper` file or `piper.json` changes (not under `bin/` or
+  `obj/`), stops it and runs it again; a version that doesn't compile waits for the next save. A web server is
+  restarted on its port, and a run ends with its watcher however that ends, so none is left holding the port.
+- **The args plugin:** `args Options { port: int = 5080 "The port"; verbose: bool; files: List<string>; }` declares a
+  program's command-line options as a record, with `Options.FromArgs(args)` (which prints the usage on `--help`, and
+  the mistake and usage on a bad command line, and exits) and `Options.Parse(args)` (a Result, for tests). Flags,
+  optional and required options, defaults, `--name=value`, `--` and the other arguments; typos suggest the nearest
+  option. It comes with piper, and samples/todo-api and the web template use it.
+- **Plugins come with piper:** the `piper` tool carries the actors, remote-actors, parallel, services and web plugins,
+  which a `piper.json` names, `"plugins": ["services", "web"]`, rather than giving a path to a built copy. The samples
+  name theirs, so they no longer need the plugins built first. A path still works for any other plugin.
+- **Fix:** an Option of a value type passed where .NET takes `object?` (`Console.WriteLine(xs?.Count)`) generated C#
+  that didn't compile; the value is now boxed, or null for None.
 - **Bare calls in trait defaults:** a trait's default methods name its other methods and properties bare (`Name()` for
   `this.Name()`), as a class's methods do.
 - **Fix:** a class deriving from a generic Piper class (`class Names: Repository<string>`) didn't see what it inherited:

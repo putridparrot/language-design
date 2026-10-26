@@ -18,7 +18,7 @@ public enum PiperOutput
 /// {
 ///   "name": "app", "output": "exe",
 ///   "packages": { "Humanizer.Core": "2.14.1" }, "frameworks": ["Microsoft.AspNetCore.App"], "references": ["lib/My.dll"],
-///   "plugins": ["../ext/My.Plugin.dll"]
+///   "plugins": ["web", "../ext/My.Plugin.dll"]
 /// }
 /// </code>
 /// Every key is optional and an empty file is allowed. Any other key is an error, so later versions can add keys without
@@ -30,7 +30,10 @@ public sealed record PiperProject(string? Name, PiperOutput? Output)
 {
     public const string FileName = "piper.json";
 
-    /// <summary>Paths of compiler plugin assemblies, relative to the folder (see <see cref="Plugins.PluginLoader"/>).</summary>
+    /// <summary>
+    /// Compiler plugins: the names of ones that come with piper (<c>web</c>), or paths of plugin assemblies, relative to the
+    /// folder (see <see cref="Plugins.PluginLoader"/>).
+    /// </summary>
     public ImmutableArray<string> Plugins { get; init; } = [];
 
     /// <summary>NuGet packages the program uses: id → version (see <see cref="ProgramReferences"/>).</summary>
@@ -112,7 +115,7 @@ public sealed record PiperProject(string? Name, PiperOutput? Output)
                         plugins = paths;
                         break;
                     case "plugins":
-                        Error(key, "\"plugins\" must be a list of paths to plugin assemblies, such as [\"../plugins/My.Plugin.dll\"].");
+                        Error(key, "\"plugins\" must be a list of plugins: names of ones that come with piper, or paths to plugin assemblies, such as [\"web\", \"../plugins/My.Plugin.dll\"].");
                         break;
                     case "packages" when property.Value.ValueKind == JsonValueKind.Object &&
                                          property.Value.EnumerateObject().All(p => p.Name.Length > 0 && p.Value.ValueKind == JsonValueKind.String && p.Value.GetString() is { Length: > 0 }):

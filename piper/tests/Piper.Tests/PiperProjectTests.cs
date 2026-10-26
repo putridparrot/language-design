@@ -45,9 +45,9 @@ public class PiperProjectTests
     [InlineData("{ \"name\": 3 }", "\"name\" must be a non-empty string")]
     [InlineData("[]", "must hold a JSON object")]
     [InlineData("{ \"name\": ", "isn't valid JSON")]
-    [InlineData("{ \"plugins\": \"a.dll\" }", "\"plugins\" must be a list of paths")]
-    [InlineData("{ \"plugins\": [\"\"] }", "\"plugins\" must be a list of paths")]
-    [InlineData("{ \"plugins\": [1] }", "\"plugins\" must be a list of paths")]
+    [InlineData("{ \"plugins\": \"a.dll\" }", "\"plugins\" must be a list of plugins")]
+    [InlineData("{ \"plugins\": [\"\"] }", "\"plugins\" must be a list of plugins")]
+    [InlineData("{ \"plugins\": [1] }", "\"plugins\" must be a list of plugins")]
     public void Anything_else_is_an_error(string text, string message)
     {
         var (project, errors) = Parse(text);
@@ -96,4 +96,73 @@ public class PiperProjectTests
         var (_, errors) = Parse("{\n  \"name\": \"app\"\n  \"output\": \"exe\"\n}");
         Assert.StartsWith("piper.json(3,", Assert.Single(errors).Format());
     }
+
+    [Fact]
+    public void Plugins_that_come_with_piper_are_named()
+    {
+        var folder = Directory.CreateTempSubdirectory("piper-plugins").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, PiperProject.FileName), """{ "plugins": ["services", "web"] }""");
+            var (project, errors) = LoadedProject.Load(folder);
+            Assert.Empty(errors);
+            Assert.Equal(2, project!.Plugins.Length);
+
+            File.WriteAllText(Path.Combine(folder, PiperProject.FileName), """{ "plugins": ["webb"] }""");
+            (_, errors) = LoadedProject.Load(folder);
+            var error = Assert.Single(errors);
+            Assert.Contains("isn't one that comes with piper (actors, args, parallel, remote-actors, services, web)", error.Message);
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    /// <summary>What `piper new` makes compiles without warnings, and its tests pass; the console one runs.</summary>
+    [Theory]
+    [InlineData("console")]
+    [InlineData("web")]
+    public void Templates_make_working_programs(string template)
+    {
+        var folder = Directory.CreateTempSubdirectory("piper-new").FullName;
+        try
+        {
+            var files = ProjectTemplates.Files(template, "sample");
+            Assert.Equal([".gitignore", "main.piper", PiperProject.FileName], files.Select(f => f.Path).ToArray());
+            foreach (var (path, text) in files)
+                File.WriteAllText(Path.Combine(folder, path), text);
+
+            var (project, errors) = LoadedProject.Load(folder);
+            Assert.Empty(errors);
+            Assert.Equal("sample", project!.Project.Name);
+            var sources = files.Where(f => f.Path.EndsWith(".piper")).Select(f => new SourceText(f.Text, Path.Combine(folder, f.Path))).ToList();
+            var options = new CompilationOptions(LineDirectives: true, IncludeTests: true) { Plugins = project.Plugins, References = project.References };
+            var result = Compilation.Compile(sources, options);
+            Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+            Assert.Empty(result.Diagnostics);
+            var tests = Runner.RunTests(result.Files, references: result.References);
+            Assert.True(tests.Success && tests.Results.All(r => r.Passed), string.Join("\n", tests.Errors));
+
+            if (template == "console")
+            {
+                var run = Runner.Run(Compilation.Compile(sources, options with { IncludeTests = false }).Files, args: ["Ada"]);
+                Assert.Equal("Hello, Ada!", run.Output.Trim());
+            }
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("hello", true)]
+    [InlineData("todo-api", true)]
+    [InlineData("My.App_2", true)]
+    [InlineData("9lives", false)]
+    [InlineData("has space", false)]
+    [InlineData("", false)]
+    public void Program_names_are_checked(string name, bool valid) =>
+        Assert.Equal(valid, ProjectTemplates.IsValidName(name));
 }
