@@ -1,0 +1,63 @@
+// Invariants on classes: what the constructor's arguments must satisfy, checked whenever one is made.
+using System;
+
+class Account(owner: string, opening: decimal)
+    requires owner.Length > 0
+    requires opening >= 0m
+{
+    mut balance = opening;
+
+    fn Balance() => decimal = balance;
+}
+
+// With no fields, and with conditions that bind with `is` and use static members.
+class Grid(width: int, height: int, label: string?)
+    requires width > 0, height > 0, width * height <= maxCells
+    requires (label ?? "").Length <= MaxLabel()
+    requires label is Some(l) && l != ""
+{
+    static let maxCells = 100;
+
+    static fn MaxLabel() => int = 5;
+    fn Cells() => int = width * height;
+}
+
+// Checked before the field initializers and the base constructor's arguments run.
+class Base(divisor: int) {
+    public let share = 100 / divisor;
+}
+
+class Derived(n: int): Base(10 / n) requires n != 0 {
+    let half = Half(n);
+
+    static fn Half(n: int) => int {
+        Print("  initializing half");
+        n / 2
+    }
+}
+
+fn Attempt(name: string, make: () => unit) {
+    try {
+        make();
+        Print("{name}: ok");
+    } catch (e: ArgumentException) {
+        Print("{name}: {e.Message}");
+    }
+}
+
+fn Main() {
+    Print(Account("Ada", 10m).Balance());
+    Print(Grid(4, 5, Some("map")).Cells());
+
+    let empty = "";
+    let negative = -1m;
+    let zero = 0;
+    let wide = 50;
+    Attempt("unnamed") { Account(empty, 1m); };
+    Attempt("overdrawn") { Account("Bob", negative); };
+    Attempt("too many cells") { Grid(wide, wide, Some("big")); };
+    Attempt("long label") { Grid(1, 1, Some("too long")); };
+    Attempt("no label") { Grid(1, 1, None); };
+    Attempt("derived") { Derived(4); };
+    Attempt("zero") { Derived(zero); };
+}

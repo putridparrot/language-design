@@ -1,0 +1,89 @@
+# To-do API
+
+A small REST server in Piper: services registered for dependency injection with `services { }`, and routes mapped
+with `endpoints { }`, from the [services](../../plugins/Piper.Plugins.Services) and
+[web](../../plugins/Piper.Plugins.Web) plugins.
+
+## Running it
+
+Build the two plugins once, from the `piper` folder:
+
+```
+dotnet build plugins/Piper.Plugins.Services
+dotnet build plugins/Piper.Plugins.Web
+```
+
+Then serve on <http://localhost:5080> until Ctrl+C:
+
+```
+piper run samples/todo-api --serve
+```
+
+(`piper run samples/todo-api -- --serve` does the same.) From a clone without the `piper` tool installed, run the
+CLI through dotnet, from the `piper` folder:
+
+```
+dotnet run --project src/Piper.Cli -- run samples/todo-api --serve
+```
+
+Without `--serve` it starts on a free port, calls each endpoint once, prints what comes back and stops, which is how
+the test suite runs it.
+
+Options, after `--serve`:
+
+- `--port 5090` serves on another port than 5080 (if 5080 is taken, say by another copy still running).
+- `--https` serves HTTPS too, on the next port (<https://localhost:5081>). It uses ASP.NET Core's development
+  certificate; create and trust it once with `dotnet dev-certs https --trust` (which also renews one that's expired).
+
+```
+piper run samples/todo-api --serve --https --port 5090
+```
+
+## Endpoints
+
+| Request | Does | Answers |
+|---|---|---|
+| `GET /api/todos` | lists the to-dos | 200 and a JSON array |
+| `GET /api/todos/{id}` | finds one | 200 and the to-do, or 404 |
+| `POST /api/todos` with `{"title": "…"}` | adds one | 201 and the to-do, or 400 for an empty title |
+| `PUT /api/todos/{id}/done` | marks one done | 200 and the to-do, or 404 |
+| `DELETE /api/todos/{id}` | removes one | 204, or 404 |
+| `GET /api/stats` | counts them | 200 and `{"total", "done", "open", "since"}` |
+| `GET /api/hello?name=Ada` | greets | 200 and text |
+
+## Trying it
+
+With curl:
+
+```
+curl -X POST http://localhost:5080/api/todos -H "Content-Type: application/json" -d "{\"title\":\"Try Piper\"}"
+curl http://localhost:5080/api/todos
+curl -X PUT http://localhost:5080/api/todos/1/done
+curl -i http://localhost:5080/api/todos/5
+curl http://localhost:5080/api/stats
+curl "http://localhost:5080/api/hello?name=Ada"
+curl -X DELETE http://localhost:5080/api/todos/1
+```
+
+Or in PowerShell:
+
+```powershell
+Invoke-RestMethod http://localhost:5080/api/todos -Method Post -ContentType application/json -Body '{"title":"Try Piper"}'
+Invoke-RestMethod http://localhost:5080/api/todos
+Invoke-RestMethod http://localhost:5080/api/todos/1/done -Method Put
+Invoke-RestMethod http://localhost:5080/api/stats
+```
+
+The GET requests work in a browser too.
+
+## What's where
+
+- **The data** is records (`Todo`, `NewTodo`, `Stats`), which ASP.NET Core turns into JSON and back.
+- **The services** (`services AppServices { … }`):
+  - `Clock` is a trait, implemented by `SystemClock`.
+  - `TodoStore` is a class whose constructor takes the `Clock`, which DI passes it. It's a singleton, so every request
+    sees the same to-dos.
+  - `Greeter` is transient, made afresh for each request.
+- **The routes** (`endpoints TodoApi "/api" { … }`): each handler's parameters come from the route (`{id}`), the
+  query string (`name`), the JSON body (`request: NewTodo`) or the services (`store: TodoStore`), and it answers with a
+  value (sent as JSON) or a `Results.…` status.

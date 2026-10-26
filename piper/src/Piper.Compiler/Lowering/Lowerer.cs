@@ -28,10 +28,14 @@ public sealed class Lowerer
             [.. functions.Select(f => new BoundFunction(f.Symbol, lowerer.LowerFunction(f), f.IsExpressionBodied))];
         foreach (var @class in program.Types.OfType<ClassSymbol>())
         {
-            foreach (var field in @class.Fields.Where(f => f.Initializer is not null))
+            foreach (var field in @class.StaticFields.Concat(@class.Fields).Where(f => f.Initializer is not null))
                 field.Initializer = lowerer.LowerInitializer(field.Initializer!);
             @class.BaseArguments = [.. @class.BaseArguments.Select(lowerer.LowerInitializer)];
+            @class.Invariants = lowerer.LowerInvariants(@class.Invariants);
+            @class.Constructors = [.. @class.Constructors.Select(c => c with { ThisArguments = [.. c.ThisArguments.Select(lowerer.LowerInitializer)] })];
         }
+        foreach (var record in program.Types.OfType<RecordSymbol>())
+            record.Invariants = lowerer.LowerInvariants(record.Invariants);
         return new BoundProgram(program.Files, program.FileNamespaces, program.Types, program.BuiltinTypes, LowerAll(program.Functions), LowerAll(program.Methods), program.Main)
         {
             Tests = [.. program.Tests.Select(t => t with { Function = LowerAll([t.Function])[0] })],
@@ -46,6 +50,10 @@ public sealed class Lowerer
     /// A class field's initializer, or a base constructor argument: an expression C# runs in the constructor. One that
     /// lowers to statements (a `match` with blocks, say) runs them in a lambda called on the spot.
     /// </summary>
+    /// <summary>A record's or class's invariants, checked in an initializer, so lowered as one.</summary>
+    private ImmutableArray<BoundContract> LowerInvariants(ImmutableArray<BoundContract> invariants) =>
+        [.. invariants.Select(contract => contract with { Condition = LowerInitializer(contract.Condition) })];
+
     private BoundExpression LowerInitializer(BoundExpression value)
     {
         var prelude = new List<BoundStatement>();
@@ -534,7 +542,7 @@ public sealed class Lowerer
             case BoundIndexExpression index:
             {
                 var operands = LowerOperands([index.Target, .. index.Arguments], prelude);
-                return new BoundIndexExpression(operands[0], index.Indexer, operands[1..], index.Type);
+                return new BoundIndexExpression(operands[0], index.Indexer, operands[1..], index.Type) { PiperIndexer = index.PiperIndexer };
             }
 
             case BoundCollectionExpression collection:
@@ -599,7 +607,7 @@ public sealed class Lowerer
                 var operands = LowerOperands([.. targetOperands, assignment.Value], prelude);
                 BoundExpression loweredTarget = target switch
                 {
-                    BoundIndexExpression index => new BoundIndexExpression(operands[0], index.Indexer, operands[1..^1], index.Type),
+                    BoundIndexExpression index => new BoundIndexExpression(operands[0], index.Indexer, operands[1..^1], index.Type) { PiperIndexer = index.PiperIndexer },
                     BoundClrMemberExpression { Receiver: not null } member =>
                         new BoundClrMemberExpression(operands[0], member.ContainerType, member.Member, member.Type),
                     _ => target,

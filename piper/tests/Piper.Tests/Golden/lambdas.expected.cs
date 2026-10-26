@@ -18,7 +18,7 @@ public static class Lambdas
     {
         global::System.Func<int, int> increment = (int x) => x + 1;
         global::System.Console.WriteLine(increment(41));
-        global::System.Console.WriteLine(Apply((int x_1) => x_1 * x_1, 7));
+        global::System.Console.WriteLine(Apply((int x) => x * x, 7));
         global::System.Func<int, int, int> add = (int a, int b) => a + b;
         global::System.Console.WriteLine(add(2, 3));
         global::System.Console.WriteLine(Apply(Doubled, 21));
@@ -31,24 +31,24 @@ public static class Lambdas
         accumulate(10);
         accumulate(5);
         global::System.Console.WriteLine(total);
-        global::System.Func<int, string> classify = (int n_1) => {
-            if (n_1 < 0)
+        global::System.Func<int, string> classify = (int n) => {
+            if (n < 0)
             {
                 return "negative";
             }
-            return n_1 == 0 ? "zero" : "positive";
+            return n == 0 ? "zero" : "positive";
         };
         global::System.Console.WriteLine(classify(-3));
         global::System.Console.WriteLine(classify(0));
         global::System.Console.WriteLine(classify(8));
         global::System.Collections.Generic.List<int> numbers = new global::System.Collections.Generic.List<int> { 5, 3, 8, 1, 9, 2 };
-        global::System.Collections.Generic.List<int> evens = global::System.Linq.Enumerable.ToList<int>(global::System.Linq.Enumerable.Select<int, int>(global::System.Linq.Enumerable.Where<int>(numbers, (int n_2) => n_2 % 2 == 0), (int n_3) => n_3 * 10));
+        global::System.Collections.Generic.List<int> evens = global::System.Linq.Enumerable.ToList<int>(global::System.Linq.Enumerable.Select<int, int>(global::System.Linq.Enumerable.Where<int>(numbers, (int n) => n % 2 == 0), (int n) => n * 10));
         global::System.Console.WriteLine(string.Join<int>(", ", evens));
-        global::System.Console.WriteLine(global::System.Linq.Enumerable.Any<int>(numbers, (int n_4) => n_4 > 8));
+        global::System.Console.WriteLine(global::System.Linq.Enumerable.Any<int>(numbers, (int n) => n > 8));
         global::System.Console.WriteLine(global::System.Linq.Enumerable.Sum(numbers));
-        global::System.Console.WriteLine(string.Join(" ", global::System.Linq.Enumerable.Select<int, string>(global::System.Linq.Enumerable.OrderBy<int, int>(numbers, (int n_5) => n_5), (int n_6) => $"<{n_6}>")));
+        global::System.Console.WriteLine(string.Join(" ", global::System.Linq.Enumerable.Select<int, string>(global::System.Linq.Enumerable.OrderBy<int, int>(numbers, (int n) => n), (int n) => $"<{n}>")));
         global::System.Collections.Generic.List<string> names = new global::System.Collections.Generic.List<string> { "Grace", "Ada", "Linus" };
-        names.Sort((string a_1, string b_1) => a_1.Length - b_1.Length);
+        names.Sort((string a, string b) => a.Length - b.Length);
         global::System.Console.WriteLine(string.Join(", ", names));
         global::System.Console.WriteLine(names.Exists((string name) => name.StartsWith("L")));
         global::System.Collections.Generic.List<global::System.Func<int>> captured = new global::System.Collections.Generic.List<global::System.Func<int>>();
@@ -57,9 +57,9 @@ public static class Lambdas
             int i = i_1;
             captured.Add(() => i * 10);
         }
-        foreach (int n_7 in new global::System.Collections.Generic.List<int> { 7, 8 })
+        foreach (int n_1 in new global::System.Collections.Generic.List<int> { 7, 8 })
         {
-            captured.Add(() => n_7);
+            captured.Add(() => n_1);
         }
         global::System.Console.WriteLine(string.Join<int>(" ", global::System.Linq.Enumerable.Select<global::System.Func<int>, int>(captured, (global::System.Func<int> f) => f())));
     }

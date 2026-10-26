@@ -45,15 +45,21 @@ function        = [ "static" ] [ "async" ] ( "fn" IDENT [ typeParameters ] | "op
                   { requires } ( block | "=" expression ";" | ";" ) ;      (* ";" only for required trait methods; "static" only in traits and extend blocks *)
 record          = "record" IDENT [ typeParameters ] "(" [ parameters ] ")" { requires } ";" ;
 class           = [ "abstract" | "sealed" ] "class" IDENT [ typeParameters ] [ "(" [ parameters ] ")" ]
-                  [ ":" baseType { "," baseType } ] "{" { classMember } "}" ;
+                  [ ":" baseType { "," baseType } ] { requires } "{" { classMember } "}" ;
 baseType        = type [ "(" [ arguments ] ")" ] ;               (* a base class first, with its constructor arguments; then traits and interfaces *)
-classMember     = attributes [ "public" | "private" ] ( field | [ "static" ] [ "virtual" | "override" | "abstract" ] function ) ;
-field           = ( "let" | "mut" ) IDENT [ ":" type ] "=" expression ";" ;   (* private unless "public"; methods are public unless "private" *)
+classMember     = attributes [ "public" | "private" | "protected" ]
+                  ( field | constructor | [ "static" ] [ "virtual" | "override" | "abstract" ] ( function | property ) ) ;
+field           = [ "static" ] ( "let" | "mut" ) IDENT [ ":" type ] "=" expression ";" ;   (* private unless "public"; methods are public unless "private" *)
+property        = "prop" ( IDENT | "this" "[" parameters "]" ) [ ":" type ]               (* "this[…]": an indexer; public unless "private" *)
+                  ( "=>" expression ";" | "{" { accessor } "}" [ "=" expression ";" ] ) ;
+accessor        = [ "private" | "protected" ] ( "get" | "set" | "init" ) ( ";" | "=>" expression ";" | block ) ;   (* prop, get, set and init are keywords only here *)
+constructor     = IDENT "(" [ parameters ] ")" [ ":" "this" "(" [ arguments ] ")" ] block ;   (* IDENT is the class's name *)
 requires        = "requires" condition { "," condition } ;    (* condition: an expression without assignment, of type bool *)
 enum            = "enum" IDENT [ typeParameters ] "{" [ variant { "," variant } [ "," ] ] "}" ;
 variant         = IDENT [ "(" [ parameters ] ")" ] ;
-trait           = "trait" IDENT [ typeParameters ] [ ":" type { "," type } ] "{" { attributes function } "}" ;   (* ": Named" inherits *)
-extend          = "extend" namedType [ ":" type { "," type } ] "{" { attributes [ "private" ] function } "}" ;
+trait           = "trait" IDENT [ typeParameters ] [ ":" type { "," type } ] "{" { attributes ( function | property ) } "}" ;   (* ": Named" inherits *)
+extend          = "extend" namedType [ ":" type { "," type } ] "{" { attributes [ "private" ] ( function | [ "static" ] property ) } "}" ;
+                  (* a trait's or extend block's property has a "get" alone *)
 typeParameters  = "<" typeParameter { "," typeParameter } [ "," ] ">" ;
 typeParameter   = IDENT [ ":" type { "+" type } ] ;           (* bounds must be traits *)
 parameters      = parameter { "," parameter } [ "," ] ;
@@ -155,7 +161,7 @@ generic call `a<b, c>(d)`, as in C#.
 ### Lexical structure
 
 - **Identifiers:** ASCII letters, digits and `_`, not starting with a digit.
-- **Reserved words:** `requires` is a keyword only after a signature, but can't be a name anywhere. `const operator test where type impl module import self base public internal protected sealed abstract override virtual class struct interface` aren't keywords yet but may become ones, so they can't be used as names (of variables, parameters, fields, functions or types). `class`, `abstract`, `sealed`, `virtual`, `override` and `base` are used by [classes](#classes) and still can't be names. They can still follow a dot, to reach a .NET member of that name.
+- **Reserved words:** `requires` is a keyword only after a signature, but can't be a name anywhere. `const operator test where type impl module import self base public internal protected sealed abstract override virtual class struct interface` aren't keywords yet but may become ones, so they can't be used as names (of variables, parameters, fields, functions or types). `class`, `abstract`, `sealed`, `virtual`, `override`, `protected` and `base` are used by [classes](#classes) and still can't be names. `prop`, `get`, `set`, `init` and `value` are keywords only where properties use them, so they can be names elsewhere. They can still follow a dot, to reach a .NET member of that name.
 - **Keywords:** `fn let mut if else while for in return break continue record enum match trait extend static this null is namespace using private try catch finally defer throw out true false`; `async`, `await`, `yield` and `ref`, which are contextual as in C# (still usable as names); and the builtin type names `int long double bool string char object byte sbyte short ushort uint ulong float decimal unit`.
 - **Comments:** `// line` and `/* block */`. Block comments nest. `///` lines directly above a declaration, method, parameter, field or enum variant are its documentation: the editor shows it, and the generated C# carries it as XML documentation (`piper build --exe` and `--library` also write the `.xml` file).
 - **Integers:** `42`, `1_000_000`, `0xFF`, `0b1010`. Suffixes as in C#: `L` long (`3_000_000_000L`), `U` uint (or ulong if it doesn't fit), `UL` ulong. An unsuffixed literal must fit in int (C# would make a larger one a uint or long; Piper asks for the suffix); as in C#, `-2147483648` and `-9223372036854775808L` are allowed too.
@@ -176,7 +182,7 @@ anything else, and .NET's names for them (`String`, `Int32` with `using System;`
 - **Records:** `record Point(x: int, y: int);` declares an immutable value type with value equality. Construct one with `Point(1, 2)` and read fields with `p.x`. To change fields, copy with a spread, as in TypeScript: `{ ...p, y: 5 }` is `p` with `y` replaced, and a field written alone takes the variable of that name (`{ ...p, height }`).
 - **Implicit conversions:** C#'s implicit numeric conversions, which never lose magnitude: int → long → float → double, byte → int, char → int, int → decimal and so on. Narrowing needs a cast. As in C#, a constant that fits converts implicitly to a smaller integer type: `let b: byte = 200;`, `stream.WriteByte(7)`.
 - **Arithmetic:** C#'s numeric promotion: mixed operands are converted to the wider type, so `1 + 2.5` is a double, and anything smaller than int is done as int, so `byte + byte` is an int and `'a' + 1` is 98. decimal doesn't mix with float or double, nor ulong with signed types, without a cast. `/` on integers truncates. `b += 1` on a byte works, as in C#.
-- **Casts:** `(int)2.7` is 2, `(byte)300` wraps to 44 (unless it's a constant, when it's an error), `(char)65` is `'A'`, as in C#. Casts also go from a trait, `object`, a base class or a .NET base type to something more specific (throwing `InvalidCastException` if the value isn't one). As in C#, `(T)` is a cast only if the token after it can start an operand (an identifier, literal, `(`, `!`, …), so `(a) - b` is a subtraction.
+- **Casts:** `(int)2.7` is 2, `(byte)300` wraps to 44 (unless it's a constant, when it's an error), `(char)65` is `'A'`, as in C#. A .NET enum casts to and from a number, and to another enum: `(int)response.StatusCode`, `(DayOfWeek)3`. Casts also go from a trait, `object`, a base class or a .NET base type to something more specific (throwing `InvalidCastException` if the value isn't one). As in C#, `(T)` is a cast only if the token after it can start an operand (an identifier, literal, `(`, `!`, …), so `(a) - b` is a subtraction.
 - **Never:** the internal type of a block that always returns, breaks or continues. It fits wherever any type is expected, so `let x = if ok { 1 } else { return; };` type-checks.
 - **Overflow:** integer arithmetic wraps around on overflow, as in C#'s default (unchecked) context: with `let max = int.MaxValue;`, `max + 1 == int.MinValue`. Constant expressions are checked, as in C#: `int.MaxValue + 1`, `(byte)300` and `1 / 0` are compile errors.
 - **Tuples and arrays:** `(int, string)` is a tuple and `int[]` an array, both as in C#; see [Tuples](#tuples-and-deconstruction) and [Collections](#collections).
@@ -285,6 +291,8 @@ extend Circle: Shape {
 ```
 
 - **Implementing a trait:** `extend Type: Trait1, Trait2 { … }` declares that a record or enum implements traits. Every required method must be present, with exactly the trait's signature.
+- **Bare names in defaults:** a trait's methods (and those an `extend Trait` block adds) name its other instance methods and properties, and those it inherits, bare: `fn Describe() => string = "{Label}: {Area()}"` means `this.Label` and `this.Area()`.
+- **Properties:** a trait can declare read-only properties, required (`prop Area: double { get; }`) or with a default (`prop Label: string => "shape";`). A record or enum implements them in its `extend` block (`prop Area: double => …;`), a builtin or .NET type likewise, and a class with a property of the same name and type, or a public field or automatic property. They're read like fields, `shape.Area`, also through a bound `T: Shape`. C# sees them as interface properties. A trait's properties can't have a `set`, since a trait has nowhere to store a value.
 - **Traits as types:** a trait is also a type. A `Circle` converts implicitly to `Shape`, and calls through a `Shape` value dispatch dynamically.
 - **Traits as bounds:** a type parameter bound by a trait gets static dispatch.
 - **Using the expected type:** when an `if` or `match` produces different types that all implement the expected trait, the trait is used, e.g. `let s: Shape = if c { circle } else { rect };`.
@@ -295,7 +303,7 @@ extend Circle: Shape {
   - **Ambiguity:** two parents can't both declare a method with the same name. If two unrelated parents override the same method, a trait or type that inherits both must override it again, as in C#.
 - **Generic methods:** a trait method can take type parameters of its own, `fn MapAll<U>(f: (T) => U) => List<U>;`. An implementation has as many type parameters, with the same bounds, under any names: `fn MapAll<R>(f: (int) => R) => List<R>`.
 - **Adding methods to a trait:** `extend Named { fn Shout() => string = this.Greet().ToUpper(); }` adds default methods to a trait, including one declared in another file or namespace, and every implementer gets them. They must have bodies and can't be static or private, and the block can't make the trait implement other traits (list parents in its declaration).
-- **.NET interfaces:** `extend` can implement a .NET interface too, and one can be a bound. Each method of `extend Money: IComparable<Money> { fn CompareTo(other: Money?) => int = … }` has the interface's signature as Piper sees it: a parameter or result .NET marks as possibly null is an Option, as when calling .NET. Then `wallet.Sort()` uses it, `using let c = Connection(…)` works for an `IDisposable`, and the record passes wherever .NET expects the interface (`words.Sort(ByLength())` for an `IComparer<string>`). `fn Largest<T: IComparable<T>>(items: List<T>)` accepts Piper types that implement it and .NET types such as `int` and `string`, and calls `a.CompareTo(b)` on them. Only interfaces made of instance methods (no properties, events, static or generic methods, or ref and out parameters) can be implemented.
+- **.NET interfaces:** `extend` can implement a .NET interface too, and one can be a bound. Each method of `extend Money: IComparable<Money> { fn CompareTo(other: Money?) => int = … }` has the interface's signature as Piper sees it: a parameter or result .NET marks as possibly null is an Option, as when calling .NET. Then `wallet.Sort()` uses it, `using let c = Connection(…)` works for an `IDisposable`, and the record passes wherever .NET expects the interface (`words.Sort(ByLength())` for an `IComparer<string>`). `fn Largest<T: IComparable<T>>(items: List<T>)` accepts Piper types that implement it and .NET types such as `int` and `string`, and calls `a.CompareTo(b)` on them. Only interfaces made of instance methods (no properties, events, static or generic methods, or ref and out parameters) can be implemented, except that a class can also implement an interface's properties with its own (see [Classes](#classes)).
   - **Comparison operators:** a type that implements `IComparable<T>` for itself (`extend Version: IComparable<Version>`, or a class listing it) has `<`, `<=`, `>` and `>=`, which call its `CompareTo`. They're C# operators, so C# code can use them too, and sorting, `Max` and `Order` use the same `CompareTo`.
   - **Sequences:** a record, enum or class can implement `IEnumerable<T>` with one method, an iterator: `fn GetEnumerator() => IEnumerator<int> { … yield return i; … }`. Piper supplies the non-generic `IEnumerable.GetEnumerator` that C# also requires. The type then works with `for`, LINQ (`countdown.Where(n => n > 2)`) and anything that takes a sequence (`string.Join`, `List<int>(countdown)`).
 - **Static methods:** `static fn Empty() => T;` in a trait is a C# static abstract member, and one with a body a default (`static virtual`). Implementers write `static fn Empty() => Total = …`. They are called through a type parameter bounded by the trait, as in C#: `fn Concat<T: Monoid<T>>(items: List<T>) => T { mut result = T.Empty(); … }`. They can also be called on a type that implements the trait, including a default it doesn't override (`Total.Describe()`), but not on the trait itself. A trait with static methods can only be a bound, not the type of a value.
@@ -332,6 +340,7 @@ let s = Option.Some(5).GetOr(0);
 
   Operands convert as for a call (`2 * v` widens the int), the overload whose operand types match exactly wins, and `+=` and the other compound assignments use the operator. Comparisons and `==` can't be declared: records already compare by value, and implementing `IComparable<T>` gives `<`, `<=`, `>` and `>=` (see [Traits](#traits)). Nor can operators be declared on traits, builtin or .NET types.
 - **Instance and static methods:** as in C#, a method is an instance method by default, with `this` referring to the receiver. Mark it `static fn` to call it on the type instead, e.g. `int.Zero()`. There is no explicit receiver parameter.
+- **Properties:** an extend block can add read-only properties, computed each time they're read: `extend int { prop IsEven: bool => this % 2 == 0; static prop Answer: int => 42; }`, read as `4.IsEven` and `int.Answer`. Inside the block's methods they're named bare. On a builtin or .NET type they're C# 14 extension properties. They can't have a `set` or an initial value, since there's nowhere to store one.
 - **`this` is immutable.** Using it in a static method or a top-level function is an error.
 - **Generic types:** write `extend Option`, not `extend Option<int>`. Methods apply to every instantiation.
 - **Name clashes are errors.** A method can't share a name with a field, a variant, a variant's field (variants inherit their enum's methods) or another method.
@@ -381,13 +390,156 @@ ada.Deposit(25m);
   call. A class without parameters is made with `Counter()`. Generic classes take their type arguments explicitly or
   from the expected type: `Stack<int>()`, `let t: Stack<string> = Stack();`.
 - **Constructor parameters** are in scope in every field initializer and instance method, as in a C# primary
-  constructor. A field initializer can use the parameters but not other fields.
+  constructor. A field initializer can use the parameters, static fields and static methods, but not other instance
+  fields.
+- **Other constructors** are written as in C#, named after the class, and call the primary constructor first with
+  `: this(…)`, then run their body:
+
+  ```piper
+  class Account(owner: string, opening: decimal) {
+      mut balance = opening;
+      prop Source: string { get; init; } = "opened";
+
+      Account(owner: string): this(owner, 0m) {
+          Source = "opened empty";
+      }
+
+      private Account(): this("anonymous", 0m) { }
+  }
+  ```
+
+  - `: this(…)` can be left out when the primary constructor needs no arguments. A class written without parameters
+    still has a primary constructor, `Counter()`, which the others call.
+  - Its arguments come from the constructor's parameters and the class's static members; there's no instance yet. The
+    body has one: it can call methods and set `mut` fields and properties, `init` ones included. `let` fields keep the
+    value their initializers give them.
+  - `Account("Ada")`, and a derived class's base list, choose among the constructors by their arguments, preferring
+    one whose parameter types they match exactly. Two constructors can't take the same parameter types.
+  - Constructors are public unless marked `private` (only the class can call it, say from a static factory) or
+    `protected` (only derived classes, from their base list).
+  - The class's invariants are checked by the primary constructor, so every constructor checks them.
+- **Invariants:** `requires` clauses after the base list state what the constructor's arguments must satisfy, checked
+  whenever one is made (see [Preconditions and invariants](#preconditions-and-invariants)):
+
+  ```piper
+  class Account(owner: string, opening: decimal): Audited(owner)
+      requires owner.Length > 0
+      requires opening >= 0m
+  {
+      mut balance = opening;
+  }
+  ```
 - **Fields:** `let` fields are read-only, `mut` fields can be assigned in methods (`balance += amount`). Fields are
-  private unless marked `public`; a public field is a C# property, settable from outside when it's `mut`. The type
-  may be left to the initializer.
-- **Methods** are public unless marked `private`. Inside an instance method, fields, parameters and the other methods
+  private unless marked `public` or `protected`; a public field is a C# property, settable from outside when it's `mut`.
+  The type may be left to the initializer.
+- **Methods** are public unless marked `private` or `protected`. Inside an instance method, fields, parameters and the other methods
   are named bare (`balance`, `Log(…)`), or through `this` (`this.name`), which is needed only when a parameter of the
   method hides a field. Static methods have no instance, so using a field or an instance method in one is an error.
+- **Properties** (`prop`) are read and set like fields, but compute their value, check what they're given, or can be
+  set only inside the class:
+
+  ```piper
+  class Account(owner: string) {
+      mut balance = 0m;
+      mut name = owner;
+
+      prop Balance: decimal => balance;                  // computed: a getter alone
+      prop Deposits: int { get; private set; } = 0;      // automatic: stores its value; set only inside Account
+      prop Name: string {                                // both accessors; the setter is given `value`
+          get => name;
+          set { name = value.Trim(); }
+      }
+      private prop Summary: string => "{name}: {balance}";
+  }
+
+  account.Name = " Ada ";
+  Print("{account.Name} {account.Balance} {account.Deposits}");
+  ```
+
+  - **Forms:** a getter alone, `prop P: T => expression;`. Accessors, `{ get … set … }`, each `=> expression;` or a
+    block. Or an automatic property, `{ get; }` or `{ get; set; }` with an initial value after it (`= 0;`), which stores
+    its value as a field does. A property with accessors needs its type; an automatic one can take it from its initial
+    value.
+  - **Access:** properties are public unless marked `private` or `protected`, like methods. `private set` makes a public
+    property settable only inside its class (not in derived classes, as in C#), and `protected set` in it and the classes
+    deriving from it. Assigning to a property without a `set` is an error.
+  - **`init`** in place of `set` makes a property settable only while the object is made: in a constructor of its class
+    or of one deriving from it, on `this` (not in a lambda there), and by C# code's object initializers.
+    `prop Opened: DateOnly { get; init; } = DateOnly(2026, 1, 1);`
+  - Inside the class they're named bare, like fields (`Balance`, `Deposits += 1`). `static prop` belongs to the class:
+    `Account.Opened`.
+  - `get` and `set` are bodies like a method's: `set` is given the new value as `value`, `get` can `yield` (making it an
+    iterator), and neither can `await`. `prop` is a keyword only in a class, before the property's name.
+  - **Overriding:** `virtual prop`, `abstract prop P: T { get; set; }` (accessors without bodies, in an abstract class)
+    and `override prop` work as for methods, and must keep the property's type. An override can't add a `set` the
+    property it overrides doesn't have.
+  - A class can override a .NET base's properties (`override prop Message: string => …` on an `Exception`), and must
+    complete its abstract ones: a `Stream` needs `CanRead`, `CanSeek`, `CanWrite`, `Length` and `Position`.
+  - A class implements a .NET interface's properties with its own, of the same name and type, with a public `set` if
+    the interface's has one: `class Countdown(n: int): IReadOnlyCollection<int> { prop Count: int => n; … }`. A
+    property .NET marks as possibly null is an Option, as for methods (`prop AsyncState: object? => None;`).
+  - Traits and `extend` blocks can declare read-only properties too (see [Traits](#traits) and
+    [Methods and `extend`](#methods-and-extend)).
+- **Indexers** let a class be used with `[]`, as arrays and lists are. One is a property named `this` with parameters:
+
+  ```piper
+  class Grid(width: int, height: int) {
+      let cells: int[] = int[width * height];
+
+      prop this[x: int, y: int]: int {
+          get => cells[y * width + x];
+          set { cells[y * width + x] = value; }
+      }
+      prop this[cell: string]: int => …;      // overloaded by parameter types
+  }
+
+  grid[1, 2] = 5;
+  grid[1, 2] += 1;
+  ```
+
+  - They have a `get`, and a `set` if they can be assigned. They take the property forms and access (`private set`,
+    `protected`), and can be `virtual`, `abstract` and `override`, but can't be static, automatic or `init`.
+  - Overloads must take different parameter types; `value[…]` chooses the one its arguments match exactly, otherwise
+    the one they convert to.
+  - A class implements a .NET interface's indexer with one of the same parameter and result types:
+    `class Ring<T>: IReadOnlyList<T>` with `prop this[i: int]: T`.
+- **Protected members:** `protected` fields, properties, methods, indexers and constructors are for the class and the
+  classes deriving from it. As in C#, a derived class uses an instance member through an instance of its own class
+  (`this`, or another of its kind), not through the base class. Overrides keep the access of what they override, so an
+  override of a protected method (Piper's or .NET's, like `Collection<T>.InsertItem`) is protected too, and can't be
+  made protected if what it overrides is public. `private` can't be combined with `virtual`, `abstract` or `override`.
+- **Attributes** go on a class and on its fields, properties, indexers, methods and constructors, as on records:
+  `[JsonPropertyName("id")] public let Id = id;`. A public field or automatic property is a C# property with a backing
+  field, so an attribute goes on the property if it applies to properties, otherwise on the field (`[field: …]`, for
+  `[NonSerialized]`); a private or protected field is a C# field.
+- **Static fields** belong to the class, not an instance: one counter, cache or shared value for every `Account`.
+
+  ```piper
+  class Ticket(holder: string) {
+      static mut issued = 0;
+      public static let prefix = "T";
+      static let pattern = "{prefix}-*";       // can use the static fields before it
+      let number = issued;                     // an instance field's initializer can use static fields
+
+      fn Issue() => string {
+          issued += 1;
+          "{prefix}{number} for {holder}"
+      }
+  }
+
+  Print(Ticket.prefix);
+  ```
+
+  - Inside the class (in instance and static methods, and initializers) they're named bare; outside, through the
+    class: `Ticket.prefix`, `Config.created += 1`. Naming one through an instance (`ticket.prefix`) is an error.
+  - Privacy, `let` and `mut` work as for instance fields. A public one is a C# static property, settable from outside
+    when it's `mut`.
+  - Their initializers run in the order they're declared, before any instance is made. An initializer can use the
+    static fields before it and the static methods, but not the constructor's parameters or instance fields. Naming
+    one declared after it is an error, where C# would silently read its default value.
+  - Each instantiation of a generic class has its own: `Pool<int>.made` and `Pool<string>.made` are different fields,
+    so outside the class the type arguments must be given.
+  - A derived class names the public static fields of its Piper base classes bare, as it does their methods.
 - **Privacy is per class,** as in C#: methods of `Account` can use the private members of any `Account`.
 - **Identity:** classes compare by reference. Two accounts with the same balance aren't equal, and passing one around
   passes the same object.
@@ -406,6 +558,11 @@ ada.Deposit(25m);
   class NotFound(id: int): System.Exception("No item {id}") { public let item = id; }
   ```
 
+  - **Generic bases:** a class can derive from a generic class, passing its type arguments:
+    `class Names: Repository<string>("names")`, or `class Pairs<U>: Repository<List<U>>(…)`. What it inherits takes them:
+    inside `Names`, the base's `items: List<T>` is a `List<string>`, and an override of `fn Describe(item: T)` is
+    `override fn Describe(item: string)`. A generic class can derive from a generic .NET class too (`class Bag<T>: List<T>`),
+    and a class deriving from `Bag<int>` has `List<int>`'s members.
   - A class converts implicitly to its base classes (`let shapes: List<Shape> = [Circle(1.0)];`), and calls through
     the base dispatch to the override.
   - Only `virtual` and `abstract` methods can be overridden, by a method marked `override` with the same signature.
@@ -437,8 +594,6 @@ ada.Deposit(25m);
     can use protected ones (on itself, or another instance of its class). Outside, protected members stay hidden.
   - A class deriving from a .NET collection can be indexed, iterated and queried with LINQ like the collection.
   - A class deriving from `Exception` can be thrown and caught by its type.
-  - A .NET base whose abstract members are properties (`Stream`) can't be completed yet, since classes can't declare
-    properties.
   - A collection literal of different classes needs a type, as in C#: `let shapes: List<Shape> = [Square(1.0), Circle(1.0)];`.
 - **Traits and interfaces** follow the base class in the list, and are implemented by the class's methods:
   `class Dog(name: string): Named { fn Name() => string = name; }`, or
@@ -565,6 +720,9 @@ points.Add(Point(1, 2));                   // and can hold Piper values
 - **`ref` parameters** take `ref x`, where x is a `mut` variable of exactly the parameter's type, or an array element: `Interlocked.Increment(ref counter)`, `Array.Resize(ref items, 10)`. .NET's nullability on a ref parameter is ignored, since the variable already has a type.
 - **Operators** a .NET type declares work as in C#: `date > other` on DateOnly, `end - start` on DateTime (a TimeSpan), `span += TimeSpan.FromHours(1)`, BigInteger arithmetic.
 - **Implicit conversions** a .NET type declares (C#'s `implicit operator`) apply as in C#: `BigInteger.Pow(2, 70)`, `let big: BigInteger = 5;`, `big + 1`, and `XElement("root", …)`, where a string becomes an `XName`. In overload resolution they come last, after exact matches, widening and base types.
+- **`None` as an argument** goes where .NET takes null, and is typed once the overload is chosen: `client.PutAsync(url, None)` picks the `string` or `Uri` overload by the URL. If several overloads take null there and nothing else tells them apart (`sb.Append(None)`), the call is ambiguous, as in C#.
+- **Piper types as type arguments:** a .NET generic given a Piper trait or class takes what implements or derives from it: `List<Shape>().Add(Circle(1.0))`, `services.AddSingleton<Clock>(SystemClock())`, `Task.FromResult<Shape>(…)`. A builtin implementing the trait is boxed on the way in (`shapes.Add(5)` with `extend int: Shape`).
+- **Variance** works as in C#: a variant interface or delegate converts when its `out` type arguments convert by reference (and its `in` ones the other way), so a `List<Circle>` is an `IEnumerable<Shape>` (`shapes.AddRange(circles)`), a `Func<Dog>` a `Func<Animal>`, and an `IComparer<Shape>` sorts a `List<Circle>`. Value types don't vary: an `int` becomes a `Shape` only by boxing, so a `List<int>` isn't an `IEnumerable<Shape>`. `List<T>` itself is invariant, as in C#.
 - **Spans** (`Span<T>`, `ReadOnlySpan<T>`) aren't supported yet, so methods that take or return them, such as `AsSpan`, can't be called. Most have an overload taking an array or string.
 - **Events:** `list.CollectionChanged += handler` adds a handler and `-=` removes it, as in C#. The handler is a lambda or a function, converted to the event's delegate type. An event can't be read or assigned with `=`.
 
@@ -584,7 +742,7 @@ fn LegacyParse(text: string) => int = int.Parse(text);
 
 - **Names:** `Obsolete` means `ObsoleteAttribute` (tried first) or `Obsolete`, found like any type name, so it needs a `using` or a qualified name (`System.Obsolete`). It must be a .NET attribute class; Piper can't declare attributes.
 - **Arguments** are the constructor's, which must be constants (literals, .NET enum members such as `AttributeTargets.Method`, constant fields, and operators on those), followed by `Name = value` for the attribute's settable properties and fields: `[Obsolete("Old", DiagnosticId = "APP001")]`. Several attributes can share brackets: `[Serializable, Obsolete]`.
-- **Where they go:** on records, enums and traits (C# classes and interfaces), functions and methods, parameters, and record and variant fields. A field's attribute goes on the C# property when it applies to properties (`[property: …]`, so System.Text.Json and similar see it), otherwise on the backing field, otherwise the constructor parameter. An attribute that can't go where it's written (`[Serializable]` on a function) is an error, as is repeating one that doesn't allow it.
+- **Where they go:** on records, enums, traits and classes (C# classes and interfaces), functions, methods and constructors, parameters, record and variant fields, and a class's fields, properties and indexers (see [Classes](#classes) for where a class field's attribute lands). A record field's attribute goes on the C# property when it applies to properties (`[property: …]`, so System.Text.Json and similar see it), otherwise on the backing field, otherwise the constructor parameter. An attribute that can't go where it's written (`[Serializable]` on a function) is an error, as is repeating one that doesn't allow it.
 - **`[Obsolete]`** on a Piper declaration makes each use of it a warning, `'F' is obsolete: message` (an error with `[Obsolete("…", true)]`), as in C#. Uses of obsolete .NET types, methods, constructors and properties are reported the same way (`'WebClient' is obsolete: … Use HttpClient instead.`).
 
 ### Named arguments and default values
@@ -628,6 +786,11 @@ names.Sort((a, b) => a.Length - b.Length);    // a .NET delegate type
 - An error in a lambda passed to an overloaded .NET method is reported in the lambda, not as "no overload accepts
   these arguments", when its parameters say which overload is meant.
 - A lambda without annotations needs an expected function type; a lambda with too few or many parameters for it is an error.
+- **A function named as a value** (top-level, local, or a static method of a record, enum or class: `Point.Make`)
+  converts to any delegate type with its signature, as a C# method group does: `numbers.ConvertAll(Square)` (a
+  `Converter`), `numbers.FindAll(IsEven)` (a `Predicate`), `words.Sort(ByLength)` (a `Comparison`), `Thread(Work)` (a
+  `ThreadStart`). A generic .NET method infers its type arguments from the function's: `Array.ConvertAll(array, Describe)`.
+  A variable holding a function is a delegate already, and, as in C#, doesn't convert to another delegate type.
 
 ### Local functions
 
@@ -898,8 +1061,8 @@ Evaluation is strictly left to right, including operands that contain blocks.
 
 ### Preconditions and invariants
 
-A function, method or operator can state what its arguments must satisfy, and a record what its fields must, with
-`requires` clauses:
+A function, method or operator can state what its arguments must satisfy, a record what its fields must, and a class
+what its constructor's arguments must, with `requires` clauses:
 
 ```piper
 fn Sqrt(x: double) => double
@@ -912,9 +1075,11 @@ fn Withdraw(amount: decimal, balance: decimal) => decimal
 = balance - amount;
 
 record Percentage(value: int) requires value >= 0 && value <= 100;
+
+class Grid(width: int, height: int) requires width > 0, height > 0 { … }
 ```
 
-- **Conditions** are `bool` expressions over the parameters (and `this` in an instance method), or a record's fields. As in an `if`, they can bind with `is`: `requires count is Some(n) && n > 0`.
+- **Conditions** are `bool` expressions over the parameters (and `this` in an instance method), a record's fields, or a class's constructor parameters (and its static fields and methods). As in an `if`, they can bind with `is`: `requires count is Some(n) && n > 0`.
   Separate several with commas, or write several `requires` clauses; each is checked on its own.
 - **At run time** every call checks its function's preconditions before the body runs. A broken one throws
   `ArgumentException`, saying which condition failed and the values it used, and naming the parameter when there's
@@ -923,8 +1088,13 @@ record Percentage(value: int) requires value >= 0 && value <= 100;
 - **Records** are checked whenever one is made, including by a copy: `{ ...p, value: 200 }` is checked like
   `Percentage(200)`, and fails with `Invariant failed: value >= 0 && value <= 100 (value = 200)`. So a Percentage outside
   0 to 100 can't exist in Piper code. (C# code using `with` on the record isn't checked.)
+- **Classes** are checked whenever one is made, before anything else runs: before the field initializers, and before
+  the base class's constructor and its arguments. So `class Derived(n: int): Base(10 / n) requires n != 0` fails
+  `Invariant failed: n != 0 (n = 0)` rather than dividing by zero. A class's conditions are over the arguments it was
+  made with: fields can change afterwards, and they aren't checked again. A derived class's and its base class's are
+  each checked, the derived class's first.
 - **At compile time** a call whose arguments are constants that break a condition is an error (PIP0340), such as
-  `Sqrt(-1.0)` or `Percentage(150)`. Calls that can't be decided this way are left to run time.
+  `Sqrt(-1.0)`, `Percentage(150)` or `Grid(0, 5)`. Calls that can't be decided this way are left to run time.
 - **Not yet:** trait methods (PIP0341), enum variants and lambdas can't have `requires` clauses.
 
 ### Tests
@@ -958,7 +1128,7 @@ async test "waits" {
 `Print(value)` writes any value followed by a newline, using its C# `ToString`: Bools print as `True`/`False`,
 records as `Point { x = 1, y = 2 }`, fieldless enum variants by name (`Food`, as a C# enum member) and tuples as `(1, a)`. Output
 is locale-independent. `Assert` and `AssertEqual` are for tests (see [Tests](#tests)), though they work anywhere: a failure throws.
-`Main()` returns unit and is the program's entry point. It takes no parameters, or the command-line arguments as `Main(args: string[])`, as in C#; `piper run app -- one two` passes `one` and `two`.
+`Main()` returns unit and is the program's entry point. It takes no parameters, or the command-line arguments as `Main(args: string[])`, as in C#; `piper run app -- one two` passes `one` and `two`. The `--` can be left out when the first argument starts with `-`: `piper run app --port 8001` passes `--port 8001`, as `dotnet run` does.
 
 As in C#, functions and methods are PascalCase (`Print`, `Main`, `Area()`), and variables, parameters and fields camelCase. That's a convention, not a rule: the compiler accepts any casing. A method added to a .NET or builtin type mustn't have the name of one of its members (`extend int { fn Clamp(…) }` clashes with `int.Clamp`).
 
@@ -968,6 +1138,12 @@ As in C#, functions and methods are PascalCase (`Print`, `Main`, `Area()`), and 
 |---|---|
 | `record P(x: int)` | `public sealed record P(int x);` |
 | `class A(x: int): B(x), Named { mut n = x; public let m = 1; … }` | `public partial class A(int x) : B(x), Named { private int n = x; public int m { get; } = 1; … }` |
+| `static mut count = 0;`, `public static let Empty = A(0);` in a class | `private static int count = 0;`, `public static A Empty { get; } = new A(0);`, used as `A.count` |
+| `prop Total: decimal => t;`, `prop N: int { get; private set; } = 0;`, `prop Name: string { get => n; set { n = value; } }` | `public decimal Total => this.t;`, `public int N { get; private set; } = 0;`, `public string Name { get => this.n; set { this.n = value; } }` |
+| `prop this[i: int]: T { get => …; set { … } }` in a class | `public T this[int i] { get => …; set { … } }` |
+| `Account(owner: string): this(owner, 0m) { … }` in a class | `public Account(string owner) : this(owner, 0m) { … }`, and the class always has a primary constructor, `()` if need be |
+| `prop P: T { get; init; } = x;`, `protected fn F()` | `public T P { get; init; } = x;`, `protected void F()` |
+| `trait Shape { prop Area: double { get; } }`, `extend int { prop IsEven: bool => … }` | `double Area { get; }` in the interface, and a C# 14 extension property: `extension(int self) { public bool IsEven => … }` |
 | `extend R { override fn ToString() => string = … }`, `extend R: IComparable<R>` | `public override string ToString() => …` (`sealed override` on an enum), and `public static bool operator <(R left, R right) => ((IComparable<R>)left).CompareTo(right) < 0;` with `<=`, `>`, `>=` |
 | `base.F()`, `c: Circle` (pattern), `(Circle)shape` | `base.F()`, `Circle c`, `(Circle)shape` |
 | `virtual fn F()`, `override fn F()`, `abstract fn F();` | `public virtual void F()`, `public override void F()` (`protected` for a protected .NET method), `public abstract void F();` |

@@ -1,0 +1,89 @@
+// Constructors besides the primary one, and `init` properties they (and only they) can set.
+using System;
+using System.Collections.Generic;
+
+class Account(owner: string, opening: decimal) requires opening >= 0m {
+    mut balance = opening;
+
+    // Set once, while the account is made.
+    prop Source: string { get; init; } = "opened";
+    prop Opened: DateOnly { get; init; } = DateOnly(2026, 1, 1);
+
+    // Each calls the primary constructor first, which checks the invariant, then runs its body.
+    Account(owner: string): this(owner, 0m) {
+        Source = "opened empty";
+    }
+
+    Account(owner: string, cents: int, on: DateOnly): this(owner, (decimal)cents / 100m) {
+        Source = "opened with {cents} cents";
+        Opened = on;
+    }
+
+    fn Describe() => string = "{owner}: {balance} ({Source}, {Opened})";
+}
+
+// A private constructor, used by a static factory, and a protected one for derived classes.
+class Temperature(celsius: double) {
+    prop Celsius => double = celsius;
+
+    private Temperature(fahrenheit: double, _: bool): this((fahrenheit - 32.0) * 5.0 / 9.0) { }
+
+    protected Temperature(): this(0.0) { }
+
+    static fn FromFahrenheit(fahrenheit: double) => Temperature = Temperature(fahrenheit, true);
+}
+
+class Freezing: Temperature {
+    prop Label: string { get; init; } = "";
+
+    // A derived class chooses among its base's constructors, protected ones included.
+    Freezing(label: string): this() {
+        Label = label;
+    }
+}
+
+// A class without parameters still has a primary constructor, `Counter()`, which the others call.
+class Counter {
+    mut count = 0;
+
+    Counter(start: int) {
+        count = start;
+    }
+
+    fn Next() => int {
+        count += 1;
+        count
+    }
+}
+
+// A generic class, chosen by its arguments' types, named arguments included.
+class Range<T>(first: T, last: T) {
+    let items: List<T> = [first, last];
+
+    Range(only: T): this(only, only) { }
+
+    fn Describe() => string = string.Join("..", items);
+}
+
+fn Main() {
+    Print(Account("Ada", 10m).Describe());
+    Print(Account("Bob").Describe());
+    Print(Account("Cy", 250, DateOnly(2026, 10, 26)).Describe());
+    try {
+        let negative = -1m;
+        Account("Di", negative);
+    } catch (e: ArgumentException) {
+        Print(e.Message);
+    }
+
+    Print(Math.Round(Temperature.FromFahrenheit(212.0).Celsius, 1));
+    let frost = Freezing("frost");
+    Print("{frost.Label} at {frost.Celsius}");
+
+    let counter = Counter(10);
+    counter.Next();
+    Print("{counter.Next()} {Counter().Next()}");
+
+    Print(Range(1, 5).Describe());
+    Print(Range(only: "x").Describe());
+}

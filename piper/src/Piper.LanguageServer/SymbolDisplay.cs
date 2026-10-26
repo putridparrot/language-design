@@ -9,13 +9,24 @@ public static class SymbolDisplay
     {
         VariableSymbol { Kind: VariableKind.Parameter } v => $"{v.Name}: {v.Type}",
         VariableSymbol { Kind: VariableKind.This } v => $"this: {v.Type}",
+        VariableSymbol { Kind: VariableKind.StaticField } v => $"static {(v.IsMutable ? "mut" : "let")} {v.Name}: {v.Type}",
         VariableSymbol v => $"{(v.IsMutable ? "mut" : "let")} {v.Name}: {v.Type}",
+        // A trait's or extend block's property, which is its getter to the compiler.
+        MethodSymbol { IsAccessor: true, IsIndexerAccessor: false } getter when getter.Name.StartsWith("get_", StringComparison.Ordinal) =>
+            $"{(getter.IsStatic ? "static " : "")}prop {getter.ContainingType}.{getter.DisplayName}: {getter.ReturnType} {{ get; }}",
+        MethodSymbol { IsConstructor: true } c =>
+            $"{(c.IsPrivate ? "private " : c.IsProtected ? "protected " : "")}{c.ContainingType}({string.Join(", ", c.Parameters.Select(p => $"{p.Name}: {p.Type}"))})",
         MethodSymbol m => Function(m, $"{m.ContainingType}."),
         FunctionSymbol f => Function(f, ""),
         RecordSymbol r => $"record {r.Name}{TypeParameters(r.TypeParameters)}({Fields(r.Fields)}){Requires(r.Invariants)}",
         EnumSymbol e => $"enum {e.Name}{TypeParameters(e.TypeParameters)} {{ {string.Join(", ", e.Variants.Select(Variant))} }}",
         TraitSymbol t => Trait(t),
         VariantSymbol v => $"{v.Enum.Name}.{Variant(v)}",
+        IndexerSymbol i =>
+            $"{(i.IsPublic ? "" : "private ")}prop this[{string.Join(", ", i.Parameters.Select(p => $"{p.Name}: {p.Type}"))}]: {i.Type} {{ get;{(i.Setter is null ? "" : i.HasPrivateSetter ? " private set;" : " set;")} }}",
+        FieldSymbol { IsProperty: true } p =>
+            $"{(p.IsPublic ? "" : "private ")}{(p.IsStatic ? "static " : "")}prop {p.Name}: {p.Type} {{ get;{(!p.IsMutable ? "" : p.HasPrivateSetter ? " private set;" : " set;")} }}",
+        FieldSymbol { IsStatic: true } f => $"static {(f.IsMutable ? "mut" : "let")} {f.Name}: {f.Type}",
         FieldSymbol f => $"{f.Name}: {f.Type}",
         TypeParameterSymbol p => p.Constraints.IsEmpty ? $"type parameter {p.Name}" : $"type parameter {p.Name}: {string.Join(" + ", p.Constraints)}",
         ClrTypeSymbol clr => $".NET {Kind(clr.Type)} {clr.Type.FullName ?? clr.Name}",

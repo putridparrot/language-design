@@ -1,0 +1,9 @@
+Ada: 10 (opened, 01/01/2026)
+Bob: 0 (opened empty, 01/01/2026)
+Cy: 2.5 (opened with 250 cents, 10/26/2026)
+Invariant failed: opening >= 0m (opening = -1)
+100
+frost at 0
+12 1
+1..5
+x..x

@@ -1,0 +1,6 @@
+{
+  // The services plugin adds `services`, and brings in Microsoft.Extensions.DependencyInjection (a NuGet package),
+  // which the code it becomes uses. No web framework is needed. Build the plugin first
+  // (`dotnet build plugins/Piper.Plugins.Services`), then `piper run samples/services`.
+  "plugins": ["../../plugins/Piper.Plugins.Services/bin/plugin/Piper.Plugins.Services.dll"]
+}

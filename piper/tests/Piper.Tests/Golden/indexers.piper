@@ -1,0 +1,89 @@
+// Indexers: a class used with [], as arrays and lists are.
+using System;
+using System.Collections.Generic;
+
+// Two parameters, and an overload taking a string.
+class Grid(width: int, height: int) {
+    let cells: int[] = int[width * height];
+
+    prop this[x: int, y: int] => int {
+        get = cells[Index(x, y)];
+        set { cells[Index(x, y)] = value; }
+    }
+
+    // "1,2" for x = 1, y = 2.
+    prop this[cell: string] => int {
+        get {
+            let parts = cell.Split(',');
+            this[int.Parse(parts[0]), int.Parse(parts[1])]
+        }
+    }
+
+    private fn Index(x: int, y: int) => int {
+        if x < 0 || x >= width || y < 0 || y >= height {
+            throw IndexOutOfRangeException("({x}, {y}) is outside the grid");
+        }
+        y * width + x
+    }
+}
+
+// A generic class, read-only from outside, implementing IReadOnlyList<T>.
+class Ring<T>(capacity: int): IReadOnlyList<T> {
+    let items: List<T> = [];
+    mut start = 0;
+
+    fn Add(item: T) {
+        if items.Count < capacity {
+            items.Add(item);
+        } else {
+            this[0] = item;              // the private set, from inside
+            start = (start + 1) % capacity;
+        }
+    }
+
+    prop Count => int = items.Count;
+
+    prop this[i: int] => T {
+        get = items[(start + i) % items.Count];
+        private set { items[(start + i) % items.Count] = value; }
+    }
+
+    fn GetEnumerator() => IEnumerator<T> {
+        for i in 0..<Count {
+            yield return this[i];
+        }
+    }
+}
+
+// Abstract and overridden indexers.
+abstract class Lookup {
+    abstract prop this[key: string] => string? { get; }
+}
+
+class Upper: Lookup {
+    override prop this[key: string] => string? = key == "" ? None : Some(key.ToUpper());
+}
+
+fn Main() {
+    let grid = Grid(3, 2);
+    grid[1, 1] = 5;
+    grid[1, 1] += 2;
+    grid[2, 0] = 9;
+    Print("{grid[1, 1]} {grid["2,0"]}");
+    try {
+        grid[5, 5] = 1;
+    } catch (e: IndexOutOfRangeException) {
+        Print(e.Message);
+    }
+
+    let ring = Ring<string>(3);
+    for word in ["a", "b", "c", "d", "e"] {
+        ring.Add(word);
+    }
+    Print("{ring[0]} {ring.Count}: {string.Join(" ", ring)}");
+    let list: IReadOnlyList<string> = ring;
+    Print(list[2]);
+
+    let lookup: Lookup = Upper();
+    Print("{lookup["piper"] ?? "-"} {lookup[""] ?? "-"}");
+}

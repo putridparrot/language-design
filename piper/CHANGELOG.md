@@ -29,6 +29,80 @@
   - Type patterns test for a type and bind it: `match shape { c: Circle => …, _ => … }`, `if o is s: string { … }`,
     as C#'s `shape is Circle c`. They work on classes, records, traits, interfaces, .NET types and `object`.
   - Casts go down to a derived class: `(Circle)shape`.
+  - **Static fields:** `static mut issued = 0;`, `public static let Default = Config("default");`. One per class (per
+    instantiation for a generic class), named bare inside it and as `Ticket.issued` outside. Their initializers run in
+    the order they're declared, and using one before it's initialized is an error rather than C#'s silent default.
+  - **Invariants:** `class Account(owner: string, opening: decimal) requires opening >= 0m { … }`. The conditions are
+    over the constructor's arguments, and are checked whenever one is made, before the field initializers and the base
+    constructor run, and at compile time for constant arguments (PIP0340), as for records.
+  - Field initializers can call the class's static methods bare.
+  - **Properties:** `prop Balance: decimal => balance;`, `prop Count: int { get; private set; } = 0;`,
+    `prop Name: string { get => name; set { name = value.Trim(); } }`. Read and set like fields; public unless marked
+    `private`, with an optional `private set`. They can be static, `virtual`, `abstract` and `override`, override .NET
+    properties, and implement .NET interfaces' properties (`IReadOnlyCollection<T>.Count`), so a class can now derive
+    from a .NET base with abstract properties, such as `Stream`. New errors PIP0355 and PIP0356.
+  - **Indexers:** `prop this[x: int, y: int]: int { get => …; set { … } }`, used as `grid[1, 2] = 5`. They can be
+    overloaded by parameter types, be virtual, abstract or overridden, and implement .NET interfaces' indexers
+    (`IReadOnlyList<T>`).
+  - **Constructors** besides the primary one, written as in C#: `Account(owner: string): this(owner, 0m) { … }`. A
+    creation, or a derived class's base list, chooses among them by argument types. They can be private or protected.
+  - **`init` properties:** `prop Opened: DateOnly { get; init; } = …;`, settable only in constructors.
+  - **`protected`** fields, properties, methods, indexers, constructors and setters (`protected set`), checked as C#
+    does. Overrides keep the access of what they override, so an override of a protected .NET method can no longer be
+    called from outside, which C# rejected.
+  - **Attributes** on a class's fields, properties, indexers and constructors (`[JsonPropertyName("id")] public let Id`).
+  - New errors PIP0357–PIP0359.
+  - The editor's outline shows a class's fields, properties, indexers, constructors and methods; completion offers a
+    class's public fields and properties; `prop`, `get`, `set`, `init` and `protected` are highlighted.
+- **Properties in traits and `extend` blocks:** read-only, `trait Shape { prop Area: double { get; } prop Label:
+  string => "shape"; }`, implemented in `extend` blocks or by a class's properties, and read through a bound like
+  methods. `extend int { prop IsEven: bool => this % 2 == 0; }` adds a C# 14 extension property.
+- **Bare calls in trait defaults:** a trait's default methods name its other methods and properties bare (`Name()` for
+  `this.Name()`), as a class's methods do.
+- **Fix:** a class deriving from a generic Piper class (`class Names: Repository<string>`) didn't see what it inherited:
+  its fields, properties, indexers and methods weren't found, and its overrides were reported as overriding nothing.
+  They're now found, with the base's type parameters replaced by the class's type arguments, as are the .NET members of
+  a generic .NET class at the root (`class Ints: Bag<int>` where `class Bag<T>: List<T>`).
+- **Services plugin:** `services { }` moves from the web plugin to its own, `plugins/Piper.Plugins.Services`, which
+  brings in only the `Microsoft.Extensions.DependencyInjection` package, so dependency injection works in any program
+  (see `samples/services`). The web plugin keeps `endpoints { }`; a web program lists both plugins.
+- **Fix:** a .NET generic given a Piper trait or class as its type argument didn't take what implements or derives
+  from it: `services.AddSingleton<Clock>(SystemClock())` and `List<Shape>().Add(Circle(1.0))` reported no matching
+  overload. They now convert as Piper converts (boxing a builtin that implements the trait).
+- **.NET variance:** `List<Circle>` converts to `IEnumerable<Shape>`, `Func<Dog>` to `Func<Animal>`, and an
+  `IComparer<Shape>` to an `IComparer<Circle>`, as in C#, for assignments and arguments alike.
+- **Functions as any delegate type:** a function named as a value converts to any delegate type with its signature, not
+  just `Func` and `Action`: `numbers.ConvertAll(Square)`, `numbers.FindAll(IsEven)`, `words.Sort(ByLength)`,
+  `Thread(Work)`, with a generic method's type arguments inferred from it (`Array.ConvertAll(array, Describe)`). A static
+  method of a record, enum or class can be a function value too: `numbers.ConvertAll(Point.Make)`.
+- **Fix:** lambdas' parameters were renamed apart in the generated C# when several in a function shared a name (`id`,
+  `id_1`, `id_2`). ASP.NET Core binds route values by name, so every `endpoints` handler after the first taking `{id}`
+  answered 400 Bad Request. Lambda parameters now keep their names unless that would hide something the lambda uses.
+- **Sample:** `samples/todo-api`, a to-do REST server using `services` and `endpoints`; `--serve` keeps it running on
+  localhost:5080.
+- **`piper run app --port 8001`:** an option `piper run` doesn't know, after the program, goes to the program (with
+  everything after it), as with `dotnet run`, so the `--` before the program's arguments can be left out. That also
+  helps where a shell (Windows PowerShell) drops a bare `--`.
+- **.NET enum casts:** a .NET enum casts to and from numbers, and to another enum, as in C#: `(int)response.StatusCode`,
+  `(DayOfWeek)3`.
+- **`None` for overloaded .NET methods:** `client.PutAsync(url, None)` used to fail, since `None` alone has no type and
+  the method has `string` and `Uri` overloads. `None` now fits any parameter .NET lets be null, and takes its type from
+  the overload chosen.
+- **Fix (editor, Windows):** VS Code names files as `file:///d%3A/…`, which the language server read as
+  `D:\d:\…`. It then couldn't find a program's `piper.json`, so a program's other files, its plugins (`services`
+  reported as unexpected) and its references were missing, and problems were listed against a file that doesn't
+  exist.
+- **Fix (editor):** code a plugin generates has its construct's span (so errors point there), and the editor treated it
+  as source: `services AppServices` was coloured as a namespace, and `endpoints` as a variable with a
+  `: RouteGroupBuilder` hint. Generated code is now left out of hover, colouring, references and hints, and plugin
+  keywords are coloured as keywords.
+- **Go to Type Definition** in the editor: from a variable, field, parameter, expression or function to the declaration
+  of its type, or of the Piper types in it (`List<Point>`, `Point?` and `(Point, Circle)` lead to Point and Circle).
+- **Fix:** attributes on a class itself were silently dropped; they're now applied.
+- **Fix:** a class method's parameter named like a primary constructor parameter was renamed in the C# (`owner_1`),
+  breaking named arguments to it.
+- **Fix:** a record invariant using an operator that needs lowering (`requires (max ?? 0) >= 0`) no longer crashes the
+  compiler.
   - New errors PIP0109 and PIP0349–PIP0354.
 - **Better error:** a collection literal whose elements have no common type says so, rather than calling the element a
   match arm.

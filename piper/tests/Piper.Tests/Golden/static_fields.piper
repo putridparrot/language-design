@@ -1,0 +1,92 @@
+// Static fields: one per class, not one per instance.
+using System;
+using System.Collections.Generic;
+
+class Ticket(holder: string) {
+    // Initialized in order, so each can use the ones before it.
+    static mut issued = 0;
+    public static let prefix = "T";
+    public static let firstNumber = 100;
+    static let pattern = "{prefix}-{firstNumber}+";
+
+    // An instance field's initializer can use static fields.
+    let number = firstNumber + issued;
+
+    fn Issue() => string {
+        issued += 1;                                 // named bare inside the class
+        "{prefix}{number} for {holder}"
+    }
+
+    static fn Issued() => int = issued;
+    static fn Pattern() => string = pattern;
+    static fn Reset() { Ticket.issued = 0; }         // or through the class
+}
+
+// A cached instance, and a counter of instances made.
+class Config(name: string) {
+    public static mut created = 0;
+    public static let Default = Named("default");    // an initializer can call static methods
+
+    public let label = name;
+
+    fn Touch() { created += 1; }
+
+    static fn Named(name: string) => Config = Config(name);
+}
+
+// A static field holding a function.
+class Hooks {
+    public static mut onEvent: (string) => unit = (s) => Print("default: {s}");
+}
+
+// Each instantiation of a generic class has its own static fields.
+class Pool<T> {
+    static mut made = 0;
+    let items: List<T> = [];
+
+    fn Add(item: T) {
+        items.Add(item);
+        made += 1;
+    }
+
+    static fn Made() => int = made;
+}
+
+// A derived class names its base's public static fields bare.
+class Base {
+    public static mut total = 0;
+}
+
+class Derived: Base {
+    fn Bump() { total += 10; }
+}
+
+fn Main() {
+    let ada = Ticket("Ada");
+    Print(ada.Issue());
+    let bob = Ticket("Bob");                         // made after one was issued
+    Print(bob.Issue());
+    Print("{Ticket.Issued()} issued, prefix {Ticket.prefix}, pattern {Ticket.Pattern()}");
+    Ticket.Reset();
+    Print(Ticket.Issued());
+
+    Print(Config.Default.label);
+    Config.created += 2;
+    Config.Default.Touch();
+    Print(Config.created);
+
+    Hooks.onEvent("first");
+    Hooks.onEvent = (s) => Print("custom: {s}");
+    Hooks.onEvent("second");
+
+    let ints = Pool<int>();
+    ints.Add(1);
+    ints.Add(2);
+    let words = Pool<string>();
+    words.Add("a");
+    Print("{Pool<int>.Made()} ints, {Pool<string>.Made()} strings");
+
+    Derived().Bump();
+    Base.total += 1;
+    Print(Derived.total);
+}

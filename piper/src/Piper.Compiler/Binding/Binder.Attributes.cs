@@ -21,12 +21,15 @@ public sealed partial class Binder
                 EnumSymbol { Declaration: { } syntax } @enum => (syntax, syntax.Variants.Zip(@enum.Variants, (v, symbol) => (v, symbol))
                     .SelectMany(pair => pair.v.Fields.Select(f => (pair.symbol.Fields, f)))),
                 TraitSymbol trait => (trait.Declaration, []),
+                ClassSymbol @class => (@class.Declaration, []),
                 _ => (null, []),
             };
             if (declaration is null)
                 continue;
             InFile(FileOf(type));
             type.Attributes = BindAttributeList(declaration.Attributes, type is TraitSymbol ? AttributeTargets.Interface : AttributeTargets.Class, "a type");
+            if (type is ClassSymbol classType)
+                BindClassMemberAttributes(classType);
             foreach (var (symbols, syntax) in fields)
             {
                 if (symbols.FirstOrDefault(f => f.Name == syntax.Name.Text) is { } field)
@@ -48,6 +51,33 @@ public sealed partial class Binder
         {
             InFile(function.File);
             BindFunctionAttributes(function.Symbol, function.Syntax);
+        }
+    }
+
+    /// <summary>
+    /// A class's field, property and indexer attributes. A public field or an automatic property is a C# property with a
+    /// backing field, so an attribute goes on the property if it applies to properties, otherwise on the field
+    /// (<c>[field: …]</c>); a property with accessors has no field; a private or protected field is a C# field.
+    /// </summary>
+    private void BindClassMemberAttributes(ClassSymbol @class)
+    {
+        foreach (var syntax in @class.Declaration.Fields.Where(f => !f.Attributes.IsEmpty))
+        {
+            if (syntax.IsIndexer)
+            {
+                if (@class.Indexers.FirstOrDefault(i => ReferenceEquals(i.Getter.Declaration!.Parameters.FirstOrDefault(), syntax.Parameters.FirstOrDefault())) is { } indexer)
+                    indexer.Attributes = BindAttributeList(syntax.Attributes, AttributeTargets.Property, "an indexer");
+                continue;
+            }
+            if (@class.Fields.Concat(@class.StaticFields).FirstOrDefault(f => f.Name == syntax.Name.Text) is not { } field)
+                continue;
+            var (targets, what) = field switch
+            {
+                { IsProperty: false, IsPublic: false } => (AttributeTargets.Field, "a field"),
+                { IsProperty: true, IsAutomatic: false } => (AttributeTargets.Property, "a property"),
+                _ => (AttributeTargets.Property | AttributeTargets.Field, field.IsProperty ? "a property" : "a field"),
+            };
+            field.Attributes = BindAttributeList(syntax.Attributes, targets, what);
         }
     }
 
@@ -91,7 +121,8 @@ public sealed partial class Binder
             attributes.Add(target switch
             {
                 AttributeTargets.Property when targets.HasFlag(AttributeTargets.Parameter) => bound with { Target = "property" },
-                AttributeTargets.Field when targets.HasFlag(AttributeTargets.Parameter) => bound with { Target = "field" },
+                // On a C# property, an attribute for its backing field says so.
+                AttributeTargets.Field when targets.HasFlag(AttributeTargets.Property) => bound with { Target = "field" },
                 _ => bound,
             });
         }

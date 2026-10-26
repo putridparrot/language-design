@@ -26,7 +26,7 @@ public static class Pipe
         global::System.Console.WriteLine(new Box(7));
         global::System.Console.WriteLine(string.Concat("Piper", "!"));
         global::System.Collections.Generic.List<string> words = new global::System.Collections.Generic.List<string> { "pear", "fig", "banana" };
-        global::System.Collections.Generic.List<int> lengths = global::System.Linq.Enumerable.ToList<int>(global::System.Linq.Enumerable.Select<string, int>(global::System.Linq.Enumerable.Where<string>(words, (string w) => w.Length > 3), (string w_1) => w_1.Length));
+        global::System.Collections.Generic.List<int> lengths = global::System.Linq.Enumerable.ToList<int>(global::System.Linq.Enumerable.Select<string, int>(global::System.Linq.Enumerable.Where<string>(words, (string w) => w.Length > 3), (string w) => w.Length));
         global::System.Console.WriteLine(string.Join<int>(",", lengths));
         global::System.Console.WriteLine(global::System.Math.Sqrt(global::System.Math.Abs(-16.0)));
         string log = "";

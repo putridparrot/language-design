@@ -1,5 +1,9 @@
 {
-  // The web plugin adds `services` and `endpoints`, and brings in ASP.NET Core, which the code they become uses.
-  // Build it first (`dotnet build plugins/Piper.Plugins.Web`), then `piper run samples/webapp`.
-  "plugins": ["../../plugins/Piper.Plugins.Web/bin/plugin/Piper.Plugins.Web.dll"]
+  // The services plugin adds `services` (dependency injection), and the web plugin `endpoints`, bringing in ASP.NET
+  // Core, which the code they become uses. Build them first (`dotnet build plugins/Piper.Plugins.Services` and
+  // `dotnet build plugins/Piper.Plugins.Web`), then `piper run samples/webapp`.
+  "plugins": [
+    "../../plugins/Piper.Plugins.Services/bin/plugin/Piper.Plugins.Services.dll",
+    "../../plugins/Piper.Plugins.Web/bin/plugin/Piper.Plugins.Web.dll"
+  ]
 }

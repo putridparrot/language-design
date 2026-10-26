@@ -15,7 +15,9 @@ public sealed partial class Binder
     {
         var bound = BindExpressionCore(syntax, expected);
         bound.SourceSpan ??= syntax.Span;
-        _semantic?.AddExpression(_file.Source, syntax.Span, bound.Type, _scope);
+        // Code a plugin wrote isn't in the source, so the editor learns nothing from it (it has the construct's span).
+        if (!syntax.IsGenerated)
+            _semantic?.AddExpression(_file.Source, syntax.Span, bound.Type, _scope);
         return bound;
     }
 
@@ -209,7 +211,11 @@ public sealed partial class Binder
                     _diagnostics.ReportThisOutsideInstanceMethod(name.Span);
                 else if (InheritedClrMember(name) is { } inherited)
                     return BindExpression(inherited, expected);
-                else if (!ReportIfPrivateElsewhere(name))
+                // In a trait's or extend block's method, its own properties are named bare: `Area` is `this.Area`.
+                else if (_scope.Lookup("this") is VariableSymbol { Kind: VariableKind.This } self &&
+                         BindPropertyGetter(new BoundVariableExpression(self), name, self.Type, span) is { } property)
+                    return property;
+                else if (!ReportClassMemberOutOfScope(name) && !ReportIfPrivateElsewhere(name))
                     _diagnostics.ReportUndefinedName(name.Span, name.Text);
                 return new BoundErrorExpression();
         }
@@ -336,13 +342,40 @@ public sealed partial class Binder
         if (syntax.Target is TupleExpressionSyntax tupleTarget)
             return BindDeconstructionAssignment(syntax, tupleTarget);
 
+        // `Account.count = 0`, `Account.count += 1`: a class's static field.
+        if (syntax.Target is MemberAccessExpressionSyntax { TypeArguments.IsEmpty: true } staticTarget &&
+            Trial(() => ResolveContainer(staticTarget.Target), out _) is TypeSymbol { OriginalDefinition: ClassSymbol } && ResolveContainer(staticTarget.Target) is TypeSymbol container &&
+            FindStaticField(container, staticTarget.Member.Text) is not null)
+        {
+            if (BindStaticFieldAccess(container, staticTarget.Member) is BoundVariableExpression { Variable: var staticField })
+                return BindAssignmentTo(staticField, syntax, staticTarget.Member.Span);
+            BindExpression(syntax.Value);
+            return new BoundErrorExpression();
+        }
+
+        // `n.IsEven = …`, `int.Answer = …`: a trait's or extend block's property, which can only be read.
+        if (syntax.Target is MemberAccessExpressionSyntax readOnly && ReadOnlyPropertyOwner(readOnly) is { } owner)
+        {
+            BindExpression(syntax.Value);
+            _diagnostics.ReportReadOnlyMember(readOnly.Member.Span, $"{owner}.{readOnly.Member.Text}");
+            return new BoundErrorExpression();
+        }
+
+        // `account.count = 0` where `count` is static: reported, as it belongs to the class.
+        if (syntax.Target is MemberAccessExpressionSyntax instanceTarget && Trial(() => BindExpression(instanceTarget.Target), out bool failed) is var instance &&
+            !failed && FindField(instance.Type, instanceTarget.Member.Text) is null && ReportStaticFieldThroughInstance(instance.Type, instanceTarget.Member))
+        {
+            BindExpression(syntax.Value);
+            return new BoundErrorExpression();
+        }
+
         // `this.owner = owner`, `other.count += 1`: a class's mutable field, through an instance.
         if (syntax.Target is MemberAccessExpressionSyntax memberTarget && ClassFieldTarget(memberTarget) is { } classField)
         {
             var receiver = RequireValue(BindExpression(memberTarget.Target), memberTarget.Target.Span);
             Record(memberTarget.Member, classField);
-            CheckFieldAccessible(classField, memberTarget.Member);
-            return BindAssignmentTo(FieldVariable(classField), syntax, memberTarget.Member.Span) is BoundAssignmentExpression assignment
+            CheckFieldAccessible(classField, memberTarget.Member, receiver);
+            return BindAssignmentTo(FieldVariable(classField, TypeSubstitution.FieldType(classField, receiver.Type)), syntax, memberTarget.Member.Span, receiver) is BoundAssignmentExpression assignment
                 ? new BoundFieldAssignmentExpression(receiver, classField, assignment.CompoundOperator, assignment.Value)
                 : new BoundErrorExpression();
         }
@@ -383,10 +416,19 @@ public sealed partial class Binder
     }
 
     /// <summary>`x = value` or `x op= value` into <paramref name="variable"/>, which must be mutable.</summary>
-    private BoundExpression BindAssignmentTo(VariableSymbol variable, AssignmentExpressionSyntax syntax, TextSpan targetSpan)
+    /// <param name="receiver">For a class field or property set through an instance (<c>other.count = 1</c>): that instance.</param>
+    private BoundExpression BindAssignmentTo(VariableSymbol variable, AssignmentExpressionSyntax syntax, TextSpan targetSpan, BoundExpression? receiver = null)
     {
         if (!variable.IsMutable)
             _diagnostics.ReportCannotAssignImmutable(targetSpan, variable);
+        else if (variable.Field is { HasPrivateSetter: true, Owner: { } owner } property && _currentClass != owner)
+            _diagnostics.ReportPrivateSetter(targetSpan, property.Name, owner.Name);
+        else if (variable.Field is { HasProtectedSetter: true, Owner: { } baseOwner } protectedSet && !CanUseProtected(baseOwner, null))
+            _diagnostics.ReportPrivateSetter(targetSpan, protectedSet.Name, baseOwner.Name, isProtected: true);
+        else if (variable.Field is { IsInitOnly: true, Owner: { } initOwner } initOnly &&
+                 !(_return?.Constructor is { } constructed && constructed.SelfAndBases().Contains(initOwner) &&
+                   receiver is null or BoundVariableExpression { Variable.Kind: VariableKind.This }))
+            _diagnostics.ReportInitOnly(targetSpan, initOnly.Name, initOwner.Name);
 
         var value = RequireValue(BindExpression(syntax.Value, variable.Type), syntax.Value.Span);
 
@@ -439,6 +481,9 @@ public sealed partial class Binder
                     // Geometry.area(c), System.Text.StringBuilder()
                     NamespaceSymbol @namespace when !member.Member.IsMissing =>
                         BindCallTo(MemberOf(@namespace, member.Member.Text) ?? NotInNamespace(member.Member, @namespace), member.Member, syntax, expected, member.TypeArguments),
+                    // Handlers.onTick(now): a class's static field holding a function.
+                    TypeSymbol { OriginalDefinition: ClassSymbol } type when member.TypeArguments.IsEmpty && FindStaticField(type, member.Member.Text) is not null =>
+                        BindStaticFieldCall(type, member.Member, syntax),
                     // Point.origin(), Shape.Circle(1.0), Math.Sqrt(2.0), Enumerable.Empty<Int>()
                     TypeSymbol type => BindStaticMember(type, member.Member, syntax.Arguments, syntax.Span, expected, member.TypeArguments),
                     ClrTypeGroupSymbol group when NonGenericMember(group) is { } type =>
@@ -606,8 +651,8 @@ public sealed partial class Binder
             case VariableSymbol variable when DelegateSignature(variable.Type) is not null:
                 return BindDelegateInvocation(new BoundVariableExpression(variable), syntax, calleeName);
 
-            // Inside a class, its own (or an inherited) method by bare name: `Area()` is `this.Area()`.
-            case MethodSymbol { ContainingType: ClassSymbol } method:
+            // Inside a class or trait, its own (or an inherited) method by bare name: `Area()` is `this.Area()`.
+            case MethodSymbol { ContainingType: ClassSymbol or TraitSymbol } method:
                 return BindBareMethodCall(method, syntax, name, expected);
 
             case ClassSymbol @class:
@@ -716,6 +761,13 @@ public sealed partial class Binder
             return BindVariantCreation(@enum, variant, arguments, span, type == @enum ? expected : type);
         }
 
+        // `Account.count`: a class's static field.
+        if (arguments is null && type.OriginalDefinition is ClassSymbol && BindStaticFieldAccess(type, member) is { } staticField)
+            return staticField;
+        // `int.Zero`: a static property an extend block declares.
+        if (arguments is null && BindPropertyGetter(null, member, type, span) is { } staticProperty)
+            return staticProperty;
+
         var found = FindMethodWithOwner(type, member.Text);
         var method = found?.Method;
         Record(member, method);
@@ -734,6 +786,12 @@ public sealed partial class Binder
         }
 
         CheckAccessible(method, member);
+        // `numbers.ConvertAll(Point.Make)`: a static method of a Piper record, enum or class, as a function value.
+        if (arguments is null && method is { IsStatic: true, IsHidden: false } && type is NamedTypeDefinition { IsRuntimeType: false, IsGeneric: false } &&
+            BindFunctionReference(method, expected, explicitArguments, span) is { } reference)
+        {
+            return reference;
+        }
         if (arguments is null)
         {
             _diagnostics.ReportNotAValue(member.Span, member.Text, "method");
@@ -821,7 +879,7 @@ public sealed partial class Binder
 
         if (method is not null)
         {
-            CheckAccessible(method, member);
+            CheckAccessible(method, member, receiver);
             if (receiver is BoundVariableExpression { Variable.Kind: VariableKind.Base } && method.IsAbstract)
             {
                 BindArgumentsForDiagnostics(syntax.Arguments);
@@ -876,25 +934,79 @@ public sealed partial class Binder
     /// </summary>
     private (MethodSymbol Method, TypeSymbol Owner)? FindMethodWithOwner(TypeSymbol type, string name)
     {
-        if (type.OriginalDefinition is NamedTypeDefinition definition && definition.Methods.FirstOrDefault(m => m.Name == name) is { } own)
+        // Accessors and constructors can't be called by name, except a property's getter while reading the property.
+        bool Named(MethodSymbol m) => m.Name == name && (!m.IsHidden || (_readingProperty && m.IsAccessor && !m.IsIndexerAccessor));
+        if (type.OriginalDefinition is NamedTypeDefinition definition && definition.Methods.FirstOrDefault(Named) is { } own)
             return (own, type);
         // A method a class inherits from a Piper base class.
         if (type.OriginalDefinition is ClassSymbol @class)
         {
             foreach (var @base in SelfAndBaseTypes(type).Skip(1).Where(b => b.OriginalDefinition is ClassSymbol))
             {
-                if (((ClassSymbol)@base.OriginalDefinition).Methods.FirstOrDefault(m => m.Name == name) is { } inherited)
+                if (((ClassSymbol)@base.OriginalDefinition).Methods.FirstOrDefault(Named) is { } inherited)
                     return (inherited, @base);
             }
         }
-        if (_builtinMethods.TryGetValue(type, out var methods) && methods.FirstOrDefault(m => m.Name == name) is { } builtin)
+        if (_builtinMethods.TryGetValue(type, out var methods) && methods.FirstOrDefault(Named) is { } builtin)
             return (builtin, type);
         foreach (var trait in TraitsOf(type))
         {
-            if (trait.TraitDefinition?.Methods.FirstOrDefault(m => m.Name == name) is { } inherited)
+            if (trait.TraitDefinition?.Methods.FirstOrDefault(Named) is { } inherited)
                 return (inherited, trait);
         }
         return null;
+    }
+
+    /// <summary>The type whose trait or extend property <paramref name="target"/> names, if it names one (they can only be read).</summary>
+    private TypeSymbol? ReadOnlyPropertyOwner(MemberAccessExpressionSyntax target)
+    {
+        var type = Trial(() => ResolveContainer(target.Target), out _) as TypeSymbol;
+        if (type is null)
+        {
+            var receiver = Trial(() => BindExpression(target.Target), out bool failed);
+            type = failed ? null : receiver.Type;
+        }
+        if (type is null || type == TypeSymbol.Error || FindField(type, target.Member.Text) is not null)
+            return null;
+        var outer = _readingProperty;
+        _readingProperty = true;
+        try
+        {
+            return FindMethodWithOwner(type, "get_" + target.Member.Text) is { Method.IsAccessor: true } ? type : null;
+        }
+        finally
+        {
+            _readingProperty = outer;
+        }
+    }
+
+    /// <summary>Set while binding a property read as a call to its getter, which method lookup then finds.</summary>
+    private bool _readingProperty;
+
+    /// <summary>
+    /// <c>shape.Area</c>, <c>n.IsEven</c>, <c>int.Zero</c>: a property declared in a trait or an `extend` block, which is
+    /// its getter, <c>get_Area()</c>, called (through the trait's witness where the receiver needs one). Null if the type
+    /// has no such property. A class's own properties are fields to the binder, so they're found before this.
+    /// </summary>
+    private BoundExpression? BindPropertyGetter(BoundExpression? receiver, Token member, TypeSymbol type, TextSpan span)
+    {
+        var name = new Token(TokenKind.Identifier, member.Span, "get_" + member.Text);
+        var outer = _readingProperty;
+        _readingProperty = true;
+        try
+        {
+            if (FindMethodWithOwner(type, name.Text) is not { Method: { IsAccessor: true } getter } || getter.IsStatic != (receiver is null))
+                return null;
+            Record(member, getter);
+            var call = new CallExpressionSyntax(span, new MemberAccessExpressionSyntax(span, new NameExpressionSyntax(member.Span, member), name), []);
+            return receiver is null
+                ? BindStaticMember(type, name, [], span, null)
+                : BindMethodCall(receiver, name, call, null, []);
+        }
+        finally
+        {
+            _readingProperty = outer;
+        }
     }
 
     private static FieldSymbol? FindField(TypeSymbol type, string name) => type.OriginalDefinition switch
@@ -1258,9 +1370,14 @@ public sealed partial class Binder
         if (FindField(target.Type, syntax.Member.Text) is { } field)
         {
             Record(syntax.Member, field);
-            CheckFieldAccessible(field, syntax.Member);
+            CheckFieldAccessible(field, syntax.Member, target);
             return new BoundFieldAccessExpression(target, field, TypeSubstitution.FieldType(field, target.Type));
         }
+        if (ReportStaticFieldThroughInstance(target.Type, syntax.Member))
+            return new BoundErrorExpression();
+        // `shape.Area`: a property a trait or extend block declares.
+        if (BindPropertyGetter(target, syntax.Member, target.Type, syntax.Span) is { } property)
+            return property;
         if (_semantic is not null)
             Record(syntax.Member, FindMethod(target.Type, syntax.Member.Text));
 
@@ -1675,7 +1792,38 @@ public sealed partial class Binder
         (from.IsValueType && ImplicitClrConversion(from, to) is not null) ||
         (from is TupleTypeSymbol fromTuple && to is TupleTypeSymbol toTuple && IsTupleConvertible(fromTuple, toTuple)) ||
         // List<(Int, Int)> to List<(a: Int, b: Int)>: tuple names don't matter, at any depth.
-        (from.IsValueType && TypeSubstitution.WithoutTupleNames(from) == TypeSubstitution.WithoutTupleNames(to));
+        (from.IsValueType && TypeSubstitution.WithoutTupleNames(from) == TypeSubstitution.WithoutTupleNames(to)) ||
+        (from.IsValueType && IsVariantConversion(from, to));
+
+    /// <summary>
+    /// .NET variance, as in C#: <c>List&lt;Circle&gt;</c> to <c>IEnumerable&lt;Shape&gt;</c>, <c>Func&lt;Dog&gt;</c> to
+    /// <c>Func&lt;Animal&gt;</c>. One of <paramref name="from"/>'s interfaces (or itself) is <paramref name="to"/>'s
+    /// variant interface or delegate, with each covariant (`out`) type argument converting to the target's by reference,
+    /// each contravariant (`in`) one the other way, and the rest the same. Value types don't vary: an int becomes a
+    /// trait only by boxing, so a List&lt;int&gt; isn't an IEnumerable&lt;Shape&gt;.
+    /// </summary>
+    private bool IsVariantConversion(TypeSymbol from, TypeSymbol to)
+    {
+        if (to is not ClrTypeSymbol { TypeArguments.Length: > 0, Definition: var definition } target ||
+            !(definition.Type.IsInterface || typeof(Delegate).IsAssignableFrom(definition.Type)))
+            return false;
+        var parameters = definition.Type.GetGenericArguments();
+        if (parameters.All(p => (p.GenericParameterAttributes & System.Reflection.GenericParameterAttributes.VarianceMask) == 0))
+            return false;
+
+        bool ByReference(TypeSymbol source, TypeSymbol destination) =>
+            source == destination ||
+            (ClrTypes.IsReferenceType(source) && ClrTypes.IsReferenceType(destination) && source.IsValueType && IsConvertible(source, destination));
+
+        return SelfAndBaseTypes(from).OfType<ClrTypeSymbol>().Where(t => t.Definition == definition && t != to).Any(candidate =>
+            candidate.TypeArguments.Zip(target.TypeArguments, parameters).All(t =>
+                (t.Third.GenericParameterAttributes & System.Reflection.GenericParameterAttributes.VarianceMask) switch
+                {
+                    System.Reflection.GenericParameterAttributes.Covariant => ByReference(t.First, t.Second),
+                    System.Reflection.GenericParameterAttributes.Contravariant => ByReference(t.Second, t.First),
+                    _ => t.First == t.Second,
+                }));
+    }
 
     /// <summary>
     /// Whether `x op= y` can store its result in x (of type <paramref name="target"/>), as in C#: when the result converts
@@ -1711,6 +1859,11 @@ public sealed partial class Binder
             return type.IsOption ? Widen(operand, type) : new BoundCastExpression(type, operand);
 
         if (IsDowncast(operand.Type, type))
+            return new BoundCastExpression(type, operand);
+
+        // A .NET enum to or from a number, or to another enum, as in C#: `(int)response.StatusCode`, `(DayOfWeek)3`.
+        static bool IsClrEnum(TypeSymbol t) => ClrTypes.ToClr(t) is { IsEnum: true };
+        if ((IsClrEnum(operand.Type) && (Operators.IsArithmetic(type) || IsClrEnum(type))) || (Operators.IsArithmetic(operand.Type) && IsClrEnum(type)))
             return new BoundCastExpression(type, operand);
 
         _diagnostics.ReportCannotCast(syntax.Span, operand.Type, type);

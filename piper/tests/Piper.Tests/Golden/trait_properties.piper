@@ -1,0 +1,63 @@
+// Properties in traits and extend blocks: read-only, computed each time they're read.
+using System;
+using System.Collections.Generic;
+
+trait Shape {
+    // Required: each implementer supplies it.
+    prop Area => double;
+    // A default, which implementers may replace.
+    prop Label => string = "shape";
+
+    // A default method names the trait's properties bare.
+    fn Describe() => string = "{Label} of area {Math.Round(Area, 2)}";
+}
+
+// A record implements them in an extend block.
+record Circle(r: double);
+extend Circle: Shape {
+    prop Area => double = Math.PI * this.r * this.r;
+    prop Label => string = "circle";
+}
+
+// A class, with its own property, or an automatic property or public field of the type.
+class Square(side: double): Shape {
+    prop Area => double = side * side;
+}
+
+class Plot(width: double, depth: double): Shape {
+    public let Area = width * depth;
+}
+
+// A builtin type, through extend.
+extend int: Shape {
+    prop Area => double = (double)(this * this);
+}
+
+// Properties an extend block adds without a trait, instance and static.
+extend int {
+    prop IsEven => bool = this % 2 == 0;
+    static prop Answer => int = 42;
+}
+
+extend Circle {
+    prop Diameter => double = 2.0 * this.r;
+}
+
+// Generic code reads a bound's properties through its witness.
+fn Total<T: Shape>(items: List<T>) => double {
+    mut sum = 0.0;
+    for item in items {
+        sum += item.Area;
+    }
+    sum
+}
+
+fn Main() {
+    let shapes: List<Shape> = [Circle(1.0), Square(2.0), Plot(2.0, 3.0), 3];
+    for shape in shapes {
+        Print(shape.Describe());
+    }
+    let sides: List<int> = [2, 3];
+    Print("{Total(sides)} {Total([Square(1.0), Square(2.0)])}");
+    Print("{4.IsEven} {7.IsEven} {int.Answer} {Circle(1.5).Diameter}");
+}

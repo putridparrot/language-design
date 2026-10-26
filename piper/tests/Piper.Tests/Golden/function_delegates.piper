@@ -1,0 +1,50 @@
+// A function named as a value converts to any delegate type with its signature, as a C# method group does: not just
+// Func and Action, but Converter, Predicate, Comparison, ThreadStart and the rest.
+using System;
+using System.Linq;
+using System.Collections.Generic;
+using System.Threading;
+
+fn Square(n: int) => int = n * n;
+fn IsEven(n: int) => bool = n % 2 == 0;
+fn ByLength(a: string, b: string) => int = a.Length - b.Length;
+fn Describe(n: int) => string = "#{n}";
+fn Work() { Print("working on another thread"); }
+
+record Point(x: int);
+
+extend Point {
+    // A static method of a Piper type is a function value too.
+    static fn Make(x: int) => Point = Point(x);
+}
+
+fn Main() {
+    let numbers: List<int> = [1, 2, 3, 4];
+
+    // List<T>.ConvertAll takes a Converter<T, TOutput>, inferring TOutput from the function's result.
+    Print(string.Join(",", numbers.ConvertAll(Square)));
+    Print(string.Join(",", numbers.ConvertAll(Describe)));
+    Print(numbers.ConvertAll(Point.Make)[3]);
+
+    // Predicate<T> and Comparison<T>.
+    Print("{numbers.FindAll(IsEven).Count} even, any {numbers.Exists(IsEven)}, first {numbers.Find(IsEven)}");
+    let words: List<string> = ["ccc", "a", "bb"];
+    words.Sort(ByLength);
+    Print(string.Join(",", words));
+
+    // A generic method whose type arguments come from the function: Array.ConvertAll<TInput, TOutput>.
+    let array: int[] = [5, 6];
+    Print("{Array.ConvertAll(array, Describe)[1]} {Array.Find(array, IsEven)} {Array.TrueForAll(array, IsEven)}");
+
+    // Func still works where it's what's asked for, and a local function converts too.
+    fn Odd(n: int) => bool = n % 2 == 1;
+    Print("{string.Join(",", numbers.Select(Square))} {numbers.FindAll(Odd).Count} {numbers.Count(Odd)}");
+
+    // Delegate-typed variables, and a constructor taking a ThreadStart.
+    let isEven: Predicate<int> = IsEven;
+    let describe: Converter<int, string> = Describe;
+    Print("{isEven(4)} {describe(7)}");
+    let thread = Thread(Work);
+    thread.Start();
+    thread.Join();
+}

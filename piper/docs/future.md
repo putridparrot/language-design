@@ -33,27 +33,33 @@ the `.piper` files are still only checked against .NET's own assemblies, not the
 build should pass the project's resolved references (`@(ReferencePath)`) to the compiler, so Piper code there can use
 them too.
 
-### Functions as values for other delegate types
-
-A function passed by name is a `Func` or `Action`, so `numbers.ConvertAll(Square)` reports no matching overload: `List<T>.ConvertAll` takes a
-`Converter<T, TOutput>`. A function, like a lambda, should convert to any delegate type it fits, including one a generic
-method's type arguments are inferred for.
-
-### .NET generics instantiated with Piper traits
-
-`services.AddSingleton<Clock>(SystemClock())`, where `Clock` is a Piper trait and `SystemClock` a record implementing it
-with `extend`, reports no matching overload. A Piper type should convert to a trait it implements when the trait is a
-.NET method's type argument.
-
 ## Language
 
 - **More for classes:**
 
-  - Properties with getters and setters, which would also let a class complete a .NET base with abstract properties
-    (`Stream`), and `protected` members.
-  - Constructors besides the primary one, and attributes on fields.
-  - Bare calls to a trait's own methods in its defaults (`Name()` rather than `this.Name()`), as classes allow.
+  - Settable and static properties in traits (C# `{ get; set; }` and `static abstract` interface properties).
+  - A way to set properties when making an object, like C#'s object initializers (`new Window { Title = "x" }`), so
+    `init` properties can be set outside constructors. `Window() { … }` already means a trailing closure, so it needs
+    another syntax.
+  - Implementing .NET interface indexers and properties whose types may be null (an Option in Piper) with a class's
+    indexer, as is done for properties.
+- **Property syntax like functions' (to decide before 1.0).** A declaration's keyword (`fn`, `prop`, `let`) should be
+  the only thing that changes, so there's one shape to learn. Today a computed property follows C#,
+  `prop Count: int => todos.Count;`, where `=>` is the body; in a function it's the result type and `=` the body,
+  `fn Count() => int = todos.Count`. The proposal: what computes is written like a function, what stores like a field.
 
+  | | Now | Proposed |
+  |---|---|---|
+  | computed | `prop Count: int => todos.Count;` | `prop Count => int = todos.Count;` |
+  | block body | `prop Name: string { get { … } }` | `prop Name => string { get { … } }` |
+  | accessors | `prop Name: string { get => name; set { … } }` | `prop Name => string { get = name; set { … } }` |
+  | indexer | `prop this[i: int]: T => items[i];` | `prop this[i: int] => T = items[i];` (like `fn Item(i: int) => T`) |
+  | in a trait | `prop Area: double { get; }` | `prop Area => double;` (like `fn Area() => double;`) |
+  | automatic (stores) | `prop Count: int { get; private set; } = 0;` | unchanged: `: int` and `= 0` as in `let count: int = 0` |
+
+  If it looks like `fn`, it runs code each time it's read; if it looks like `let`, it holds a value. The change is
+  mostly mechanical (the parser, then the samples, golden tests and docs), and cheap only until 1.0: afterwards the
+  compatibility promise makes it a breaking change.
 - **`const` declarations,** usable in patterns and attribute arguments (`const` is reserved).
 - **Spans:** `Span<T>` and `ReadOnlySpan<T>` (and ref structs generally), so APIs such as `AsSpan` and span overloads can be called. They can't be captured by lambdas or live across `await`, as in C#.
 - **Namespace-qualified variants in patterns** (`Library.Loans.LoanError.UnknownBook(code)`).

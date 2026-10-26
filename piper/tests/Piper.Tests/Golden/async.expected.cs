@@ -112,12 +112,12 @@ public static class Async
         {
             global::System.Console.WriteLine($"caught {e.Message}");
         }
-        global::System.Func<int, global::System.Threading.Tasks.Task<int>> fetch = async (int n_1) => await Twice(n_1) + 100;
+        global::System.Func<int, global::System.Threading.Tasks.Task<int>> fetch = async (int n) => await Twice(n) + 100;
         global::System.Console.WriteLine(await fetch(1));
         global::System.Threading.Channels.Channel<int> channel = global::System.Threading.Channels.Channel.CreateUnbounded<int>();
-        for (int n_2 = 1; n_2 <= 3; n_2++)
+        for (int n_1 = 1; n_1 <= 3; n_1++)
         {
-            channel.Writer.TryWrite(n_2 * n_2);
+            channel.Writer.TryWrite(n_1 * n_1);
         }
         channel.Writer.Complete();
         int total = 0;

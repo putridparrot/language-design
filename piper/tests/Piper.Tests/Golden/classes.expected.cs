@@ -21,9 +21,9 @@ public partial class Account(string owner, decimal opening)
 
     public decimal Balance() => this.balance;
 
-    public string Rename(string owner_1)
+    public string Rename(string owner)
     {
-        return $"{this.name} → {owner_1}";
+        return $"{this.name} → {owner}";
     }
 
     public void Transfer(Account to, decimal amount)
@@ -37,7 +37,7 @@ public partial class Account(string owner, decimal opening)
         global::System.Console.WriteLine($"{owner}: {message}");
     }
 
-    public static Account Empty(string owner_1) => new Account(owner_1, 0m);
+    public static Account Empty(string owner) => new Account(owner, 0m);
 }
 
 public abstract partial class Shape(string name)

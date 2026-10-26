@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Reflection;
 using Piper.Syntax;
 using Piper.Text;
 
@@ -39,11 +40,66 @@ public sealed class FieldSymbol(string name, TypeSymbol type) : Symbol(name)
     /// <summary>A class's `public` field, which code outside the class can read (and, if mutable, change).</summary>
     public bool IsPublic { get; init; } = true;
 
+    /// <summary>A class's `static` field: one for the class, not one per instance.</summary>
+    public bool IsStatic { get; init; }
+
+    /// <summary>A class's property (`prop`), used like a field but read and set through accessors.</summary>
+    public bool IsProperty { get; init; }
+
+    /// <summary>A property without accessor bodies, storing its value (C#'s <c>{ get; set; }</c>).</summary>
+    public bool IsAutomatic { get; init; }
+
+    /// <summary>A public property whose `set` is private: settable only inside its class.</summary>
+    public bool HasPrivateSetter { get; init; }
+
+    /// <summary>A public property whose `set` is protected: settable in its class and classes deriving from it.</summary>
+    public bool HasProtectedSetter { get; init; }
+
+    /// <summary>A class's `protected` field or property: usable in its class and classes deriving from it.</summary>
+    public bool IsProtected { get; init; }
+
+    /// <summary>A property with an `init`: settable only in a constructor of its class or one deriving from it.</summary>
+    public bool IsInitOnly { get; init; }
+
+    /// <summary>A property's getter, as a method (<c>get_Name</c>); null for an automatic property.</summary>
+    public MethodSymbol? Getter { get; internal set; }
+
+    /// <summary>A property's setter, as a method (<c>set_Name</c>, taking <c>value</c>); null if it has none or is automatic.</summary>
+    public MethodSymbol? Setter { get; internal set; }
+
     /// <summary>The class a class field belongs to; null for a record's or variant's.</summary>
     public ClassSymbol? Owner { get; init; }
 
     /// <summary>A class field's value when an instance is made, bound in a scope of the primary constructor's parameters.</summary>
     public BoundExpression? Initializer { get; internal set; }
+}
+
+/// <summary>
+/// A class's indexer, <c>prop this[index: int]: T { … }</c>, used as <c>value[index]</c>: its accessors are the methods
+/// <c>get_Item(index)</c> and <c>set_Item(index, value)</c>, as .NET names them.
+/// </summary>
+public sealed class IndexerSymbol(MethodSymbol getter, ClassSymbol owner) : Symbol("this[]")
+{
+    public MethodSymbol Getter { get; } = getter;
+
+    public MethodSymbol? Setter { get; init; }
+
+    public ClassSymbol Owner { get; } = owner;
+
+    /// <summary>The parameters, as the getter's.</summary>
+    public ImmutableArray<VariableSymbol> Parameters => Getter.Parameters;
+
+    public TypeSymbol Type => Getter.ReturnType;
+
+    public bool IsPublic => !Getter.IsPrivate && !Getter.IsProtected;
+
+    public bool IsProtected => Getter.IsProtected;
+
+    /// <summary>A public indexer whose `set` is private: settable only inside its class.</summary>
+    public bool HasPrivateSetter => IsPublic && Setter is { IsPrivate: true };
+
+    /// <summary>A public indexer whose `set` is protected.</summary>
+    public bool HasProtectedSetter => IsPublic && Setter is { IsProtected: true };
 }
 
 public enum VariableKind
@@ -66,6 +122,12 @@ public enum VariableKind
 
     /// <summary>A class's field, named bare inside the class (see <see cref="VariableSymbol.Field"/>).</summary>
     Field,
+
+    /// <summary>
+    /// A class's static field, named bare inside the class or through it (<c>Account.count</c>); see
+    /// <see cref="VariableSymbol.Field"/> and <see cref="VariableSymbol.Container"/>.
+    /// </summary>
+    StaticField,
 
     /// <summary>A class's primary constructor parameter, usable throughout the class, as in C# 12.</summary>
     ClassParameter,
@@ -92,8 +154,11 @@ public sealed class VariableSymbol(string name, TypeSymbol type, bool isMutable,
 
     public VariableKind Kind { get; } = kind;
 
-    /// <summary>For a <see cref="VariableKind.Field"/>: the class field it names.</summary>
+    /// <summary>For a <see cref="VariableKind.Field"/> or <see cref="VariableKind.StaticField"/>: the class field it names.</summary>
     public FieldSymbol? Field { get; init; }
+
+    /// <summary>For a <see cref="VariableKind.StaticField"/>: the class it's reached through, with its type arguments (<c>Stack&lt;int&gt;</c>).</summary>
+    public TypeSymbol? Container { get; init; }
 }
 
 public class FunctionSymbol(
@@ -167,6 +232,32 @@ public sealed class MethodSymbol(
 
     /// <summary>A class's `override fn`, replacing a base class's virtual or abstract method.</summary>
     public bool IsOverride => Declaration?.Modifier?.Text == "override";
+
+    /// <summary>
+    /// A class's `protected` method, usable in its class and classes deriving from it, or an override of a protected
+    /// method (Piper or .NET), which keeps its access, as C# requires.
+    /// </summary>
+    public bool IsProtected =>
+        Declaration?.Protected is not null ||
+        Overridden is MethodSymbol { IsProtected: true } or MethodInfo { IsFamily: true } or MethodInfo { IsFamilyOrAssembly: true };
+
+    /// <summary>A property's getter or setter, which is used through the property rather than called.</summary>
+    public bool IsAccessor => Declaration?.AccessorOf is not null;
+
+    /// <summary>An indexer's getter or setter (<c>get_Item</c>, <c>set_Item</c>), which may be overloaded.</summary>
+    public bool IsIndexerAccessor => Declaration?.AccessorOf == "this[]";
+
+    /// <summary>A class's constructor besides its primary one: <c>Account(owner: string): this(owner, 0m) { … }</c>.</summary>
+    public bool IsConstructor => Declaration?.Constructor is not null;
+
+    /// <summary>A property's `init`: a setter usable only while the object is made.</summary>
+    public bool IsInitAccessor => Declaration?.IsInitAccessor == true;
+
+    /// <summary>An accessor or constructor: a method in all but name, which code can't call as one.</summary>
+    public bool IsHidden => IsAccessor || IsConstructor;
+
+    /// <summary>How it's named in messages: its name, or for an accessor its property's (<c>Length</c>, not <c>get_Length</c>).</summary>
+    public string DisplayName => Declaration?.AccessorOf is { } property ? property : Name;
 
     /// <summary>
     /// For a class's override: the base method it overrides, a Piper method or a .NET one (<c>object.ToString</c>,

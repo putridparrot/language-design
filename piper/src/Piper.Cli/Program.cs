@@ -13,7 +13,8 @@ const string Usage = """
                                            Compile to a library: <name>.dll, .pdb and Piper.Runtime.dll
       piper emit  <inputs...>              Print the generated C# to stdout
       piper run   <inputs...> [-- <args...>]
-                                           Transpile, compile and run; <args> go to Main(args: string[])
+                                           Transpile, compile and run; <args> go to Main(args: string[]). The `--` can be
+                                           left out when the first starts with '-': piper run app --port 8001
       piper test  <inputs...> [--filter <text>]
                                            Run the program's test blocks (those whose name contains <text>)
       piper lsp                            Run the language server (LSP over stdin and stdout), for editors
@@ -69,6 +70,13 @@ for (int i = 1; i < args.Length; i++)
         executable = true;
     else if (args[i] == "--library" && command == "build")
         library = true;
+    // `piper run app --port 8001`: an option piper doesn't have, after the program, is the program's, as with
+    // `dotnet run`. (So is everything after it.) That also covers shells that drop a bare `--`, as Windows PowerShell can.
+    else if (command == "run" && inputs.Count > 0 && args[i].StartsWith('-'))
+    {
+        programArguments = args[i..];
+        break;
+    }
     else if (args[i].StartsWith('-'))
     {
         Console.Error.WriteLine($"Unknown argument '{args[i]}'.");

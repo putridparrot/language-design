@@ -1,0 +1,89 @@
+// Protected members: for a class and the classes deriving from it, not for code outside.
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+
+abstract class Shape(name: string) {
+    // A field and a property derived classes use; code outside can't.
+    protected let label = name;
+    protected prop Scale: double { get; set; } = 1.0;
+
+    // Readable everywhere, settable only by Shape and the classes deriving from it.
+    prop Sides: int { get; protected set; } = 0;
+
+    // The template: derived classes supply the steps.
+    fn Describe() => string = "{label} with {Sides} sides and area {Math.Round(Area() * Scale, 2)}";
+
+    protected abstract fn Area() => double;
+
+    protected fn Grow(by: double) { Scale *= by; }
+
+    protected static fn Square(x: double) => double = x * x;
+}
+
+class Rect(width: double, height: double): Shape("rect") {
+    let corners = 4;
+
+    // An override keeps the access of what it overrides: Area stays protected.
+    override fn Area() => double = width * height;
+
+    fn Double() {
+        Sides = corners;
+        Grow(2.0);
+    }
+}
+
+sealed class Circle(radius: double): Shape("circle") {
+    override fn Area() => double = Math.PI * Square(radius);
+
+    // Another Circle's protected members are visible here, through a Circle.
+    fn Bigger(other: Circle) => bool = other.Area() > Area();
+}
+
+// A protected indexer and a protected `set`.
+class Readings {
+    let values: List<double> = [];
+
+    fn Add(value: double) { values.Add(value); }
+
+    protected prop this[i: int] => double = values[i];
+
+    prop Latest => double { get = this[values.Count - 1]; protected set { values.Add(value); } }
+}
+
+class Smoothed: Readings {
+    fn Average(n: int) => double {
+        mut sum = 0.0;
+        for i in 0..<n {
+            sum += this[i];
+        }
+        sum / (double)n
+    }
+
+    fn Record(value: double) { Latest = value; }
+}
+
+// An override of a protected .NET method stays protected.
+class Upper: Collection<string> {
+    override fn InsertItem(index: int, item: string) {
+        base.InsertItem(index, item.ToUpper());
+    }
+}
+
+fn Main() {
+    let rect = Rect(2.0, 3.0);
+    rect.Double();
+    Print(rect.Describe());
+    let small = Circle(1.0);
+    Print("{small.Describe()}; bigger than a circle of 2: {small.Bigger(Circle(2.0))}");
+
+    let readings = Smoothed();
+    readings.Add(1.0);
+    readings.Add(2.0);
+    readings.Record(6.0);
+    Print("latest {readings.Latest}, average of all {readings.Average(3)}");
+
+    let upper = Upper();
+    upper.Add("piper");
+    Print(upper[0]);
+}

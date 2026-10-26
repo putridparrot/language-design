@@ -59,7 +59,7 @@ public static class Trailing_closures
             return n % 2 == 0;
         }));
         global::System.Console.WriteLine(string.Join<int>(", ", evens));
-        if (IsSmall(3, (int n_1) => n_1 < 5))
+        if (IsSmall(3, (int n) => n < 5))
         {
             global::System.Console.WriteLine("small");
         }

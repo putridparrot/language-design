@@ -492,9 +492,9 @@ public sealed partial class Parser
 
     /// <summary>
     /// class    = [ "abstract" | "sealed" ] "class" IDENT [ typeParameters ] [ "(" [ parameters ] ")" ]
-    ///            [ ":" baseType { "," baseType } ] ( ";" | "{" { member } "}" ) ;
+    ///            [ ":" baseType { "," baseType } ] { requires } ( ";" | "{" { member } "}" ) ;
     /// baseType = type [ "(" [ arguments ] ")" ] ;
-    /// member   = attributes [ "public" | "private" ] ( ( "let" | "mut" ) IDENT [ ":" type ] "=" expression ";"
+    /// member   = attributes [ "public" | "private" ] ( [ "static" ] ( "let" | "mut" ) IDENT [ ":" type ] "=" expression ";"
     ///                                               | [ "virtual" | "override" | "abstract" ] function ) ;
     /// </summary>
     private ClassDeclarationSyntax ParseClass()
@@ -532,6 +532,7 @@ public sealed partial class Parser
             }
             while (Current.Kind == TokenKind.Comma);
         }
+        var requires = ParseRequires();
 
         var fields = ImmutableArray.CreateBuilder<ClassFieldSyntax>();
         var methods = ImmutableArray.CreateBuilder<FunctionDeclarationSyntax>();
@@ -545,7 +546,7 @@ public sealed partial class Parser
             while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
             {
                 int start = _position;
-                ParseClassMember(fields, methods);
+                ParseClassMember(name, fields, methods);
                 if (_position == start)
                     NextToken();
             }
@@ -556,17 +557,226 @@ public sealed partial class Parser
         {
             Abstract = @abstract,
             Sealed = @sealed,
+            Requires = requires,
         };
     }
 
     private bool IsMethodModifier(int offset) => Peek(offset) is { Kind: TokenKind.Identifier, Text: "virtual" or "override" or "abstract" };
 
-    private void ParseClassMember(ImmutableArray<ClassFieldSyntax>.Builder fields, ImmutableArray<FunctionDeclarationSyntax>.Builder methods)
+    /// <summary>`prop` is a keyword only where a property can start: in a class, before the property's name.</summary>
+    private bool IsPropertyStart(int offset) =>
+        Peek(offset) is { Kind: TokenKind.Identifier, Text: "prop" } &&
+        (Peek(offset + 1).Kind == TokenKind.Identifier || (Peek(offset + 1).Kind == TokenKind.ThisKeyword && Peek(offset + 2).Kind == TokenKind.OpenBracket));
+
+    /// <summary>
+    /// property = "prop" ( IDENT | "this" "[" parameters "]" )
+    ///            ( "=&gt;" type ( "=" expression ";" | ";" | "{" { accessor } "}" )   (* computes: written as a function is *)
+    ///            | [ ":" type ] "{" { accessor } "}" "=" expression ";" ) ;          (* stores: written as a field is *)
+    /// accessor = [ "private" | "protected" ] ( "get" | "set" | "init" ) ( ";" | "=" expression ";" | block ) ;
+    /// </summary>
+    private ClassFieldSyntax ParseProperty()
+    {
+        var keyword = NextToken();
+        // `prop this[index: int]: T …`: an indexer.
+        Token name;
+        ImmutableArray<ParameterSyntax> parameters = [];
+        if (Current.Kind == TokenKind.ThisKeyword)
+        {
+            name = NextToken();
+            Expect(TokenKind.OpenBracket);
+            parameters = ParseSeparatedList(ParseParameter, TokenKind.CloseBracket);
+            Expect(TokenKind.CloseBracket);
+        }
+        else
+        {
+            name = Expect(TokenKind.Identifier);
+        }
+        // `prop Total => decimal …` computes its value, written as a function is; `prop Count: int { get; set; } = 0`
+        // stores one, written as a field is.
+        Token? arrow = null;
+        TypeSyntax? type = null;
+        if (Current.Kind == TokenKind.FatArrow)
+        {
+            arrow = NextToken();
+            type = ParseType();
+        }
+        else if (Current.Kind == TokenKind.Colon)
+        {
+            NextToken();
+            type = ParseType();
+        }
+
+        var accessors = ImmutableArray.CreateBuilder<AccessorSyntax>();
+        ExpressionSyntax? initializer = null;
+        if (arrow is not null && Current.Kind == TokenKind.Equals)
+        {
+            // `prop Total => decimal = price * quantity;`: a getter alone, its body as a function's is.
+            var equals = NextToken();
+            var (body, isIterator) = ParseAccessorBody(() => ParseExpression());
+            Expect(TokenKind.Semicolon);
+            accessors.Add(new AccessorSyntax(Span(equals, body), new Token(TokenKind.Identifier, equals.Span, "get"), null, body) { IsIterator = isIterator });
+        }
+        else if (arrow is not null && Current.Kind == TokenKind.Semicolon)
+        {
+            // `prop Area => double;`: a getter without a body, as a trait's required property is.
+            var semicolon = NextToken();
+            accessors.Add(new AccessorSyntax(semicolon.Span, new Token(TokenKind.Identifier, semicolon.Span, "get"), null, null));
+        }
+        else if (Current.Kind == TokenKind.FatArrow)
+        {
+            // `prop Total: decimal => …`, as C# writes it: reported, then read as `prop Total => decimal = …`.
+            var fatArrow = NextToken();
+            arrow = fatArrow;
+            _diagnostics.ReportClassMember(fatArrow.Span,
+                $"A property that computes its value is written as a function is: 'prop {name.Text} => {(type is null ? "Type" : _source.ToString(type.Span))} = …;'.");
+            var (body, isIterator) = ParseAccessorBody(() => ParseExpression());
+            Expect(TokenKind.Semicolon);
+            accessors.Add(new AccessorSyntax(Span(fatArrow, body), new Token(TokenKind.Identifier, fatArrow.Span, "get"), null, body) { IsIterator = isIterator });
+        }
+        else
+        {
+            Expect(TokenKind.OpenBrace);
+            while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
+            {
+                var first = Current;
+                Token? @private = Current.Kind == TokenKind.PrivateKeyword ? NextToken() : null;
+                Token? @protected = @private is null && Current is { Kind: TokenKind.Identifier, Text: "protected" } ? NextToken() : null;
+                if (Current is not { Kind: TokenKind.Identifier, Text: "get" or "set" or "init" })
+                {
+                    ReportOnce(Current.Span, () => _diagnostics.ReportClassMember(Current.Span,
+                        $"Expected 'get', 'set' or 'init' in the property, but found '{Current.Text}'."));
+                    NextToken();
+                    continue;
+                }
+                var accessor = NextToken();
+                BlockExpressionSyntax? block = null;
+                ExpressionSyntax? expression = null;
+                bool isIterator = false;
+                if (Current.Kind is TokenKind.Equals or TokenKind.FatArrow)
+                {
+                    // `get = name;`, as a function's body is written; `get => name;` (C#'s) is read the same, and reported.
+                    var equals = NextToken();
+                    if (equals.Kind == TokenKind.FatArrow)
+                        _diagnostics.ReportClassMember(equals.Span, $"An accessor's body is written as a function's is: '{accessor.Text} = …;'.");
+                    (expression, isIterator) = ParseAccessorBody(() => ParseExpression());
+                    Expect(TokenKind.Semicolon);
+                }
+                else if (Current.Kind == TokenKind.OpenBrace)
+                {
+                    (block, isIterator) = ParseAccessorBody(ParseBlock);
+                }
+                else
+                {
+                    Expect(TokenKind.Semicolon);
+                }
+                accessors.Add(new AccessorSyntax(SpanFrom(first), accessor, block, expression) { Private = @private, Protected = @protected, IsIterator = isIterator });
+            }
+            Expect(TokenKind.CloseBrace);
+            if (Current.Kind == TokenKind.Equals)
+            {
+                NextToken();
+                initializer = ParseExpression();
+                Expect(TokenKind.Semicolon);
+            }
+        }
+        return new ClassFieldSyntax(SpanFrom(keyword), keyword, name, type, initializer) { Accessors = accessors.ToImmutable(), Parameters = parameters, Arrow = arrow };
+    }
+
+    /// <summary>
+    /// constructor = IDENT "(" [ parameters ] ")" [ ":" "this" "(" [ arguments ] ")" ] block ;  (* IDENT is the class's name *)
+    /// It's a method named <c>.ctor</c>, which nothing can call by name.
+    /// </summary>
+    private FunctionDeclarationSyntax ParseConstructor()
+    {
+        var className = NextToken();
+        Expect(TokenKind.OpenParen);
+        var parameters = ParseSeparatedList(ParseParameter, TokenKind.CloseParen);
+        Expect(TokenKind.CloseParen);
+        Token? @this = null;
+        ImmutableArray<ExpressionSyntax> arguments = [];
+        if (Current.Kind == TokenKind.Colon)
+        {
+            NextToken();
+            @this = Expect(TokenKind.ThisKeyword);
+            Expect(TokenKind.OpenParen);
+            arguments = ParseSeparatedList(ParseArgument, TokenKind.CloseParen);
+            Expect(TokenKind.CloseParen);
+        }
+        var (body, _) = ParseAccessorBody(ParseBlock);
+        return new FunctionDeclarationSyntax(SpanFrom(className), new Token(TokenKind.Identifier, className.Span, ".ctor"), [], null, parameters, null, body, null)
+        {
+            Constructor = new ConstructorChainSyntax(className, @this, arguments),
+        };
+    }
+
+    /// <summary>
+    /// A property in a trait or `extend` block as its getter, a method named <c>get_Name</c> as .NET names it: read-only,
+    /// with a type, and with no initial value, since neither can store one. Null after reporting one that isn't.
+    /// </summary>
+    private FunctionDeclarationSyntax? PropertyGetter(ClassFieldSyntax property)
+    {
+        string? problem = property switch
+        {
+            { IsIndexer: true } => "Indexers can only be declared in classes.",
+            { Arrow: null } => $"A trait's or extend block's property computes its value, so it's written as a function is: 'prop {property.Name.Text} => Type = …;' (or 'prop {property.Name.Text} => Type;' for a trait to require).",
+            _ when property.Accessors.Any(a => a.IsSetter) || property.Initializer is not null =>
+                $"A trait's or extend block's properties can only be read, as there's nowhere to store a value; give '{property.Name.Text}' a 'get' alone.",
+            _ when property.Accessors.Count(a => !a.IsSetter) != 1 => $"'{property.Name.Text}' needs a single 'get'.",
+            _ => null,
+        };
+        if (problem is not null)
+        {
+            _diagnostics.ReportClassMember(property.Name.Span, problem);
+            return null;
+        }
+        var get = property.Accessors[0];
+        return new FunctionDeclarationSyntax(property.Span, new Token(TokenKind.Identifier, property.Name.Span, "get_" + property.Name.Text), [], null, [],
+            property.Type, get.BlockBody, get.ExpressionBody)
+        {
+            IsIterator = get.IsIterator,
+            AccessorOf = property.Name.Text,
+        };
+    }
+
+    /// <summary>An accessor's body: never async, and an iterator if it yields.</summary>
+    private (T Body, bool IsIterator) ParseAccessorBody<T>(Func<T> parse)
+    {
+        var (outerAsync, outerYield, outerContext) = (_inAsync, _sawYield, _asyncContext);
+        (_inAsync, _sawYield, _asyncContext) = (false, false, AsyncContext.Sync);
+        var body = parse();
+        bool isIterator = _sawYield;
+        (_inAsync, _sawYield, _asyncContext) = (outerAsync, outerYield, outerContext);
+        return (body, isIterator);
+    }
+
+    private void ParseClassMember(Token className, ImmutableArray<ClassFieldSyntax>.Builder fields, ImmutableArray<FunctionDeclarationSyntax>.Builder methods)
     {
         var documentation = DocumentationBefore(Current.Span.Start);
         var attributes = Current.Kind == TokenKind.OpenBracket ? ParseAttributes() : [];
         Token? @public = Current is { Kind: TokenKind.Identifier, Text: "public" } ? NextToken() : null;
         Token? @private = @public is null && Current.Kind == TokenKind.PrivateKeyword ? NextToken() : null;
+        Token? @protected = @public is null && @private is null && Current is { Kind: TokenKind.Identifier, Text: "protected" } ? NextToken() : null;
+        Token? staticField = Current.Kind == TokenKind.StaticKeyword &&
+                             (Peek(1).Kind is TokenKind.LetKeyword or TokenKind.MutKeyword || IsPropertyStart(1) || (IsMethodModifier(1) && IsPropertyStart(2)))
+            ? NextToken()
+            : null;
+
+        if (IsPropertyStart(0) || (IsMethodModifier(0) && IsPropertyStart(1)))
+        {
+            Token? propertyModifier = IsMethodModifier(0) ? NextToken() : null;
+            if (@public is not null)
+                _diagnostics.ReportClassMember(@public.Span, "Properties are public unless marked 'private' or 'protected', so 'public' isn't needed.");
+            fields.Add(ParseProperty() with
+            {
+                Private = @private,
+                Protected = @protected,
+                Static = staticField,
+                Modifier = propertyModifier,
+                Attributes = attributes,
+                Documentation = documentation,
+            });
+            return;
+        }
 
         if (Current.Kind is TokenKind.LetKeyword or TokenKind.MutKeyword)
         {
@@ -581,9 +791,28 @@ public sealed partial class Parser
             Expect(TokenKind.Equals);
             var initializer = ParseExpression();
             Expect(TokenKind.Semicolon);
-            if (!attributes.IsEmpty)
-                _diagnostics.ReportClassMember(attributes[0].Span, "Fields can't have attributes yet.");
-            fields.Add(new ClassFieldSyntax(SpanFrom(keyword), keyword, fieldName, type, initializer) { Public = @public, Documentation = documentation });
+            fields.Add(new ClassFieldSyntax(SpanFrom(staticField ?? keyword), keyword, fieldName, type, initializer)
+            {
+                Public = @public,
+                Protected = @protected,
+                Static = staticField,
+                Attributes = attributes,
+                Documentation = documentation,
+            });
+            return;
+        }
+
+        // `Account(owner: string): this(owner, 0m) { … }`: a constructor, named as C# names one, after its class.
+        if (Current.Kind == TokenKind.Identifier && Current.Text == className.Text && Peek(1).Kind == TokenKind.OpenParen)
+        {
+            methods.Add(ParseConstructor() with
+            {
+                Private = @private,
+                Protected = @protected,
+                Public = @public,
+                Attributes = attributes,
+                Documentation = documentation,
+            });
             return;
         }
 
@@ -593,10 +822,10 @@ public sealed partial class Parser
         if (!AtFunctionStart())
         {
             ReportOnce(Current.Span, () => _diagnostics.ReportClassMember(Current.Span,
-                $"Expected a field ('let' or 'mut') or a method ('fn') in the class, but found '{Current.Text}'."));
+                $"Expected a field ('let' or 'mut'), a property ('prop') or a method ('fn') in the class, but found '{Current.Text}'."));
             // Skip the rest of the member, so one mistake is one error.
             while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile or TokenKind.LetKeyword or TokenKind.MutKeyword) &&
-                   !AtFunctionStart() && !IsMethodModifier(0))
+                   !AtFunctionStart() && !IsMethodModifier(0) && !IsPropertyStart(0))
             {
                 if (NextToken().Kind == TokenKind.Semicolon)
                     break;
@@ -608,6 +837,7 @@ public sealed partial class Parser
         {
             Static = @static ?? function.Static,
             Private = @private,
+            Protected = @protected,
             Public = @public,
             Modifier = modifier,
             Attributes = attributes,
@@ -707,6 +937,17 @@ public sealed partial class Parser
             {
                 var @private = NextToken();
                 methods.Add(ParseFunction() with { Private = @private, Documentation = documentation });
+                continue;
+            }
+
+            // `prop Area: double { get; }` (required, in a trait) or `prop Area: double => …;`: a getter.
+            if (IsPropertyStart(0) || (Current.Kind is TokenKind.PrivateKeyword or TokenKind.StaticKeyword && IsPropertyStart(1)) ||
+                (Current.Kind == TokenKind.PrivateKeyword && Peek(1).Kind == TokenKind.StaticKeyword && IsPropertyStart(2)))
+            {
+                var @private = Current.Kind == TokenKind.PrivateKeyword ? NextToken() : null;
+                var @static = Current.Kind == TokenKind.StaticKeyword ? NextToken() : null;
+                if (PropertyGetter(ParseProperty()) is { } getter)
+                    methods.Add(getter with { Private = @private, Static = @static, Documentation = documentation });
                 continue;
             }
 

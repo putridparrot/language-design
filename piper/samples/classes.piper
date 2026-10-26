@@ -28,7 +28,7 @@ class Account(owner: string, opening: decimal) {
         to.Deposit(amount);
     }
 
-    fn Balance() => decimal = balance;
+    prop Balance => decimal = balance;      // a property: read like a field
     fn History() => string = string.Join(", ", history);
 
     private fn Record(entry: string) { history.Add(entry); }
@@ -99,7 +99,7 @@ fn Main() {
     // The same object, not a copy.
     let alias = bob;
     alias.Deposit(1m);
-    Print(bob.Balance());
+    Print(bob.Balance);
 
     let shapes: List<Shape> = [Rect(2.0, 3.0), Circle(1.0)];
     for shape in shapes {

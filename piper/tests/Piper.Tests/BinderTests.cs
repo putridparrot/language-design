@@ -835,7 +835,224 @@ public class BinderTests
     [InlineData("PIP0201", "class A { let x = 1; fn x() { } } fn Main() { }")]
     [InlineData("PIP0205", "class A(x: int) { } fn Main() { let a = A(); }")]
     [InlineData("PIP0212", "class A: System.Collections.ObjectModel.Collection<int> { } fn Main() { Print(A().Items); }")]
-    [InlineData("PIP0200", "class A: System.Exception { static fn F() => string = Message; } fn Main() { }")]    public void Class_errors(string code, string program) => AssertSingleError(code, program);
+    [InlineData("PIP0200", "class A: System.Exception { static fn F() => string = Message; } fn Main() { }")]
+    public void Class_errors(string code, string program) => AssertSingleError(code, program);
+
+    [Theory]
+    [InlineData("PIP0354", "class A { static let x = y; static let y = 1; } fn Main() { }")]
+    [InlineData("PIP0354", "class A { static let x = x; } fn Main() { }")]
+    [InlineData("PIP0354", "class A(p: int) { static let x = p; } fn Main() { }")]
+    [InlineData("PIP0354", "class A { let y = 1; static let x = y; } fn Main() { }")]
+    [InlineData("PIP0354", "class A { public static let x = 1; } fn Main() { Print(A().x); }")]
+    [InlineData("PIP0354", "class A { public static mut x = 1; } fn Main() { A().x = 2; }")]
+    [InlineData("PIP0354", "class A<T> { public static let x = 1; } fn Main() { Print(A.x); }")]
+    [InlineData("PIP0351", "class A { static let x = 1; } fn Main() { Print(A.x); }")]
+    [InlineData("PIP0351", "class A { static mut x = 1; } fn Main() { A.x = 2; }")]
+    [InlineData("PIP0351", "class A { static let x = 1; } class B: A { fn F() => int = A.x; } fn Main() { }")]
+    [InlineData("PIP0207", "class A { public static let x = 1; } fn Main() { A.x = 2; }")]
+    [InlineData("PIP0207", "class A { static let x = 1; static fn F() { x = 2; } } fn Main() { }")]
+    [InlineData("PIP0201", "class A { static let x = 1; let x = 2; } fn Main() { }")]
+    [InlineData("PIP0201", "class A { static let x = 1; static fn x() { } } fn Main() { }")]
+    [InlineData("PIP0206", "class A { public static let x = 1; } fn Main() { A.x(); }")]
+    public void Static_field_errors(string code, string program) => AssertSingleError(code, program);
+
+    [Theory]
+    [InlineData("PIP0340", "class A(x: int) requires x > 0 { } fn Main() { let a = A(-1); }")]
+    [InlineData("PIP0340", "class A(x: int, y: int) requires x < y { } fn Main() { let a = A(y: 1, x: 2); }")]
+    [InlineData("PIP0354", "class A(x: int) requires y > 0 { let y = 1; } fn Main() { }")]
+    [InlineData("PIP0354", "class A(x: int) requires F() { fn F() => bool = true; } fn Main() { }")]
+    [InlineData("PIP0200", "class A(x: int) requires z > 0 { } fn Main() { }")]
+    public void Class_invariant_errors(string code, string program) => AssertSingleError(code, program);
+
+    [Theory]
+    [InlineData("PIP0356", "class A { prop X: int { get; private set; } = 0; } fn Main() { A().X = 1; }")]
+    [InlineData("PIP0356", "class A { prop X: int { get; private set; } = 0; } class B: A { fn F() { X = 1; } } fn Main() { }")]
+    [InlineData("PIP0356", "class A { static prop X: int { get; private set; } = 0; } fn Main() { A.X += 1; }")]
+    [InlineData("PIP0207", "class A { prop X => int = 1; } fn Main() { A().X = 2; }")]
+    [InlineData("PIP0207", "class A { prop X => int = 1; fn F() { X = 2; } } fn Main() { }")]
+    [InlineData("PIP0351", "class A { private prop X => int = 1; } fn Main() { Print(A().X); }")]
+    [InlineData("PIP0354", "class A { prop X => int = 1; let y = X; } fn Main() { }")]
+    [InlineData("PIP0354", "class A { prop X => int = 1; static fn F() => int = X; } fn Main() { }")]
+    [InlineData("PIP0355", "class A { mut x = 0; prop X => int { set { x = value; } } } fn Main() { }")]
+    [InlineData("PIP0355", "class A { prop X => int { get = 1; get = 2; } } fn Main() { }")]
+    [InlineData("PIP0355", "class A { mut x = 0; prop X => int { private get = x; set { x = value; } } } fn Main() { }")]
+    [InlineData("PIP0355", "class A { mut x = 0; private prop X => int { get = x; private set { x = value; } } } fn Main() { }")]
+    [InlineData("PIP0355", "class A { prop X: int { get; } } fn Main() { }")]
+    [InlineData("PIP0355", "class A { prop X => int { get = 1; } = 2; } fn Main() { }")]
+    [InlineData("PIP0355", "class A { prop X => int { get = 1; set; } } fn Main() { }")]
+    [InlineData("PIP0355", "class A { prop X => 1; } fn Main() { }")]
+    [InlineData("PIP0355", "class A { virtual prop X: int { get; } = 1; } fn Main() { }")]
+    [InlineData("PIP0355", "abstract class A { abstract prop X: int { get; } = 1; } fn Main() { }")]
+    [InlineData("PIP0352", "class A { override prop X => int = 1; } fn Main() { }")]
+    [InlineData("PIP0352", "class A { virtual prop X => int = 1; } class B: A { override prop X => string = \"\"; } fn Main() { }")]
+    [InlineData("PIP0352", "class A { virtual prop X => int = 1; } class B: A { prop X => int = 2; } fn Main() { }")]
+    [InlineData("PIP0352", "class A { virtual prop X => int = 1; } class B: A { mut x = 0; override prop X => int { get = x; set { x = value; } } } fn Main() { }")]
+    [InlineData("PIP0352", "class A { abstract prop X => int { get; } } fn Main() { }")]
+    [InlineData("PIP0352", "abstract class A { abstract prop X => int { get = 1; } } fn Main() { }")]
+    [InlineData("PIP0352", "class A { static mut x = 0; static virtual prop X => int { get = x; set { x = value; } } } fn Main() { }")]
+    [InlineData("PIP0352", "class E: System.Exception { override prop Message => int = 1; } fn Main() { }")]
+    [InlineData("PIP0353", "abstract class A { abstract prop X => int { get; set; } } class B: A { } fn Main() { }")]
+    [InlineData("PIP0109", "class A { public prop X => int = 1; } fn Main() { }")]
+    [InlineData("PIP0201", "class A { mut x = 0; prop x => int = 1; } fn Main() { }")]
+    [InlineData("PIP0243", "class A { prop X => int = 1; } fn Main() { A().get_X(); }")]
+    public void Property_errors(string code, string program) => AssertSingleError(code, program);
+
+    [Theory]
+    [InlineData("PIP0356", "class A { mut x = 0; prop this[i: int] => int { get = x; private set { x = value; } } } fn Main() { A()[0] = 1; }")]
+    [InlineData("PIP0285", "class A { prop this[i: int] => int = i; } fn Main() { A()[0] = 1; }")]
+    [InlineData("PIP0351", "class A { private prop this[i: int] => int = i; } fn Main() { Print(A()[0]); }")]
+    [InlineData("PIP0274", "class A { prop this[i: int] => int = i; } fn Main() { Print(A()[1, 2]); }")]
+    [InlineData("PIP0202", "class A { prop this[i: int] => int = i; } fn Main() { Print(A()[\"x\"]); }")]
+    [InlineData("PIP0275", "class A { prop this[i: long] => int = 1; prop this[d: double] => int = 2; } fn Main() { Print(A()[1]); }")]
+    [InlineData("PIP0355", "class A { static prop this[i: int] => int = i; } fn Main() { }")]
+    [InlineData("PIP0355", "class A { prop this[value: int] => int = value; } fn Main() { }")]
+    [InlineData("PIP0355", "class A { prop this[i: int] => int { get; set; } } fn Main() { }")]
+    [InlineData("PIP0355", "class A { prop this[i: int] => i; } fn Main() { }")]
+    [InlineData("PIP0355", "class A { prop this[i: int] => int = i; prop this[j: int] => string = \"\"; } fn Main() { }")]
+    [InlineData("PIP0352", "abstract class A { abstract prop this[i: int] => int { get; } } class B: A { prop this[i: int] => int = i; } fn Main() { }")]
+    [InlineData("PIP0353", "abstract class A { abstract prop this[i: int] => int { get; } } class B: A { } fn Main() { }")]
+    public void Indexer_errors(string code, string program) => AssertSingleError(code, program);
+
+    private const string ProtectedBase = "class A { protected mut x = 1; protected fn F() => int = 1; protected prop P => int = 2; protected static fn S() => int = 3; prop Q: int { get; protected set; } = 0; protected prop this[i: int] => int = i; }\n";
+
+    [Theory]
+    [InlineData("PIP0357", "fn Main() { Print(A().F()); }")]
+    [InlineData("PIP0357", "fn Main() { Print(A().P); }")]
+    [InlineData("PIP0357", "fn Main() { Print(A().x); }")]
+    [InlineData("PIP0357", "fn Main() { Print(A.S()); }")]
+    [InlineData("PIP0357", "fn Main() { Print(A()[0]); }")]
+    [InlineData("PIP0357", "class B: A { fn G(other: A) => int = other.F(); } fn Main() { }")]
+    [InlineData("PIP0357", "class B: A { fn G(other: A) => int = other.x; } fn Main() { }")]
+    [InlineData("PIP0357", "class C { fn G(a: A) => int = a.P; } fn Main() { }")]
+    [InlineData("PIP0356", "fn Main() { A().Q = 1; }")]
+    [InlineData("PIP0356", "class C { fn G(a: A) { a.Q = 1; } } fn Main() { }")]
+    [InlineData("PIP0352", "class B { private virtual fn F() { } } fn Main() { }")]
+    [InlineData("PIP0352", "class B { virtual fn F() { } } class C: B { protected override fn F() { } } fn Main() { }")]
+    [InlineData("PIP0355", "class B { prop P => int { protected get = 1; } } fn Main() { }")]
+    [InlineData("PIP0355", "class B { mut v = 0; protected prop P => int { get = v; protected set { v = value; } } } fn Main() { }")]
+    public void Protected_errors(string code, string program) => AssertSingleError(code, ProtectedBase + program);
+
+    [Theory]
+    [InlineData("PIP0331", "class A { [System.Serializable] let x = 1; } fn Main() { }")]
+    [InlineData("PIP0331", "class A { [System.NonSerialized] prop P => int = 1; } fn Main() { }")]
+    [InlineData("PIP0331", "class A { [System.NonSerialized] prop this[i: int] => int = i; } fn Main() { }")]
+    [InlineData("PIP0331", "[System.NonSerialized] class A { } fn Main() { }")]
+    [InlineData("PIP0332", "class A { [System.Obsolete, System.Obsolete] let x = 1; } fn Main() { }")]
+    public void Class_attribute_errors(string code, string program) => AssertSingleError(code, program);
+
+    [Theory]
+    [InlineData("PIP0354", "trait T { fn Name() => string; static fn Make() => string = Name(); } fn Main() { }")]
+    [InlineData("PIP0200", "trait T { static fn Zero() => int; fn F() => int = Zero(); } fn Main() { }")]
+    public void Bare_trait_method_errors(string code, string program) => AssertSingleError(code, program);
+
+    [Theory]
+    [InlineData("PIP0358", "class A(x: int) { A(y: int): this(y) { } } fn Main() { }")]
+    [InlineData("PIP0358", "class A { A() { } } fn Main() { }")]
+    [InlineData("PIP0358", "class A(x: int) { A() { } } fn Main() { }")]
+    [InlineData("PIP0275", "class A(x: long) { A(d: double): this(1L) { } } fn Main() { let a = A(1); }")]
+    [InlineData("PIP0274", "class A(x: int) { A(s: string): this(1) { } } fn Main() { let a = A(true); }")]
+    [InlineData("PIP0351", "class A(x: int) { private A(): this(1) { } } fn Main() { let a = A(); }")]
+    [InlineData("PIP0357", "class A(x: int) { protected A(): this(1) { } } class B: A(1) { fn F() { let a = A(); } } fn Main() { }")]
+    [InlineData("PIP0354", "class A(x: int) { let y = 1; A(): this(y) { } } fn Main() { }")]
+    [InlineData("PIP0207", "class A(x: int) { let y = 1; A(): this(1) { y = 2; } } fn Main() { }")]
+    [InlineData("PIP0359", "class A { prop P: int { get; init; } = 0; } fn Main() { A().P = 1; }")]
+    [InlineData("PIP0359", "class A { prop P: int { get; init; } = 0; fn F() { P = 1; } } fn Main() { }")]
+    [InlineData("PIP0359", "class A(x: int) { prop P: int { get; init; } = 0; A(other: A): this(1) { other.P = 2; } } fn Main() { }")]
+    [InlineData("PIP0359", "class A(x: int) { prop P: int { get; init; } = 0; A(): this(1) { let f = () => { P = 2; }; } } fn Main() { }")]
+    [InlineData("PIP0355", "class A { mut v = 0; prop this[i: int] => int { get = v; init { v = value; } } } fn Main() { }")]
+    [InlineData("PIP0352", "class A { mut v = 0; virtual prop P => int { get = v; init { v = value; } } } class B: A { override prop P => int { get = 1; set { } } } fn Main() { }")]
+    public void Constructor_and_init_errors(string code, string program) => AssertSingleError(code, program);
+
+    [Theory]
+    [InlineData("PIP0109", "trait T { prop X => int { get; set; } } fn Main() { }")]
+    [InlineData("PIP0109", "extend int { prop X: int { get; } = 1; } fn Main() { }")]
+    [InlineData("PIP0109", "extend int { prop X => 1; } fn Main() { }")]
+    [InlineData("PIP0109", "extend int { prop this[i: int] => int = i; } fn Main() { }")]
+    [InlineData("PIP0245", "trait T { prop X => int; } record R(a: int); extend R: T { } fn Main() { }")]
+    [InlineData("PIP0245", "trait T { prop X => int; } class C: T { public let X = \"\"; } fn Main() { }")]
+    [InlineData("PIP0245", "trait T { prop X => int; } class C: T { let X = 1; } fn Main() { }")]
+    [InlineData("PIP0246", "trait T { prop X => int; } record R(a: int); extend R: T { prop X => string = \"\"; } fn Main() { }")]
+    [InlineData("PIP0243", "extend int { prop X => int = 1; } fn Main() { Print(1.get_X()); }")]
+    [InlineData("PIP0285", "extend int { static prop X => int = 1; } fn Main() { int.X = 2; }")]
+    [InlineData("PIP0285", "extend int { prop X => int = 1; } fn Main() { let n = 1; n.X = 2; }")]
+    public void Trait_and_extend_property_errors(string code, string program) => AssertSingleError(code, program);
+
+    [Theory]
+    [InlineData("PIP0352", "abstract class A<T> { abstract fn F(x: T) => T; } class B: A<int> { override fn F(x: string) => string = x; } fn Main() { }")]
+    [InlineData("PIP0352", "class A<T>(v: T) { virtual prop P => T = v; } class B: A<int>(1) { override prop P => string = \"\"; } fn Main() { }")]
+    [InlineData("PIP0353", "abstract class A<T> { abstract fn F(x: T); } class B: A<int> { } fn Main() { }")]
+    [InlineData("PIP0357", "class A<T> { protected let x = 1; } class B: A<int> { } fn Main() { Print(B().x); }")]
+    [InlineData("PIP0202", "class A<T>(v: T) { public mut x: T = v; } class B: A<int>(1) { fn F() { x = \"s\"; } } fn Main() { }")]
+    [InlineData("PIP0202", "class A<T>(v: T) { public mut x: T = v; } class B: A<int>(1) { } fn Main() { let b = B(); b.x = \"s\"; }")]
+    [InlineData("PIP0202", "class A<T>(v: T) { fn Get() => T = v; } class B: A<int>(1) { fn F() => string = Get(); } fn Main() { }")]
+    public void Generic_base_errors(string code, string program) => AssertSingleError(code, program);
+
+    private const string VarianceShapes = "trait Shape { fn Area() => double; } record Circle(r: double); extend Circle: Shape { fn Area() => double = this.r; } extend int: Shape { fn Area() => double = 1.0; }\n";
+
+    [Theory]
+    [InlineData("PIP0202", "fn Main() { let ints: System.Collections.Generic.List<int> = [1]; let s: System.Collections.Generic.IEnumerable<Shape> = ints; }")]
+    [InlineData("PIP0202", "fn Main() { let circles: System.Collections.Generic.List<Circle> = []; let s: System.Collections.Generic.List<Shape> = circles; }")]
+    [InlineData("PIP0274", "fn Main() { let s = System.Collections.Generic.List<Shape>(); s.Add(\"x\"); }")]
+    [InlineData("PIP0202", "record ByRadius(); extend ByRadius: System.Collections.Generic.IComparer<Circle> { fn Compare(a: Circle?, b: Circle?) => int = 0; } fn Main() { let c: System.Collections.Generic.IComparer<Shape> = ByRadius(); }")]
+    public void Variance_errors(string code, string program) => AssertSingleError(code, VarianceShapes + program);
+
+    [Theory]
+    // The function's signature must be the delegate's.
+    [InlineData("PIP0274", "fn Both(a: int, b: int) => int = a + b; fn Main() { let n: System.Collections.Generic.List<int> = [1]; n.ConvertAll(Both); }")]
+    [InlineData("PIP0274", "fn Wrong(s: string) => bool = true; fn Main() { let n: System.Collections.Generic.List<int> = [1]; n.FindAll(Wrong); }")]
+    // A variable holding a Func is a delegate already, which C# doesn't convert to another delegate type.
+    [InlineData("PIP0274", "fn IsEven(n: int) => bool = n % 2 == 0; fn Main() { let f: System.Func<int, bool> = IsEven; let n: System.Collections.Generic.List<int> = [1]; n.FindAll(f); }")]
+    public void Function_as_delegate_errors(string code, string program) => AssertSingleError(code, program);
+
+    [Theory]
+    [InlineData("PIP0295", "fn Main() { let s = (string)System.DayOfWeek.Monday; }")]
+    [InlineData("PIP0295", "fn Main() { let d = (System.DayOfWeek)\"Monday\"; }")]
+    // None goes only where .NET takes null.
+    [InlineData("PIP0274", "fn Main() { Print(System.Math.Abs(None)); }")]
+    // Several overloads take it equally well, as in C#.
+    [InlineData("PIP0275", "fn Main() { let sb = System.Text.StringBuilder(); sb.Append(None); }")]
+    public void Enum_cast_and_none_argument_errors(string code, string program) => AssertSingleError(code, program);
+
+    [Fact]
+    public void An_override_of_a_generic_base_s_method_is_described_with_its_type_arguments()
+    {
+        var result = Compilation.Compile("abstract class A<T> { abstract fn F(x: T) => T; } class B: A<int> { override fn F(x: string) => string = x; } fn Main() { }");
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("(x: int) => int"));
+    }
+
+    [Fact]
+    public void A_derived_class_s_constructor_sets_its_base_s_init_properties()
+    {
+        var result = Compilation.Compile(
+            "class A { prop P: int { get; init; } = 0; }\nclass B: A { B(x: int): this() { P = x; } }\n" +
+            "fn Main() { Print(B(4).P); }");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.Run(result.Files);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("4", run.Output.Trim());
+    }
+
+    [Theory]
+    [InlineData("class B: A { fn G() => int = F() + P + x + S() + this[1]; fn H(other: B) => int = other.F() + other.x; fn K() { Q = 5; } } fn Main() { }")]
+    [InlineData("class B: A { override fn ToString() => string = \"{base.ToString()}\"; } fn Main() { }")]
+    public void Protected_members_are_usable_in_derived_classes(string program)
+    {
+        var result = Compilation.Compile(ProtectedBase + program);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        // C# agrees: its access rules for protected members are the ones Piper checks.
+        var run = Runner.Run(result.Files);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+    }
+
+    [Fact]
+    public void A_class_can_override_a_dotnet_property()
+    {
+        var result = Compilation.Compile(
+            "class NotFound(id: int): System.Exception { override prop Message => string = \"No item {id}\"; }\n" +
+            "fn Main() { try { throw NotFound(3); } catch (e: System.Exception) { Print(e.Message); } }");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Equal("No item 3", Runner.Run(result.Files).Output.Trim());
+    }
 
     private const string ClassShapes = "abstract class Shape { } class Circle: Shape { } class Other { } trait T { fn F() => int; } extend int: T { fn F() => int = 1; }\n";
 
@@ -854,6 +1071,16 @@ public class BinderTests
     [InlineData("PIP0295", "fn F(o: Other) => Circle = (Circle)o;")]
     [InlineData("PIP0221", "fn F() { let xs = [Circle(), Other()]; }")]
     public void Type_test_base_and_downcast_errors(string code, string program) => AssertSingleError(code, ClassShapes + program);
+
+    [Fact]
+    public void Invariants_are_lowered_like_initializers()
+    {
+        var result = Compilation.Compile(
+            "record Limit(max: int?) requires (max ?? 0) >= 0;\n" +
+            "fn Main() { Print(Limit(Some(3)).max ?? 0); let bad = -1; try { Limit(Some(bad)); } catch (e: System.ArgumentException) { Print(e.Message); } }");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Equal("3\nInvariant failed: (max ?? 0) >= 0 (max = Some(-1))", Runner.Run(result.Files).Output.Trim().ReplaceLineEndings("\n"));
+    }
 
     [Fact]
     public void Records_and_enums_can_override_ToString()

@@ -50,21 +50,41 @@ public sealed partial class Binder
         /// <summary>`count: 2`: the parameter a named argument is for.</summary>
         public string? Name { get; init; }
 
+        /// <summary>
+        /// `None` (or `null`) written alone, which has no type of its own: it fits any parameter that takes null, and is
+        /// bound once the overload is chosen, as a lambda is.
+        /// </summary>
+        public ExpressionSyntax? None { get; init; }
+
         public TypeSymbol? Type => Bound?.Type ?? OutVariable?.Type;
     }
+
+    /// <summary>`None` or `null` with nothing to say what it's an Option of.</summary>
+    private bool IsUntypedNone(ExpressionSyntax syntax) => syntax switch
+    {
+        LiteralExpressionSyntax { Literal.Kind: TokenKind.NullKeyword } => true,
+        NameExpressionSyntax { Identifier.Text: "None", TypeArguments.IsEmpty: true } =>
+            _scope.Lookup("None") is VariantSymbol { Enum.BuiltinKind: BuiltinEnumKind.Option },
+        _ => false,
+    };
+
+    /// <summary>Whether a parameter takes null: a .NET `T?`, or an Option in a Piper-runtime method.</summary>
+    private static bool TakesNone(ClrParameter parameter) =>
+        parameter.Boundary != ClrBoundary.None || parameter.Type.IsOption;
 
     /// <param name="Names">Named arguments' names, by position (empty when all are positional), for C# to match the same way.</param>
     private sealed record ResolvedClrCall(ClrCandidate Candidate, ImmutableArray<BoundExpression> Arguments, ImmutableArray<string?> Names);
 
     private static bool IsClrBacked(TypeSymbol type) => type is ClrTypeSymbol || ClrTypes.BuiltinTypes.ContainsKey(type);
 
-    private void CheckAccessible(MethodSymbol method, Token name)
+    private void CheckAccessible(MethodSymbol method, Token name, BoundExpression? receiver = null)
     {
-        // A class's private method is private to the class; an extend block's, to its file.
+        // A class's private method is private to the class (a protected one is for it and classes deriving from it); an
+        // extend block's private method is private to its file.
         if (method.ContainingType is ClassSymbol owner)
         {
-            if (method.IsPrivate && _currentClass != owner)
-                _diagnostics.ReportPrivateMember(name.Span, method.Name, owner.Name);
+            if (method.IsPrivate || method.IsProtected)
+                CheckMemberAccessible(method.Name, owner, method.IsProtected, method.IsStatic ? null : receiver, name.Span);
         }
         else if (method.IsPrivate && method.DeclaringFile != _file.Source)
             _diagnostics.ReportPrivateDeclaration(name.Span, method.Name, method.DeclaringFile!.FileName);
@@ -75,7 +95,7 @@ public sealed partial class Binder
     {
         ClrTypeSymbol clr => (clr.Type, clr.GenericMap),
         // A class's .NET members are its .NET base class's: an Exception subclass's Message.
-        _ when type.OriginalDefinition is ClassSymbol @class => (@class.ClrBase.Type, @class.ClrBase.GenericMap),
+        _ when type.OriginalDefinition is ClassSymbol && TypeSubstitution.ClrBaseOf(type) is var clrBase => (clrBase.Type, clrBase.GenericMap),
         _ => (ClrTypes.BuiltinTypes[type], new Dictionary<Type, TypeSymbol>()),
     };
 
@@ -321,6 +341,7 @@ public sealed partial class Binder
                 return (a switch
                 {
                     LambdaExpressionSyntax lambda => new ClrArgument(null, lambda, a.Span),
+                    _ when IsUntypedNone(a) => new ClrArgument(null, null, a.Span) { None = a },
                     OutArgumentSyntax output => new ClrArgument(null, null, a.Span) { Out = output, OutVariable = OutTarget(output) },
                     RefArgumentSyntax reference => new ClrArgument(BindRefTarget(reference), null, a.Span) { Ref = reference },
                     _ => new ClrArgument(RequireArgument(BindExpression(a), a.Span), null, a.Span),
@@ -367,7 +388,7 @@ public sealed partial class Binder
         {
             if (!ReportLambdaErrors(Applicable(lambdaShapesOnly: true), arguments))
             {
-                var described = arguments.Select(a => a.Type ?? (TypeSymbol)ClrTypeSymbol.For(typeof(Delegate)));
+                var described = arguments.Select(a => a.Type ?? (a.None is not null ? _option : ClrTypeSymbol.For(typeof(Delegate))));
                 _diagnostics.ReportNoApplicableOverload(span, displayName, described);
             }
             return null;
@@ -391,6 +412,12 @@ public sealed partial class Binder
                 return BindOutArgument(output, argument.OutVariable, parameter);
             if (argument.Ref is not null)
                 return new BoundRefArgument(argument.Bound!);
+            // `None`, typed now that the parameter's known: an Option of what .NET takes as `T?`.
+            if (argument.None is { } none)
+            {
+                var optional = parameter.Type.IsOption ? parameter.Type : _option.Construct([parameter.Type]);
+                return ConvertClrArgument(BindExpression(none, optional), parameter);
+            }
             return argument.Lambda is { } lambda
                 ? BindLambda(lambda, parameter.Type)
                 : ConvertClrArgument(argument.Bound!, parameter);
@@ -441,19 +468,92 @@ public sealed partial class Binder
     private BoundExpression BindRefTarget(RefArgumentSyntax syntax)
     {
         var target = BindExpression(syntax.Target);
-        if (target is BoundVariableExpression { Variable.IsMutable: true } or BoundIndexExpression { Indexer: null } || target.Type == TypeSymbol.Error)
+        if (target is BoundVariableExpression { Variable.IsMutable: true } or BoundIndexExpression { Indexer: null, PiperIndexer: null } || target.Type == TypeSymbol.Error)
             return target;
         _diagnostics.ReportInvalidRefTarget(syntax.Target.Span);
         return new BoundErrorExpression();
     }
 
 
+    /// <summary>The .NET interface properties classes must implement, checked once their members are bound.</summary>
+    private readonly List<(ClassSymbol Class, TypeSymbol Interface, PropertyInfo Property, IReadOnlyDictionary<Type, TypeSymbol> Map, TypeSyntax Syntax, FileContext File)>
+        _propertyConformances = [];
+
+    private void CheckPropertyConformances()
+    {
+        foreach (var (@class, @interface, property, map, syntax, file) in _propertyConformances)
+        {
+            InFile(file);
+            CheckClrPropertyConformance(@class, @interface, property, map, syntax);
+        }
+    }
+
+    /// <summary>
+    /// A .NET interface's property (<c>IReadOnlyCollection&lt;T&gt;.Count</c>), which a class implements with a public
+    /// property of the same name and type, settable from outside if the interface's is.
+    /// </summary>
+    private void CheckClrPropertyConformance(ClassSymbol @class, TypeSymbol @interface, PropertyInfo required, IReadOnlyDictionary<Type, TypeSymbol> map, TypeSyntax syntax)
+    {
+        var getter = Describe(required.GetMethod!, @interface, map);
+        if (required.GetIndexParameters().Length > 0)
+        {
+            CheckClrIndexerConformance(@class, @interface, required, getter, syntax);
+            return;
+        }
+        var implementation = @class.SelfAndBases().SelectMany(c => c.Fields).FirstOrDefault(f => f.Name == required.Name);
+        if (getter is null || implementation is null)
+        {
+            _diagnostics.ReportMissingTraitMethod(syntax.Span, @class, required.Name, @interface);
+            return;
+        }
+        var type = getter.ReturnType;
+        bool settable = required.SetMethod is not null;
+        if (implementation is { IsProperty: true, IsPublic: true } && implementation.Type == type &&
+            (!settable || implementation is { IsMutable: true, HasPrivateSetter: false, HasProtectedSetter: false, IsInitOnly: false }))
+        {
+            // A `T?` in .NET is an Option in Piper, so C# needs an implementation that converts.
+            if (getter.ReturnBoundary != ClrBoundary.None)
+                @class.PropertyBridges.Add(new ClrPropertyBridge(implementation, @interface, type.TypeArguments[0], getter.ReturnBoundary, settable));
+            return;
+        }
+        _diagnostics.CurrentSource = implementation.DeclaringFile;
+        _diagnostics.ReportTraitSignatureMismatch(implementation.Owner!.Declaration.Fields.First(f => f.Name.Text == required.Name).Name.Span,
+            required.Name, @interface, $"a public prop {required.Name}: {type}{(settable ? " with a public 'set'" : "")}");
+        _diagnostics.CurrentSource = _file.Source;
+    }
+
+    /// <summary>
+    /// A .NET interface's indexer (<c>IReadOnlyList&lt;T&gt;</c>'s <c>this[int]</c>), which a class implements with a public
+    /// indexer taking the same parameter types, of the same type, settable from outside if the interface's is.
+    /// </summary>
+    private void CheckClrIndexerConformance(ClassSymbol @class, TypeSymbol @interface, PropertyInfo required, ClrCandidate? getter, TypeSyntax syntax)
+    {
+        // Possibly-null types would need converting between Option and null, which indexers don't do yet.
+        if (getter is null || getter.ReturnBoundary != ClrBoundary.None || getter.Parameters.Any(p => p.Boundary != ClrBoundary.None))
+        {
+            _diagnostics.ReportUnsupportedInterface(syntax.Span, @interface);
+            return;
+        }
+        var parameters = getter.Parameters.Select(p => p.Type).ToList();
+        var implementation = @class.SelfAndBases().SelectMany(c => c.Indexers).FirstOrDefault(i => i.Parameters.Select(p => p.Type).SequenceEqual(parameters));
+        var expected = $"prop this[{string.Join(", ", parameters)}]: {getter.ReturnType}";
+        if (implementation is null)
+        {
+            _diagnostics.ReportMissingTraitMethod(syntax.Span, @class, expected, @interface);
+            return;
+        }
+        bool settable = required.SetMethod is not null;
+        if (implementation.IsPublic && implementation.Type == getter.ReturnType && (!settable || implementation is { Setter: not null, HasPrivateSetter: false }))
+            return;
+        _diagnostics.ReportTraitSignatureMismatch(syntax.Span, "this[]", @interface, $"a public {expected}{(settable ? " with a public 'set'" : "")}");
+    }
+
     /// <summary>
     /// <c>extend Money: IComparable&lt;Money&gt;</c>: each abstract method of the .NET interface needs a public Piper method of
     /// the same name whose signature is the .NET one as Piper sees it, with a parameter or return type that .NET marks as
     /// possibly null being an Option (<c>fn CompareTo(other: Money?) => int</c>). Where that makes the C# signatures
-    /// differ, a bridge is recorded for the emitter. Interfaces with properties, events, static or generic methods, or
-    /// ref and out parameters, can't be implemented; false after reporting such an interface.
+    /// differ, a bridge is recorded for the emitter. Interfaces with events, static or generic methods, or
+    /// ref and out parameters, can't be implemented (nor properties, except by a class); false after reporting such an interface.
     /// </summary>
     private bool CheckClrConformance(NamedTypeDefinition definition, TypeSymbol @interface, TypeSyntax syntax)
     {
@@ -475,11 +575,20 @@ public sealed partial class Binder
         var members = clrType.GetMembers(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
             .Where(m => m is not MethodInfo { IsAbstract: false })
             .ToList();
+        // A class can implement an interface's properties with its own (their accessors are checked with them).
+        var properties = definition is ClassSymbol
+            ? members.OfType<PropertyInfo>().Where(p => p.GetMethod is { IsStatic: false }).ToList()
+            : [];
+        var accessors = properties.SelectMany(p => p.GetAccessors()).ToHashSet();
+        members = [.. members.Except(properties).Where(m => m is not MethodInfo method || !accessors.Contains(method))];
         if (members.Any(m => m is not MethodInfo { IsStatic: false, IsSpecialName: false, IsGenericMethodDefinition: false }))
         {
             _diagnostics.ReportUnsupportedInterface(syntax.Span, @interface);
             return false;
         }
+        // Checked once the class's members are bound (see CheckPropertyConformances).
+        foreach (var property in properties)
+            _propertyConformances.Add(((ClassSymbol)definition, @interface, property, map, syntax, _file));
 
         foreach (var required in members.Cast<MethodInfo>())
         {
@@ -688,6 +797,7 @@ public sealed partial class Binder
                 { Out: not null, OutVariable: { } variable } => variable.Type == OutType(parameter) ? 0 : null,
                 { Out: not null } => 0,
                 { Ref: not null, Bound: var target } => target!.Type == parameter.Type ? 0 : null,
+                { None: not null } => TakesNone(parameter) ? 0 : null,
                 { Lambda: { } lambda } when lambdaShapesOnly => FitsShape(lambda, parameter.Type) ? 0 : null,
                 { Lambda: { } lambda } => LambdaScore(lambda, parameter.Type),
                 var argument => ConversionScore(argument.Bound!, parameter),
@@ -749,6 +859,10 @@ public sealed partial class Binder
         // An argument that never completes (`{ throw … }`) fits any parameter.
         if (argument == target || argument == TypeSymbol.Never)
             return 0;
+        // A function named as a value fits any delegate type with its signature, as a C# method group does:
+        // `numbers.ConvertAll(Square)` (a Converter), `words.Sort(ByLength)` (a Comparison). Its own Func type wins.
+        if (bound is BoundFunctionReferenceExpression && FitsDelegate(argument, target))
+            return 1;
         // An optional value passed where .NET accepts null (or a Nullable<T>).
         if (parameter.Boundary == ClrBoundary.NullableReference && argument.IsOption && argument.TypeArguments[0] == target)
             return 0;
@@ -760,6 +874,14 @@ public sealed partial class Binder
         // A constant that fits: `stream.WriteByte(7)`.
         if (ConstantFolding.FitsImplicitly(bound, target))
             return 1 + Operators.NumericRank(target);
+
+        // A Piper type to a Piper trait it implements, or a class to its Piper base class, where a .NET generic has been
+        // given one: `services.AddSingleton<Clock>(SystemClock())`, `shapes.Add(Circle(1.0))` on a List<Shape>.
+        if ((target.IsTrait || target.OriginalDefinition is ClassSymbol) && IsConvertible(argument, target))
+            return 12;
+        // .NET variance with them: `shapes.AddRange(circles)`, a List<Circle> for an IEnumerable<Shape>.
+        if (IsVariantConversion(argument, target))
+            return 12;
 
         var targetClr = ClrTypes.ToClr(target);
         if (targetClr == typeof(object))
@@ -792,8 +914,20 @@ public sealed partial class Binder
             .FirstOrDefault(m => m.Name == "op_Implicit" && m.ReturnType == key.Item2 && m.GetParameters() is [var p] && p.ParameterType == key.Item1));
     }
 
-    private static BoundExpression ConvertClrArgument(BoundExpression argument, ClrParameter parameter)
+    /// <summary>
+    /// Whether a function whose natural delegate type is <paramref name="natural"/> (a Func or Action) can be the delegate
+    /// type <paramref name="target"/>: the same parameter types and result.
+    /// </summary>
+    private bool FitsDelegate(TypeSymbol natural, TypeSymbol target) =>
+        DelegateSignature(natural) is { } have && DelegateSignature(target) is { } want &&
+        have.Parameters.SequenceEqual(want.Parameters) && have.Return == want.Return;
+
+    private BoundExpression ConvertClrArgument(BoundExpression argument, ClrParameter parameter)
     {
+        // A function named as a value becomes the delegate type the method takes; C# converts the method group too.
+        if (argument is BoundFunctionReferenceExpression reference && argument.Type != parameter.Type && FitsDelegate(argument.Type, parameter.Type))
+            return new BoundFunctionReferenceExpression(reference.Function, reference.TypeArguments, parameter.Type);
+
         if (argument.Type.IsOption && parameter.Boundary == ClrBoundary.NullableReference)
             return new BoundNullableBoundaryExpression(argument, NullableBoundaryKind.ToNullableReference, parameter.Type);
         if (argument.Type.IsOption && parameter.Boundary == ClrBoundary.NullableValue)
@@ -805,6 +939,9 @@ public sealed partial class Binder
         // A .NET implicit conversion is written out, so C# picks the overload Piper did.
         if (ImplicitClrConversion(argument.Type, parameter.Type) is not null)
             return new BoundCastExpression(parameter.Type, argument);
+        // To a Piper trait or base class, converted as Piper converts: an int becomes a Shape through its box.
+        if ((parameter.Type.IsTrait || parameter.Type.OriginalDefinition is ClassSymbol) && argument.Type != parameter.Type && argument.Type != TypeSymbol.Never)
+            return Widen(argument, parameter.Type);
         return argument;
     }
 
@@ -828,6 +965,17 @@ public sealed partial class Binder
                 continue;
             if (hasParams && i >= parameters.Length - 1 && !(bound.Type is ClrTypeSymbol { IsArray: true } && arguments.Count == parameters.Length))
                 InferClr(parameters[^1].ParameterType.GetElementType()!, bound.Type, result, generics);
+            // A function named as a value, for a delegate parameter of another type (`Converter<TInput, TOutput>`): its
+            // parameters and result give the delegate's, matched through the delegate's Invoke.
+            else if (i < parameters.Length && bound is BoundFunctionReferenceExpression &&
+                     parameters[i].ParameterType.IsSubclassOf(typeof(MulticastDelegate)) && DelegateSignature(bound.Type) is { } signature &&
+                     parameters[i].ParameterType.GetMethod("Invoke") is { } invoke && invoke.GetParameters().Length == signature.Parameters.Length)
+            {
+                foreach (var (parameter, type) in invoke.GetParameters().Zip(signature.Parameters))
+                    InferClr(parameter.ParameterType, type, result, generics);
+                if (invoke.ReturnType != typeof(void))
+                    InferClr(invoke.ReturnType, signature.Return, result, generics);
+            }
             else if (i < parameters.Length)
                 InferClr(parameters[i].ParameterType is { IsByRef: true } byRef ? byRef.GetElementType()! : parameters[i].ParameterType, bound.Type, result, generics);
         }

@@ -13,10 +13,18 @@ C#'s types, numeric rules and the whole of .NET underneath.
 
 ## Installing
 
-Piper needs the .NET 10 SDK.
+Piper needs the .NET 10 SDK. It isn't on nuget.org yet, so install the `piper` tool from this repository (from the
+`piper` folder); the [VS Code extension's README](editors/vscode/README.md#installing-it-locally) covers the editor:
 
 ```
-dotnet tool install -g Piper
+dotnet pack src/Piper.Cli -c Release -o artifacts
+dotnet tool install -g Piper --add-source artifacts
+```
+
+The installed tool is a copy of the compiler as it was built; after changing the compiler, pack again and reinstall it
+(`dotnet tool uninstall -g Piper`, then the install line above).
+
+```
 piper run hello.piper         # transpile, compile and run
 piper build src/ -o out/      # write the C# (one .cs per .piper file; it references the Piper.Runtime package)
 piper build app.piper --exe   # compile to bin/app.exe (plus app.dll, its .pdb and Piper.Runtime.dll)
@@ -133,7 +141,8 @@ producing one `.cs` file per `.piper` file. The generated code needs C# 14 (.NET
 | [plugins/Piper.Plugins.Actors](plugins/Piper.Plugins.Actors) | A sample compiler plugin: `actor` declarations, with private state, tells and asks |
 | [plugins/Piper.Plugins.Actors.Remote](plugins/Piper.Plugins.Actors.Remote) | The same `actor` syntax on Proto.Actor, for actors in other processes and on other machines |
 | [plugins/Piper.Plugins.Parallel](plugins/Piper.Plugins.Parallel) | A sample compiler plugin: `parallel for` and `concurrency { }` |
-| [plugins/Piper.Plugins.Web](plugins/Piper.Plugins.Web) | A sample compiler plugin for ASP.NET Core: `services { }` and `endpoints { }` |
+| [plugins/Piper.Plugins.Services](plugins/Piper.Plugins.Services) | A sample compiler plugin for dependency injection, in any program: `services { }` |
+| [plugins/Piper.Plugins.Web](plugins/Piper.Plugins.Web) | A sample compiler plugin for ASP.NET Core minimal APIs: `endpoints { }` |
 | [tests/Piper.Tests](tests/Piper.Tests) | Lexer, parser and binder unit tests, plus golden tests |
 
 ## Adding a language feature

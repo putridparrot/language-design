@@ -1,7 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    A sample Piper compiler plugin: `services { }` and `endpoints { }` for ASP.NET Core. It's listed in a program's
+    A sample Piper compiler plugin: `endpoints { }` for ASP.NET Core minimal APIs (dependency injection is
+    plugins/Piper.Plugins.Services). It's listed in a program's
     piper.json ("plugins": [".../Piper.Plugins.Web.dll"]) and loaded by the compiler, which never references it.
   -->
   <PropertyGroup>

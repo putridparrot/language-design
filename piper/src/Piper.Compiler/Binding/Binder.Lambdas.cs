@@ -262,21 +262,34 @@ public sealed partial class Binder
     // Collections
 
     /// <summary>
+    /// A class type, then its Piper base classes as it sees them: for <c>class Names: Repository&lt;string&gt;</c>,
+    /// <c>Repository&lt;string&gt;</c>, each base's type arguments substituted from the class below it.
+    /// </summary>
+    private static IEnumerable<TypeSymbol> SelfAndPiperBaseTypes(TypeSymbol type)
+    {
+        for (TypeSymbol? current = type; current?.OriginalDefinition is ClassSymbol definition;
+             current = definition.Base is { } @base ? TypeSubstitution.Substitute(@base, TypeSubstitution.MapFor(current)) : null)
+        {
+            yield return current;
+        }
+    }
+
+    /// <summary>
     /// The type itself, then its base classes and the .NET interfaces it implements, in Piper terms: for a Piper type,
     /// those its class header and extend blocks name (an <c>IEnumerable&lt;int&gt;</c> is iterated and queried like one).
     /// </summary>
     private IEnumerable<TypeSymbol> SelfAndBaseTypes(TypeSymbol type)
     {
         // A class, its Piper base classes, then its .NET base class's own bases and interfaces.
-        if (type.OriginalDefinition is ClassSymbol @class)
+        if (type.OriginalDefinition is ClassSymbol)
         {
-            foreach (var self in @class.SelfAndBases())
-                yield return self == @class ? type : self;
-            if (@class.ClrBase is var clrBase)
-            {
-                foreach (var @base in SelfAndBaseTypes(clrBase))
-                    yield return @base;
-            }
+            var last = type;
+            foreach (var self in SelfAndPiperBaseTypes(type))
+                yield return last = self;
+            var root = (ClassSymbol)last.OriginalDefinition;
+            var clrBase = root.Base is { } @base ? TypeSubstitution.Substitute(@base, TypeSubstitution.MapFor(last)) : root.ClrBase;
+            foreach (var ancestor in SelfAndBaseTypes(clrBase))
+                yield return ancestor;
             foreach (var @interface in TraitsOf(type).OfType<ClrTypeSymbol>())
                 yield return @interface;
             yield break;
@@ -473,6 +486,9 @@ public sealed partial class Binder
             return new BoundIndexExpression(target, null, [.. indices], element);
         }
 
+        if (target.Type.OriginalDefinition is ClassSymbol && BindPiperIndex(target, syntax) is { } piperIndex)
+            return piperIndex;
+
         if (HasClrMembers(target.Type))
         {
             var (clrType, map) = ClrContext(target.Type);
@@ -570,8 +586,21 @@ public sealed partial class Binder
             return new BoundErrorExpression();
         }
 
+        if (target is BoundIndexExpression { PiperIndexer: { HasPrivateSetter: true } privateSet } && _currentClass != privateSet.Owner)
+        {
+            BindExpression(syntax.Value);
+            _diagnostics.ReportPrivateSetter(syntax.Target.Span, "this[]", privateSet.Owner.Name);
+            return new BoundErrorExpression();
+        }
+        if (target is BoundIndexExpression { PiperIndexer: { HasProtectedSetter: true } protectedSet, Target: var indexed } && !CanUseProtected(protectedSet.Owner, indexed))
+        {
+            BindExpression(syntax.Value);
+            _diagnostics.ReportPrivateSetter(syntax.Target.Span, "this[]", protectedSet.Owner.Name, isProtected: true);
+            return new BoundErrorExpression();
+        }
         bool writable = target switch
         {
+            BoundIndexExpression { PiperIndexer: { } piperIndexer } => piperIndexer.Setter is not null,
             BoundIndexExpression { Indexer: null } => true,
             BoundIndexExpression { Indexer: { } indexer } => indexer.SetMethod is { IsPublic: true },
             BoundClrMemberExpression { Member: System.Reflection.PropertyInfo property } => property.SetMethod is { IsPublic: true },
@@ -589,7 +618,8 @@ public sealed partial class Binder
         if (SyntaxFacts.GetCompoundAssignmentOperator(syntax.Operator.Kind) is not { } compound)
         {
             // None assigned to a .NET property that accepts null.
-            if (value.Type.IsOption && value.Type.TypeArguments[0] == target.Type && ClrTypes.IsReferenceType(target.Type))
+            if (value.Type.IsOption && value.Type.TypeArguments[0] == target.Type && ClrTypes.IsReferenceType(target.Type) &&
+                target is not BoundIndexExpression { PiperIndexer: not null })
                 return new BoundClrAssignmentExpression(target, null, new BoundNullableBoundaryExpression(value, NullableBoundaryKind.ToNullableReference, target.Type));
             return new BoundClrAssignmentExpression(target, null, Convert(value, target.Type, syntax.Value.Span));
         }

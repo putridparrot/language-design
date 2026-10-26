@@ -1,0 +1,43 @@
+// Attributes on a class and on its fields, properties and indexers.
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+[Description("A customer, as the API sends it")]
+class Customer(id: int, name: string) {
+    // A public field is a C# property: JSON sees it, under the name the attribute gives.
+    [JsonPropertyName("customer_id")]
+    public let Id = id;
+
+    public mut Name = name;
+
+    // An attribute that applies only to fields goes on the property's backing field.
+    [NonSerialized]
+    public mut Cache = "";
+
+    // Properties: automatic, and computed.
+    [JsonPropertyName("orders")]
+    prop OrderCount: int { get; set; } = 0;
+
+    [JsonIgnore]
+    prop Secret => string = "{id}:{name}";
+
+    prop Display => string = "#{id} {name}";
+
+    // A private field: a C# field, which the attribute marks.
+    [Obsolete("Use Display")]
+    let legacy = "";
+
+    [IndexerName("Tag")]
+    prop this[i: int] => string = "tag{i}";
+}
+
+fn Main() {
+    let customer = Customer(7, "Ada");
+    customer.OrderCount = 3;
+    Print(JsonSerializer.Serialize(customer));
+    Print(customer[2]);
+}

@@ -260,8 +260,11 @@ each statement is a task, with no lambdas to write.
 
 ### `services` and `endpoints` (dependency injection and web APIs)
 
-Both are in [Piper.Plugins.Web](../plugins/Piper.Plugins.Web/WebPlugin.cs) and run in
-[samples/webapp](../samples/webapp/main.piper). Both are `DeclarationKeyword`s, and each becomes a function.
+`services` is in [Piper.Plugins.Services](../plugins/Piper.Plugins.Services/ServicesPlugin.cs), which works in any
+program, and `endpoints` in [Piper.Plugins.Web](../plugins/Piper.Plugins.Web/WebPlugin.cs). A web program lists both
+plugins in its piper.json and uses them together, as [samples/webapp](../samples/webapp/main.piper) does;
+[samples/services](../samples/services/main.piper) uses `services` in a console program. Both are
+`DeclarationKeyword`s, and each becomes a function.
 
 ```piper
 services AppServices {
@@ -297,8 +300,16 @@ A program calls them as `AppServices(builder.Services)` and `Api(app)`.
 
 - **Writing the output:** the plugin calls the extension methods through their classes (fully qualified, shortened
   above), so the code works whatever the user's file imports. A plugin can't add a `using`.
-- **Framework:** the plugin lists `Microsoft.AspNetCore.App` among its frameworks, so a program needs only
-  `"plugins"` in its piper.json.
+- **Without the web:** a console program builds a provider from the function and asks it for services:
+
+  ```piper
+  let provider = AppServices(ServiceCollection()).BuildServiceProvider();
+  let reminder = provider.GetRequiredService<Reminder>();
+  ```
+
+- **Packages and frameworks:** the services plugin lists the `Microsoft.Extensions.DependencyInjection` package, and
+  the web plugin the `Microsoft.AspNetCore.App` framework, so a program needs only `"plugins"` in its piper.json. A web
+  program gets dependency injection from ASP.NET Core, whose newer version wins over the package's.
 - **Routes** are written as ASP.NET Core documents them. In plain Piper `{id}` in a string is interpolation, so a
   handwritten call needs `"/users/\{id}"`. The plugin rebuilds the route from the token as written.
 - **Checks** report at the clause what ASP.NET Core would only find when the program runs, or not at all:

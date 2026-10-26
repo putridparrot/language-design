@@ -7,32 +7,17 @@ using Piper.Text;
 namespace Piper.Plugins.Web;
 
 /// <summary>
-/// Adds two declarations for ASP.NET Core, each rewritten into a function of ordinary Piper:
-/// <list type="bullet">
-/// <item><c>services Name { singleton Clock => SystemClock; … }</c> registers services for dependency injection:
-/// <c>fn Name(services: IServiceCollection) => IServiceCollection</c>.</item>
-/// <item><c>endpoints Name "/api" { get "/users/{id}" (id: int) => …; … }</c> maps a minimal API:
-/// <c>fn Name(app: IEndpointRouteBuilder)</c>.</item>
-/// </list>
-/// Both need ASP.NET Core, which the plugin asks for, so a program using it needn't. It also checks what ASP.NET Core
-/// would only find when the program runs: a service registered twice, a route mapped twice, a route parameter that
-/// no handler parameter takes, and a handler parameter without a type.
+/// Adds a declaration for ASP.NET Core, rewritten into a function of ordinary Piper:
+/// <c>endpoints Name "/api" { get "/users/{id}" (id: int) => …; … }</c> maps a minimal API, as
+/// <c>fn Name(app: IEndpointRouteBuilder)</c>. It needs ASP.NET Core, which the plugin asks for, so a program using it
+/// needn't. It also checks what ASP.NET Core would only find when the program runs: a route mapped twice, a route
+/// parameter that no handler parameter takes, and a handler parameter without a type. Dependency injection is the
+/// services plugin's (plugins/Piper.Plugins.Services), which works without the web.
 /// </summary>
 public sealed class WebPlugin : IPiperPlugin
 {
-    private const string DependencyInjection = "Microsoft.Extensions.DependencyInjection";
-
     // The extension methods are called through their classes, so the code works whatever the user's file imports.
-    private const string Registrations = DependencyInjection + ".ServiceCollectionServiceExtensions";
-
     private const string Routing = "Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions";
-
-    private static readonly Dictionary<string, string> Lifetimes = new()
-    {
-        ["singleton"] = "AddSingleton",
-        ["scoped"] = "AddScoped",
-        ["transient"] = "AddTransient",
-    };
 
     private static readonly Dictionary<string, string> Verbs = new()
     {
@@ -47,71 +32,7 @@ public sealed class WebPlugin : IPiperPlugin
 
     public IReadOnlyList<string> Frameworks => ["Microsoft.AspNetCore.App"];
 
-    public IReadOnlyList<PluginKeyword> Keywords { get; } =
-    [
-        new DeclarationKeyword("services", Services),
-        new DeclarationKeyword("endpoints", Endpoints),
-    ];
-
-    /// <summary>
-    /// services     = "services" IDENT "{" { registration } "}" ;
-    /// registration = ( "singleton" | "scoped" | "transient" ) type [ "=>" type | "=" expression ] ";" ;
-    /// </summary>
-    private static IEnumerable<DeclarationSyntax> Services(PluginParser p)
-    {
-        var name = p.Expect(TokenKind.Identifier);
-        p.Expect(TokenKind.OpenBrace);
-
-        var registrations = new List<StatementSyntax>();
-        var registered = new Dictionary<string, Token>();
-        while (p.Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
-        {
-            var lifetime = p.Current;
-            if (lifetime.Kind != TokenKind.Identifier || !Lifetimes.TryGetValue(lifetime.Text, out var method))
-            {
-                p.Report(lifetime.Span, "Expected 'singleton', 'scoped' or 'transient'.");
-                SkipClause(p);
-                continue;
-            }
-            p.NextToken();
-
-            var service = p.ParseType();
-            var key = TypeText(service);
-            if (registered.TryGetValue(key, out var first))
-                p.Report(service.Span, $"'{key}' is already registered (as {first.Text}); a later registration would replace it.");
-            else
-                registered[key] = lifetime;
-
-            if (p.Current.Kind == TokenKind.FatArrow)
-            {
-                // `singleton Clock => SystemClock;`: the service, and the type that implements it.
-                p.NextToken();
-                var implementation = p.ParseType();
-                registrations.Add(p.Template.Statement($"{Registrations}.{method}<$service, $implementation>(services);",
-                    ("service", service), ("implementation", implementation)));
-            }
-            else if (p.Current.Kind == TokenKind.Equals)
-            {
-                // `singleton Greeter = Greeter("Hello");` (made when first needed), or a factory taking the service provider.
-                p.NextToken();
-                var value = p.ParseExpression();
-                var factory = value is LambdaExpressionSyntax { Parameters.Length: 1 }
-                    ? value
-                    : p.Template.Expression("$provider => $value", ("provider", p.FreshName("provider")), ("value", value));
-                registrations.Add(p.Template.Statement($"{Registrations}.{method}<$service>(services, $factory);", ("service", service), ("factory", factory)));
-            }
-            else
-            {
-                registrations.Add(p.Template.Statement($"{Registrations}.{method}<$service>(services);", ("service", service)));
-            }
-            p.Expect(TokenKind.Semicolon);
-        }
-        p.Expect(TokenKind.CloseBrace);
-
-        return p.Template.Declarations(
-            $"fn $name(services: {DependencyInjection}.IServiceCollection) => {DependencyInjection}.IServiceCollection {{ $registrations; services }}",
-            ("name", name), ("registrations", registrations));
-    }
+    public IReadOnlyList<PluginKeyword> Keywords { get; } = [new DeclarationKeyword("endpoints", Endpoints)];
 
     /// <summary>
     /// endpoints = "endpoints" IDENT [ STRING ] "{" { endpoint } "}" ;
@@ -237,14 +158,6 @@ public sealed class WebPlugin : IPiperPlugin
         var value = route.ToString();
         return new LiteralExpressionSyntax(token.Span, new Token(TokenKind.StringLiteral, token.Span, token.Text, value), value);
     }
-
-    /// <summary>How a type is written, to tell registrations of the same service apart.</summary>
-    private static string TypeText(TypeSyntax type) => type switch
-    {
-        NamedTypeSyntax named => string.Join(".", named.Qualifier.Select(q => q.Text).Append(named.Name.Text)) +
-                                 (named.TypeArguments.IsEmpty ? "" : $"<{string.Join(", ", named.TypeArguments.Select(TypeText))}>"),
-        _ => type.ToString(),
-    };
 
     /// <summary>Skips to the end of a clause that can't be read: past its `;`, or up to the block's `}`.</summary>
     private static void SkipClause(PluginParser p)

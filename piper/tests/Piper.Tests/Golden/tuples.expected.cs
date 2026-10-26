@@ -105,7 +105,7 @@ public static class Tuples
             global::System.Console.WriteLine($"{entry.Item1}:{entry.Item2}");
         }
         global::System.Collections.Generic.List<(string, int)> pairs = new global::System.Collections.Generic.List<(string, int)> { ("x", 1), ("y", 2) };
-        global::System.Console.WriteLine(string.Join(";", global::System.Linq.Enumerable.Select<(string, int), string>(pairs, ((string, int) entry_1) => $"{entry_1.Item1}={entry_1.Item2 * 10}")));
+        global::System.Console.WriteLine(string.Join(";", global::System.Linq.Enumerable.Select<(string, int), string>(pairs, ((string, int) entry) => $"{entry.Item1}={entry.Item2 * 10}")));
     }
 }
 

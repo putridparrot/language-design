@@ -43,6 +43,28 @@ public sealed partial class Binder
             record.Invariants = BindConditions(record.Declaration.Requires, scope, fields);
         }
 
+        // A class's are over its constructor's parameters (and its static fields and methods), as they're checked before
+        // any field is initialized.
+        foreach (var @class in types.OfType<ClassSymbol>().Where(c => !c.Declaration.Requires.IsEmpty))
+        {
+            InFile(FileOf(@class));
+            var statics = new Scope(TypeParameterScope(@class, _file));
+            foreach (var field in @class.StaticFields)
+                statics.TryDeclare(StaticFieldVariable(field, @class.SelfType));
+            // Instance methods too, so calling one is reported as needing an instance rather than as unknown.
+            foreach (var method in @class.Methods.Where(m => !m.IsHidden))
+                statics.TryDeclare(method);
+            var scope = new Scope(statics);
+            foreach (var parameter in @class.Parameters)
+                scope.TryDeclare(parameter);
+            var outerClass = _currentClass;
+            _currentClass = @class;
+            _bindingClassInvariants = true;
+            @class.Invariants = BindConditions(@class.Declaration.Requires, scope, @class.Parameters);
+            _bindingClassInvariants = false;
+            _currentClass = outerClass;
+        }
+
         // Required trait methods have no body, so they aren't among the functions above.
         foreach (var trait in types.OfType<TraitSymbol>())
         {

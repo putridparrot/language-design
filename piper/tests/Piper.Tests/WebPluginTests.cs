@@ -6,14 +6,17 @@ using Piper.Text;
 namespace Piper.Tests;
 
 /// <summary>
-/// The web plugin (plugins/Piper.Plugins.Web): what `services` and `endpoints` check. samples/webapp runs what they
-/// become. The plugin is loaded from its build output, as a program's piper.json would load it.
+/// The web plugin (plugins/Piper.Plugins.Web): what `endpoints` checks, alongside the services plugin's `services`, as a
+/// web program uses them. samples/webapp runs what they become. The plugins are loaded from their build output, as a
+/// program's piper.json would load them. ASP.NET Core includes dependency injection, so the services plugin's package
+/// isn't restored here: these tests run offline. (ServicesPluginTests covers `services` without the web.)
 /// </summary>
 public class WebPluginTests
 {
     private static readonly Lazy<(ImmutableArray<IPiperPlugin> Plugins, ProgramReferences References)> Web = new(() =>
     {
-        var (plugins, errors) = PluginLoader.Load(PluginsDirectory(), ["Piper.Plugins.Web/bin/plugin/Piper.Plugins.Web.dll"]);
+        var (plugins, errors) = PluginLoader.Load(PluginsDirectory(),
+            ["Piper.Plugins.Services/bin/plugin/Piper.Plugins.Services.dll", "Piper.Plugins.Web/bin/plugin/Piper.Plugins.Web.dll"]);
         Assert.Empty(errors);
         var (references, referenceErrors) = ProgramReferences.Resolve(
             Path.GetTempPath(), ImmutableDictionary<string, string>.Empty, [.. plugins.SelectMany(p => p.Frameworks)], []);
@@ -74,26 +77,29 @@ public class WebPluginTests
     }
 
     [Fact]
-    public void A_service_registered_twice_is_reported()
+    public void Handlers_keep_their_parameter_names_which_ASP_NET_Core_binds_route_values_to()
     {
-        AssertPluginError(Types + """
+        // Each handler is a lambda in the same function; their parameters mustn't be renamed apart (`id_1`), or `{id}`
+        // would no longer bind and every request would get 400 Bad Request.
+        var result = Compile(Types + """
 
-            services Registrations {
-                singleton Clock = FixedClock("noon");
-                scoped Clock = FixedClock("later");
+            endpoints Routes {
+                get "/users/{id:int}" (id: int) => id;
+                put "/users/{id:int}" (id: int, name: string) => "{id} {name}";
+                delete "/users/{id:int}" (id: int) => id;
             }
-            """, "Clock = FixedClock(\"later\")", "'Clock' is already registered (as singleton)");
+            """);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Contains("MapGet(app, \"/users/{id:int}\", (int id) =>", result.CSharp);
+        Assert.Contains("MapPut(app, \"/users/{id:int}\", (int id, string name) =>", result.CSharp);
+        Assert.Contains("MapDelete(app, \"/users/{id:int}\", (int id) =>", result.CSharp);
     }
 
     [Fact]
-    public void An_unknown_lifetime_is_reported()
+    public void The_web_plugin_no_longer_adds_services()
     {
-        AssertPluginError(Types + """
-
-            services Registrations {
-                forever Clock = FixedClock("noon");
-            }
-            """, "forever", "Expected 'singleton', 'scoped' or 'transient'.");
+        var web = Web.Value.Plugins.Single(p => p.Name == "web");
+        Assert.Equal(["endpoints"], web.Keywords.Select(k => k.Text));
     }
 
     [Fact]

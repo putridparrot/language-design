@@ -704,6 +704,9 @@ public sealed class BoundIndexExpression(BoundExpression target, PropertyInfo? i
 
     public PropertyInfo? Indexer { get; } = indexer;
 
+    /// <summary>A Piper class's indexer, when that's what it uses (<see cref="Indexer"/> is then null).</summary>
+    public IndexerSymbol? PiperIndexer { get; init; }
+
     public ImmutableArray<BoundExpression> Arguments { get; } = arguments;
 
     public override TypeSymbol Type { get; } = type;

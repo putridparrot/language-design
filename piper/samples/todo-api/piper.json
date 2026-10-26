@@ -1,0 +1,11 @@
+{
+  // `services` (dependency injection) and `endpoints` (routes) come from two plugins; the web plugin brings in ASP.NET
+  // Core. Build them first:
+  //   dotnet build plugins/Piper.Plugins.Services
+  //   dotnet build plugins/Piper.Plugins.Web
+  // then `piper run samples/todo-api --serve` and open http://localhost:5080/api/todos.
+  "plugins": [
+    "../../plugins/Piper.Plugins.Services/bin/plugin/Piper.Plugins.Services.dll",
+    "../../plugins/Piper.Plugins.Web/bin/plugin/Piper.Plugins.Web.dll"
+  ]
+}

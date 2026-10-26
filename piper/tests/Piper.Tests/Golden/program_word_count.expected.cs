@@ -47,7 +47,7 @@ public static class Program_word_count
         return counts;
     }
 
-    public static global::System.Collections.Generic.List<WordCount> Top(global::System.Collections.Generic.Dictionary<string, int> counts, int n) => global::System.Linq.Enumerable.ToList<WordCount>(global::System.Linq.Enumerable.Take<WordCount>(global::System.Linq.Enumerable.ThenBy<WordCount, string>(global::System.Linq.Enumerable.OrderByDescending<WordCount, int>(global::System.Linq.Enumerable.Select<global::System.Collections.Generic.KeyValuePair<string, int>, WordCount>(counts, (global::System.Collections.Generic.KeyValuePair<string, int> pair) => new WordCount(pair.Key, pair.Value)), (WordCount w) => w.count), (WordCount w_1) => w_1.word), n));
+    public static global::System.Collections.Generic.List<WordCount> Top(global::System.Collections.Generic.Dictionary<string, int> counts, int n) => global::System.Linq.Enumerable.ToList<WordCount>(global::System.Linq.Enumerable.Take<WordCount>(global::System.Linq.Enumerable.ThenBy<WordCount, string>(global::System.Linq.Enumerable.OrderByDescending<WordCount, int>(global::System.Linq.Enumerable.Select<global::System.Collections.Generic.KeyValuePair<string, int>, WordCount>(counts, (global::System.Collections.Generic.KeyValuePair<string, int> pair) => new WordCount(pair.Key, pair.Value)), (WordCount w) => w.count), (WordCount w) => w.word), n));
 
     public static string Bar(int count, int scale) => new string('#', count * scale);
 
@@ -85,7 +85,7 @@ public static class Program_word_count
         {
             global::System.Console.WriteLine("no words");
         }
-        string[] once = global::System.Linq.Enumerable.ToArray<string>(global::System.Linq.Enumerable.Order<string>(global::System.Linq.Enumerable.Select<global::System.Collections.Generic.KeyValuePair<string, int>, string>(global::System.Linq.Enumerable.Where<global::System.Collections.Generic.KeyValuePair<string, int>>(counts, (global::System.Collections.Generic.KeyValuePair<string, int> pair) => pair.Value == 1), (global::System.Collections.Generic.KeyValuePair<string, int> pair_1) => pair_1.Key)));
+        string[] once = global::System.Linq.Enumerable.ToArray<string>(global::System.Linq.Enumerable.Order<string>(global::System.Linq.Enumerable.Select<global::System.Collections.Generic.KeyValuePair<string, int>, string>(global::System.Linq.Enumerable.Where<global::System.Collections.Generic.KeyValuePair<string, int>>(counts, (global::System.Collections.Generic.KeyValuePair<string, int> pair) => pair.Value == 1), (global::System.Collections.Generic.KeyValuePair<string, int> pair) => pair.Key)));
         global::System.Console.WriteLine($"seen once: {string.Join(", ", once)}");
     }
 }

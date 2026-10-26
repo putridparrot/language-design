@@ -38,6 +38,8 @@ public sealed partial class SyntaxTemplate
 
     private static readonly ConcurrentDictionary<Type, PropertyInfo[]> WritableProperties = new();
 
+    private static readonly PropertyInfo GeneratedProperty = typeof(SyntaxNode).GetProperty(nameof(SyntaxNode.IsGenerated))!;
+
     private readonly Func<TextSpan> _span;
 
     internal SyntaxTemplate(Func<TextSpan> span) => _span = span;
@@ -133,7 +135,7 @@ public sealed partial class SyntaxTemplate
         switch (node)
         {
             case Token token:
-                return token with { Span = span };
+                return token with { Span = span, IsGenerated = true };
             case BlockExpressionSyntax { Statements.IsEmpty: true, Trailing: var trailing } when HoleName(trailing) is { } name &&
                                                                                           values.GetValueOrDefault(name) is BlockExpressionSyntax block:
                 // `if c { $body }`: a block on its own in a block is that block (a hole can't be where a `{` must be).
@@ -157,6 +159,7 @@ public sealed partial class SyntaxTemplate
                         ? span
                         : Rewrite(value, property.PropertyType, values, used, span));
                 }
+                GeneratedProperty.SetValue(clone, true);
                 return clone;
             }
             case IEnumerable when node.GetType().GetProperty(nameof(ImmutableArray<int>.IsDefault))?.GetValue(node) is true:

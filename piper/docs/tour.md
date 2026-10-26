@@ -9,10 +9,10 @@ This tour takes about fifteen minutes. The full reference is [language.md](langu
 
 ## Running a program
 
-Install the compiler as a .NET tool (it needs the .NET 10 SDK), then run a file:
+Install the compiler as a .NET tool (it needs the .NET 10 SDK; see the [README](../README.md#installing) for
+installing it from the repository until it's published), then run a file:
 
 ```
-dotnet tool install -g Piper
 piper run hello.piper
 ```
 
@@ -196,7 +196,27 @@ class NotFound(id: int): Exception("No item {id}") { }
 Fields and parameters are named bare in methods (`this.` works too). A class derives from one class, Piper or .NET,
 then lists traits and interfaces. `virtual`, `abstract`, `override` and `sealed` mean what they do in C#, but
 redeclaring an inherited method without `override` is an error rather than a warning. `base.Describe()` calls the
-version an override replaces.
+version an override replaces. `static let` and `static mut` fields belong to the class (`static mut issued = 0;`), and
+are reached through it from outside: `Ticket.issued`.
+
+Properties are read like fields but run code, and are public unless marked `private` or `protected`. Other
+constructors call the primary one first, as in C#, and can set `init` properties:
+
+```piper
+class Account(owner: string, opening: decimal) {
+    mut balance = opening;
+    prop Balance: decimal => balance;                  // computed
+    prop Deposits: int { get; private set; } = 0;      // settable only inside Account
+    prop Source: string { get; init; } = "opened";     // settable only while it's made
+
+    Account(owner: string): this(owner, 0m) {
+        Source = "opened empty";
+    }
+}
+```
+
+An indexer, `prop this[i: int]: T { get => …; set { … } }`, lets a class be used with `[]`. Traits and `extend`
+blocks can declare read-only properties too: `extend int { prop IsEven: bool => this % 2 == 0; }`.
 
 To get the derived class back, test for it in a pattern with `name: Type` (C#'s `Type name`), or cast:
 
@@ -337,12 +357,15 @@ editor shows on hover.
 
 ## Preconditions
 
-Say what a function's arguments, or a record's fields, must satisfy, and Piper checks it on every call:
+Say what a function's arguments, a record's fields, or a class's constructor arguments must satisfy, and Piper checks
+it on every call:
 
 ```piper
 fn Sqrt(x: double) => double requires x >= 0.0 = Math.Sqrt(x);
 
 record Percentage(value: int) requires value >= 0 && value <= 100;
+
+class Account(owner: string, opening: decimal) requires opening >= 0m { mut balance = opening; }
 ```
 
 `Sqrt(-1.0)` doesn't compile, since the argument is a constant. `Sqrt(n)` with a negative `n` throws an

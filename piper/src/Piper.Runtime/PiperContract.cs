@@ -23,6 +23,17 @@ public static class PiperContract
         return value;
     }
 
+    /// <summary>
+    /// A class's invariant, checked as one is made, before its fields are initialized. Returns true, so the checks can
+    /// guard its first field's initializer: <c>Invariant(…) &amp;&amp; Invariant(…) ? value : default!</c>.
+    /// </summary>
+    public static bool Invariant(bool condition, string text, string values)
+    {
+        if (!condition)
+            throw new ArgumentException(Message("Invariant", text, values));
+        return true;
+    }
+
     private static string Message(string kind, string text, string values) =>
         values.Length == 0 ? $"{kind} failed: {text}" : $"{kind} failed: {text} ({values})";
 }

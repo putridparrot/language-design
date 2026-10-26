@@ -1,0 +1,148 @@
+// Properties: read like fields, but computed, validated, or settable only inside the class.
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Runtime.Serialization;
+using System.Threading;
+
+class Account(owner: string, opening: decimal) {
+    mut balance = opening;
+    mut name = owner;
+    let history: List<string> = [];
+    let id = Open();
+
+    // Automatic: stores its value. Readable everywhere, settable only inside Account.
+    prop Deposits: int { get; private set; } = 0;
+
+    // Computed: a getter alone.
+    prop Balance => decimal = balance;
+    prop IsOverdrawn => bool = balance < 0m;
+
+    // With both accessors; the setter receives `value`.
+    prop Name => string {
+        get = name;
+        set {
+            name = value.Trim();
+            history.Add("renamed to {name}");
+        }
+    }
+
+    // Private: only Account sees it.
+    private prop Summary => string = "{name} has {balance}";
+
+    // Static, computed from a static field.
+    static mut opened = 0;
+    static prop Opened => int = opened;
+
+    static fn Open() => int {
+        opened += 1;
+        opened
+    }
+
+    fn Deposit(amount: decimal) {
+        balance += amount;
+        Deposits += 1;                       // the private setter, from inside
+    }
+
+    fn Describe() => string = "#{id} {Summary}; {string.Join(", ", history)}";
+}
+
+// Abstract and overridden properties.
+abstract class Shape {
+    abstract prop Area => double { get; }
+    virtual prop Label => string = "shape";
+
+    fn Describe() => string = "{Label} of area {Math.Round(Area, 2)}";
+}
+
+class Square(side: double): Shape {
+    override prop Area => double = side * side;
+    override prop Label => string = "square";
+}
+
+class Circle(radius: double): Shape {
+    override prop Area => double = Math.PI * radius * radius;
+}
+
+// Completing a .NET base's abstract properties: a read-only stream of n zero bytes.
+class Zeros(length: long): Stream {
+    mut position = 0L;
+
+    override prop CanRead => bool = true;
+    override prop CanSeek => bool = true;
+    override prop CanWrite => bool = false;
+    override prop Length => long = length;
+    override prop Position => long {
+        get = position;
+        set { position = value; }
+    }
+
+    override fn Read(buffer: byte[], offset: int, count: int) => int {
+        let n = (int)Math.Min((long)count, length - position);
+        for i in 0..<n {
+            buffer[offset + i] = (byte)0;
+        }
+        position += (long)n;
+        n
+    }
+
+    override fn Seek(offset: long, origin: SeekOrigin) => long {
+        position = offset;
+        position
+    }
+
+    override fn SetLength(value: long) { throw NotSupportedException(); }
+    override fn Write(buffer: byte[], offset: int, count: int) { throw NotSupportedException(); }
+    override fn Flush() { }
+}
+
+// Implementing .NET interfaces' properties. A `T?` there is an Option here.
+class Done: IAsyncResult {
+    prop AsyncState => object? = None;
+    prop AsyncWaitHandle => WaitHandle = ManualResetEvent(true);
+    prop CompletedSynchronously => bool = true;
+    prop IsCompleted => bool = true;
+}
+
+class Countdown(n: int): IReadOnlyCollection<int> {
+    prop Count => int = n;
+
+    fn GetEnumerator() => IEnumerator<int> {
+        for i in 0..<n {
+            yield return n - i;
+        }
+    }
+}
+
+class Extensible: IExtensibleDataObject {
+    prop ExtensionData: ExtensionDataObject? { get; set; } = None;
+}
+
+fn Main() {
+    let ada = Account("Ada", 10m);
+    ada.Deposit(5m);
+    ada.Deposit(1m);
+    ada.Name = "  Ada Lovelace ";
+    Print("{ada.Name}: {ada.Balance}, {ada.Deposits} deposits, overdrawn {ada.IsOverdrawn}");
+    Print(ada.Describe());
+    Print("{Account.Opened} opened");
+
+    let shapes: List<Shape> = [Square(2.0), Circle(1.0)];
+    for shape in shapes {
+        Print(shape.Describe());
+    }
+
+    let zeros = Zeros(10L);
+    let buffer = byte[4];
+    Print("read {zeros.Read(buffer, 0, 4)}, now at {zeros.Position} of {zeros.Length}");
+    zeros.Position = 8L;
+    Print("read {zeros.Read(buffer, 0, 4)}, now at {zeros.Position}");
+
+    let done: IAsyncResult = Done();
+    Print("completed {done.IsCompleted}, state {done.AsyncState is None}");
+    let countdown: IReadOnlyCollection<int> = Countdown(3);
+    Print("{countdown.Count}: {string.Join(", ", countdown)}");
+    let data: IExtensibleDataObject = Extensible();
+    data.ExtensionData = None;
+    Print(data.ExtensionData is None);
+}

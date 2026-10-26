@@ -47,6 +47,16 @@
         {
           "match": "\\b(let|mut)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": { "1": { "name": "storage.type.piper" }, "2": { "name": "variable.other.piper" } }
+        },
+        {
+          "comment": "A property, or an indexer (`prop this[i: int]`), whose `this` keeps its own colour.",
+          "match": "\\b(prop)\\s+(?:(?=this\\b)|([A-Za-z_][A-Za-z0-9_]*))",
+          "captures": { "1": { "name": "keyword.declaration.property.piper" }, "2": { "name": "variable.other.property.piper" } }
+        },
+        {
+          "comment": "A property's accessors: `get;`, `get => …`, `private set { … }`. Contextual, so only before ; => or {.",
+          "match": "\\b(get|set|init)\\b(?=\\s*(;|=>|\\{))",
+          "name": "storage.type.accessor.piper"
         }
       ]
     },
@@ -91,7 +101,7 @@
       "patterns": [
         { "name": "keyword.control.piper", "match": "\\b(if|else|while|for|in|return|break|continue|match|try|catch|finally|throw|defer|yield|await)\\b" },
         { "name": "keyword.declaration.piper", "match": "\\b(fn|record|class|enum|trait|extend|namespace|using|let|mut|test|operator|requires)\\b" },
-        { "name": "storage.modifier.piper", "match": "\\b(static|private|public|async|out|ref|abstract|sealed|virtual|override)\\b" },
+        { "name": "storage.modifier.piper", "match": "\\b(static|private|public|protected|async|out|ref|abstract|sealed|virtual|override)\\b" },
         { "name": "keyword.operator.word.piper", "match": "\\bis\\b" },
         { "name": "variable.language.this.piper", "match": "\\bthis\\b" },
         { "name": "constant.language.piper", "match": "\\b(true|false|null|None)\\b" }

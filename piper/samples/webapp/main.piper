@@ -1,6 +1,7 @@
-// A web API declared with the web plugin's `services` and `endpoints`. It serves on a free port, calls itself and
-// stops, so it can run as a sample; a real server would end with `app.Run()`. Compare samples/web, which writes the
-// same kind of calls out by hand.
+// A web API declared with the services plugin's `services` and the web plugin's `endpoints`. It serves on a free
+// port, calls itself and stops, so it can run as a sample; a real server would end with `app.Run()`. Compare
+// samples/web, which writes the same kind of calls out by hand, and samples/services, which uses `services` without
+// the web.
 
 using System.Linq;
 using System.Net.Http;

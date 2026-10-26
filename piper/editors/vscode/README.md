@@ -6,7 +6,9 @@ Support for [Piper](../../README.md) `.piper` files:
 - **Language features** from the Piper language server (`piper lsp`):
   - errors and warnings as you type
   - hover
-  - go to definition
+  - go to definition (Ctrl+click or F12), for types too, wherever their names are written
+  - go to type definition, from a variable, expression or function to the declaration of its type (for `List<Point>`
+    or `Point?`, to Point)
   - find references and highlights
   - rename
   - completion, including members after a dot. After `x.` on an optional, it offers the value's members (turning the
@@ -24,24 +26,72 @@ Support for [Piper](../../README.md) `.piper` files:
   stepping and variables in the `.piper` source. It uses the .NET debugger from Microsoft's
   [C# extension](https://marketplace.visualstudio.com/items?itemName=ms-dotnettools.csharp), which needs to be installed.
 
-## Setup
+## Installing it locally
 
-The extension starts the language server with the `piper` tool:
+Piper isn't on the Marketplace or nuget.org yet, so both the extension and the compiler come from this repository.
+
+**1. Package and install the extension** (from the `piper` folder):
 
 ```
-dotnet tool install -g Piper
+cd editors/vscode
+npm install
+npx @vscode/vsce package
+code --install-extension piper-language-1.0.0.vsix
 ```
 
-If `piper` isn't installed and the extension is run from this repository, it uses the compiler built there
-(`src/Piper.Cli/bin/Debug` or `Release`) with `dotnet`, so `dotnet build` is enough. To use another build, set these in
-your settings:
+(or **Extensions: Install from VSIX…** in VS Code). It's then installed like any other extension, in every window.
+After changing the extension, package and install it again.
 
-```json
-"piper.server.path": "dotnet",
-"piper.server.args": ["D:/path/to/piper/src/Piper.Cli/bin/Debug/net10.0/piper.dll", "lsp"]
-```
+**2. Give it the compiler**, in one of two ways, from the `piper` folder again (`cd ../..` after step 1):
 
-**Piper: Restart Language Server** restarts it, for example after rebuilding the compiler.
+- **As the `piper` tool**, which also gives you `piper` on the command line:
+
+  ```
+  dotnet pack src/Piper.Cli -c Release -o artifacts
+  dotnet tool install -g Piper --add-source artifacts
+  ```
+
+  The tool installs into `%USERPROFILE%\.dotnet\tools` (`~/.dotnet/tools` elsewhere), which the .NET SDK puts on your
+  PATH; `piper --version` checks it.
+
+- **Or point the extension at the compiler you build**, in your user settings (**Preferences: Open User Settings
+  (JSON)**), so a `dotnet build` is all it takes to update it:
+
+  ```json
+  "piper.server.path": "dotnet",
+  "piper.server.args": ["D:/Development/putridparrot/language-design/piper/src/Piper.Cli/bin/Debug/net10.0/piper.dll", "lsp"]
+  ```
+
+**3. Restart VS Code**, closing every window rather than reloading one, so it loads the extension and sees `piper` on
+the PATH. Then open a `.piper` file: it's highlighted, errors show as you type, and ▶ runs it.
+
+### Keeping it up to date
+
+The installed tool and extension are copies of what you built; changing this repository doesn't change them.
+
+- **After changing the compiler**, with the `piper` tool, pack and reinstall it (the version stays 1.0.0, so
+  `dotnet tool update` would see nothing new), from the `piper` folder:
+
+  ```
+  dotnet pack src/Piper.Cli -c Release -o artifacts
+  dotnet tool uninstall -g Piper
+  dotnet tool install -g Piper --add-source artifacts
+  ```
+
+  With the settings instead, `dotnet build` is enough. Either way, then run **Piper: Restart Language Server** in VS
+  Code. (Uninstalling or rebuilding while VS Code runs the compiler may fail with the file locked: close VS Code, or
+  run **Piper: Restart Language Server** after.)
+
+- **After changing the extension**, package and install it again, then restart VS Code:
+
+  ```
+  cd editors/vscode
+  npx @vscode/vsce package
+  code --install-extension piper-language-1.0.0.vsix --force
+  ```
+
+When the extension runs from this repository instead (F5 in `editors/vscode`) and `piper` isn't installed, it uses the
+compiler built there (`src/Piper.Cli/bin/Debug` or `Release`) without any of this.
 
 ## Debugging
 
@@ -79,5 +129,4 @@ npm install
 ```
 
 Then open the folder in VS Code and press F5, which starts an Extension Development Host with the extension loaded. To
-install it in VS Code itself, package it with `npx @vscode/vsce package` and install the `.vsix` file
-(**Extensions: Install from VSIX…**).
+install it in VS Code itself, see [Installing it locally](#installing-it-locally).

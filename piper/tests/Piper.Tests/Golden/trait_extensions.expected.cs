@@ -269,7 +269,7 @@ public static class Trait_extensions
         Bag bag = new Bag(new global::System.Collections.Generic.List<int> { 1, 2, 3 });
         global::System.Console.WriteLine(bag.MapAll<int>((int x) => x * 10)[2]);
         Container<int> c = bag;
-        global::System.Console.WriteLine(c.MapAll<bool>((int x_1) => x_1 % 2 == 0)[1]);
+        global::System.Console.WriteLine(c.MapAll<bool>((int x) => x % 2 == 0)[1]);
         global::System.Console.WriteLine(Labels<Bag>(bag)[0]);
         global::System.Console.WriteLine(((Container<int>)bag).Pick<Person>(new Person("Ann"), new Person("Bartholomew")).Name());
         global::System.Console.WriteLine(((Named)new Person("Ann")).Greet());

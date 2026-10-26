@@ -68,7 +68,9 @@ public sealed partial class CSharpEmitter
     }
 
     private static string ForwardedCall(MethodSymbol method, string receiver) =>
-        $"{receiver}.{Escape(method.Name)}{TypeParameterList(method.TypeParameters)}({string.Join(", ", method.Parameters.Select(p => Escape(p.Name)))})";
+        PropertyOf(method) is { } property
+            ? $"{receiver}.{Escape(property)}"
+            : $"{receiver}.{Escape(method.Name)}{TypeParameterList(method.TypeParameters)}({string.Join(", ", method.Parameters.Select(p => Escape(p.Name)))})";
 
     /// <summary>The witness interface and its two implementations, nested in the trait's interface.</summary>
     private void EmitWitnessTypes(TraitSymbol trait)
@@ -203,7 +205,11 @@ public sealed partial class CSharpEmitter
                 continue;
             var arguments = string.Join(", ", method.Parameters.Select(p => Escape(p.Name)));
             var call = ExtensionCall(implementation, target, method.IsStatic ? null : "Value", TypeParameterList(method.TypeParameters), arguments);
-            _writer.WriteLine($"{WitnessSignature(method, map, method.IsStatic ? "public static " : "public ", withSelf: false)} => {call};");
+            // A trait property, implemented by the type's extension property: `public double Area => Value.Area;`.
+            var signature = PropertyOf(method) is { } property
+                ? $"public {TypeName(TypeSubstitution.Substitute(method.ReturnType, map))} {Escape(property)}"
+                : WitnessSignature(method, map, method.IsStatic ? "public static " : "public ", withSelf: false);
+            _writer.WriteLine($"{signature} => {call};");
         }
         _writer.CloseBrace();
     }
@@ -218,7 +224,11 @@ public sealed partial class CSharpEmitter
         bool sameNamespace = @namespace == _namespace || (@namespace.IsGlobal && _namespace is { IsGlobal: true });
         var name = Escape(method.Name);
         if (sameNamespace)
-            return receiver is null ? $"{TypeName(receiverType)}.{name}{typeArguments}({arguments})" : $"{receiver}.{name}{typeArguments}({arguments})";
+        {
+            // An extension property is read by name: `n.IsEven`, `int.Zero`.
+            var member = PropertyOf(method) is { } property ? Escape(property) : $"{name}{typeArguments}({arguments})";
+            return receiver is null ? $"{TypeName(receiverType)}.{member}" : $"{receiver}.{member}";
+        }
 
         // The static form's type parameters are the extension block's (Option's T), then the method's.
         if (method.ContainingType is GenericTypeDefinition { IsGeneric: true } && (receiver is null || typeArguments != ""))

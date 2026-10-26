@@ -1,0 +1,18 @@
+// A trait's defaults name its other methods, and those it inherits, bare: Name() is this.Name().
+trait Named {
+    fn Name() => string;
+    fn Greeting() => string = "Hello, {Name()}";
+}
+trait Titled: Named {
+    fn Title() => string;
+    fn Formal() => string = "{Title()} {Name()}: {Greeting()}";
+}
+extend Titled {
+    fn Shout() => string = Formal().ToUpper();
+}
+record Person(name: string);
+extend Person: Titled {
+    fn Name() => string = this.name;
+    fn Title() => string = "Dr";
+}
+fn Main() { let p = Person("Ada"); Print(p.Formal()); Print(p.Shout()); }

@@ -1,0 +1,71 @@
+// Piper traits and classes as .NET generics' type arguments: values that implement the trait (or derive from the
+// class) go where the generic expects it, and .NET variance applies, as in C#.
+using System;
+using System.Linq;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
+trait Shape {
+    fn Area() => double;
+}
+
+record Circle(r: double);
+extend Circle: Shape { fn Area() => double = 3.0 * this.r * this.r; }
+
+record Square(side: double);
+extend Square: Shape { fn Area() => double = this.side * this.side; }
+
+// A builtin implementing the trait is boxed on the way in.
+extend int: Shape { fn Area() => double = (double)this; }
+
+abstract class Animal {
+    abstract fn Sound() => string;
+}
+
+class Dog: Animal { override fn Sound() => string = "woof"; }
+class Cat: Animal { override fn Sound() => string = "meow"; }
+
+// Compares any shapes, so it can compare circles too (IComparer<T> is contravariant).
+record ByArea();
+extend ByArea: IComparer<Shape> {
+    fn Compare(a: Shape?, b: Shape?) => int = (a?.Area() ?? 0.0).CompareTo(b?.Area() ?? 0.0);
+}
+
+fn Main() {
+    // A collection of a trait takes anything implementing it.
+    let shapes = List<Shape>();
+    shapes.Add(Circle(1.0));
+    shapes.Add(Square(2.0));
+    shapes.Add(5);
+    shapes.Insert(0, Circle(2.0));
+    let named = Dictionary<string, Shape>();
+    named["unit"] = Square(1.0);
+    named.Add("five", 5);
+    Print("{shapes.Count} shapes, total area {shapes.Sum(s => s.Area())}, five {named["five"].Area()}");
+
+    // A collection of a base class takes its derived classes.
+    let animals = List<Animal>();
+    animals.Add(Dog());
+    animals.Add(Cat());
+    Print(string.Join(" ", animals.Select(a => a.Sound())));
+
+    // Explicit type arguments, and a lambda producing the implementing type.
+    let pair = Enumerable.Repeat<Shape>(Circle(1.0), 2).ToList();
+    let made: Func<Shape> = () => Square(3.0);
+    let lazy = Lazy<Shape>(() => Circle(2.0));
+    Print("{pair.Count} {made().Area()} {lazy.Value.Area()} {Task.FromResult<Shape>(Square(2.0)).Result.Area()}");
+
+    // Covariance: a List<Circle> is an IEnumerable<Shape>, and a Func<Dog> a Func<Animal>.
+    let circles: List<Circle> = [Circle(1.0), Circle(3.0)];
+    shapes.AddRange(circles);
+    let copy = List<Shape>(circles);
+    let all: IEnumerable<Shape> = circles;
+    let makeDog: Func<Dog> = () => Dog();
+    let makeAnimal: Func<Animal> = makeDog;
+    Print("{shapes.Count} {copy.Count} {all.Count()} {makeAnimal().Sound()}");
+
+    // Contravariance: an IComparer<Shape> sorts circles.
+    let sorted: List<Circle> = [Circle(3.0), Circle(1.0), Circle(2.0)];
+    sorted.Sort(ByArea());
+    Print(string.Join(", ", sorted.Select(c => c.r)));
+}

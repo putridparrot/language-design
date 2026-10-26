@@ -347,8 +347,8 @@ public sealed partial class CSharpEmitter
     private void EmitClass(ClassSymbol @class, SourceText file)
     {
         var modifiers = @class.IsAbstract ? "abstract " : @class.IsSealed ? "sealed " : "";
-        // Base arguments need a primary constructor, so a class passing some has one, if only an empty one.
-        var parameters = @class.Parameters.IsEmpty && @class.BaseArguments.IsEmpty
+        // Base arguments and other constructors need a primary constructor, so a class with either has one, if only an empty one.
+        var parameters = @class.Parameters.IsEmpty && @class.BaseArguments.IsEmpty && @class.Constructors.IsEmpty
             ? ""
             : $"({string.Join(", ", @class.Parameters.Select(p => $"{TypeName(p.Type)} {Escape(p.Name)}{DefaultValue(p.Default)}"))})";
         _names = new NameAllocator(@class.Parameters.Select(p => p.Name));
@@ -363,22 +363,216 @@ public sealed partial class CSharpEmitter
         EmitAttributes(@class);
         _writer.WriteLine($"{Visibility(@class)} {modifiers}partial class {Escape(@class.Name)}{TypeParameterList(@class.TypeParameters)}{parameters}{baseList}{Constraints(@class.TypeParameters)}");
         _writer.OpenBrace();
-        foreach (var field in @class.Fields)
+        // Its invariants are checked before anything else runs: in its first field's initializer, as instance field
+        // initializers run before the base constructor (and before the base arguments are evaluated).
+        var checks = string.Join(" && ", @class.Invariants.Select(contract =>
+            $"global::Piper.Runtime.PiperContract.Invariant({Expr(contract.Condition, AssignmentPrecedence)}, {Literal(contract.Text)}, " +
+            $"{Expr(Piper.Binding.Binder.ContractValues(contract), AssignmentPrecedence)})"));
+        var firstStored = @class.Fields.FirstOrDefault(f => f.Initializer is not null);
+        if (checks.Length > 0 && firstStored is null)
+            _writer.WriteLine($"private readonly bool __PiperInvariants = {checks};");
+        // What stores a value first (fields and automatic properties), static ones first, in order: C# runs their
+        // initializers in the order they're written.
+        var stored = @class.StaticFields.Concat(@class.Fields).Where(f => f.Initializer is not null).ToList();
+        foreach (var field in stored)
         {
             var type = TypeName(field.Type);
+            var @static = field.IsStatic ? "static " : "";
             var initializer = Expr(field.Initializer!, AssignmentPrecedence);
-            _writer.WriteLine(field.IsPublic
-                ? $"public {type} {Escape(field.Name)} {{ get;{(field.IsMutable ? " set;" : "")} }} = {initializer};"
-                : $"private {(field.IsMutable ? "" : "readonly ")}{type} {Escape(field.Name)} = {initializer};");
+            if (checks.Length > 0 && field == firstStored)
+                initializer = $"{checks} ? ({initializer}) : default!";
+            if (field.IsProperty)
+                EmitDocumentation(field, []);
+            EmitAttributes(field);
+            // A public field is a C# property, as are automatic properties; private and protected fields are C# fields.
+            var access = field.IsPublic ? "public " : field.IsProtected ? "protected " : "private ";
+            var keyword = field.IsInitOnly ? "init" : "set";
+            var set = !field.IsMutable ? "" : field.HasPrivateSetter ? $" private {keyword};" : field.HasProtectedSetter ? $" protected {keyword};" : $" {keyword};";
+            _writer.WriteLine(field.IsPublic || field.IsProperty
+                ? $"{access}{@static}{type} {Escape(field.Name)} {{ get;{set} }} = {initializer};"
+                : $"{access}{@static}{(field.IsMutable ? "" : "readonly ")}{type} {Escape(field.Name)} = {initializer};");
         }
-        var methods = MethodsFrom(@class, file).ToList();
+        // Then properties with accessors, indexers, and methods.
+        var properties = @class.StaticFields.Concat(@class.Fields).Where(f => f.IsProperty && f.Initializer is null).ToList();
+        // A property an extend block adds to the class has no field; it's emitted with the methods.
+        var methods = MethodsFrom(@class, file).Where(m => !m.IsHidden || (PropertyOf(m) is not null && !@class.Fields.Concat(@class.StaticFields).Any(f => f.Getter == m))).ToList();
+        bool any = stored.Count > 0;
+        foreach (var property in properties)
+        {
+            if (any)
+                _writer.WriteLine();
+            EmitProperty(property);
+            any = true;
+        }
+        foreach (var indexer in @class.Indexers)
+        {
+            if (any)
+                _writer.WriteLine();
+            EmitIndexer(indexer);
+            any = true;
+        }
+        foreach (var constructor in @class.Constructors)
+        {
+            if (any)
+                _writer.WriteLine();
+            EmitConstructor(@class, constructor);
+            any = true;
+        }
         if (methods.Count > 0)
         {
-            if (!@class.Fields.IsEmpty)
+            if (any)
                 _writer.WriteLine();
             EmitMembers(methods);
         }
+        foreach (var bridge in @class.PropertyBridges)
+        {
+            _writer.WriteLine();
+            EmitPropertyBridge(bridge);
+        }
         _writer.CloseBrace();
+    }
+
+    /// <summary>
+    /// <c>object? IAsyncResult.AsyncState =&gt; PiperInterop.ToNullableReference(this.AsyncState);</c>: implements a .NET
+    /// interface property that may be null with the class's Option property.
+    /// </summary>
+    private void EmitPropertyBridge(ClrPropertyBridge bridge)
+    {
+        var kind = bridge.Boundary == ClrBoundary.NullableReference ? "NullableReference" : "NullableValue";
+        var name = Escape(bridge.Property.Name);
+        var get = $"global::{InteropClassName}.To{kind}(this.{name})";
+        var header = $"{TypeName(bridge.Type)}? {TypeName(bridge.Interface)}.{name}";
+        _writer.WriteLine(bridge.Settable
+            ? $"{header} {{ get => {get}; set => this.{name} = global::{InteropClassName}.From{kind}(value); }}"
+            : $"{header} => {get};");
+    }
+
+    /// <summary>
+    /// A class's property with accessors: <c>public decimal Total =&gt; price * quantity;</c> for a getter alone,
+    /// otherwise <c>public string Name { get =&gt; …; private set { … } }</c>. An abstract one's accessors have no bodies.
+    /// </summary>
+    private void EmitProperty(FieldSymbol property)
+    {
+        if ((property.Getter ?? property.Setter) is not { } accessor)
+            return;
+        _thisName = "this";
+        EmitDocumentation(property, []);
+        EmitAttributes(property);
+        var header = $"{AccessorModifiers(accessor)}{(property.IsStatic ? "static " : "")}{TypeName(property.Type)} {Escape(property.Name)}";
+        EmitAccessors(header, property.Getter, property.Setter);
+    }
+
+    /// <summary><c>public string this[int index] { get =&gt; …; set { … } }</c>, its parameters named as its accessors name them.</summary>
+    private void EmitIndexer(IndexerSymbol indexer)
+    {
+        _thisName = "this";
+        EmitAttributes(indexer);
+        _names = NewNameAllocator(indexer.Getter);
+        var parameters = string.Join(", ", indexer.Parameters.Select(p => $"{TypeName(p.Type)} {Escape(_names.Get(p))}"));
+        var header = $"{AccessorModifiers(indexer.Getter)}{TypeName(indexer.Type)} this[{parameters}]";
+        EmitAccessors(header, indexer.Getter, indexer.Setter);
+    }
+
+    /// <summary>
+    /// A property's or indexer's access, from its getter (or its setter, if it has no getter), and modifiers. An
+    /// override of a protected one is protected too.
+    /// </summary>
+    private static string AccessorModifiers(MethodSymbol accessor)
+    {
+        var access = accessor.IsPrivate ? "private "
+            : accessor.Overridden is MethodInfo { IsFamilyOrAssembly: true } ? "protected internal "
+            : accessor.IsProtected ? "protected "
+            : "public ";
+        return access + (accessor.IsOverride ? "override " : accessor.IsAbstract ? "abstract " : accessor.IsVirtual ? "virtual " : "");
+    }
+
+    /// <summary>
+    /// After <paramref name="header"/>, the accessors: none with bodies for an abstract one, <c>=&gt; expression;</c> for
+    /// a getter alone written as one, otherwise <c>{ get … set … }</c>. A setter more restricted than the getter says so
+    /// (<c>private set</c>, <c>protected set</c>).
+    /// </summary>
+    private void EmitAccessors(string header, MethodSymbol? getter, MethodSymbol? setter)
+    {
+        var keyword = setter is { IsInitAccessor: true } ? "init" : "set";
+        var set = setter is null ? null
+            : getter is null ? keyword
+            : setter.IsPrivate && !getter.IsPrivate ? $"private {keyword}"
+            : setter.IsProtected && !getter.IsProtected && !getter.IsPrivate ? $"protected {keyword}"
+            : keyword;
+        if ((getter ?? setter)!.IsAbstract)
+        {
+            _writer.WriteLine($"{header} {{ get;{(set is null ? "" : $" {set};")} }}");
+            return;
+        }
+        // A getter alone, written as an expression: `public decimal Total => price * quantity;`.
+        if (setter is null && getter is not null && _methodBodies[getter] is { IsExpressionBodied: true } function &&
+            ExpressionBody((BoundBlockStatement)function.Body) is not null)
+        {
+            EmitAccessor(getter, header);
+            return;
+        }
+        _writer.WriteLine(header);
+        _writer.OpenBrace();
+        if (getter is not null)
+            EmitAccessor(getter, "get");
+        if (setter is not null)
+            EmitAccessor(setter, set!);
+        _writer.CloseBrace();
+    }
+
+    /// <summary><c>public Account(string owner) : this(owner, 0m) { … }</c>: a constructor besides the primary one.</summary>
+    private void EmitConstructor(ClassSymbol @class, ClassConstructor constructor)
+    {
+        var method = constructor.Method;
+        _names = NewNameAllocator(method);
+        _thisName = "this";
+        var access = method.IsPrivate ? "private " : method.IsProtected ? "protected " : "public ";
+        var parameters = string.Join(", ", method.Parameters.Select(p => $"{TypeName(p.Type)} {Escape(_names.Get(p))}{DefaultValue(p.Default)}"));
+        EmitDocumentation(method, method.Parameters);
+        EmitAttributes(method);
+        LineDirective(method.Declaration!.Span);
+        try
+        {
+            _writer.WriteLine($"{access}{Escape(@class.Name)}({parameters}) : this({Arguments(constructor.ThisArguments, constructor.ArgumentNames)})");
+            _lastLine = -1;
+            EmitBlock((BoundBlockStatement)_methodBodies[method].Body);
+        }
+        finally
+        {
+            if (_lineDirectives && _lastLine >= 0)
+            {
+                _writer.WriteLine("#line default");
+                _lastLine = -1;
+            }
+        }
+    }
+
+    /// <summary><c>get =&gt; name;</c> or <c>set { … }</c>: an accessor's body, after <paramref name="head"/>.</summary>
+    private void EmitAccessor(MethodSymbol accessor, string head)
+    {
+        var function = _methodBodies[accessor];
+        _names = NewNameAllocator(accessor);
+        LineDirective(accessor.Declaration!.Span);
+        try
+        {
+            var body = (BoundBlockStatement)function.Body;
+            if (function.IsExpressionBodied && ExpressionBody(body) is { } expression)
+            {
+                _writer.WriteLine($"{head} => {Expr(expression, AssignmentPrecedence)};");
+                return;
+            }
+            _writer.WriteLine(head);
+            _lastLine = -1;
+            EmitBlock(body);
+        }
+        finally
+        {
+            if (_lineDirectives && _lastLine >= 0)
+            {
+                _writer.WriteLine("#line default");
+                _lastLine = -1;
+            }
+        }
     }
 
     /// <summary>
@@ -489,6 +683,13 @@ public sealed partial class CSharpEmitter
                 _writer.WriteLine();
             var method = methods[i];
             _thisName = "this";
+            // A property: `double Area { get; }`, or with a default, `string Label => "shape";`.
+            if (PropertyOf(method) is { } property)
+            {
+                EmitDocumentation(method, []);
+                EmitAccessors($"{TypeName(method.ReturnType)} {Escape(property)}", method, null);
+                continue;
+            }
             // A static trait method is a C# 11 static abstract (or, with a body, static virtual) interface member.
             if (_methodBodies.TryGetValue(method, out var body))
             {
@@ -515,8 +716,8 @@ public sealed partial class CSharpEmitter
             // A class's private method is private to it; an extend block's is visible to the program (it's private to
             // its file in Piper). An override of a protected .NET method must be protected too.
             var access = method.IsPrivate ? method.ContainingType is ClassSymbol ? "private " : "internal "
-                : method.Overridden is MethodInfo { IsFamily: true } ? "protected "
                 : method.Overridden is MethodInfo { IsFamilyOrAssembly: true } ? "protected internal "
+                : method.IsProtected ? "protected "
                 : "public ";
             // An enum's ToString is sealed, so its variants (C# records deriving from it) don't generate their own.
             var modifier = method.ContainingType is EnumSymbol && method.IsOverride ? "sealed override "
@@ -526,6 +727,13 @@ public sealed partial class CSharpEmitter
                 : method.IsVirtual ? "virtual " : "";
             // An instance-form operator is a static C# operator whose first parameter, `self`, is Piper's `this`.
             _thisName = method.IsOperator ? "self" : "this";
+            // A property an extend block adds: `public double Length => …;`.
+            if (PropertyOf(method) is { } property)
+            {
+                EmitDocumentation(method, []);
+                EmitAccessors($"{access}{(method.IsStatic ? "static " : "")}{modifier}{TypeName(method.ReturnType)} {Escape(property)}", method, null);
+                continue;
+            }
             if (method.ContainingType is ClassSymbol && method.IsAbstract)
             {
                 _names = NewNameAllocator(method);
@@ -617,7 +825,11 @@ public sealed partial class CSharpEmitter
                         _writer.WriteLine();
                     _thisName = "self";
                     var access = methods[j].IsPrivate ? "internal " : "public ";
-                    EmitFunction(_methodBodies[methods[j]], access + (isStatic ? "static " : ""));
+                    // A C# 14 extension property: `public bool IsEven => self % 2 == 0;`.
+                    if (PropertyOf(methods[j]) is { } property)
+                        EmitAccessors($"{access}{(isStatic ? "static " : "")}{TypeName(methods[j].ReturnType)} {Escape(property)}", methods[j], null);
+                    else
+                        EmitFunction(_methodBodies[methods[j]], access + (isStatic ? "static " : ""));
                 }
                 _writer.CloseBrace();
             }
@@ -736,9 +948,13 @@ public sealed partial class CSharpEmitter
     /// among its locals), a top-level one through its module class, qualified as needed.
     /// </summary>
     private string FunctionName(FunctionSymbol function) =>
-        function.IsLocal
-            ? Escape(_names.Get(function))
-            : $"{(InCurrentClass(function) ? "" : FunctionContainer(function) + ".")}{Escape(function.Name)}";
+        function switch
+        {
+            { IsLocal: true } => Escape(_names.Get(function)),
+            // A static method of a Piper type, named as a value: `Point.Make`.
+            MethodSymbol { ContainingType: var owner } => $"{TypeName(owner)}.{Escape(function.Name)}",
+            _ => $"{(InCurrentClass(function) ? "" : FunctionContainer(function) + ".")}{Escape(function.Name)}",
+        };
 
     /// <summary>How to reach a top-level function from the current position: its module class, qualified as needed.</summary>
     private string FunctionContainer(FunctionSymbol function)
@@ -755,9 +971,13 @@ public sealed partial class CSharpEmitter
         IEnumerable<string> typeParameters = function.TypeParameters.Select(p => p.Name);
         if (function is MethodSymbol { ContainingType: NamedTypeDefinition definition })
             typeParameters = typeParameters.Concat(definition.TypeParameters.Select(p => p.Name));
-        // A class's methods name its constructor parameters bare, so no local may take their names.
+        // A class's methods name its constructor parameters bare, so no local may take their names. A parameter of the
+        // method may, keeping its name for named arguments: it hides the constructor's throughout, in Piper as in C#.
         if (function is MethodSymbol { ContainingType: ClassSymbol @class })
-            typeParameters = typeParameters.Concat(@class.SelfAndBases().SelectMany(c => c.Parameters).Select(p => p.Name));
+        {
+            typeParameters = typeParameters.Concat(@class.SelfAndBases().SelectMany(c => c.Parameters).Select(p => p.Name)
+                .Where(name => !function.Parameters.Any(p => p.Name == name)));
+        }
         // In an extension block the receiver parameter is called `self` (C# can't name it `this`), so keep that name free.
         return new NameAllocator([.. _topLevelNames, "_", "self", .. typeParameters]);
     }
@@ -1221,6 +1441,7 @@ public sealed partial class CSharpEmitter
     private string VariableName(VariableSymbol variable) => variable.Kind switch
     {
         VariableKind.Field => $"{_thisName}.{Escape(variable.Name)}",
+        VariableKind.StaticField => $"{TypeName(variable.Container!)}.{Escape(variable.Name)}",
         VariableKind.ClassParameter => Escape(variable.Name),
         _ => Escape(_names.Get(variable)),
     };
@@ -1261,7 +1482,20 @@ public sealed partial class CSharpEmitter
     /// </summary>
     private string Lambda(BoundLambdaExpression lambda)
     {
-        var parameters = string.Join(", ", lambda.Parameters.Select(p => $"{TypeName(p.Type)} {Escape(_names.Declare(p))}"));
+        // Its parameters keep their names where they can (so `(id: int) => …` binds a route's {id}); not where they'd hide
+        // something the lambda uses from outside it.
+        var taken = BoundTreeWalker.DescendantsAndSelf(lambda.Body)
+            .Select(node => node switch
+            {
+                BoundVariableExpression read => read.Variable,
+                BoundAssignmentExpression written => written.Variable,
+                _ => null,
+            })
+            .OfType<VariableSymbol>()
+            .Select(_names.NameOf)
+            .OfType<string>()
+            .ToHashSet();
+        var parameters = string.Join(", ", lambda.Parameters.Select(p => $"{TypeName(p.Type)} {Escape(_names.DeclareLambdaParameter(p, taken))}"));
         var body = (BoundBlockStatement)lambda.Body;
         if (lambda.IsExpressionBodied && ExpressionBody(body) is { } expression)
             return $"{(lambda.IsAsync ? "async " : "")}({parameters}) => {Expr(expression, AssignmentPrecedence)}";
@@ -1376,6 +1610,13 @@ public sealed partial class CSharpEmitter
     /// <c>receiver.method(args)</c> or <c>Type.method(args)</c>. C# only exposes a default interface method
     /// through the interface, so a default trait method called on a concrete type casts the receiver first.
     /// </summary>
+    /// <summary>
+    /// For a property's getter (<c>get_Area</c>, from a trait, an extend block or a class): the property, which C# code
+    /// reads by name. Null for other methods, and for indexers' accessors.
+    /// </summary>
+    private static string? PropertyOf(MethodSymbol method) =>
+        method.IsAccessor && !method.IsIndexerAccessor && method.Name.StartsWith("get_", StringComparison.Ordinal) ? method.Declaration!.AccessorOf : null;
+
     private string MethodCall(BoundMethodCallExpression call)
     {
         var typeArguments = TypeArgumentList(call.TypeArguments);
@@ -1397,7 +1638,8 @@ public sealed partial class CSharpEmitter
             return ExtensionCall(call.Method, call.ReceiverType, receiver, typeArguments, arguments);
         }
 
-        var method = $"{Escape(call.Method.Name)}{typeArguments}({arguments})";
+        // A property's getter is read as the property.
+        var method = PropertyOf(call.Method) is { } property ? Escape(property) : $"{Escape(call.Method.Name)}{typeArguments}({arguments})";
         if (call.Receiver is null)
             return $"{TypeName(call.ReceiverType)}.{method}";
 
@@ -1686,6 +1928,7 @@ public sealed partial class CSharpEmitter
     /// <summary>Gives each variable (and local function) in a method a unique C# name that doesn't collide with top-level names.</summary>
     private sealed class NameAllocator(IEnumerable<string> reserved)
     {
+        private readonly HashSet<string> _reserved = [.. reserved];
         private readonly HashSet<string> _used = [.. reserved];
         private readonly Dictionary<Symbol, string> _names = [];
 
@@ -1697,6 +1940,24 @@ public sealed partial class CSharpEmitter
             _names[variable] = name;
             return name;
         }
+
+        /// <summary>
+        /// A lambda's parameter, under its own name if it can have it: C# lets a lambda's parameters (unlike a nested
+        /// block's locals) hide the enclosing method's names, and something may read the name, as ASP.NET Core binds a
+        /// route's `{id}` to the handler's `id`. Not a reserved name, nor one of <paramref name="taken"/>, the C# names of
+        /// what the lambda uses from outside it, which it would hide.
+        /// </summary>
+        public string DeclareLambdaParameter(Symbol variable, IReadOnlySet<string> taken)
+        {
+            if (_reserved.Contains(variable.Name) || taken.Contains(variable.Name))
+                return Declare(variable);
+            _used.Add(variable.Name);
+            _names[variable] = variable.Name;
+            return variable.Name;
+        }
+
+        /// <summary>The C# name given to <paramref name="variable"/>, if it's been declared.</summary>
+        public string? NameOf(Symbol variable) => _names.GetValueOrDefault(variable);
 
         public string Get(Symbol variable) => _names.TryGetValue(variable, out var name) ? name : Declare(variable);
     }

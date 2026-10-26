@@ -13,6 +13,12 @@ public sealed record Token(TokenKind Kind, TextSpan Span, string Text, object? V
 
     /// <summary>True for tokens the parser synthesized during error recovery.</summary>
     public bool IsMissing { get; init; }
+
+    /// <summary>
+    /// True for a token in code a plugin wrote (a template's own syntax, or a fresh name), which has the plugin
+    /// construct's span so errors point at it, but isn't in the source: the editor doesn't hover, colour or hint it.
+    /// </summary>
+    public bool IsGenerated { get; init; }
 }
 
 /// <summary>

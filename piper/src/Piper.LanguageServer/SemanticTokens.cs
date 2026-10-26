@@ -11,7 +11,7 @@ namespace Piper.LanguageServer;
 public static class SemanticTokens
 {
     public static readonly string[] TokenTypes =
-        ["namespace", "class", "struct", "enum", "interface", "typeParameter", "parameter", "variable", "property", "enumMember", "function", "method"];
+        ["namespace", "class", "struct", "enum", "interface", "typeParameter", "parameter", "variable", "property", "enumMember", "function", "method", "keyword"];
 
     public static readonly string[] TokenModifiers = ["declaration", "readonly", "static", "defaultLibrary"];
 
@@ -28,24 +28,27 @@ public static class SemanticTokens
     {
         var data = new JsonArray();
         int previousLine = 0, previousColumn = 0, previousEnd = 0;
-        var occurrences = analysis.Semantic.Occurrences
+        // The names the binder resolved, and the plugins' keywords (`services`), which the grammar can't know.
+        var names = analysis.Semantic.Occurrences
             .Where(o => o.File == source)
-            .OrderBy(o => o.Span.Start)
-            .ThenBy(o => o.Span.Length);
-        foreach (var occurrence in occurrences)
+            .Select(o => (o.Span, Token: Classify(o)));
+        var keywords = analysis.Semantic.PluginKeywords
+            .Where(k => k.File == source)
+            .Select(k => (k.Span, Token: ((string, int)?)("keyword", 0)));
+        foreach (var (span, token) in names.Concat(keywords).OrderBy(t => t.Span.Start).ThenBy(t => t.Span.Length))
         {
             // Tokens can't overlap, and a name is only recorded once per symbol, but may be recorded twice.
-            if (occurrence.Span.Start < previousEnd || Classify(occurrence) is not var (type, modifiers))
+            if (span.Start < previousEnd || token is not var (type, modifiers))
                 continue;
-            var (line, column) = source.GetLineColumn(occurrence.Span.Start);
+            var (line, column) = source.GetLineColumn(span.Start);
             line--;
             column--;
             data.Add(line - previousLine);
             data.Add(line == previousLine ? column - previousColumn : column);
-            data.Add(occurrence.Span.Length);
+            data.Add(span.Length);
             data.Add(Array.IndexOf(TokenTypes, type));
             data.Add(modifiers);
-            (previousLine, previousColumn, previousEnd) = (line, column, occurrence.Span.End);
+            (previousLine, previousColumn, previousEnd) = (line, column, span.End);
         }
         return new JsonObject { ["data"] = data };
     }
@@ -59,6 +62,7 @@ public static class SemanticTokens
             VariableSymbol { Kind: VariableKind.This } => null,
             VariableSymbol { Kind: VariableKind.Parameter } => ("parameter", 0),
             VariableSymbol variable => ("variable", variable.IsMutable ? 0 : Readonly),
+            FieldSymbol { IsStatic: true } field => ("property", (field.IsMutable ? 0 : Readonly) | Static),
             FieldSymbol => ("property", Readonly),
             VariantSymbol => ("enumMember", 0),
             MethodSymbol method => ("method", method.IsStatic ? Static : 0),

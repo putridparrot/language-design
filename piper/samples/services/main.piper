@@ -1,0 +1,61 @@
+// Dependency injection in a console program, with the services plugin's `services` and no web framework. The
+// container makes each service, and the services it needs, when it's first asked for.
+
+using System;
+using System.Collections.Generic;
+using Microsoft.Extensions.DependencyInjection;
+
+trait Clock {
+    fn Now() => string;
+}
+
+record FixedClock(time: string);
+
+extend FixedClock: Clock {
+    fn Now() => string = this.time;
+}
+
+trait Log {
+    fn Write(message: string);
+    fn Lines() => List<string>;
+}
+
+class MemoryLog: Log {
+    let lines: List<string> = [];
+
+    fn Write(message: string) { lines.Add(message); }
+    fn Lines() => List<string> = lines;
+}
+
+// DI constructs it, passing the Clock and Log it was registered with.
+class Reminder(clock: Clock, log: Log) {
+    fn Remind(what: string) { log.Write("{clock.Now()}: {what}"); }
+}
+
+// Becomes `fn AppServices(services: IServiceCollection) => IServiceCollection`, registering each service.
+services AppServices {
+    singleton Clock = FixedClock("09:00");   // made by this expression, when first needed
+    singleton Log => MemoryLog;              // a trait, and the class implementing it, which DI constructs
+    transient Reminder;                      // a class DI constructs, a new one each time
+}
+
+fn Main() {
+    let provider = AppServices(ServiceCollection()).BuildServiceProvider();
+
+    let first = provider.GetRequiredService<Reminder>();
+    let second = provider.GetRequiredService<Reminder>();
+    first.Remind("stand up");
+    second.Remind("drink water");
+
+    // Two Reminders, one Log: transient services are made each time, singletons once.
+    Print("{Object.ReferenceEquals(first, second)} {Object.ReferenceEquals(provider.GetRequiredService<Log>(), provider.GetRequiredService<Log>())}");
+    for line in provider.GetRequiredService<Log>().Lines() {
+        Print(line);
+    }
+}
+
+test "the log keeps what reminders write" {
+    let provider = AppServices(ServiceCollection()).BuildServiceProvider();
+    provider.GetRequiredService<Reminder>().Remind("test");
+    AssertEqual(provider.GetRequiredService<Log>().Lines().Count, 1);
+}

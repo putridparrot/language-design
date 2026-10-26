@@ -134,7 +134,7 @@ public static class Dotnet_protocols
             global::System.Console.WriteLine(n);
         }
         global::System.Console.WriteLine(global::System.Linq.Enumerable.Sum(new Countdown(4)));
-        global::System.Console.WriteLine(string.Join<int>(" ", global::System.Linq.Enumerable.Where<int>(new Countdown(5), (int n_1) => n_1 % 2 == 1)));
+        global::System.Console.WriteLine(string.Join<int>(" ", global::System.Linq.Enumerable.Where<int>(new Countdown(5), (int n) => n % 2 == 1)));
         Deck deck = new Deck(new global::System.Collections.Generic.List<Suit> { new Suit.Spades(), new Suit.Hearts() });
         global::System.Console.WriteLine(global::System.Linq.Enumerable.Count<Suit>(deck));
         foreach (Suit suit in deck)

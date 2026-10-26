@@ -1,0 +1,95 @@
+// Classes deriving from generic classes: what they inherit takes the type arguments they pass.
+using System;
+using System.Collections.Generic;
+
+abstract class Repository<T>(name: string) {
+    protected let items: List<T> = [];
+    public mut lastAdded: T? = None;
+    protected static mut made = 0;
+
+    prop Count => int = items.Count;
+    prop Latest => T? { get = lastAdded; protected set { lastAdded = value; } }
+    prop this[i: int] => T = items[i];
+
+    fn Add(item: T) {
+        items.Add(item);
+        Latest = Some(item);
+        made += 1;
+    }
+
+    abstract fn Describe(item: T) => string;
+    virtual fn Name() => string = name;
+    static fn Made() => int = made;
+}
+
+// Fields, properties, the indexer and methods of Repository<string> are named bare, with T as string.
+class Names: Repository<string>("names") {
+    fn AddTwice(item: string) {
+        Add(item);
+        items.Add(item.ToUpper());
+    }
+
+    override fn Describe(item: string) => string = "'{item}' ({item.Length} letters)";
+    override fn Name() => string = "{base.Name()}!";
+
+    fn First() => string = items[0];
+    fn Shout() { Latest = Some(this[Count - 1]); }
+}
+
+// Two levels: Pairs<U> passes List<U> on, and Grid passes int.
+class Pairs<U>(label: string): Repository<List<U>>(label) {
+    fn AddPair(a: U, b: U) { Add([a, b]); }
+    override fn Describe(item: List<U>) => string = string.Join("+", item);
+}
+
+class Grid: Pairs<int>("grid") {
+    fn Sum() => int {
+        mut total = 0;
+        for pair in items {
+            for n in pair {
+                total += n;
+            }
+        }
+        total
+    }
+}
+
+// A generic Piper base over a generic .NET class: Ints has List<int>'s members.
+class Bag<T>: List<T> {
+    fn AddAll(values: List<T>) {
+        for value in values {
+            Add(value);
+        }
+    }
+}
+
+class Ints: Bag<int> {
+    fn Total() => int {
+        mut total = 0;
+        for n in this {
+            total += n;
+        }
+        total
+    }
+}
+
+fn Main() {
+    let names = Names();
+    names.AddTwice("ada");
+    names.Shout();
+    Print("{names.Name()}: {names.Count} items, {names[1]}, first {names.First()}, latest {names.Latest ?? "-"}");
+    Print(names.Describe(names[0]));
+    names.lastAdded = Some("bob");
+    Print(names.lastAdded ?? "-");
+
+    let grid = Grid();
+    grid.AddPair(1, 2);
+    grid.AddPair(3, 4);
+    Print("{grid.Name()}: {grid.Describe(grid[1])}, sum {grid.Sum()}");
+    Print("{Repository<string>.Made()} strings, {Repository<List<int>>.Made()} lists");
+
+    let ints = Ints();
+    ints.AddAll([5, 6, 7]);
+    ints.Add(8);
+    Print("{ints.Count} ints, {ints[0]}..{ints[ints.Count - 1]}, total {ints.Total()}");
+}

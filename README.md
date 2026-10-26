@@ -18,7 +18,7 @@ Parrot had more features than I wanted for an experimentation language. In truth
 _Note: I'll likely add Parrot to the repository soon._
 
 I was interested to see what an AI would come back with. Pure OO was a lower priority than I expected (as an OO
-developer of many years), so the design leans towards a more functional style, like Rust's.
+developer of many years), so the design leans towards a more function based style, like Rust's (not a functional-first language like F#). The best was to describe the languages is, as a "data and traits first, expression-oriented, with classes for .NET".
 
 Piper is a full-featured language, but it's aimed at the core features. With Parrot I was looking to build
 concurrency and distributed features into the language. With Piper I'm more interested in a smaller language, and in

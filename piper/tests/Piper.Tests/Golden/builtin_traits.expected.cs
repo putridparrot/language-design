@@ -203,14 +203,14 @@ public static class Builtin_traits
         global::System.Console.WriteLine(n.Greet());
         global::System.Console.WriteLine(Option<int>.Some(4).Convert());
         Option<int> o = Option<int>.None;
-        global::System.Console.WriteLine(global::Piper.Runtime.PiperTraits.Witness<Convert<string>.PiperWitness<Option<int>>>().MapTo<int>(o, (string s_1) => s_1.Length));
+        global::System.Console.WriteLine(global::Piper.Runtime.PiperTraits.Witness<Convert<string>.PiperWitness<Option<int>>>().MapTo<int>(o, (string s) => s.Length));
         global::System.Console.WriteLine(new Holder<int>(5).Area());
-        Shape s_2 = global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<int>>().PiperBox(7);
-        global::System.Console.WriteLine(s_2);
-        int back = global::Piper.Runtime.PiperTraits.Unbox<int>(s_2);
+        Shape s_1 = global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<int>>().PiperBox(7);
+        global::System.Console.WriteLine(s_1);
+        int back = global::Piper.Runtime.PiperTraits.Unbox<int>(s_1);
         global::System.Console.WriteLine(back + 1);
         global::System.Console.WriteLine(AsShape<int>(9).Area());
-        global::System.Console.WriteLine(global::System.Collections.Generic.EqualityComparer<Shape>.Default.Equals(s_2, AsShape<int>(7)));
+        global::System.Console.WriteLine(global::System.Collections.Generic.EqualityComparer<Shape>.Default.Equals(s_1, AsShape<int>(7)));
     }
 }
 

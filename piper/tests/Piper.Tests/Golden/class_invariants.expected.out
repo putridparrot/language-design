@@ -1,0 +1,10 @@
+10
+20
+unnamed: Invariant failed: owner.Length > 0 (owner = )
+overdrawn: Invariant failed: opening >= 0m (opening = -1)
+too many cells: Invariant failed: width * height <= maxCells (width = 50, height = 50)
+long label: Invariant failed: (label ?? "").Length <= MaxLabel() (label = Some(too long))
+no label: Invariant failed: label is Some(l) && l != "" (label = None)
+  initializing half
+derived: ok
+zero: Invariant failed: n != 0 (n = 0)

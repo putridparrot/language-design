@@ -161,6 +161,12 @@ public static class Completion
             foreach (var field in record.Fields)
                 yield return (field.Name, FieldKind, $"{field.Name}: {TypeSubstitution.FieldType(field, type)}", null);
         }
+        // A class's public fields and properties, its own and its Piper base classes'.
+        if (definition is ClassSymbol @class)
+        {
+            foreach (var field in @class.SelfAndBases().SelectMany(c => instance ? c.Fields : c.StaticFields).Where(f => f.IsPublic).DistinctBy(f => f.Name))
+                yield return (field.Name, field.IsProperty ? PropertyKind : FieldKind, SymbolDisplay.Describe(field), field.Documentation);
+        }
         if (instance && type is TupleTypeSymbol tuple)
         {
             for (int i = 0; i < tuple.ElementTypes.Length; i++)
@@ -172,8 +178,12 @@ public static class Completion
                 yield return Item(variant);
         }
 
-        foreach (var method in PiperMethods(analysis, type).Where(m => m.IsStatic != instance))
+        foreach (var method in PiperMethods(analysis, type).Where(m => m.IsStatic != instance && !m.IsHidden))
             yield return Item(method);
+        // A trait's or extend block's properties, which are getters to the compiler (a class's are its fields, above).
+        foreach (var getter in PiperMethods(analysis, type).Where(m => m.IsStatic != instance && m is { IsAccessor: true, IsIndexerAccessor: false } &&
+                                                                       m.Name.StartsWith("get_", StringComparison.Ordinal) && m.ContainingType is not ClassSymbol))
+            yield return (getter.DisplayName, PropertyKind, SymbolDisplay.Describe(getter), getter.Documentation);
 
         // Option and Result are structs in Piper.Runtime, but their .NET members aren't part of Piper.
         if (definition is not NamedTypeDefinition && ClrTypes.ToClr(type) is { ContainsGenericParameters: false } clr)

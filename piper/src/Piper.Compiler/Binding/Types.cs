@@ -194,6 +194,21 @@ public sealed class ClassSymbol : NamedTypeDefinition
 
     public ImmutableArray<FieldSymbol> Fields { get; internal set; } = [];
 
+    /// <summary>Its `requires` conditions, over the primary constructor's <see cref="Parameters"/>, checked when one is made.</summary>
+    public ImmutableArray<BoundContract> Invariants { get; internal set; } = [];
+
+    /// <summary>Its properties implementing .NET interface properties that may be null, converting between Option and null.</summary>
+    public List<ClrPropertyBridge> PropertyBridges { get; } = [];
+
+    /// <summary>Its constructors besides the primary one, which all call it first (<c>: this(…)</c>).</summary>
+    public ImmutableArray<ClassConstructor> Constructors { get; internal set; } = [];
+
+    /// <summary>Its indexers (<c>prop this[i: int]: T</c>), which may be overloaded by their parameters' types.</summary>
+    public ImmutableArray<IndexerSymbol> Indexers { get; internal set; } = [];
+
+    /// <summary>Its `static` fields, in the order they're declared (and initialized).</summary>
+    public ImmutableArray<FieldSymbol> StaticFields { get; internal set; } = [];
+
     /// <summary>The class it derives from: a <see cref="ClassSymbol"/>, a .NET class, or null for <c>object</c>.</summary>
     public TypeSymbol? Base { get; internal set; }
 
@@ -209,10 +224,13 @@ public sealed class ClassSymbol : NamedTypeDefinition
     /// <summary>Where its static methods are bound: its members by name, so instance ones are reported as needing an instance.</summary>
     internal Scope? StaticScope { get; set; }
 
-    /// <summary>Itself and its Piper base classes, nearest first.</summary>
+    /// <summary>
+    /// Itself and its Piper base classes' definitions, nearest first (<c>Repository</c> for a base written
+    /// <c>Repository&lt;string&gt;</c>; the binder's <c>SelfAndBaseTypes</c> gives the bases with their type arguments).
+    /// </summary>
     public IEnumerable<ClassSymbol> SelfAndBases()
     {
-        for (ClassSymbol? type = this; type is not null; type = type.Base as ClassSymbol)
+        for (ClassSymbol? type = this; type is not null; type = type.Base?.OriginalDefinition as ClassSymbol)
             yield return type;
     }
 
@@ -366,6 +384,13 @@ public sealed class TraitSymbol : GenericTypeDefinition
 
     public TraitDeclarationSyntax Declaration { get; }
 
+    /// <summary>
+    /// The scopes its methods' bodies (and those of `extend` blocks adding to it) are bound in, which name its instance
+    /// methods and those it inherits, so a default can call <c>Name()</c> for <c>this.Name()</c>. Filled once its
+    /// inheritance is known.
+    /// </summary>
+    internal List<Scope> MemberScopes { get; } = [];
+
     /// <summary>The methods it declares itself (not those it inherits, or its overrides of them).</summary>
     public ImmutableArray<MethodSymbol> Methods { get; internal set; } = [];
 
@@ -405,8 +430,42 @@ public static class TypeSubstitution
         return map;
     }
 
-    /// <summary>The type of <paramref name="field"/> when its record or enum is instantiated as <paramref name="owner"/>.</summary>
-    public static TypeSymbol FieldType(FieldSymbol field, TypeSymbol owner) => Substitute(field.Type, MapFor(owner));
+    /// <summary>
+    /// The type of <paramref name="field"/> when its record, enum or class is instantiated as <paramref name="owner"/>.
+    /// A class's field may be reached through a class deriving from it: its <c>T</c> is then what that class passes,
+    /// <c>string</c> for an <c>items: List&lt;T&gt;</c> of <c>Repository&lt;T&gt;</c> reached through <c>class Names: Repository&lt;string&gt;</c>.
+    /// </summary>
+    public static TypeSymbol FieldType(FieldSymbol field, TypeSymbol owner) => Substitute(field.Type, MapFor(AsBase(owner, field.Owner)));
+
+    /// <summary>
+    /// The .NET class at the root of a Piper class type's bases, with the type arguments the classes pass down:
+    /// <c>List&lt;int&gt;</c> for <c>class Ints: Bag&lt;int&gt;</c> where <c>class Bag&lt;T&gt;: List&lt;T&gt;</c>.
+    /// </summary>
+    public static ClrTypeSymbol ClrBaseOf(TypeSymbol type)
+    {
+        var current = type;
+        while (current.OriginalDefinition is ClassSymbol { Base: { OriginalDefinition: ClassSymbol } @base })
+            current = Substitute(@base, MapFor(current));
+        var root = (ClassSymbol)current.OriginalDefinition;
+        return root.Base is { } clr && Substitute(clr, MapFor(current)) is ClrTypeSymbol substituted ? substituted : root.ClrBase;
+    }
+
+    /// <summary>
+    /// <paramref name="type"/>'s Piper base class <paramref name="declaring"/>, with the type arguments
+    /// <paramref name="type"/> gives it, or <paramref name="type"/> itself if that's not one of its bases.
+    /// </summary>
+    public static TypeSymbol AsBase(TypeSymbol type, ClassSymbol? declaring)
+    {
+        if (declaring is null)
+            return type;
+        for (TypeSymbol? current = type; current?.OriginalDefinition is ClassSymbol definition;
+             current = definition.Base is { } @base ? Substitute(@base, MapFor(current)) : null)
+        {
+            if (definition == declaring)
+                return current;
+        }
+        return type;
+    }
 
     /// <summary>
     /// The type with every tuple's element names removed, at any depth: C# treats types that differ only in tuple
@@ -442,3 +501,16 @@ public sealed record ClrInterfaceBridge(
     ImmutableArray<(TypeSymbol Type, ClrBoundary Boundary)> Parameters,
     TypeSymbol ReturnType,
     ClrBoundary ReturnBoundary);
+
+/// <summary>
+/// A class property implementing a .NET interface property that .NET marks as possibly null, which is an Option in Piper:
+/// the emitter adds an explicit implementation that converts, e.g. <c>object? IAsyncResult.AsyncState =&gt;
+/// PiperInterop.ToNullableReference(AsyncState);</c>. <see cref="Type"/> is the C# one, without the <c>?</c>.
+/// </summary>
+public sealed record ClrPropertyBridge(FieldSymbol Property, TypeSymbol Interface, TypeSymbol Type, ClrBoundary Boundary, bool Settable);
+
+/// <summary>
+/// A class's constructor besides its primary one: <see cref="Method"/> holds its parameters and body (run after the
+/// primary constructor), and <see cref="ThisArguments"/> the primary constructor's arguments, named as written.
+/// </summary>
+public sealed record ClassConstructor(MethodSymbol Method, ImmutableArray<BoundExpression> ThisArguments, ImmutableArray<string?> ArgumentNames);

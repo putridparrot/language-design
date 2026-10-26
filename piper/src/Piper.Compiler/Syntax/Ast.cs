@@ -4,7 +4,14 @@ using Piper.Text;
 namespace Piper.Syntax;
 
 /// <summary>Base of the immutable syntax tree. Every node knows the source span it covers.</summary>
-public abstract record SyntaxNode(TextSpan Span);
+public abstract record SyntaxNode(TextSpan Span)
+{
+    /// <summary>
+    /// True for a node of a plugin's template, which has the plugin construct's span so errors point at it, but isn't
+    /// in the source (see <see cref="Token.IsGenerated"/>).
+    /// </summary>
+    public bool IsGenerated { get; init; }
+}
 
 /// <summary>One source file: an optional file-scoped namespace, using directives, then declarations.</summary>
 public sealed record CompilationUnitSyntax(
@@ -87,11 +94,29 @@ public sealed record FunctionDeclarationSyntax(
     /// <summary>The body contains `yield`, so (as in C#) the function is an iterator.</summary>
     public bool IsIterator { get; init; }
 
+    /// <summary>
+    /// For a class property's getter or setter, which the binder makes a method of (<c>get_Name</c>, <c>set_Name</c>, as
+    /// .NET names them): the property's name. Such methods can't be called by name; the property is used instead.
+    /// </summary>
+    public string? AccessorOf { get; init; }
+
+    /// <summary>
+    /// For a class's constructor besides its primary one (<c>Account(owner: string): this(owner, 0m) { … }</c>, named
+    /// <c>.ctor</c> so it can't be called by name): its class's name as written, and the primary constructor's arguments.
+    /// </summary>
+    public ConstructorChainSyntax? Constructor { get; init; }
+
+    /// <summary>For a property's setter: written `init`, so it can be used only while the object is made.</summary>
+    public bool IsInitAccessor { get; init; }
+
     /// <summary>A class method's `virtual`, `override` or `abstract`.</summary>
     public Token? Modifier { get; init; }
 
     /// <summary>A class method's `public`, which it is anyway.</summary>
     public Token? Public { get; init; }
+
+    /// <summary>A class method's `protected`: usable in its class and classes deriving from it.</summary>
+    public Token? Protected { get; init; }
 }
 
 /// <summary>
@@ -112,7 +137,16 @@ public sealed record ClassDeclarationSyntax(
     public Token? Abstract { get; init; }
 
     public Token? Sealed { get; init; }
+
+    /// <summary>The conditions of its `requires` clauses: invariants its constructor's arguments must meet, checked when one is made.</summary>
+    public ImmutableArray<ExpressionSyntax> Requires { get; init; } = [];
 }
+
+/// <summary>
+/// A constructor's name (the class's) and its <c>: this(…)</c>, whose <see cref="Arguments"/> go to the primary
+/// constructor; <see cref="This"/> is null when it's left out, for a primary constructor that needs no arguments.
+/// </summary>
+public sealed record ConstructorChainSyntax(Token ClassName, Token? This, ImmutableArray<ExpressionSyntax> Arguments);
 
 /// <summary>
 /// An entry in a class's base list: its base class, with the base constructor's <see cref="Arguments"/>
@@ -120,15 +154,86 @@ public sealed record ClassDeclarationSyntax(
 /// </summary>
 public sealed record BaseTypeSyntax(TextSpan Span, TypeSyntax Type, ImmutableArray<ExpressionSyntax>? Arguments) : SyntaxNode(Span);
 
-/// <summary><c>mut balance: decimal = opening;</c> in a class: a field, private unless <see cref="Public"/>.</summary>
-public sealed record ClassFieldSyntax(TextSpan Span, Token Keyword, Token Name, TypeSyntax? Type, ExpressionSyntax Initializer) : SyntaxNode(Span)
+/// <summary>
+/// <c>mut balance: decimal = opening;</c> in a class: a field, private unless <see cref="Public"/>. A <see cref="Static"/>
+/// one (<c>static mut count = 0;</c>) belongs to the class, not an instance.
+/// <para>
+/// With the <c>prop</c> keyword it's a property, public unless <see cref="Private"/>. One that computes its value is
+/// written as a function is (see <see cref="Arrow"/>): <c>prop Total =&gt; decimal = price * quantity;</c>, whose getter
+/// is <see cref="Accessors"/>' only one, or with accessors, <c>prop Name =&gt; string { get = name; set { … } }</c>. One
+/// that stores its value is written as a field is, its accessors without bodies: <c>prop Count: int { get; private set; } = 0;</c>.
+/// Only that one, an automatic property, has an <see cref="Initializer"/>.
+/// </para>
+/// </summary>
+public sealed record ClassFieldSyntax(TextSpan Span, Token Keyword, Token Name, TypeSyntax? Type, ExpressionSyntax? Initializer) : SyntaxNode(Span)
 {
     public Token? Public { get; init; }
+
+    public Token? Private { get; init; }
+
+    /// <summary>`protected`: usable in its class and classes deriving from it.</summary>
+    public Token? Protected { get; init; }
+
+    public Token? Static { get; init; }
+
+    /// <summary>A property's `virtual`, `override` or `abstract`.</summary>
+    public Token? Modifier { get; init; }
+
+    public ImmutableArray<AttributeSyntax> Attributes { get; init; } = [];
+
+    /// <summary>A property's `get` and `set`, in the order written.</summary>
+    public ImmutableArray<AccessorSyntax> Accessors { get; init; } = [];
+
+    /// <summary>
+    /// An indexer's parameters: <c>prop this[index: int]: T { get =&gt; …; set { … } }</c>, used as <c>value[index]</c>.
+    /// Its <see cref="Name"/> is the <c>this</c> token.
+    /// </summary>
+    public ImmutableArray<ParameterSyntax> Parameters { get; init; } = [];
+
+    public bool IsIndexer => Name.Kind == TokenKind.ThisKeyword;
 
     /// <summary>The text of the `///` comment lines directly above it, if any.</summary>
     public string? Documentation { get; init; }
 
-    public bool IsMutable => Keyword.Kind == TokenKind.MutKeyword;
+    public bool IsProperty => Keyword.Kind == TokenKind.Identifier && Keyword.Text == "prop";
+
+    /// <summary>A field declared `mut`, or a property with a `set`.</summary>
+    public bool IsMutable => Keyword.Kind == TokenKind.MutKeyword || Accessors.Any(a => a.IsSetter);
+
+    /// <summary>A property with an `init` rather than a `set`: settable only while the object is made.</summary>
+    public bool IsInitOnly => Accessors.Any(a => a.IsInit);
+
+    /// <summary>
+    /// The `=&gt;` before a property's type, which says it computes its value, written as a function is
+    /// (<c>prop Total =&gt; decimal = price * quantity;</c>); null for one written as a field, which stores it
+    /// (<c>prop Count: int { get; set; } = 0;</c>).
+    /// </summary>
+    public Token? Arrow { get; init; }
+
+    /// <summary>A property written as a field, its accessors without bodies, which stores its value as a field does.</summary>
+    public bool IsAutomatic => IsProperty && Arrow is null && Modifier?.Text != "abstract" && Accessors.All(a => !a.HasBody);
+}
+
+/// <summary>
+/// A property's <c>get</c> or <c>set</c>: with a body (<c>get =&gt; name;</c>, <c>set { name = value; }</c>), or without
+/// one (<c>get;</c>) for an automatic or abstract property. A setter may be <see cref="Private"/>.
+/// </summary>
+public sealed record AccessorSyntax(TextSpan Span, Token Keyword, BlockExpressionSyntax? BlockBody, ExpressionSyntax? ExpressionBody) : SyntaxNode(Span)
+{
+    public Token? Private { get; init; }
+
+    /// <summary>A setter's `protected`.</summary>
+    public Token? Protected { get; init; }
+
+    /// <summary>The body contains `yield`, so (as in C#) the getter is an iterator.</summary>
+    public bool IsIterator { get; init; }
+
+    /// <summary>A `set`, or an `init`: a setter usable only while the object is made.</summary>
+    public bool IsSetter => Keyword.Text is "set" or "init";
+
+    public bool IsInit => Keyword.Text == "init";
+
+    public bool HasBody => BlockBody is not null || ExpressionBody is not null;
 }
 
 public sealed record RecordDeclarationSyntax(

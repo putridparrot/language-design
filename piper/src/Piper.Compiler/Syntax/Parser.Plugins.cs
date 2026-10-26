@@ -59,7 +59,7 @@ public sealed partial class Parser
         int start = _position;
         var keyword = NextToken();
         var parser = new PluginParser(this, _diagnostics, plugin, keyword,
-            hint => new Token(TokenKind.Identifier, keyword.Span, $"__{hint}_{++_freshNames}"));
+            hint => new Token(TokenKind.Identifier, keyword.Span, $"__{hint}_{++_freshNames}") { IsGenerated = true });
         try
         {
             ImmutableArray<T> result = [.. expand(parser)];

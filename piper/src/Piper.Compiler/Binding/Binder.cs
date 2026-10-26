@@ -72,6 +72,9 @@ public sealed partial class Binder
     /// <summary>While declarations are being bound: constraint checks to run once every conformance is known.</summary>
     private List<Action>? _deferredConstraintChecks;
 
+    /// <summary>Trait properties classes may implement with fields, checked once their fields are bound.</summary>
+    private readonly List<Action> _classPropertyConformances = [];
+
     /// <summary>True while binding a bound, a trait's parents or an extend's traits, where a trait with static methods may appear.</summary>
     private bool _bindingBound;
 
@@ -83,12 +86,14 @@ public sealed partial class Binder
     /// are collected (not converted) so their common type can become the return type.
     /// </summary>
     /// <param name="IteratorElement">In an iterator, the type it yields; `return` isn't allowed there.</param>
+    /// <param name="Constructor">In a class's constructor (not a lambda or local function in one): the class, whose `init` properties it can set.</param>
     private sealed record ReturnContext(
         TypeSymbol Type,
         string Name,
         List<TypeSymbol>? Inferred = null,
         bool IsAsync = false,
-        TypeSymbol? IteratorElement = null);
+        TypeSymbol? IteratorElement = null,
+        ClassSymbol? Constructor = null);
     private int _loopDepth;
 
     /// <summary>Everything about the file being bound: its namespace, private declarations and the scope chain its code sees.</summary>
@@ -169,7 +174,9 @@ public sealed partial class Binder
     {
         if (symbol is null or ErrorSymbol || name.IsMissing)
             return;
-        _semantic?.AddOccurrence(_file.Source, name.Span, symbol, declaration);
+        // A name a plugin wrote has its construct's span, but isn't there to hover, colour or rename.
+        if (!name.IsGenerated)
+            _semantic?.AddOccurrence(_file.Source, name.Span, symbol, declaration);
         if (!declaration)
             CheckObsolete(name, symbol);
     }
@@ -266,6 +273,16 @@ public sealed partial class Binder
         foreach (var extend in extends.Where(e => e.Target is TraitSymbol))
             methods.AddRange(BindExtendMethods(extend));
         CheckInheritedMethods([.. types.OfType<TraitSymbol>()]);
+        // Inside a trait's methods, its instance methods and those it inherits are named bare (`Name()` is `this.Name()`).
+        foreach (var trait in types.OfType<TraitSymbol>())
+        {
+            var instanceMethods = WithAncestors(trait.SelfType).SelectMany(t => t.TraitDefinition!.Methods).Where(m => !m.IsStatic && !m.IsHidden).ToList();
+            foreach (var scope in trait.MemberScopes)
+            {
+                foreach (var method in instanceMethods)
+                    scope.TryDeclare(method);
+            }
+        }
         foreach (var extend in extends.Where(e => e.Target is not TraitSymbol))
             methods.AddRange(BindExtendMethods(extend));
         CheckConformances(extends);
@@ -286,6 +303,9 @@ public sealed partial class Binder
         // Field initializers can call functions, so classes' members come once every function is declared.
         BindClassMembers(types.OfType<ClassSymbol>());
         CheckClassMethods(types.OfType<ClassSymbol>());
+        CheckPropertyConformances();
+        foreach (var check in _classPropertyConformances)
+            check();
 
         // Tests are functions no scope declares, so nothing can call them, marked for `piper test` to find.
         var tests = new List<(string Name, FunctionInfo Info)>();
@@ -824,7 +844,9 @@ public sealed partial class Binder
             if (syntax.Private is { } @private)
                 _diagnostics.ReportInvalidTraitMethod(@private.Span, $"Trait method '{syntax.Name.Text}' cannot be private.");
 
-            var info = BindFunctionSignature(syntax, file, TypeParameterScope(trait, file), trait, trait.SelfType);
+            var memberScope = new Scope(TypeParameterScope(trait, file));
+            trait.MemberScopes.Add(memberScope);
+            var info = BindFunctionSignature(syntax, file, memberScope, trait, trait.SelfType);
             var method = (MethodSymbol)info.Symbol;
             if (syntax.Name.IsMissing)
                 continue;
@@ -928,8 +950,14 @@ public sealed partial class Binder
         var infos = new List<FunctionInfo>();
         foreach (var syntax in extend.Syntax.Methods)
         {
-            // A class's instance methods see its fields and constructor parameters by bare name.
+            // A class's instance methods see its fields and constructor parameters by bare name, and a trait's methods its
+            // other methods.
             var outer = (syntax.Static is null ? extend.MemberScope : extend.StaticScope) ?? extend.TypeParameterScope;
+            if (target is TraitSymbol extended)
+            {
+                outer = new Scope(outer);
+                extended.MemberScopes.Add(outer);
+            }
             var info = BindFunctionSignature(syntax, extend.File, outer, target, thisType);
             var method = (MethodSymbol)info.Symbol;
             // A class's bodiless methods are checked with its other methods; nothing else may lack a body.
@@ -1009,7 +1037,9 @@ public sealed partial class Binder
         if (target is NamedTypeDefinition definition)
         {
             bool clash = method.Name == definition.Name ||
-                         definition.Methods.Any(m => m.Name == method.Name) ||
+                         // Overloaded indexers each have a get_Item (and set_Item), and constructors are all .ctor; their parameters must
+                         // differ (see BindClassIndexers and BindClassConstructors).
+                         definition.Methods.Any(m => m.Name == method.Name && !(m.IsIndexerAccessor && method.IsIndexerAccessor) && !(m.IsConstructor && method.IsConstructor)) ||
                          definition.TypeParameters.Any(p => p.Name == method.Name) ||
                          (definition is RecordSymbol record && record.Fields.Any(f => f.Name == method.Name)) ||
                          (definition is ClassSymbol @class && @class.Declaration.Fields.Any(f => f.Name.Text == method.Name)) ||
@@ -1077,19 +1107,37 @@ public sealed partial class Binder
                     var implementation = OwnMethods(definition).FirstOrDefault(m => m.Name == required.Name);
                     if (implementation is null)
                     {
+                        // A class's automatic property or public field is a C# property too, so it can implement a trait's;
+                        // that's checked once the class's fields are bound.
+                        if (required.IsAccessor && required.IsAbstract && definition is ClassSymbol @class)
+                        {
+                            var (span, file) = (traitSyntax.Span, extend.File);
+                            _classPropertyConformances.Add(() =>
+                            {
+                                if (@class.SelfAndBases().SelectMany(c => c.Fields).FirstOrDefault(f => f.Name == required.DisplayName) is { IsPublic: true } stored &&
+                                    stored.Type == TypeSubstitution.Substitute(required.ReturnType, map))
+                                {
+                                    return;
+                                }
+                                InFile(file);
+                                _diagnostics.ReportMissingTraitMethod(span, @class, required.DisplayName, traitType);
+                            });
+                            continue;
+                        }
                         // A trait the type implements may override the method, supplying (or replacing) its default.
                         var overriders = MostSpecificOverriders([.. TraitsOf(definition)], required);
                         if (overriders is [var first, var second, ..])
-                            _diagnostics.ReportAmbiguousTraitOverride(traitSyntax.Span, required.Name, first, second, "in the extend block");
+                            _diagnostics.ReportAmbiguousTraitOverride(traitSyntax.Span, required.DisplayName, first, second, "in the extend block");
                         else if (required.IsAbstract && overriders.Count == 0)
-                            _diagnostics.ReportMissingTraitMethod(traitSyntax.Span, definition, required.Name, traitType);
+                            _diagnostics.ReportMissingTraitMethod(traitSyntax.Span, definition, required.DisplayName, traitType);
                         continue;
                     }
 
                     if (!SignaturesMatch(implementation, required, map))
                     {
                         _diagnostics.CurrentSource = implementation.DeclaringFile;
-                        _diagnostics.ReportTraitSignatureMismatch(implementation.Declaration!.Name.Span, required.Name, traitType, Signature(required, map));
+                        _diagnostics.ReportTraitSignatureMismatch(implementation.Declaration!.Name.Span, required.DisplayName, traitType,
+                            required.IsAccessor ? $"prop {required.DisplayName}: {TypeSubstitution.Substitute(required.ReturnType, map)}" : Signature(required, map));
                         _diagnostics.CurrentSource = extend.File.Source;
                     }
                 }
@@ -1297,7 +1345,9 @@ public sealed partial class Binder
             IteratorElementType = iteratorElement,
             Documentation = declaration.Documentation,
         };
-        Record(declaration.Name, method, declaration: true);
+        // An accessor's name is its property's, which records the property.
+        if (declaration.AccessorOf is null)
+            Record(declaration.Name, method, declaration: true);
         return new FunctionInfo(method, declaration, file, scope);
     }
 
@@ -1313,7 +1363,8 @@ public sealed partial class Binder
             _currentClass = owner;
         else if (!function.IsLocal)
             _currentClass = null;
-        _return = new ReturnContext(function.BodyReturnType, function.Name, IsAsync: function.IsAsync, IteratorElement: function.IteratorElementType);
+        _return = new ReturnContext(function.BodyReturnType, function.Name, IsAsync: function.IsAsync, IteratorElement: function.IteratorElementType,
+            Constructor: function is MethodSymbol { IsConstructor: true, ContainingType: ClassSymbol constructed } ? constructed : null);
         (_yieldReturnForbidden, _yieldBreakForbidden) = (null, null);
         _sawAwait = false;
         _finallyLoopDepth = -1;

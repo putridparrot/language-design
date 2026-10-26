@@ -125,6 +125,189 @@ public sealed class LanguageServerTests : IDisposable
     }
 
     [Fact]
+    public async Task Class_properties_show_in_hover_completion_and_the_outline()
+    {
+        var text = "class Account {\n    mut balance = 0m;\n    prop Balance => decimal = balance;\n    prop Count: int { get; private set; } = 0;\n    static mut opened = 0;\n}\n" +
+                   "fn Main() { let a = Account(); Print(a.Balance); Print(a.); }";
+        var uri = await OpenAsync(text);
+
+        var hover = await _server.HandleAsync("textDocument/hover", At(uri, text, "Balance);"));
+        Assert.Contains("prop Balance => decimal { get; }", hover!["contents"]!["value"]!.GetValue<string>());
+
+        var items = ((JsonArray)(await _server.HandleAsync("textDocument/completion", At(uri, text, "a.)", 2)))!).OfType<JsonObject>().ToList();
+        var labels = items.Select(i => i["label"]!.GetValue<string>()).ToList();
+        Assert.Contains("Balance", labels);
+        Assert.Contains("Count", labels);
+        Assert.DoesNotContain("balance", labels);      // private
+        Assert.DoesNotContain("opened", labels);       // static
+        Assert.DoesNotContain(labels, l => l.StartsWith("get_", StringComparison.Ordinal));
+        Assert.Equal("prop Count => int { get; private set; }", items.Single(i => i["label"]!.GetValue<string>() == "Count")["detail"]!.GetValue<string>());
+
+        var symbols = (JsonArray)(await _server.HandleAsync("textDocument/documentSymbol", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = uri } }))!;
+        var account = symbols.Single(s => s!["name"]!.GetValue<string>() == "Account")!;
+        var members = account["children"]!.AsArray().Select(c => (c!["name"]!.GetValue<string>(), c["kind"]!.GetValue<int>())).ToList();
+        Assert.Equal([("balance", 8), ("Balance", 7), ("Count", 7), ("opened", 8)], members);
+    }
+
+    private const string Types = """
+        trait Shape { fn Area() => double; }
+        record Point(x: double, y: double);
+        extend Point { static fn Origin() => Point = Point(0.0, 0.0); }
+        record Circle(r: double);
+        extend Circle: Shape { fn Area() => double = this.r; }
+        abstract class Animal { abstract fn Sound() => string; }
+        class Dog: Animal { override fn Sound() => string = "woof"; }
+        enum Colour { Red, Green }
+        fn Far(p: Point) => Point = p;
+        fn Main() {
+            let p: Point = Point(1.0, 2.0);
+            let ps: System.Collections.Generic.List<Point> = [];
+            let s: Shape = Circle(1.0);
+            let o = Point.Origin();
+            let c = (Circle)s;
+            let isCircle = s is k: Circle;
+            let colour = Colour.Red;
+            let d: Animal = Dog();
+            let maybe: Point? = None;
+            let pair = (p, Circle(2.0));
+            let n = 42;
+        }
+        """;
+
+    /// <summary>Go to Type Definition: from a variable, function or expression to the declaration of its type.</summary>
+    [Theory]
+    [InlineData("p: Point = Point(1", 0, new[] { "record Point" })]          // a variable with a written type
+    [InlineData("o = Point.Origin", 0, new[] { "record Point" })]            // an inferred one
+    [InlineData("d: Animal", 0, new[] { "abstract class Animal" })]
+    [InlineData("colour =", 0, new[] { "enum Colour" })]
+    [InlineData("ps: System", 0, new[] { "record Point" })]                  // List<Point>: the Piper type in it
+    [InlineData("maybe:", 0, new[] { "record Point" })]                      // Point?
+    [InlineData("pair =", 0, new[] { "record Point", "record Circle" })]     // a tuple's types
+    [InlineData("fn Far", 3, new[] { "record Point" })]                      // a function: its result
+    [InlineData("Circle(2.0)", 0, new[] { "record Circle" })]                // a type itself
+    [InlineData("p, Circle(2.0)", 0, new[] { "record Point" })]              // a variable used
+    public async Task Go_to_type_definition_finds_the_type_s_declaration(string marker, int offset, string[] declarations)
+    {
+        var uri = await OpenAsync(Types);
+        var result = (JsonArray)(await _server.HandleAsync("textDocument/typeDefinition", At(uri, Types, marker, offset)))!;
+        var lines = Types.Split('\n');
+        var found = result.Select(l => lines[l!["range"]!["start"]!["line"]!.GetValue<int>()].TrimStart()).ToList();
+        Assert.Equal(declarations.Length, found.Count);
+        Assert.All(declarations.Zip(found), pair => Assert.StartsWith(pair.First, pair.Second));
+    }
+
+    /// <summary>VS Code writes a file URI's drive with its colon escaped and in lower case: <c>file:///d%3A/src/app.piper</c>.</summary>
+    private static string VsCodeUri(string path) =>
+        OperatingSystem.IsWindows()
+            ? "file:///" + char.ToLowerInvariant(path[0]) + "%3A" + path[2..].Replace('\\', '/')
+            : PiperLanguageServer.UriOf(path);
+
+    [Fact]
+    public void A_file_uri_with_an_escaped_drive_names_the_file()
+    {
+        var path = Path.Combine(_directory, "main.piper");
+        Assert.Equal(Path.GetFullPath(path), PiperLanguageServer.PathOf(VsCodeUri(path)), ignoreCase: OperatingSystem.IsWindows());
+    }
+
+    [Fact]
+    public async Task A_program_opened_as_VS_Code_names_it_is_analyzed_with_its_folder()
+    {
+        // main.piper calls a function in helpers.piper, which only works if the server finds the folder's piper.json.
+        await File.WriteAllTextAsync(Path.Combine(_directory, "piper.json"), "{}");
+        await File.WriteAllTextAsync(Path.Combine(_directory, "helpers.piper"), "fn Twice(n: int) => int = n * 2;");
+        var path = Path.Combine(_directory, "main.piper");
+        var text = "fn Main() { Print(Twice(21)); }";
+        await File.WriteAllTextAsync(path, text);
+        await _server.HandleAsync("textDocument/didOpen", new JsonObject
+        {
+            ["textDocument"] = new JsonObject { ["uri"] = VsCodeUri(path), ["languageId"] = "piper", ["version"] = 1, ["text"] = text },
+        });
+
+        var published = _notifications.Where(n => n["method"]?.GetValue<string>() == "textDocument/publishDiagnostics").ToList();
+        Assert.NotEmpty(published);
+        foreach (var notification in published)
+        {
+            // Every file reported on is a real one, under the program's folder (not D:\d:\…).
+            var file = PiperLanguageServer.PathOf(notification["params"]!["uri"]!.GetValue<string>());
+            Assert.StartsWith(Path.GetFullPath(_directory), file, StringComparison.OrdinalIgnoreCase);
+            Assert.Empty(notification["params"]!["diagnostics"]!.AsArray());
+        }
+    }
+
+    /// <summary>
+    /// The code a plugin writes has the construct's span, but the editor shows only what's in the source: `services`
+    /// and `endpoints` are keywords, the functions they declare are functions, and nothing the plugins generated (a
+    /// namespace, a `__group_1` variable) is coloured or hinted there. Uses samples/todo-api, whose plugins this test
+    /// project builds.
+    /// </summary>
+    [Fact]
+    public async Task Plugin_constructs_are_coloured_as_written_without_what_the_plugin_generated()
+    {
+        var path = Path.GetFullPath(Path.Combine(SamplesDirectory(), "todo-api", "main.piper"));
+        var text = await File.ReadAllTextAsync(path);
+        var uri = PiperLanguageServer.UriOf(path);
+        await _server.HandleAsync("textDocument/didOpen", new JsonObject
+        {
+            ["textDocument"] = new JsonObject { ["uri"] = uri, ["languageId"] = "piper", ["version"] = 1, ["text"] = text },
+        });
+        var lines = text.Split('\n');
+        int servicesLine = Array.FindIndex(lines, l => l.StartsWith("services ")), endpointsLine = Array.FindIndex(lines, l => l.StartsWith("endpoints "));
+
+        var tokens = (await _server.HandleAsync("textDocument/semanticTokens/full", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = uri } }))!["data"]!
+            .AsArray().Select(n => n!.GetValue<int>()).ToArray();
+        var onLines = new List<string>();
+        for (int i = 0, line = 0, column = 0; i < tokens.Length; i += 5)
+        {
+            line += tokens[i];
+            column = tokens[i] == 0 ? column + tokens[i + 1] : tokens[i + 1];
+            if (line == servicesLine || line == endpointsLine)
+                onLines.Add($"{lines[line].Substring(column, tokens[i + 2])}:{SemanticTokens.TokenTypes[tokens[i + 3]]}");
+        }
+        Assert.Equal(["services:keyword", "AppServices:function", "endpoints:keyword", "TodoApi:function"], onLines);
+
+        var everything = new JsonObject { ["start"] = new JsonObject { ["line"] = 0, ["character"] = 0 }, ["end"] = new JsonObject { ["line"] = lines.Length, ["character"] = 0 } };
+        var hints = (JsonArray)(await _server.HandleAsync("textDocument/inlayHint", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = uri }, ["range"] = everything }))!;
+        Assert.DoesNotContain(hints, h => h!["position"]!["line"]!.GetValue<int>() is var line && (line == servicesLine || line == endpointsLine));
+    }
+
+    private static string SamplesDirectory([System.Runtime.CompilerServices.CallerFilePath] string thisFile = "") =>
+        Path.Combine(Path.GetDirectoryName(thisFile)!, "..", "..", "samples");
+
+    [Fact]
+    public async Task Go_to_type_definition_finds_nothing_for_a_dotnet_type()
+    {
+        var uri = await OpenAsync(Types);
+        Assert.Null(await _server.HandleAsync("textDocument/typeDefinition", At(uri, Types, "n = 42")));
+    }
+
+    /// <summary>Ctrl+click on a type's name, wherever it's written, goes to the type.</summary>
+    [Theory]
+    [InlineData("Point = Point(1", 0, "record Point")]           // a type annotation
+    [InlineData("Point(1.0, 2.0)", 0, "record Point")]           // a construction
+    [InlineData("List<Point>", 5, "record Point")]               // a type argument
+    [InlineData("Shape = Circle", 0, "trait Shape")]             // a trait as a type
+    [InlineData("Circle(1.0)", 0, "record Circle")]
+    [InlineData("Circle: Shape", 8, "trait Shape")]              // an extend's trait
+    [InlineData("extend Circle", 7, "record Circle")]            // an extend's type
+    [InlineData("Point.Origin()", 0, "record Point")]            // a static call's type
+    [InlineData("(Circle)s", 1, "record Circle")]                // a cast
+    [InlineData("k: Circle", 3, "record Circle")]                // a type pattern
+    [InlineData("Colour.Red", 0, "enum Colour")]                 // an enum
+    [InlineData("Far(p: Point)", 7, "record Point")]             // a parameter's type
+    [InlineData(") => Point = p", 5, "record Point")]            // a return type
+    [InlineData("Dog: Animal", 5, "abstract class Animal")]      // a base class
+    [InlineData("Animal = Dog", 0, "abstract class Animal")]
+    [InlineData("Dog();", 0, "class Dog")]                       // a class's construction
+    public async Task Go_to_definition_finds_types(string marker, int offset, string declaration)
+    {
+        var uri = await OpenAsync(Types);
+        var definition = await _server.HandleAsync("textDocument/definition", At(uri, Types, marker, offset));
+        Assert.NotNull(definition);
+        var line = definition!["range"]!["start"]!["line"]!.GetValue<int>();
+        Assert.StartsWith(declaration, Types.Split('\n')[line].TrimStart());
+    }
+
+    [Fact]
     public async Task Hover_and_signature_help_show_preconditions()
     {
         var text = "fn Sqrt(x: double) => double requires x >= 0.0 = x;\nrecord Pct(v: int) requires v <= 100;\nfn Main() { Print(Sqrt(4.0)); Print(Pct(1)); }";

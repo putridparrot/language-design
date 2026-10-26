@@ -127,6 +127,8 @@ public sealed class PiperLanguageServer
                 return At(parameters!, Hover);
             case "textDocument/definition":
                 return At(parameters!, Definition);
+            case "textDocument/typeDefinition":
+                return At(parameters!, TypeDefinition);
             case "textDocument/references":
                 return At(parameters!, (analysis, source, position) =>
                     References(analysis, source, position, parameters!["context"]?["includeDeclaration"]?.GetValue<bool>() ?? true));
@@ -168,6 +170,7 @@ public sealed class PiperLanguageServer
             ["textDocumentSync"] = new JsonObject { ["openClose"] = true, ["change"] = 1, ["save"] = true },
             ["hoverProvider"] = true,
             ["definitionProvider"] = true,
+            ["typeDefinitionProvider"] = true,
             ["referencesProvider"] = true,
             ["documentHighlightProvider"] = true,
             ["renameProvider"] = new JsonObject { ["prepareProvider"] = true },
@@ -304,6 +307,44 @@ public sealed class PiperLanguageServer
             ? Location(declaration.File, declaration.Span)
             : null;
 
+    /// <summary>
+    /// Go to Type Definition: the declaration of the type of what's at <paramref name="position"/> (a variable, field,
+    /// property, parameter or other expression; a function's result; a type itself). For a type made of others, the
+    /// Piper types in it, outermost first: <c>List&lt;Point&gt;</c>, <c>Point?</c> and <c>(Point, Circle)</c> lead to Point
+    /// (and Circle). .NET types have no source to go to.
+    /// </summary>
+    private static JsonNode? TypeDefinition(AnalysisResult analysis, SourceText source, int position)
+    {
+        var type = analysis.Semantic.OccurrenceAt(source, position)?.Symbol switch
+        {
+            VariableSymbol variable => variable.Type,
+            FieldSymbol field => field.Type,
+            IndexerSymbol indexer => indexer.Type,
+            FunctionSymbol function => function.ReturnType,
+            TypeSymbol named => named,
+            _ => analysis.Semantic.ExpressionAt(source, position)?.Type,
+        };
+        if (type is null)
+            return null;
+
+        var locations = new JsonArray();
+        foreach (var declaration in PiperTypesIn(type).Distinct().Select(analysis.Semantic.DeclarationOf).OfType<SymbolOccurrence>())
+            locations.Add(Location(declaration.File, declaration.Span));
+        return locations.Count == 0 ? null : locations;
+    }
+
+    /// <summary>The type's definition, then those of the types it's made of: its type arguments, a tuple's elements.</summary>
+    private static IEnumerable<TypeSymbol> PiperTypesIn(TypeSymbol type)
+    {
+        yield return type.OriginalDefinition;
+        var parts = type is TupleTypeSymbol tuple ? tuple.ElementTypes : type.TypeArguments;
+        foreach (var part in parts)
+        {
+            foreach (var inner in PiperTypesIn(part))
+                yield return inner;
+        }
+    }
+
     private static JsonNode? References(AnalysisResult analysis, SourceText source, int position, bool includeDeclaration)
     {
         if (analysis.Semantic.OccurrenceAt(source, position) is not { } occurrence)
@@ -361,6 +402,8 @@ public sealed class PiperLanguageServer
                 EnumDeclarationSyntax e => (10, e.Variants.Select(v => (v.Name, v.Span, 22))),
                 TraitDeclarationSyntax t => (11, t.Methods.Select(m => (m.Name, m.Span, 6))),
                 ExtendDeclarationSyntax x => (3, x.Methods.Select(m => (m.Name, m.Span, 6))),
+                ClassDeclarationSyntax c => (5, c.Fields.Select(f => (f.Name, f.Span, f.IsProperty ? 7 : 8))
+                    .Concat(c.Methods.Select(m => m.Constructor is { } constructor ? (constructor.ClassName, m.Span, 9) : (m.Name, m.Span, 6)))),
                 _ => (13, Enumerable.Empty<(Token, TextSpan, int)>()),
             };
             var name = declaration switch
@@ -372,7 +415,7 @@ public sealed class PiperLanguageServer
             var symbol = DocumentSymbol(unit.Source, name, kind, declaration.Span, declaration.Name.Span);
             var childArray = new JsonArray();
             foreach (var (childName, childSpan, childKind) in children.Where(c => !c.Item1.IsMissing))
-                childArray.Add(DocumentSymbol(unit.Source, childName.Text, childKind, childSpan, childName.Span));
+                childArray.Add(DocumentSymbol(unit.Source, childName.Kind == TokenKind.ThisKeyword ? "this[]" : childName.Text, childKind, childSpan, childName.Span));
             symbol["children"] = childArray;
             symbols.Add(symbol);
         }
@@ -407,7 +450,18 @@ public sealed class PiperLanguageServer
         ["range"] = Range(source, span),
     };
 
-    public static string PathOf(string uri) => Workspace.Normalize(new Uri(uri).LocalPath);
+    /// <summary>
+    /// The file a <c>file:</c> URI names. VS Code escapes a Windows drive's colon (<c>file:///d%3A/src/app.piper</c>), which
+    /// .NET's Uri then doesn't see as a drive, leaving <c>/d:/src/app.piper</c>; made absolute, that would become
+    /// <c>D:\d:\src\app.piper</c>, so the slash before the drive is dropped.
+    /// </summary>
+    public static string PathOf(string uri)
+    {
+        var path = new Uri(uri).LocalPath;
+        if (path.Length >= 3 && path[0] is '/' or '\\' && char.IsAsciiLetter(path[1]) && path[2] == ':')
+            path = path[1..];
+        return Workspace.Normalize(path);
+    }
 
     public static string UriOf(string path) => new Uri(path).AbsoluteUri;
 }

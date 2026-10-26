@@ -1,0 +1,10 @@
+T100 for Ada
+T101 for Bob
+2 issued, prefix T, pattern T-100+
+0
+default
+3
+default: first
+custom: second
+2 ints, 1 strings
+11

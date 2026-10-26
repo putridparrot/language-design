@@ -102,6 +102,8 @@ public static class Compilation
         var semantic = new SemanticModel();
         var program = Binder.BindProgram(units, diagnostics, semantic, ClrTypeIndex.For(references?.Assemblies ?? []));
         registry.Analyze(program, diagnostics);
+        foreach (var (file, keyword) in registry.KeywordsUsed)
+            semantic.AddPluginKeyword(file, keyword.Span);
         return new AnalysisResult(files, [.. diagnostics], units, program, semantic);
     }
 

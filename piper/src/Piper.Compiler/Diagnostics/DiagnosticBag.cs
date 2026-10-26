@@ -141,6 +141,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
             VariableKind.LoopVariable => $"Cannot assign to loop variable '{variable.Name}'.",
             VariableKind.PatternVariable => $"Cannot assign to pattern variable '{variable.Name}'.",
             VariableKind.This => "Cannot assign to 'this'.",
+            _ when variable.Field is { IsProperty: true } => $"Cannot assign to property '{variable.Name}' because it has no 'set'.",
             _ => $"Cannot assign to '{variable.Name}' because it is immutable; declare it with 'mut' instead of 'let'.",
         });
 
@@ -290,6 +291,23 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportInvalidClassMember(TextSpan span, string message) =>
         Error("PIP0354", span, message);
+
+    public void ReportInvalidProperty(TextSpan span, string message) =>
+        Error("PIP0355", span, message);
+
+    public void ReportPrivateSetter(TextSpan span, string property, string owner, bool isProtected = false) =>
+        Error("PIP0356", span, isProtected
+            ? $"'{property}' can only be set inside class '{owner}' and classes deriving from it, as its 'set' is protected."
+            : $"'{property}' can only be set inside class '{owner}', as its 'set' is private.");
+
+    public void ReportInitOnly(TextSpan span, string property, string owner) =>
+        Error("PIP0359", span, $"'{property}' has an 'init', so it can only be set while the object is made: in a constructor of '{owner}' (or a class deriving from it), on 'this'.");
+
+    public void ReportInvalidConstructor(TextSpan span, string message) =>
+        Error("PIP0358", span, message);
+
+    public void ReportProtectedMember(TextSpan span, string member, string owner) =>
+        Error("PIP0357", span, $"'{member}' is protected in class '{owner}': only '{owner}' and classes deriving from it can use it, and only through an instance of their own class.");
 
     public void ReportStaticOutsideExtend(TextSpan span) =>
         Error("PIP0244", span, "'static' can only be used on methods in an extend block; top-level functions are already static.");
