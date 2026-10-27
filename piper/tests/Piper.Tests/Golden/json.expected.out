@@ -11,4 +11,15 @@ True
 {"amount":2}
 Some(Quantity { amount = 5 })
 rejected: Invariant failed: amount > 0 (amount = 0)
+{"sku":"A-1","quantity":2}
+Some(Line { code = B-2, quantity = 1, note =  })
+{"sku":"C-3","QUANTITY":4}
+rejected: Invariant failed: quantity > 0 (quantity = 0)
+None
+{"low":1.5,"high":2.5,"steps":4}
+Some(Range { low = 1, high = 9, steps = 3 })
+rejected: Invariant failed: steps > 0 (steps = 0)
+clash: Shape.Tagged has a field that JSON names "kind", which is where JSON names the variant. Rename the field, or give it another JSON name with [JsonPropertyName(…)].
+{"kind":"Tagged","type":"x"}
+Some(Tagged { kind = x })
 rejected: 'Pending' isn't a variant of Status without fields.

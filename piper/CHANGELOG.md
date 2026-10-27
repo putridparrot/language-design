@@ -91,6 +91,11 @@
   As C#: `string Name { get; set; }` and `static abstract T Zero { get; }`. **Fix:** a class can now implement a trait
   with static methods or properties; it was reported as using the trait as a value's type (PIP0319). A class property
   that doesn't match a trait's is now reported as not matching (PIP0246) rather than missing.
+- **Fix:** a record with invariants is now JSON as any other record: its fields' attributes (`[JsonPropertyName]`,
+  `[JsonIgnore]`), defaults and the serializer's options apply. Its converter used to read the fields itself and
+  ignored them; the compiler now nests one in the record that has System.Text.Json read a copy of its fields, without
+  reflection. An enum variant with a field JSON would name `kind`, where the variant's name goes, is now an error
+  saying so when the enum is first read or written, rather than JSON that can't be read back.
 - **Piper's types in JSON and web requests:** System.Text.Json now writes an Option as its value or `null` (it was
   `{"IsSome":…,"Value":…}`, and `null` couldn't be read back), reading a missing field as None; an enum's variant as its
   name or an object naming it in `"kind"` (it was `{}`); and JSON a record's `requires` rejects as a `JsonException`, so

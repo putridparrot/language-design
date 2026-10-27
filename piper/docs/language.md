@@ -809,8 +809,8 @@ JsonSerializer.Serialize(Todo(2, Some("x"), Status.Closed("done"))) // {"id":2,"
 
 - **Records** are objects of their fields.
 - **Options** are their value, or `null` for None. A field missing from the JSON reads as None.
-- **Enums:** a variant without fields is its name (`"Open"`), and one with fields an object naming it in `"kind"`, then its fields. Generic enums work too (`Tree<int>`). An enum with a `[JsonConverter(…)]` of its own uses that instead.
-- **Invariants:** JSON that a record's `requires` rejects is a `JsonException` with the invariant's message, as any other bad JSON is, rather than an `ArgumentException`. A web API answers it with 400 rather than 500.
+- **Enums:** a variant without fields is its name (`"Open"`), and one with fields an object naming it in `"kind"`, then its fields. Generic enums work too (`Tree<int>`). A variant's field that JSON would also call `kind` can't be told apart from the variant's name, so reading or writing such an enum throws an `InvalidOperationException` saying which field; give it another JSON name (`[JsonPropertyName("type")] kind: string`). An enum with a `[JsonConverter(…)]` of its own uses that instead.
+- **Invariants:** JSON that a record's `requires` rejects is a `JsonException` with the invariant's message, as any other bad JSON is, rather than an `ArgumentException`. A web API answers it with 400 rather than 500. Otherwise such a record is JSON as any other: its fields' attributes (`[JsonPropertyName("sku")]`, `[JsonIgnore]`), their defaults and the serializer's options all apply. (C# gets a converter nested in the record, which lets System.Text.Json read a copy of its fields and then makes the record from them.) A record with a `[JsonConverter(…)]` of its own uses that instead.
 - **Text:** `Option<T>` has a static `TryParse`, so a framework reading a value from text (a query string, a route) gets None for no text, and otherwise parses a T: a string, a .NET enum, or anything with a `TryParse` (numbers, `bool`, dates, `Guid`).
 
 ### Attributes

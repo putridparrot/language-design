@@ -316,21 +316,21 @@ public sealed partial class CSharpEmitter
     /// <c>public sealed record Pair&lt;A, B&gt;(A first, B second) : Trait where A : Bound</c>, with a body
     /// holding any extend methods (which is what lets the record implement trait interfaces).
     /// </summary>
-    /// <summary>Whether a type chooses its own JSON converter, which then replaces Piper's.</summary>
-    private static bool HasJsonConverter(Symbol type) =>
-        type.Attributes.Any(a => a.Type is ClrTypeSymbol { Type.FullName: "System.Text.Json.Serialization.JsonConverterAttribute" });
-
     private void EmitRecord(RecordSymbol record, SourceText file)
     {
         var partial = IsPartial(record) ? "partial " : "";
         var header = $"{Visibility(record)} sealed {partial}record {Escape(record.Name)}{TypeParameterList(record.TypeParameters)}" +
                      $"({RecordFields(record)}){BaseList(TraitsFrom(record, file))}{Constraints(record.TypeParameters)}";
         var methods = MethodsFrom(record, file).ToList();
+        bool json = !record.Invariants.IsEmpty && !HasJsonConverter(record);
         EmitDocumentation(record, record.Fields);
         EmitAttributes(record);
-        // JSON its invariants reject is bad input (a JsonException, so a 400 from ASP.NET Core), not a failure.
-        if (!record.Invariants.IsEmpty && !HasJsonConverter(record))
-            _writer.WriteLine("[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperRecordJsonConverterFactory))]");
+        if (json)
+        {
+            // A generic record's converter is closed with its type arguments by the runtime, as an attribute can't.
+            var converter = record.TypeParameters.IsEmpty ? $"{Escape(record.Name)}.{JsonConverterName}" : "global::Piper.Runtime.PiperRecordJsonConverterFactory";
+            _writer.WriteLine($"[global::System.Text.Json.Serialization.JsonConverter(typeof({converter}))]");
+        }
         if (methods.Count == 0 && record.Invariants.IsEmpty)
         {
             _writer.WriteLine(header + ";");
@@ -342,10 +342,58 @@ public sealed partial class CSharpEmitter
         if (!record.Invariants.IsEmpty)
         {
             EmitInvariants(record);
+            if (methods.Count > 0 || json)
+                _writer.WriteLine();
+        }
+        if (json)
+        {
+            EmitRecordJson(record);
             if (methods.Count > 0)
                 _writer.WriteLine();
         }
         EmitMembers(methods);
+        _writer.CloseBrace();
+    }
+
+    /// <summary>Whether a type chooses its own JSON converter, which then replaces Piper's.</summary>
+    private static bool HasJsonConverter(Symbol type) =>
+        type.Attributes.Any(a => a.Type is ClrTypeSymbol { Type.FullName: "System.Text.Json.Serialization.JsonConverterAttribute" });
+
+    private const string JsonConverterName = "PiperJsonConverter";
+
+    /// <summary>
+    /// For a record with invariants, a converter making JSON they reject bad input (a <c>JsonException</c>, so a 400
+    /// from ASP.NET Core) rather than a failure (an <c>ArgumentException</c>). System.Text.Json reads and writes a
+    /// private copy of the record's fields, with their attributes and defaults but no invariants, so everything it does
+    /// for a record (names, attributes, options) still applies; the converter only makes the record from it.
+    /// </summary>
+    private void EmitRecordJson(RecordSymbol record)
+    {
+        const string json = "global::System.Text.Json";
+        var type = $"{Escape(record.Name)}{TypeParameterList(record.TypeParameters)}";
+        var fields = record.Fields.Select(f => Escape(f.Name)).ToList();
+        var shapeFields = string.Join(", ", record.Fields.Select(f => $"{InlineAttributes(f)}{TypeName(f.Type)} {Escape(f.Name)}{DefaultValue(f.Default)}"));
+
+        _writer.WriteLine($"private sealed record PiperJsonShape({shapeFields});");
+        _writer.WriteLine();
+        _writer.WriteLine($"public sealed class {JsonConverterName} : {json}.Serialization.JsonConverter<{type}>");
+        _writer.OpenBrace();
+        _writer.WriteLine($"public override {type}? Read(ref {json}.Utf8JsonReader reader, global::System.Type type, {json}.JsonSerializerOptions options)");
+        _writer.OpenBrace();
+        _writer.WriteLine($"if ({json}.JsonSerializer.Deserialize<PiperJsonShape>(ref reader, options) is not {{ }} shape)");
+        _writer.WriteLine("    return null;");
+        _writer.WriteLine("try");
+        _writer.OpenBrace();
+        _writer.WriteLine($"return new {type}({string.Join(", ", fields.Select(f => $"shape.{f}"))});");
+        _writer.CloseBrace();
+        _writer.WriteLine("catch (global::System.ArgumentException invalid)");
+        _writer.OpenBrace();
+        _writer.WriteLine($"throw new {json}.JsonException(invalid.Message, invalid);");
+        _writer.CloseBrace();
+        _writer.CloseBrace();
+        _writer.WriteLine();
+        _writer.WriteLine($"public override void Write({json}.Utf8JsonWriter writer, {type} value, {json}.JsonSerializerOptions options) =>");
+        _writer.WriteLine($"    {json}.JsonSerializer.Serialize(writer, new PiperJsonShape({string.Join(", ", fields.Select(f => $"value.{f}"))}), options);");
         _writer.CloseBrace();
     }
 

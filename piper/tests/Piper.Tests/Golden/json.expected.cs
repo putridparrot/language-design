@@ -34,10 +34,116 @@ internal abstract record Tree<T>
 
 internal sealed record Order(int id, Status status, Option<global::System.Collections.Generic.List<string>> tags);
 
-[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperRecordJsonConverterFactory))]
+[global::System.Text.Json.Serialization.JsonConverter(typeof(Quantity.PiperJsonConverter))]
 internal sealed record Quantity(int amount)
 {
     public int amount { get; init; } = global::Piper.Runtime.PiperContract.Invariant(amount, amount > 0, "amount > 0", $"amount = {amount}");
+
+    private sealed record PiperJsonShape(int amount);
+
+    public sealed class PiperJsonConverter : global::System.Text.Json.Serialization.JsonConverter<Quantity>
+    {
+        public override Quantity? Read(ref global::System.Text.Json.Utf8JsonReader reader, global::System.Type type, global::System.Text.Json.JsonSerializerOptions options)
+        {
+            if (global::System.Text.Json.JsonSerializer.Deserialize<PiperJsonShape>(ref reader, options) is not { } shape)
+                return null;
+            try
+            {
+                return new Quantity(shape.amount);
+            }
+            catch (global::System.ArgumentException invalid)
+            {
+                throw new global::System.Text.Json.JsonException(invalid.Message, invalid);
+            }
+        }
+
+        public override void Write(global::System.Text.Json.Utf8JsonWriter writer, Quantity value, global::System.Text.Json.JsonSerializerOptions options) =>
+            global::System.Text.Json.JsonSerializer.Serialize(writer, new PiperJsonShape(value.amount), options);
+    }
+}
+
+[global::System.Text.Json.Serialization.JsonConverter(typeof(Line.PiperJsonConverter))]
+internal sealed record Line(string code, int quantity = 1, string note = "")
+{
+    [global::System.Text.Json.Serialization.JsonPropertyNameAttribute("sku")] public string code { get; init; } = global::Piper.Runtime.PiperContract.Invariant(code, quantity > 0, "quantity > 0", $"quantity = {quantity}");
+    public int quantity { get; init; } = quantity;
+    [global::System.Text.Json.Serialization.JsonIgnoreAttribute] public string note { get; init; } = note;
+
+    private sealed record PiperJsonShape([property: global::System.Text.Json.Serialization.JsonPropertyNameAttribute("sku")] string code, int quantity = 1, [property: global::System.Text.Json.Serialization.JsonIgnoreAttribute] string note = "");
+
+    public sealed class PiperJsonConverter : global::System.Text.Json.Serialization.JsonConverter<Line>
+    {
+        public override Line? Read(ref global::System.Text.Json.Utf8JsonReader reader, global::System.Type type, global::System.Text.Json.JsonSerializerOptions options)
+        {
+            if (global::System.Text.Json.JsonSerializer.Deserialize<PiperJsonShape>(ref reader, options) is not { } shape)
+                return null;
+            try
+            {
+                return new Line(shape.code, shape.quantity, shape.note);
+            }
+            catch (global::System.ArgumentException invalid)
+            {
+                throw new global::System.Text.Json.JsonException(invalid.Message, invalid);
+            }
+        }
+
+        public override void Write(global::System.Text.Json.Utf8JsonWriter writer, Line value, global::System.Text.Json.JsonSerializerOptions options) =>
+            global::System.Text.Json.JsonSerializer.Serialize(writer, new PiperJsonShape(value.code, value.quantity, value.note), options);
+    }
+}
+
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record Shape
+{
+    private Shape()
+    {
+    }
+
+    public sealed record Plain() : Shape { public override string ToString() => "Plain"; }
+
+    public sealed record Tagged(string kind) : Shape;
+}
+
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record Label
+{
+    private Label()
+    {
+    }
+
+    public sealed record Plain() : Label { public override string ToString() => "Plain"; }
+
+    public sealed record Tagged([property: global::System.Text.Json.Serialization.JsonPropertyNameAttribute("type")] string kind) : Label;
+}
+
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperRecordJsonConverterFactory))]
+internal sealed record Range<T>(T low, T high, int steps)
+{
+    public T low { get; init; } = global::Piper.Runtime.PiperContract.Invariant(low, steps > 0, "steps > 0", $"steps = {steps}");
+    public T high { get; init; } = high;
+    public int steps { get; init; } = steps;
+
+    private sealed record PiperJsonShape(T low, T high, int steps);
+
+    public sealed class PiperJsonConverter : global::System.Text.Json.Serialization.JsonConverter<Range<T>>
+    {
+        public override Range<T>? Read(ref global::System.Text.Json.Utf8JsonReader reader, global::System.Type type, global::System.Text.Json.JsonSerializerOptions options)
+        {
+            if (global::System.Text.Json.JsonSerializer.Deserialize<PiperJsonShape>(ref reader, options) is not { } shape)
+                return null;
+            try
+            {
+                return new Range<T>(shape.low, shape.high, shape.steps);
+            }
+            catch (global::System.ArgumentException invalid)
+            {
+                throw new global::System.Text.Json.JsonException(invalid.Message, invalid);
+            }
+        }
+
+        public override void Write(global::System.Text.Json.Utf8JsonWriter writer, Range<T> value, global::System.Text.Json.JsonSerializerOptions options) =>
+            global::System.Text.Json.JsonSerializer.Serialize(writer, new PiperJsonShape(value.low, value.high, value.steps), options);
+    }
 }
 
 internal static class Json
@@ -66,13 +172,47 @@ internal static class Json
         {
             global::System.Console.WriteLine($"rejected: {e.Message}");
         }
+        global::System.Console.WriteLine(global::System.Text.Json.JsonSerializer.Serialize<Line>(new Line("A-1", 2, "kept out")));
+        global::System.Console.WriteLine(global::Piper.Runtime.PiperInterop.FromNullableReference(global::System.Text.Json.JsonSerializer.Deserialize<Line>("{\"sku\":\"B-2\"}")));
+        global::System.Text.Json.JsonSerializerOptions upper = new global::System.Text.Json.JsonSerializerOptions() { PropertyNamingPolicy = global::System.Text.Json.JsonNamingPolicy.SnakeCaseUpper };
+        global::System.Console.WriteLine(global::System.Text.Json.JsonSerializer.Serialize<Line>(new Line("C-3", 4, ""), upper));
         try
         {
-            _ = global::Piper.Runtime.PiperInterop.FromNullableReference(global::System.Text.Json.JsonSerializer.Deserialize<Status>("\"Pending\""));
+            _ = global::Piper.Runtime.PiperInterop.FromNullableReference(global::System.Text.Json.JsonSerializer.Deserialize<Line>("{\"sku\":\"D-4\",\"quantity\":0}"));
         }
         catch (global::System.Text.Json.JsonException e_1)
         {
             global::System.Console.WriteLine($"rejected: {e_1.Message}");
+        }
+        global::System.Console.WriteLine(global::Piper.Runtime.PiperInterop.FromNullableReference(global::System.Text.Json.JsonSerializer.Deserialize<Line>("null")));
+        global::System.Console.WriteLine(global::System.Text.Json.JsonSerializer.Serialize<Range<double>>(new Range<double>(1.5, 2.5, 4)));
+        global::System.Console.WriteLine(global::Piper.Runtime.PiperInterop.FromNullableReference(global::System.Text.Json.JsonSerializer.Deserialize<Range<int>>("{\"low\":1,\"high\":9,\"steps\":3}")));
+        try
+        {
+            _ = global::Piper.Runtime.PiperInterop.FromNullableReference(global::System.Text.Json.JsonSerializer.Deserialize<Range<int>>("{\"low\":1,\"high\":9,\"steps\":0}"));
+        }
+        catch (global::System.Text.Json.JsonException e_2)
+        {
+            global::System.Console.WriteLine($"rejected: {e_2.Message}");
+        }
+        try
+        {
+            global::System.Text.Json.JsonSerializer.Serialize<Shape>(new Shape.Tagged("x"));
+        }
+        catch (global::System.InvalidOperationException e_3)
+        {
+            global::System.Console.WriteLine($"clash: {e_3.Message}");
+        }
+        string label = global::System.Text.Json.JsonSerializer.Serialize<Label>(new Label.Tagged("x"));
+        global::System.Console.WriteLine(label);
+        global::System.Console.WriteLine(global::Piper.Runtime.PiperInterop.FromNullableReference(global::System.Text.Json.JsonSerializer.Deserialize<Label>(label)));
+        try
+        {
+            _ = global::Piper.Runtime.PiperInterop.FromNullableReference(global::System.Text.Json.JsonSerializer.Deserialize<Status>("\"Pending\""));
+        }
+        catch (global::System.Text.Json.JsonException e_4)
+        {
+            global::System.Console.WriteLine($"rejected: {e_4.Message}");
         }
     }
 }

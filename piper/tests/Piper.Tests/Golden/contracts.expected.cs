@@ -6,17 +6,61 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperRecordJsonConverterFactory))]
+[global::System.Text.Json.Serialization.JsonConverter(typeof(Percentage.PiperJsonConverter))]
 internal sealed record Percentage(int @value)
 {
     public int @value { get; init; } = global::Piper.Runtime.PiperContract.Invariant(@value, @value >= 0 && @value <= 100, "value >= 0 && value <= 100", $"value = {@value}");
+
+    private sealed record PiperJsonShape(int @value);
+
+    public sealed class PiperJsonConverter : global::System.Text.Json.Serialization.JsonConverter<Percentage>
+    {
+        public override Percentage? Read(ref global::System.Text.Json.Utf8JsonReader reader, global::System.Type type, global::System.Text.Json.JsonSerializerOptions options)
+        {
+            if (global::System.Text.Json.JsonSerializer.Deserialize<PiperJsonShape>(ref reader, options) is not { } shape)
+                return null;
+            try
+            {
+                return new Percentage(shape.@value);
+            }
+            catch (global::System.ArgumentException invalid)
+            {
+                throw new global::System.Text.Json.JsonException(invalid.Message, invalid);
+            }
+        }
+
+        public override void Write(global::System.Text.Json.Utf8JsonWriter writer, Percentage value, global::System.Text.Json.JsonSerializerOptions options) =>
+            global::System.Text.Json.JsonSerializer.Serialize(writer, new PiperJsonShape(value.@value), options);
+    }
 }
 
-[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperRecordJsonConverterFactory))]
+[global::System.Text.Json.Serialization.JsonConverter(typeof(Range.PiperJsonConverter))]
 internal sealed record Range(int low, int high)
 {
     public int low { get; init; } = global::Piper.Runtime.PiperContract.Invariant(low, low <= high, "low <= high", $"low = {low}, high = {high}");
     public int high { get; init; } = high;
+
+    private sealed record PiperJsonShape(int low, int high);
+
+    public sealed class PiperJsonConverter : global::System.Text.Json.Serialization.JsonConverter<Range>
+    {
+        public override Range? Read(ref global::System.Text.Json.Utf8JsonReader reader, global::System.Type type, global::System.Text.Json.JsonSerializerOptions options)
+        {
+            if (global::System.Text.Json.JsonSerializer.Deserialize<PiperJsonShape>(ref reader, options) is not { } shape)
+                return null;
+            try
+            {
+                return new Range(shape.low, shape.high);
+            }
+            catch (global::System.ArgumentException invalid)
+            {
+                throw new global::System.Text.Json.JsonException(invalid.Message, invalid);
+            }
+        }
+
+        public override void Write(global::System.Text.Json.Utf8JsonWriter writer, Range value, global::System.Text.Json.JsonSerializerOptions options) =>
+            global::System.Text.Json.JsonSerializer.Serialize(writer, new PiperJsonShape(value.low, value.high), options);
+    }
 
     public bool Contains(int n) => n >= this.low && n <= this.high;
 

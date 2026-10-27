@@ -18,8 +18,30 @@ public sealed class PiperEnumJsonConverterFactory : JsonConverterFactory
     // Only the enum's own base record, not its variants, which are serialized as ordinary records.
     public override bool CanConvert(Type type) => type.IsAbstract && Variants.Of(type).Count > 0;
 
-    public override JsonConverter CreateConverter(Type type, JsonSerializerOptions options) =>
-        (JsonConverter)Activator.CreateInstance(typeof(EnumConverter<>).MakeGenericType(type))!;
+    public override JsonConverter CreateConverter(Type type, JsonSerializerOptions options)
+    {
+        CheckNoFieldIsKind(type, options);
+        return (JsonConverter)Activator.CreateInstance(typeof(EnumConverter<>).MakeGenericType(type))!;
+    }
+
+    /// <summary>
+    /// A variant's field whose JSON name is <see cref="Kind"/> would be confused with the variant's name, so it's an
+    /// error, reported the first time the enum is read or written. Its JSON name is as the options make it, so
+    /// <c>[JsonPropertyName("type")]</c> on the field, or a naming policy, avoids it.
+    /// </summary>
+    private static void CheckNoFieldIsKind(Type type, JsonSerializerOptions options)
+    {
+        var comparison = options.PropertyNameCaseInsensitive ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        foreach (var variant in Variants.Of(type).Values.Where(v => v.HasFields))
+        {
+            if (options.GetTypeInfo(variant.Type).Properties.FirstOrDefault(p => string.Equals(p.Name, Kind, comparison)) is { } clash)
+            {
+                throw new InvalidOperationException(
+                    $"{type.Name}.{variant.Name} has a field that JSON names \"{clash.Name}\", which is where JSON names the variant. " +
+                    $"Rename the field, or give it another JSON name with [JsonPropertyName(…)].");
+            }
+        }
+    }
 
     private sealed class EnumConverter<TEnum> : JsonConverter<TEnum> where TEnum : class
     {

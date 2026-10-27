@@ -1,7 +1,9 @@
 // Piper's types in JSON (System.Text.Json): an Option is its value or null, an enum's variant its name or an object
 // naming it in "kind", and a record's invariants reject bad JSON as a JsonException.
+using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 record Todo(id: int, note: string?, due: int?);
 
@@ -13,6 +15,20 @@ enum Tree<T> { Leaf, Node(value: T, left: Tree<T>, right: Tree<T>) }
 record Order(id: int, status: Status, tags: List<string>?);
 
 record Quantity(amount: int) requires amount > 0;
+
+// With invariants, a record's field attributes, defaults and the serializer's options still apply.
+record Line(
+    [JsonPropertyName("sku")] code: string,
+    quantity: int = 1,
+    [JsonIgnore] note: string = "",
+) requires quantity > 0;
+
+// A field JSON would call "kind" clashes with the variant's name; another JSON name avoids it.
+enum Shape { Plain, Tagged(kind: string) }
+enum Label { Plain, Tagged([JsonPropertyName("type")] kind: string) }
+
+// A generic record with an invariant.
+record Range<T>(low: T, high: T, steps: int) requires steps > 0;
 
 fn Main() {
     // Options: Some is the value, None is null, and a missing field reads as None.
@@ -40,6 +56,36 @@ fn Main() {
     } catch (e: JsonException) {
         Print($"rejected: {e.Message}");
     }
+
+    // A renamed field, an ignored one, a missing one taking its default, and the serializer's naming policy.
+    Print(JsonSerializer.Serialize(Line("A-1", 2, "kept out")));
+    Print(JsonSerializer.Deserialize<Line>("{\"sku\":\"B-2\"}"));
+    let upper = JsonSerializerOptions() { PropertyNamingPolicy: JsonNamingPolicy.SnakeCaseUpper };
+    Print(JsonSerializer.Serialize(Line("C-3", 4, ""), upper));
+    try {
+        JsonSerializer.Deserialize<Line>("{\"sku\":\"D-4\",\"quantity\":0}");
+    } catch (e: JsonException) {
+        Print($"rejected: {e.Message}");
+    }
+    Print(JsonSerializer.Deserialize<Line>("null"));
+
+    // A generic record.
+    Print(JsonSerializer.Serialize(Range(1.5, 2.5, 4)));
+    Print(JsonSerializer.Deserialize<Range<int>>("{\"low\":1,\"high\":9,\"steps\":3}"));
+    try {
+        JsonSerializer.Deserialize<Range<int>>("{\"low\":1,\"high\":9,\"steps\":0}");
+    } catch (e: JsonException) {
+        Print($"rejected: {e.Message}");
+    }
+
+    try {
+        JsonSerializer.Serialize(Shape.Tagged("x"));
+    } catch (e: InvalidOperationException) {
+        Print($"clash: {e.Message}");
+    }
+    let label = JsonSerializer.Serialize(Label.Tagged("x"));
+    Print(label);
+    Print(JsonSerializer.Deserialize<Label>(label));
 
     // A name that isn't a variant.
     try {
