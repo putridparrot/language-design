@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public interface Shape
+internal interface Shape
 {
     double Area();
 
@@ -39,14 +39,14 @@ public interface Shape
     }
 }
 
-public sealed record Circle(double radius) : Shape
+internal sealed record Circle(double radius) : Shape
 {
     public double Area() => 3.0 * this.radius * this.radius;
 
     public string Name() => "circle";
 }
 
-public sealed record Rect(double width, double height) : Shape
+internal sealed record Rect(double width, double height) : Shape
 {
     public double Area() => this.width * this.height;
 
@@ -55,7 +55,8 @@ public sealed record Rect(double width, double height) : Shape
     public string Describe() => $"a {this.width}x{this.height} {this.Name()}";
 }
 
-public abstract record List<T>
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record List<T>
 {
     private List()
     {
@@ -66,7 +67,7 @@ public abstract record List<T>
     public sealed record Nil() : List<T> { public override string ToString() => "Nil"; }
 }
 
-public interface Speak
+internal interface Speak
 {
     string Sound();
 
@@ -94,7 +95,8 @@ public interface Speak
     }
 }
 
-public abstract record Animal : Speak
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record Animal : Speak
 {
     private Animal()
     {
@@ -133,13 +135,13 @@ public abstract record Animal : Speak
     }
 }
 
-public static class Traits
+internal static class Traits
 {
-    public static T Largest<T>(T a, T b) => global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().Area(a) >= global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().Area(b) ? a : b;
+    internal static T Largest<T>(T a, T b) => global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().Area(a) >= global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().Area(b) ? a : b;
 
-    public static string Summary<T>(T shape) => global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().Describe(shape);
+    internal static string Summary<T>(T shape) => global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().Describe(shape);
 
-    public static double TotalArea(List<Shape> shapes)
+    internal static double TotalArea(List<Shape> shapes)
     {
         if (shapes is List<Shape>.Cons(var s, var rest))
         {
@@ -151,7 +153,7 @@ public static class Traits
         }
     }
 
-    public static void Main()
+    internal static void Main()
     {
         Circle c = new Circle(1.0);
         Rect r = new Rect(2.0, 3.0);

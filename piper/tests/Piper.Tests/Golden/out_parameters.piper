@@ -9,9 +9,9 @@ fn ParseOr(text: string, fallback: int) => int = if int.TryParse(text, out let n
 fn Describe(text: string) => string {
     // As in C#, a variable declared in an if condition is still in scope after the if.
     if !double.TryParse(text, out let value) {
-        return "'{text}' is not a number";
+        return $"'{text}' is not a number";
     }
-    "'{text}' is {value * 2} doubled"
+    $"'{text}' is {value * 2} doubled"
 }
 
 fn Main() {
@@ -42,7 +42,7 @@ fn Main() {
     }
     // Anywhere else it is optional, since the call may have returned false.
     let found = names.TryGetValue("bob", out let missing);
-    Print("{found} {missing ?? "none"}");
+    Print($"{found} {missing ?? "none"}");
     if names.TryGetValue("ada", out let first) && first.StartsWith("Ada") {
         Print("starts with Ada");
     }
@@ -68,7 +68,7 @@ fn Main() {
 // A guard: after `if !…TryGetValue(…) { return …; }` the value is there.
 fn Lookup(names: Dictionary<string, string>, key: string) => string {
     if !names.TryGetValue(key, out let name) {
-        return "no {key}";
+        return $"no {key}";
     }
     name.ToUpper()
 }

@@ -6,14 +6,14 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public partial class Account(string owner, decimal opening)
+internal partial class Account(string owner, decimal opening)
 {
     private decimal balance = global::Piper.Runtime.PiperContract.Invariant(owner.Length > 0, "owner.Length > 0", $"owner = {owner}") && global::Piper.Runtime.PiperContract.Invariant(opening >= 0m, "opening >= 0m", $"opening = {opening}") ? (opening) : default!;
 
     public decimal Balance() => this.balance;
 }
 
-public partial class Grid(int width, int height, Option<string> label)
+internal partial class Grid(int width, int height, Option<string> label)
 {
     private readonly bool __PiperInvariants = global::Piper.Runtime.PiperContract.Invariant(width > 0, "width > 0", $"width = {width}") && global::Piper.Runtime.PiperContract.Invariant(height > 0, "height > 0", $"height = {height}") && global::Piper.Runtime.PiperContract.Invariant(width * height <= Grid.maxCells, "width * height <= maxCells", $"width = {width}, height = {height}") && global::Piper.Runtime.PiperContract.Invariant((label.IsSome ? label.Value : "").Length <= Grid.MaxLabel(), "(label ?? \"\").Length <= MaxLabel()", $"label = {label}") && global::Piper.Runtime.PiperContract.Invariant(label is { IsSome: true, Value: var l } && l != "", "label is Some(l) && l != \"\"", $"label = {label}");
     private static readonly int maxCells = 100;
@@ -23,12 +23,12 @@ public partial class Grid(int width, int height, Option<string> label)
     public int Cells() => width * height;
 }
 
-public partial class Base(int divisor)
+internal partial class Base(int divisor)
 {
     public int share { get; } = 100 / divisor;
 }
 
-public partial class Derived(int n) : Base(10 / n)
+internal partial class Derived(int n) : Base(10 / n)
 {
     private readonly int half = global::Piper.Runtime.PiperContract.Invariant(n != 0, "n != 0", $"n = {n}") ? (Derived.Half(n)) : default!;
 
@@ -39,9 +39,9 @@ public partial class Derived(int n) : Base(10 / n)
     }
 }
 
-public static class Class_invariants
+internal static class Class_invariants
 {
-    public static void Attempt(string name, global::System.Action make)
+    internal static void Attempt(string name, global::System.Action make)
     {
         try
         {
@@ -54,7 +54,7 @@ public static class Class_invariants
         }
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(new Account("Ada", 10m).Balance());
         global::System.Console.WriteLine(new Grid(4, 5, Option<string>.Some("map")).Cells());

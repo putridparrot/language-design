@@ -6,7 +6,8 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public abstract record Shape
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record Shape
 {
     private Shape()
     {
@@ -21,9 +22,9 @@ public abstract record Shape
     public sealed record Dot() : Shape { public override string ToString() => "Dot"; }
 }
 
-public static class Or_bindings
+internal static class Or_bindings
 {
-    public static string Size(Shape s)
+    internal static string Size(Shape s)
     {
         double r;
         if (s is Shape.Circle(var r_1))
@@ -61,7 +62,7 @@ public static class Or_bindings
         return "other";
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Collections.Generic.List<Shape> shapes = new global::System.Collections.Generic.List<Shape> { new Shape.Circle(1.5), new Shape.Ring(3.0, 1.0), new Shape.Square(20.0), new Shape.Square(2.0), new Shape.Dot() };
         foreach (Shape s in shapes)

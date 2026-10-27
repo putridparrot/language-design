@@ -85,7 +85,7 @@ fn Main() {
     mut grid = Parse(glider);
 
     for generation in 0..4 {
-        Print("generation {generation}, population {Population(grid)}:");
+        Print($"generation {generation}, population {Population(grid)}:");
         Print(Render(grid));
         grid = Step(grid);
     }
@@ -94,5 +94,5 @@ fn Main() {
     for _ in 5..<24 {
         grid = Step(grid);
     }
-    Print("back to the start after 24: {Render(grid) == glider}");
+    Print($"back to the start after 24: {Render(grid) == glider}");
 }

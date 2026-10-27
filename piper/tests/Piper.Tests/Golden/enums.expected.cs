@@ -6,7 +6,8 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public abstract record Shape
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record Shape
 {
     private Shape()
     {
@@ -19,9 +20,9 @@ public abstract record Shape
     public sealed record Empty() : Shape { public override string ToString() => "Empty"; }
 }
 
-public static class Enums
+internal static class Enums
 {
-    public static double Area(Shape shape)
+    internal static double Area(Shape shape)
     {
         if (shape is Shape.Circle(var r))
         {
@@ -37,7 +38,7 @@ public static class Enums
         }
     }
 
-    public static string Describe(Shape shape)
+    internal static string Describe(Shape shape)
     {
         if (shape is Shape.Circle(var r) && r > 10.0)
         {
@@ -61,7 +62,7 @@ public static class Enums
         }
     }
 
-    public static char Initial(Shape shape)
+    internal static char Initial(Shape shape)
     {
         char letter;
         if (shape is Shape.Circle(_))
@@ -79,7 +80,7 @@ public static class Enums
         return letter;
     }
 
-    public static void Main()
+    internal static void Main()
     {
         Shape shapes = new Shape.Rect(2.0, 3.0);
         global::System.Console.WriteLine(Area(new Shape.Circle(2.0)));

@@ -85,7 +85,7 @@ public class WebPluginTests
 
             endpoints Routes {
                 get "/users/{id:int}" (id: int) => id;
-                put "/users/{id:int}" (id: int, name: string) => "{id} {name}";
+                put "/users/{id:int}" (id: int, name: string) => $"{id} {name}";
                 delete "/users/{id:int}" (id: int) => id;
             }
             """);
@@ -93,6 +93,71 @@ public class WebPluginTests
         Assert.Contains("MapGet(app, \"/users/{id:int}\", (int id) =>", result.CSharp);
         Assert.Contains("MapPut(app, \"/users/{id:int}\", (int id, string name) =>", result.CSharp);
         Assert.Contains("MapDelete(app, \"/users/{id:int}\", (int id) =>", result.CSharp);
+    }
+
+    /// <summary>
+    /// Piper's types at the boundary, served for real: an optional query value is None when it's missing, a request body
+    /// reads and writes Options and enums as JSON, and one a record's invariant rejects is a 400, not a 500.
+    /// </summary>
+    [Fact]
+    public void Options_enums_and_invariants_work_in_requests_and_responses()
+    {
+        var result = Compile(""""
+            using System;
+            using System.Linq;
+            using System.Net.Http;
+            using System.Net.Http.Json;
+            using System.Text;
+            using Microsoft.AspNetCore.Builder;
+            using Microsoft.AspNetCore.Hosting;
+            using Microsoft.Extensions.Logging;
+
+            enum Status { Open, Closed(reason: string) }
+            record Order(id: int, status: Status, note: string?) requires id > 0;
+
+            endpoints Api {
+                get "/hello" (name: string?, times: int?) => $"{name ?? "nobody"} x{times ?? 1}";
+                get "/items/{id:int}" (id: int, verbose: bool?) => $"{id} {verbose ?? false}";
+                post "/orders" (order: Order) => order;
+            }
+
+            async fn Main() {
+                let builder = WebApplication.CreateBuilder();
+                builder.Logging.ClearProviders();
+                let urls: string[] = ["http://127.0.0.1:0"];
+                builder.WebHost.UseUrls(urls);
+                let app = builder.Build();
+                Api(app);
+                await app.StartAsync();
+                using let client = HttpClient();
+                client.BaseAddress = Uri(app.Urls.First());
+
+                async fn Show(what: string, response: HttpResponseMessage) {
+                    Print($"{what} {(int)response.StatusCode} [{await response.Content.ReadAsStringAsync()}]");
+                }
+                for path in ["/hello", "/hello?name=Ada&times=3", "/hello?times=many", "/items/4", "/items/4?verbose=true"] {
+                    await Show(path, await client.GetAsync(path));
+                }
+                await Show("post", await client.PostAsJsonAsync("/orders", Order(1, Status.Closed("done"), None)));
+                await Show("post open", await client.PostAsync("/orders", StringContent("""{"id":2,"status":"Open"}""", Encoding.UTF8, "application/json")));
+                await Show("post invalid", await client.PostAsync("/orders", StringContent("""{"id":0,"status":"Open"}""", Encoding.UTF8, "application/json")));
+                await app.StopAsync();
+            }
+            """");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("""
+            /hello 200 [nobody x1]
+            /hello?name=Ada&times=3 200 [Ada x3]
+            /hello?times=many 400 []
+            /items/4 200 [4 False]
+            /items/4?verbose=true 200 [4 True]
+            post 200 [{"id":1,"status":{"kind":"Closed","reason":"done"},"note":null}]
+            post open 200 [{"id":2,"status":"Open","note":null}]
+            post invalid 400 []
+
+            """, run.Output.Replace("\r\n", "\n"));
     }
 
     [Fact]

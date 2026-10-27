@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public interface Container<T>
+internal interface Container<T>
 {
     global::System.Collections.Generic.List<T> Items();
 
@@ -39,7 +39,7 @@ public interface Container<T>
     }
 }
 
-public interface Named
+internal interface Named
 {
     string Name();
 
@@ -72,7 +72,7 @@ public interface Named
     }
 }
 
-public interface Formal : Named
+internal interface Formal : Named
 {
     string Title();
 
@@ -105,7 +105,7 @@ public interface Formal : Named
     }
 }
 
-public interface Anonymous : Named
+internal interface Anonymous : Named
 {
     string Named.Name() => "anonymous";
 
@@ -133,7 +133,7 @@ public interface Anonymous : Named
     }
 }
 
-public interface Equatable<T>
+internal interface Equatable<T>
 {
     bool Same(T other);
 
@@ -156,7 +156,7 @@ public interface Equatable<T>
     }
 }
 
-public interface Ordered<T> : Equatable<T>
+internal interface Ordered<T> : Equatable<T>
 {
     int Compare(T other);
 
@@ -185,7 +185,7 @@ public interface Ordered<T> : Equatable<T>
     }
 }
 
-public interface Polite : Formal, Anonymous
+internal interface Polite : Formal, Anonymous
 {
     string Named.Greet() => $"Welcome, {this.Title()}";
 
@@ -219,7 +219,7 @@ public interface Polite : Formal, Anonymous
     }
 }
 
-public sealed record Bag(global::System.Collections.Generic.List<int> values) : Container<int>
+internal sealed record Bag(global::System.Collections.Generic.List<int> values) : Container<int>
 {
     public global::System.Collections.Generic.List<int> Items() => this.values;
 
@@ -234,37 +234,37 @@ public sealed record Bag(global::System.Collections.Generic.List<int> values) : 
     }
 }
 
-public sealed record Person(string n) : Named
+internal sealed record Person(string n) : Named
 {
     public string Name() => this.n;
 }
 
-public sealed record Judge(string n) : Formal
+internal sealed record Judge(string n) : Formal
 {
     public string Name() => this.n;
 
     public string Title() => "Judge";
 }
 
-public sealed record Ghost(int id) : Anonymous;
+internal sealed record Ghost(int id) : Anonymous;
 
-public sealed record Num(int v) : Ordered<Num>
+internal sealed record Num(int v) : Ordered<Num>
 {
     public int Compare(Num other) => this.v - other.v;
 }
 
-public sealed record Butler(int id) : Polite
+internal sealed record Butler(int id) : Polite
 {
     public string Title() => "sir";
 }
 
-public static class Trait_extensions
+internal static class Trait_extensions
 {
-    public static global::System.Collections.Generic.List<string> Labels<C>(C c) => global::Piper.Runtime.PiperTraits.Witness<Container<int>.PiperWitness<C>>().MapAll<string>(c, (int x) => $"#{x}");
+    internal static global::System.Collections.Generic.List<string> Labels<C>(C c) => global::Piper.Runtime.PiperTraits.Witness<Container<int>.PiperWitness<C>>().MapAll<string>(c, (int x) => $"#{x}");
 
-    public static string Welcome(Named n) => n.Greet();
+    internal static string Welcome(Named n) => n.Greet();
 
-    public static void Main()
+    internal static void Main()
     {
         Bag bag = new Bag(new global::System.Collections.Generic.List<int> { 1, 2, 3 });
         global::System.Console.WriteLine(bag.MapAll<int>((int x) => x * 10)[2]);

@@ -481,6 +481,9 @@ public sealed class BoundLambdaExpression(
     /// <summary>`async x => …`: <see cref="Type"/> returns a Task, and <see cref="ReturnType"/> is the Task's result.</summary>
     public bool IsAsync { get; init; }
 
+    /// <summary>Its Option parameters may be left out (see <see cref="Syntax.LambdaExpressionSyntax.OptionsMayBeLeftOut"/>).</summary>
+    public bool OptionsMayBeLeftOut { get; init; }
+
     public override TypeSymbol Type { get; } = type;
 }
 
@@ -622,6 +625,29 @@ public sealed class BoundObjectInitializerExpression(BoundExpression creation, I
     public ImmutableArray<(string Member, BoundExpression Value)> Members { get; } = members;
 
     public override TypeSymbol Type => Creation.Type;
+}
+
+/// <summary>
+/// <c>Font: { Size: 12 }</c>: the value of a member of an object initializer that sets properties of the object the
+/// member holds (C#'s nested object initializer). <see cref="Type"/> is the member's.
+/// </summary>
+public sealed class BoundNestedInitializer(ImmutableArray<(string Member, BoundExpression Value)> members, TypeSymbol type) : BoundExpression
+{
+    /// <summary>In the order written, which is the order the values are evaluated and set in.</summary>
+    public ImmutableArray<(string Member, BoundExpression Value)> Members { get; } = members;
+
+    public override TypeSymbol Type { get; } = type;
+}
+
+/// <summary>
+/// <c>Items: { "a", "b" }</c>: the value of a member of an object initializer that adds to the collection the member
+/// holds (C#'s collection initializer). Each element is the arguments of one call to its <c>Add</c>.
+/// </summary>
+public sealed class BoundCollectionInitializer(ImmutableArray<ImmutableArray<BoundExpression>> elements, TypeSymbol type) : BoundExpression
+{
+    public ImmutableArray<ImmutableArray<BoundExpression>> Elements { get; } = elements;
+
+    public override TypeSymbol Type { get; } = type;
 }
 
 /// <summary><c>Int[5]</c> or <c>Double[2, 3]</c>: a new array of default values (C#'s <c>new int[5]</c>).</summary>

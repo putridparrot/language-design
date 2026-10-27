@@ -6,14 +6,14 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class Option_to_object
+internal static class Option_to_object
 {
-    public static void Show<T>(Option<T> x)
+    internal static void Show<T>(Option<T> x)
     {
         global::System.Console.WriteLine(global::Piper.Runtime.PiperInterop.ToNullableObject(x));
     }
 
-    public static void Main()
+    internal static void Main()
     {
         Option<global::System.Collections.Generic.List<int>> none = Option<global::System.Collections.Generic.List<int>>.None;
         Option<global::System.Collections.Generic.List<int>> some = Option<global::System.Collections.Generic.List<int>>.Some(new global::System.Collections.Generic.List<int> { 1, 2, 3 });

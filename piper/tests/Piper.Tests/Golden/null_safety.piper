@@ -4,7 +4,7 @@
 record User(name: string, email: string?, age: int);
 
 extend User {
-    fn Greet() { Print("Hello, {this.name}!"); }
+    fn Greet() { Print($"Hello, {this.name}!"); }
 }
 
 fn Find(id: int) => User? {
@@ -17,7 +17,7 @@ fn Contact(id: int) => string {
     let user = Find(id);
     let name = user?.name ?? "nobody";
     let email = user?.email ?? "no email";   // ?. flattens: user?.email is string?, not string??
-    "{name} <{email}>"
+    $"{name} <{email}>"
 }
 
 // `?` returns None from the function as soon as a value is missing.
@@ -28,8 +28,8 @@ fn AgeNextYear(id: int) => int? {
 
 fn Describe(value: int?) => string = match value {
     null => "nothing",
-    Some(n) if n < 0 => "negative {n}",
-    Some(n) => "{n}",
+    Some(n) if n < 0 => $"negative {n}",
+    Some(n) => $"{n}",
 };
 
 extend Option {
@@ -46,7 +46,7 @@ fn Main() {
 
     let maybe: int? = 5;
     if maybe is Some(n) && n > 3 {
-        Print("big: {n}");
+        Print($"big: {n}");
     }
     if maybe != null { Print("has a value"); }
     Print(maybe == 5);
@@ -54,7 +54,7 @@ fn Main() {
     let nothing: int? = null;
     Print(nothing == null);
     Print(nothing.IsNone());
-    Print("{Describe(maybe)}, {Describe(nothing)}, {Describe(-2)}");
+    Print($"{Describe(maybe)}, {Describe(nothing)}, {Describe(-2)}");
 
     // A statement-level ?. call only happens when there is a value.
     Find(1)?.Greet();
@@ -68,7 +68,7 @@ fn Main() {
     // while + is: loop as long as there is a next value.
     mut current: int? = 3;
     while current is Some(c) {
-        Print("countdown {c}");
+        Print($"countdown {c}");
         current = if c > 1 { c - 1 } else { null };
     }
 }

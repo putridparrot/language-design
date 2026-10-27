@@ -6,11 +6,11 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Grid(bool[,] cells, int rows, int columns);
+internal sealed record Grid(bool[,] cells, int rows, int columns);
 
-public static class Program_life
+internal static class Program_life
 {
-    public static Grid Parse(string pattern)
+    internal static Grid Parse(string pattern)
     {
         string[] lines = pattern.Split('\n');
         int rows = lines.Length;
@@ -26,7 +26,7 @@ public static class Program_life
         return new Grid(cells, rows, columns);
     }
 
-    public static int Neighbours(Grid grid, int row, int column)
+    internal static int Neighbours(Grid grid, int row, int column)
     {
         int count = 0;
         for (int dr = -1; dr <= 1; dr++)
@@ -48,7 +48,7 @@ public static class Program_life
         return count;
     }
 
-    public static Grid Step(Grid grid)
+    internal static Grid Step(Grid grid)
     {
         bool[,] next = new bool[grid.rows, grid.columns];
         int temp = grid.rows;
@@ -73,7 +73,7 @@ public static class Program_life
         return new Grid(next, grid.rows, grid.columns);
     }
 
-    public static string Render(Grid grid)
+    internal static string Render(Grid grid)
     {
         global::System.Text.StringBuilder builder = new global::System.Text.StringBuilder();
         int temp = grid.rows;
@@ -92,7 +92,7 @@ public static class Program_life
         return builder.ToString();
     }
 
-    public static int Population(Grid grid)
+    internal static int Population(Grid grid)
     {
         int alive = 0;
         foreach (bool cell in grid.cells)
@@ -105,7 +105,7 @@ public static class Program_life
         return alive;
     }
 
-    public static void Main()
+    internal static void Main()
     {
         string glider = ".#....\n..#...\n###...\n......\n......\n......";
         Grid grid = Parse(glider);

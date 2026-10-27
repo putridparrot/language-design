@@ -11,7 +11,7 @@ using Microsoft.Extensions.Logging;
 record Greeter(greeting: string);
 
 extend Greeter {
-    fn Greet(name: string) => string = "{this.greeting}, {name}!";
+    fn Greet(name: string) => string = $"{this.greeting}, {name}!";
 }
 
 async fn Main() {
@@ -28,7 +28,7 @@ async fn Main() {
     await app.StartAsync();
     let address = app.Urls.First();
     using let client = HttpClient();
-    Print(await client.GetStringAsync("{address}/hello/Ada"));
-    Print("2 + 40 = {await client.GetStringAsync("{address}/add?a=2&b=40")}");
+    Print(await client.GetStringAsync($"{address}/hello/Ada"));
+    Print($"2 + 40 = {await client.GetStringAsync($"{address}/add?a=2&b=40")}");
     await app.StopAsync();
 }

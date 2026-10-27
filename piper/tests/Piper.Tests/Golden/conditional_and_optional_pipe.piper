@@ -9,8 +9,8 @@ fn Shout(s: string) => string = s.ToUpper() + "!";
 fn Describe(s: string?) => string = s ?? "nothing";
 
 fn ParsePort(text: string) => Result<int, string> =
-    int.TryParse(text, out let n) ? Ok(n) : Err("'{text}' isn't a number");
-fn Positive(n: int) => Result<int, string> = n > 0 ? Ok(n) : Err("{n} isn't positive");
+    int.TryParse(text, out let n) ? Ok(n) : Err($"'{text}' isn't a number");
+fn Positive(n: int) => Result<int, string> = n > 0 ? Ok(n) : Err($"{n} isn't positive");
 
 fn Early(x: int?) => int? {
     let bigger = x? > 3;
@@ -20,8 +20,8 @@ fn Early(x: int?) => int? {
 
 fn Main() {
     let count = 3;
-    Print(count == 1 ? "one item" : "{count} items");
-    Print("{count > 2 ? "many" : "few"}, {count > 2 ? 2.5 : 0.0:F2}");
+    Print(count == 1 ? "one item" : $"{count} items");
+    Print($"{count > 2 ? "many" : "few"}, {count > 2 ? 2.5 : 0.0:F2}");
     Print(Clamp(5000, 0, 100));
     Print(Clamp(-5, 0, 100));
     true ? Print("as a statement") : Print("not printed");

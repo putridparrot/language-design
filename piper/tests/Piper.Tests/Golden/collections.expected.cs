@@ -6,11 +6,11 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Point(int x, int y);
+internal sealed record Point(int x, int y);
 
-public static class Collections
+internal static class Collections
 {
-    public static int Sum(global::System.Collections.Generic.List<int> values)
+    internal static int Sum(global::System.Collections.Generic.List<int> values)
     {
         int total = 0;
         foreach (int @value in values)
@@ -20,7 +20,7 @@ public static class Collections
         return total;
     }
 
-    public static int SumX(Point[] points)
+    internal static int SumX(Point[] points)
     {
         int total = 0;
         foreach (Point p in points)
@@ -30,7 +30,7 @@ public static class Collections
         return total;
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Collections.Generic.List<int> primes = new global::System.Collections.Generic.List<int> { 2, 3, 5, 7 };
         global::System.Console.WriteLine(Sum(primes));

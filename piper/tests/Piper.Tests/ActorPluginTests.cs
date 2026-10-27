@@ -55,7 +55,7 @@ public class ActorPluginTests
                 on Get() => int { count }
                 on Describe(label: string) => string {
                     await Task.Yield();
-                    "{label}: {count}"
+                    $"{label}: {count}"
                 }
             }
             async fn Main() {
@@ -114,7 +114,7 @@ public class ActorPluginTests
                 try {
                     await checker.Strict(-5);
                 } catch (e: System.ArgumentException) {
-                    Print("caught: {e.Message}");
+                    Print($"caught: {e.Message}");
                 }
                 Print(await checker.Seen());
             }

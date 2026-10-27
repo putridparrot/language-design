@@ -8,16 +8,16 @@ enum Shape { Circle(r: double), Ring(r: double, inner: double), Empty }
 fn Find(id: int) => User? = if id == 1 { User("Ada", null) } else if id == 2 { User("Grace", 1) } else { null };
 
 fn ManagerName(id: int) => string {
-    let Some(user) = Find(id) else { return "no user {id}"; };
-    let Some(managerId) = user.managerId else { return "{user.name} has no manager"; };
+    let Some(user) = Find(id) else { return $"no user {id}"; };
+    let Some(managerId) = user.managerId else { return $"{user.name} has no manager"; };
     let Some(manager) = Find(managerId) else { return "unknown manager"; };
-    "{user.name} reports to {manager.name}"
+    $"{user.name} reports to {manager.name}"
 }
 
 fn ToInt(text: string) => int? = if int.TryParse(text, out let v) { v } else { null };
 
 fn Parse(text: string) => Result<int, string> {
-    let Some(n) = ToInt(text) else { return Err("'{text}' isn't a number"); };
+    let Some(n) = ToInt(text) else { return Err($"'{text}' isn't a number"); };
     Ok(n * 2)
 }
 
@@ -52,7 +52,7 @@ fn Main() {
     for id in 0..3 {
         let Some(u) = Find(id) else { continue; };
         found += 1;
-        Print("found {u.name}");
+        Print($"found {u.name}");
     }
-    Print("{found} found, {Later(2).Result}");
+    Print($"{found} found, {Later(2).Result}");
 }

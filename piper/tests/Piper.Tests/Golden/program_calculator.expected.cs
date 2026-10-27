@@ -6,7 +6,8 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public abstract record Token : Describe
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record Token : Describe
 {
     private Token()
     {
@@ -47,7 +48,8 @@ public abstract record Token : Describe
     }
 }
 
-public abstract record Expr
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record Expr
 {
     private Expr()
     {
@@ -64,7 +66,7 @@ public abstract record Expr
     public sealed record Call(string function, Expr argument) : Expr;
 }
 
-public interface Describe
+internal interface Describe
 {
     string Describe();
 
@@ -87,11 +89,11 @@ public interface Describe
     }
 }
 
-public sealed record Parser(global::System.Collections.Generic.List<Token> tokens, int[] position);
+internal sealed record Parser(global::System.Collections.Generic.List<Token> tokens, int[] position);
 
-public static class Program_calculator
+internal static class Program_calculator
 {
-    public static Result<global::System.Collections.Generic.List<Token>, string> Tokenize(string source)
+    internal static Result<global::System.Collections.Generic.List<Token>, string> Tokenize(string source)
     {
         global::System.Collections.Generic.List<Token> tokens = new global::System.Collections.Generic.List<Token>();
         int i = 0;
@@ -149,14 +151,14 @@ public static class Program_calculator
         return Result<global::System.Collections.Generic.List<Token>, string>.Ok(tokens);
     }
 
-    public static Option<Token> Peek(Parser p) => p.position[0] < p.tokens.Count ? Option<Token>.Some(p.tokens[p.position[0]]) : Option<Token>.None;
+    internal static Option<Token> Peek(Parser p) => p.position[0] < p.tokens.Count ? Option<Token>.Some(p.tokens[p.position[0]]) : Option<Token>.None;
 
-    public static void Advance(Parser p)
+    internal static void Advance(Parser p)
     {
         p.position[0] += 1;
     }
 
-    public static int Precedence(char op)
+    internal static int Precedence(char op)
     {
         if (op is '+' or '-')
         {
@@ -176,7 +178,7 @@ public static class Program_calculator
         }
     }
 
-    public static Result<Expr, string> ParseExpression(Parser p, int minPrecedence)
+    internal static Result<Expr, string> ParseExpression(Parser p, int minPrecedence)
     {
         Result<Expr, string> temp = ParseUnary(p);
         if (!temp.IsOk)
@@ -213,7 +215,7 @@ public static class Program_calculator
         return Result<Expr, string>.Ok(left);
     }
 
-    public static Result<Expr, string> ParseUnary(Parser p)
+    internal static Result<Expr, string> ParseUnary(Parser p)
     {
         Option<Token> temp = Peek(p);
         if (temp is { IsSome: true, Value: Token.Op('-') })
@@ -232,7 +234,7 @@ public static class Program_calculator
         }
     }
 
-    public static Result<Expr, string> ParsePrimary(Parser p)
+    internal static Result<Expr, string> ParsePrimary(Parser p)
     {
         Option<Token> token = Peek(p);
         Advance(p);
@@ -290,7 +292,7 @@ public static class Program_calculator
         }
     }
 
-    public static Result<int, string> Expect(Parser p, Token wanted)
+    internal static Result<int, string> Expect(Parser p, Token wanted)
     {
         Option<Token> found = Peek(p);
         if (found == Option<Token>.Some(wanted))
@@ -303,7 +305,7 @@ public static class Program_calculator
         return Result<int, string>.Err($"expected {temp} but found {(temp_1.IsSome ? temp_1.Value : "end of input")}");
     }
 
-    public static Result<double, string> Evaluate(Expr e, global::System.Collections.Generic.Dictionary<string, double> variables)
+    internal static Result<double, string> Evaluate(Expr e, global::System.Collections.Generic.Dictionary<string, double> variables)
     {
         if (e is Expr.Num(var v))
         {
@@ -392,7 +394,7 @@ public static class Program_calculator
         }
     }
 
-    public static string Show(Expr e)
+    internal static string Show(Expr e)
     {
         if (e is Expr.Num(var v))
         {
@@ -420,7 +422,7 @@ public static class Program_calculator
         }
     }
 
-    public static Result<string, string> Calculate(string source, global::System.Collections.Generic.Dictionary<string, double> variables)
+    internal static Result<string, string> Calculate(string source, global::System.Collections.Generic.Dictionary<string, double> variables)
     {
         Result<global::System.Collections.Generic.List<Token>, string> temp = Tokenize(source);
         if (!temp.IsOk)
@@ -448,7 +450,7 @@ public static class Program_calculator
         return Result<string, string>.Ok($"{Show(tree)} = {@value}");
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Collections.Generic.Dictionary<string, double> variables = new global::System.Collections.Generic.Dictionary<string, double>();
         variables["x"] = 3;

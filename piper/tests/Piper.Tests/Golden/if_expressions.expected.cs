@@ -6,14 +6,14 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class If_expressions
+internal static class If_expressions
 {
-    public static int Sign(int n)
+    internal static int Sign(int n)
     {
         return n < 0 ? -1 : n == 0 ? 0 : 1;
     }
 
-    public static string Describe(int n)
+    internal static string Describe(int n)
     {
         string parity;
         if (n % 2 == 0)
@@ -28,7 +28,7 @@ public static class If_expressions
         return parity;
     }
 
-    public static int FirstPositive(int a, int b)
+    internal static int FirstPositive(int a, int b)
     {
         int chosen;
         if (a > 0)
@@ -46,9 +46,9 @@ public static class If_expressions
         return chosen * 100;
     }
 
-    public static double Mixed(bool flag) => flag ? 1 : 2.5;
+    internal static double Mixed(bool flag) => flag ? 1 : 2.5;
 
-    public static int Absolute(int n)
+    internal static int Absolute(int n)
     {
         if (n < 0)
         {
@@ -60,7 +60,7 @@ public static class If_expressions
         }
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(Sign(-5));
         global::System.Console.WriteLine(Sign(0));

@@ -56,7 +56,7 @@ fn Main() {
     Print(total);
 
     let bill = Money(1000) + Money(250);
-    Print("{bill / 3} remainder {bill % 3}");
+    Print($"{bill / 3} remainder {bill % 3}");
 
     Print(Interval.Closed(1, 3) + Interval.Empty + Interval.Closed(5, 8));
     Print(-Pair("left", "right"));

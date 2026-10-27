@@ -6,13 +6,13 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record User(string name, Option<string> nickname);
+internal sealed record User(string name, Option<string> nickname);
 
-public static class Guards
+internal static class Guards
 {
-    public static Option<User> Lookup(int id) => id == 1 ? Option<User>.Some(new User("Ada", Option<string>.Some("ada"))) : id == 2 ? Option<User>.Some(new User("Bob", Option<string>.None)) : Option<User>.None;
+    internal static Option<User> Lookup(int id) => id == 1 ? Option<User>.Some(new User("Ada", Option<string>.Some("ada"))) : id == 2 ? Option<User>.Some(new User("Bob", Option<string>.None)) : Option<User>.None;
 
-    public static Option<int> Parse(string text)
+    internal static Option<int> Parse(string text)
     {
         int n;
         if (int.TryParse(text, out n))
@@ -25,13 +25,13 @@ public static class Guards
         }
     }
 
-    public static int Count(global::System.Collections.Generic.List<int> log, int n)
+    internal static int Count(global::System.Collections.Generic.List<int> log, int n)
     {
         log.Add(n);
         return n;
     }
 
-    public static string Describe(Option<int> n, global::System.Collections.Generic.List<int> log)
+    internal static string Describe(Option<int> n, global::System.Collections.Generic.List<int> log)
     {
         if (n is { IsSome: true, Value: var x })
         {
@@ -55,7 +55,7 @@ public static class Guards
         }
     }
 
-    public static Option<int> FirstBig(string texts, string limit)
+    internal static Option<int> FirstBig(string texts, string limit)
     {
         string label;
         Option<int> temp = Parse(texts);
@@ -85,7 +85,7 @@ public static class Guards
         return Option<int>.Some(label.Length);
     }
 
-    public static string Greet(int id, Option<User> fallback)
+    internal static string Greet(int id, Option<User> fallback)
     {
         if (fallback is { IsSome: true, Value: var f })
         {
@@ -108,7 +108,7 @@ public static class Guards
         return "who?";
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Collections.Generic.List<int> log = new global::System.Collections.Generic.List<int>();
         global::System.Console.WriteLine(Describe(Option<int>.Some(7), log));

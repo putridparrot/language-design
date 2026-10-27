@@ -47,7 +47,7 @@ fn Main() {
     Print(3.0.Half());
 
     let p = Point.Origin().Plus(Point(2, 3)).Plus(Point(1, 1));
-    Print("{p.x},{p.y} -> {p.LengthSquared()}");
+    Print($"{p.x},{p.y} -> {p.LengthSquared()}");
 
     let o: Option<string> = Option.Nothing();
     Print(o.HasValue());

@@ -6,17 +6,17 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class Evaluation_order
+internal static class Evaluation_order
 {
-    public static int Log(string label, int @value)
+    internal static int Log(string label, int @value)
     {
         global::System.Console.WriteLine($"eval {label}");
         return @value;
     }
 
-    public static int Sum3(int a, int b, int c) => a + b + c;
+    internal static int Sum3(int a, int b, int c) => a + b + c;
 
-    public static void Main()
+    internal static void Main()
     {
         int temp = Log("a", 1);
         int t = Log("b", 2);

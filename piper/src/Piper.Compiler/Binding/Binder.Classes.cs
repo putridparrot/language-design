@@ -32,7 +32,8 @@ public sealed partial class Binder
             {
                 var entry = syntax.Bases[i];
                 var type = TypeSymbol.Error;
-                WithScope(typeParameterScope, () => type = BindType(entry.Type));
+                // A trait with static methods can be implemented, though not be a value's type.
+                WithScope(typeParameterScope, () => type = BindBound(entry.Type));
                 if (type == TypeSymbol.Error)
                     continue;
 
@@ -575,8 +576,11 @@ public sealed partial class Binder
             return [];
         // No arguments: the base's parameterless constructor, which C# calls itself (it may be protected).
         if (entry.Arguments is null && @class.Base is ClrTypeSymbol { Type: var noArguments } &&
-            AccessibleConstructors(noArguments).Any(c => c.GetParameters().Length == 0))
+            AccessibleConstructors(noArguments).FirstOrDefault(c => c.GetParameters().Length == 0) is { } parameterless)
+        {
+            @class.ClrBaseConstructor = parameterless;
             return [];
+        }
         var arguments = entry.Arguments ?? [];
 
         if (@class.Base.OriginalDefinition is ClassSymbol baseClass)
@@ -589,6 +593,7 @@ public sealed partial class Binder
         var clr = (ClrTypeSymbol)@class.Base;
         var resolved = WithScope(parameterScope, () =>
             ResolveClrOverload(AccessibleConstructors(clr.Type), clr, clr.Name, arguments, [], entry.Span, clr.GenericMap));
+        @class.ClrBaseConstructor = resolved?.Candidate.Member as ConstructorInfo;
         return resolved?.Arguments ?? [];
     }
 

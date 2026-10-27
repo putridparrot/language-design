@@ -37,10 +37,19 @@ public sealed record UsingDirectiveSyntax(TextSpan Span, QualifiedNameSyntax Nam
 
 // Declarations
 
-/// <summary><see cref="Private"/> is the <c>private</c> modifier: the declaration is only visible in its own file.</summary>
+/// <summary>
+/// A top-level declaration. With neither modifier it's visible throughout the program (or library); <see cref="Private"/>
+/// limits it to its own file, and <see cref="Public"/> makes it part of a library's API, visible to other assemblies.
+/// </summary>
 public abstract record DeclarationSyntax(TextSpan Span, Token Name) : SyntaxNode(Span)
 {
     public Token? Private { get; init; }
+
+    /// <summary>
+    /// The <c>public</c> modifier (a contextual word): on a top-level declaration, exported from the assembly; on a class
+    /// method, which is public anyway, just said.
+    /// </summary>
+    public Token? Public { get; init; }
 
     public ImmutableArray<AttributeSyntax> Attributes { get; init; } = [];
 
@@ -111,9 +120,6 @@ public sealed record FunctionDeclarationSyntax(
 
     /// <summary>A class method's `virtual`, `override` or `abstract`.</summary>
     public Token? Modifier { get; init; }
-
-    /// <summary>A class method's `public`, which it is anyway.</summary>
-    public Token? Public { get; init; }
 
     /// <summary>A class method's `protected`: usable in its class and classes deriving from it.</summary>
     public Token? Protected { get; init; }
@@ -519,6 +525,12 @@ public sealed record LambdaExpressionSyntax(TextSpan Span, ImmutableArray<Lambda
 {
     /// <summary>`async x => …`: the lambda produces a Task, and its body can `await`.</summary>
     public Token? Async { get; init; }
+
+    /// <summary>
+    /// Set by a plugin (the web plugin, for handlers): its Option parameters may be left out by whoever calls it through
+    /// reflection, as ASP.NET Core does, and are then None. In C# they're nullable (<c>Option&lt;string&gt;?</c>).
+    /// </summary>
+    public bool OptionsMayBeLeftOut { get; init; }
 }
 
 /// <summary>`await task`: waits for an awaitable value (a Task, ValueTask, or anything with C#'s `GetAwaiter` pattern).</summary>
@@ -553,6 +565,21 @@ public sealed record RecordSpreadExpressionSyntax(TextSpan Span, ExpressionSynta
 /// </summary>
 public sealed record ObjectInitializerExpressionSyntax(TextSpan Span, ExpressionSyntax Creation, ImmutableArray<FieldUpdateSyntax> Members)
     : ExpressionSyntax(Span);
+
+/// <summary>
+/// `Font: { Size: 12 }` in an object initializer: sets properties of the object the member already holds, rather than
+/// giving it a new one (C#'s nested object initializer). Only a member's value in an initializer.
+/// </summary>
+public sealed record NestedInitializerSyntax(TextSpan Span, ImmutableArray<FieldUpdateSyntax> Members) : ExpressionSyntax(Span);
+
+/// <summary>
+/// `Items: { "a", "b" }` in an object initializer: adds each element to the collection the member already holds, with
+/// its `Add` (C#'s collection initializer). Only a member's value in an initializer.
+/// </summary>
+public sealed record CollectionInitializerSyntax(TextSpan Span, ImmutableArray<CollectionElementSyntax> Elements) : ExpressionSyntax(Span);
+
+/// <summary>`"a"`, or `{ "key", 1 }` for an `Add` taking several arguments: one element of a collection initializer.</summary>
+public sealed record CollectionElementSyntax(TextSpan Span, ImmutableArray<ExpressionSyntax> Arguments) : SyntaxNode(Span);
 
 /// <summary>`y: 5`, or `height` alone (<see cref="Value"/> null) for `height: height`.</summary>
 public sealed record FieldUpdateSyntax(TextSpan Span, Token Name, ExpressionSyntax? Value) : SyntaxNode(Span);

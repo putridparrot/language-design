@@ -29,7 +29,7 @@ class MemoryLog: Log {
 
 // DI constructs it, passing the Clock and Log it was registered with.
 class Reminder(clock: Clock, log: Log) {
-    fn Remind(what: string) { log.Write("{clock.Now()}: {what}"); }
+    fn Remind(what: string) { log.Write($"{clock.Now()}: {what}"); }
 }
 
 // Becomes `fn AppServices(services: IServiceCollection) => IServiceCollection`, registering each service.
@@ -48,7 +48,7 @@ fn Main() {
     second.Remind("drink water");
 
     // Two Reminders, one Log: transient services are made each time, singletons once.
-    Print("{Object.ReferenceEquals(first, second)} {Object.ReferenceEquals(provider.GetRequiredService<Log>(), provider.GetRequiredService<Log>())}");
+    Print($"{Object.ReferenceEquals(first, second)} {Object.ReferenceEquals(provider.GetRequiredService<Log>(), provider.GetRequiredService<Log>())}");
     for line in provider.GetRequiredService<Log>().Lines() {
         Print(line);
     }

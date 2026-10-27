@@ -8,7 +8,7 @@ record Account(owner: string, balance: Money) requires owner.Length > 0;
 
 extend Money {
     operator +(other: Money) => Money = Money(this.cents + other.cents);
-    fn Format() => string = "${this.cents / 100}.{(this.cents % 100).ToString("00")}";
+    fn Format() => string = $"${this.cents / 100}.{(this.cents % 100).ToString("00")}";
 }
 
 // A function's preconditions are checked on every call, before its body runs.
@@ -26,16 +26,16 @@ fn Percent(part: long, whole: long) => double requires whole > 0, part >= 0, par
 
 fn Attempt(label: string, action: () => string) {
     try {
-        Print("{label}: {action()}");
+        Print($"{label}: {action()}");
     } catch (e: ArgumentException) {
-        Print("{label} failed: {e.Message}");
+        Print($"{label} failed: {e.Message}");
     }
 }
 
 fn Main() {
     let account = Account("Ada", Money(10_000));
     let afterRent = Withdraw(account, Money(7_500));
-    Print("{afterRent.owner} has {afterRent.balance.Format()}");
+    Print($"{afterRent.owner} has {afterRent.balance.Format()}");
 
     let rent = Money(7_500);
     Attempt("withdraw rent again", () => Withdraw(afterRent, rent).balance.Format());
@@ -43,7 +43,7 @@ fn Main() {
 
     // A copy is checked like a new value.
     let overdrawn = -1L;
-    Attempt("negative balance", () => "{{ ...account, balance: Money(overdrawn) }}");
+    Attempt("negative balance", () => $"{ { ...account, balance: Money(overdrawn) } }");
 
     let total = 0L;
     Attempt("percent", () => Percent(25, 200).ToString());

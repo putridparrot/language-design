@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public partial class Ticket(string holder)
+internal partial class Ticket(string holder)
 {
     private static int issued = 0;
     public static string prefix { get; } = "T";
@@ -30,7 +30,7 @@ public partial class Ticket(string holder)
     }
 }
 
-public partial class Config(string name)
+internal partial class Config(string name)
 {
     public static int created { get; set; } = 0;
     public static Config Default { get; } = Config.Named("default");
@@ -44,12 +44,12 @@ public partial class Config(string name)
     public static Config Named(string name) => new Config(name);
 }
 
-public partial class Hooks
+internal partial class Hooks
 {
     public static global::System.Action<string> onEvent { get; set; } = (string s) => global::System.Console.WriteLine($"default: {s}");
 }
 
-public partial class Pool<T>
+internal partial class Pool<T>
 {
     private static int made = 0;
     private readonly global::System.Collections.Generic.List<T> items = new global::System.Collections.Generic.List<T>();
@@ -63,12 +63,12 @@ public partial class Pool<T>
     public static int Made() => Pool<T>.made;
 }
 
-public partial class Base
+internal partial class Base
 {
     public static int total { get; set; } = 0;
 }
 
-public partial class Derived : Base
+internal partial class Derived : Base
 {
     public void Bump()
     {
@@ -76,9 +76,9 @@ public partial class Derived : Base
     }
 }
 
-public static class Static_fields
+internal static class Static_fields
 {
-    public static void Main()
+    internal static void Main()
     {
         Ticket ada = new Ticket("Ada");
         global::System.Console.WriteLine(ada.Issue());

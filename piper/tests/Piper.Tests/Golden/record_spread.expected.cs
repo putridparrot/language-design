@@ -6,17 +6,17 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Point(int x, int y);
+internal sealed record Point(int x, int y);
 
-public sealed record Line(Point start, Point end, string label);
+internal sealed record Line(Point start, Point end, string label);
 
-public sealed record Box<T>(T @value, int count);
+internal sealed record Box<T>(T @value, int count);
 
-public static class Record_spread
+internal static class Record_spread
 {
-    public static Point MoveRight(Point p, int by) => p with { x = p.x + by };
+    internal static Point MoveRight(Point p, int by) => p with { x = p.x + by };
 
-    public static void Main()
+    internal static void Main()
     {
         Point p = new Point(1, 2);
         Point q = p with { y = 5 };

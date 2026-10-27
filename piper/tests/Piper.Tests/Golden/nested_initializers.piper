@@ -1,0 +1,64 @@
+// Nested object and collection initializers: changing the object a property already holds, rather than replacing it.
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+
+class Font {
+    prop Size: int { get; set; } = 10;
+    prop Family: string { get; init; } = "Sans";
+    prop Margins: Margins { get; } = Margins();
+}
+
+class Margins {
+    prop Left: int { get; set; } = 0;
+    prop Right: int { get; set; } = 0;
+}
+
+class Label(text: string) {
+    prop Text: string { get; } = text;
+    prop Font: Font { get; } = Font();
+    prop Tags: List<string> { get; } = [];
+    prop Scores: Dictionary<string, int> { get; } = Dictionary<string, int>();
+    prop Seen: HashSet<int> { get; } = HashSet<int>();
+
+    fn Describe() => string =
+        $"{Text}: {Font.Family} {Font.Size} ({Font.Margins.Left}, {Font.Margins.Right}) [{string.Join(", ", Tags)}] {Scores.Count} {Seen.Count}";
+}
+
+fn Parse(text: string) => Result<int, string> =
+    if int.TryParse(text, out let n) { Ok(n) } else { Err($"not a number: {text}") };
+
+// A nested value that needs statements first (here, `?`).
+fn Sized(size: string) => Result<Label, string> = Ok(Label("sized") { Font: { Size: Parse(size)? } });
+
+fn Main() {
+    // Properties of the Font the label already has, and of its Margins in turn. (Not its `init` Family: the Font
+    // isn't being made here.)
+    let title = Label("Title") {
+        Font: { Size: 14, Margins: { Left: 2, Right: 3 } },
+    };
+    Console.WriteLine(title.Describe());
+
+    // Elements added to the collections the label already has: `{ … }` gives Add several arguments, and an Add that
+    // returns something (HashSet's bool) is fine.
+    let tagged = Label("Tagged") {
+        Tags: { "a", "b", "c" },
+        Scores: { { "x", 1 }, { "y", 2 } },
+        Seen: { 1, 2, 2, 3 },
+        Font: {},
+    };
+    Console.WriteLine(tagged.Describe());
+
+    // .NET types.
+    let start = ProcessStartInfo("dotnet") { ArgumentList: { "build", "--nologo" }, UseShellExecute: false };
+    Console.WriteLine($"{start.FileName} {string.Join(" ", start.ArgumentList)}");
+
+    match Sized("20") {
+        Ok(label) => Console.WriteLine(label.Describe()),
+        Err(e) => Console.WriteLine(e),
+    }
+    match Sized("big") {
+        Ok(label) => Console.WriteLine(label.Describe()),
+        Err(e) => Console.WriteLine(e),
+    }
+}

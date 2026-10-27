@@ -15,11 +15,11 @@ class Account(owner: string, opening: decimal) requires opening >= 0m {
     }
 
     Account(owner: string, cents: int, on: DateOnly): this(owner, (decimal)cents / 100m) {
-        Source = "opened with {cents} cents";
+        Source = $"opened with {cents} cents";
         Opened = on;
     }
 
-    fn Describe() => string = "{owner}: {balance} ({Source}, {Opened})";
+    fn Describe() => string = $"{owner}: {balance} ({Source}, {Opened})";
 }
 
 // A private constructor, used by a static factory, and a protected one for derived classes.
@@ -78,11 +78,11 @@ fn Main() {
 
     Print(Math.Round(Temperature.FromFahrenheit(212.0).Celsius, 1));
     let frost = Freezing("frost");
-    Print("{frost.Label} at {frost.Celsius}");
+    Print($"{frost.Label} at {frost.Celsius}");
 
     let counter = Counter(10);
     counter.Next();
-    Print("{counter.Next()} {Counter().Next()}");
+    Print($"{counter.Next()} {Counter().Next()}");
 
     Print(Range(1, 5).Describe());
     Print(Range(only: "x").Describe());

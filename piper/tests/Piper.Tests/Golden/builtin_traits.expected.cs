@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public interface Shape
+internal interface Shape
 {
     double Area();
 
@@ -34,7 +34,7 @@ public interface Shape
     }
 }
 
-public interface Named
+internal interface Named
 {
     string Name();
 
@@ -62,7 +62,7 @@ public interface Named
     }
 }
 
-public interface Formal : Named
+internal interface Formal : Named
 {
     string Named.Greet() => $"Good day, {this.Name()}";
 
@@ -88,7 +88,7 @@ public interface Formal : Named
     }
 }
 
-public interface Monoid<T>
+internal interface Monoid<T>
 {
     static abstract T Identity();
 
@@ -118,7 +118,7 @@ public interface Monoid<T>
     }
 }
 
-public interface Convert<T>
+internal interface Convert<T>
 {
     T Convert();
 
@@ -146,19 +146,19 @@ public interface Convert<T>
     }
 }
 
-public sealed record Circle(double r) : Shape
+internal sealed record Circle(double r) : Shape
 {
     public double Area() => 3.0 * this.r * this.r;
 }
 
-public sealed record Holder<T>(T item)
+internal sealed record Holder<T>(T item)
 {
     public double Area() => global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().Area(this.item);
 }
 
-public static class Builtin_traits
+internal static class Builtin_traits
 {
-    public static double Total<T>(global::System.Collections.Generic.List<T> items)
+    internal static double Total<T>(global::System.Collections.Generic.List<T> items)
     {
         double sum = 0.0;
         foreach (T i in items)
@@ -168,7 +168,7 @@ public static class Builtin_traits
         return sum;
     }
 
-    public static T Concat<T>(global::System.Collections.Generic.List<T> items)
+    internal static T Concat<T>(global::System.Collections.Generic.List<T> items)
     {
         T result = global::Piper.Runtime.PiperTraits.Witness<Monoid<T>.PiperWitness<T>>().Identity();
         foreach (T i in items)
@@ -178,11 +178,11 @@ public static class Builtin_traits
         return result;
     }
 
-    public static string Welcome<T>(T x) => global::Piper.Runtime.PiperTraits.Witness<Named.PiperWitness<T>>().Greet(x);
+    internal static string Welcome<T>(T x) => global::Piper.Runtime.PiperTraits.Witness<Named.PiperWitness<T>>().Greet(x);
 
-    public static Shape AsShape<T>(T x) => global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().PiperBox(x);
+    internal static Shape AsShape<T>(T x) => global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<T>>().PiperBox(x);
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(3.Area());
         global::System.Console.WriteLine(global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<int>>().Describe(3));
@@ -265,28 +265,28 @@ file static class PiperWitnesses
     }
 }
 
-public static class Builtin_traitsExtensions
+internal static class Builtin_traitsExtensions
 {
     extension(int self)
     {
-        public double Area() => (double)(self * self);
+        internal double Area() => (double)(self * self);
 
-        public int Combine(int other) => self + other;
+        internal int Combine(int other) => self + other;
     }
 
     extension(int)
     {
-        public static int Identity() => 0;
+        internal static int Identity() => 0;
     }
 
     extension(global::System.Text.StringBuilder self)
     {
-        public string Name() => self.ToString();
+        internal string Name() => self.ToString();
     }
 
     extension<T>(Option<T> self)
     {
-        public string Convert()
+        internal string Convert()
         {
             if (self is { IsSome: true, Value: var v })
             {
@@ -300,18 +300,18 @@ public static class Builtin_traitsExtensions
     }
 }
 
-public static class Builtin_traitsExtensions_string
+internal static class Builtin_traitsExtensions_string
 {
     extension(string self)
     {
-        public string Name() => self;
+        internal string Name() => self;
 
-        public string Combine(string other) => self + other;
+        internal string Combine(string other) => self + other;
     }
 
     extension(string)
     {
-        public static string Identity() => "";
+        internal static string Identity() => "";
     }
 }
 

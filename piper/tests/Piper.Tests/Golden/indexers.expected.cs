@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public partial class Grid(int width, int height)
+internal partial class Grid(int width, int height)
 {
     private readonly int[] cells = new int[width * height];
 
@@ -38,7 +38,7 @@ public partial class Grid(int width, int height)
     }
 }
 
-public partial class Ring<T>(int capacity) : global::System.Collections.Generic.IReadOnlyList<T>
+internal partial class Ring<T>(int capacity) : global::System.Collections.Generic.IReadOnlyList<T>
 {
     private readonly global::System.Collections.Generic.List<T> items = new global::System.Collections.Generic.List<T>();
     private int start = 0;
@@ -78,19 +78,19 @@ public partial class Ring<T>(int capacity) : global::System.Collections.Generic.
     global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
-public abstract partial class Lookup
+internal abstract partial class Lookup
 {
     public abstract Option<string> this[string key] { get; }
 }
 
-public partial class Upper : Lookup
+internal partial class Upper : Lookup
 {
     public override Option<string> this[string key] => key == "" ? Option<string>.None : Option<string>.Some(key.ToUpper());
 }
 
-public static class Indexers
+internal static class Indexers
 {
-    public static void Main()
+    internal static void Main()
     {
         Grid grid = new Grid(3, 2);
         grid[1, 1] = 5;

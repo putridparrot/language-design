@@ -11,13 +11,13 @@ trait Container<T> {
 
 trait Named {
     fn Name() => string;
-    fn Greet() => string = "Hello, {this.Name()}";
+    fn Greet() => string = $"Hello, {this.Name()}";
 }
 
 // Overriding an inherited default, and giving an inherited required method a default.
 trait Formal: Named {
     fn Title() => string;
-    fn Greet() => string = "Good day, {this.Title()} {this.Name()}";
+    fn Greet() => string = $"Good day, {this.Title()} {this.Name()}";
 }
 
 trait Anonymous: Named {
@@ -36,7 +36,7 @@ trait Ordered<T>: Equatable<T> {
 
 // Two parents override `greet`, so this trait must pick.
 trait Polite: Formal, Anonymous {
-    fn Greet() => string = "Welcome, {this.Title()}";
+    fn Greet() => string = $"Welcome, {this.Title()}";
 }
 
 // Methods added to a trait after its declaration are defaults for every implementer.
@@ -68,7 +68,7 @@ extend Ghost: Anonymous { }
 extend Num: Ordered<Num> { fn Compare(other: Num) => int = this.v - other.v; }
 extend Butler: Polite { fn Title() => string = "sir"; }
 
-fn Labels<C: Container<int>>(c: C) => List<string> = c.MapAll((x) => "#{x}");
+fn Labels<C: Container<int>>(c: C) => List<string> = c.MapAll((x) => $"#{x}");
 
 fn Welcome(n: Named) => string = n.Greet();
 

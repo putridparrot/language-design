@@ -11,7 +11,7 @@ fn MoveRight(p: Point, by: int) => Point = { ...p, x: p.x + by };
 fn Main() {
     let p = Point(1, 2);
     let q = { ...p, y: 5 };
-    Print("{p} {q}");
+    Print($"{p} {q}");
 
     // Several fields, and a field written alone takes the variable of that name.
     let x = 10;

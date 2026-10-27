@@ -1,5 +1,5 @@
 fn Fizzbuzz(n: int) => string {
-    if n % 15 == 0 { "FizzBuzz" } else if n % 3 == 0 { "Fizz" } else if n % 5 == 0 { "Buzz" } else { "{n}" }
+    if n % 15 == 0 { "FizzBuzz" } else if n % 3 == 0 { "Fizz" } else if n % 5 == 0 { "Buzz" } else { $"{n}" }
 }
 
 fn IsPrime(n: int) => bool {
@@ -18,7 +18,7 @@ fn Main() {
     mut primes = "";
     for n in 0..<30 {
         if !IsPrime(n) { continue; }
-        primes = primes + "{n} ";
+        primes = primes + $"{n} ";
     }
     Print(primes);
 
@@ -27,7 +27,7 @@ fn Main() {
         steps += 1;
         if steps == 5 { break; }
     }
-    Print("stopped after {steps} steps");
+    Print($"stopped after {steps} steps");
 
     let big: long = 3_000_000_000L;
     mut total = 0L;

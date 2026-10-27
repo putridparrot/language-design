@@ -29,9 +29,9 @@ fn Digits(a: int, b: int) => Result<int, MathError> {
     Ok(text.Length + Compute(a, b)?.CompareTo(0))
 }
 fn Show(result: Result<int, MathError>) => string = match result {
-    Ok(v) => "ok: {v}",
+    Ok(v) => $"ok: {v}",
     Err(MathError.DivideByZero) => "error: divide by zero",
-    Err(Negative(n)) => "error: {n} is negative",
+    Err(Negative(n)) => $"error: {n} is negative",
 };
 
 fn Main() {
@@ -41,7 +41,7 @@ fn Main() {
     Print(Divide(7, 2));
     Print(Root(-1));
 
-    if Compute(64, 1) is Ok(v) { Print("64 -> {v}"); }
+    if Compute(64, 1) is Ok(v) { Print($"64 -> {v}"); }
     Print(Show(Digits(12345, 1)));
     Print(Show(Digits(1, 0)));
 }

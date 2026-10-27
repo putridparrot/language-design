@@ -6,15 +6,15 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class Lambdas
+internal static class Lambdas
 {
-    public static int Doubled(int x) => x * 2;
+    internal static int Doubled(int x) => x * 2;
 
-    public static int Apply(global::System.Func<int, int> f, int @value) => f(@value);
+    internal static int Apply(global::System.Func<int, int> f, int @value) => f(@value);
 
-    public static global::System.Func<int, int> Twice(global::System.Func<int, int> f) => (int x) => f(f(x));
+    internal static global::System.Func<int, int> Twice(global::System.Func<int, int> f) => (int x) => f(f(x));
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Func<int, int> increment = (int x) => x + 1;
         global::System.Console.WriteLine(increment(41));

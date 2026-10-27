@@ -121,7 +121,7 @@ public class PluginTests
                 swap a, b;
                 swap a, b;
                 swap a, b;
-                Print("{a} {b}");
+                Print($"{a} {b}");
             }
             """, new SwapPlugin());
         Assert.Equal("2 1\n", output);

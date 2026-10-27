@@ -6,7 +6,8 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public abstract record Message
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record Message
 {
     private Message()
     {
@@ -17,9 +18,9 @@ public abstract record Message
     public sealed record Get() : Message { public override string ToString() => "Get"; }
 }
 
-public sealed record Point(int x, int y);
+internal sealed record Point(int x, int y);
 
-public interface Shape
+internal interface Shape
 {
     double Area();
 
@@ -42,14 +43,14 @@ public interface Shape
     }
 }
 
-public sealed record Square(double side) : Shape
+internal sealed record Square(double side) : Shape
 {
     public double Area() => this.side * this.side;
 }
 
-public static class Type_tests
+internal static class Type_tests
 {
-    public static string Describe(object o)
+    internal static string Describe(object o)
     {
         if (o is Point(var x, var y))
         {
@@ -69,7 +70,7 @@ public static class Type_tests
         }
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(Describe(new Point(1, 2)));
         global::System.Console.WriteLine(Describe(new Message.Add(3)));
@@ -79,7 +80,7 @@ public static class Type_tests
         global::System.Console.WriteLine(Check(new Point(1, 9)));
     }
 
-    public static string Kind(Shape s)
+    internal static string Kind(Shape s)
     {
         if (s is Square(var side))
         {
@@ -91,7 +92,7 @@ public static class Type_tests
         }
     }
 
-    public static bool Check(object o) => o is Point(1, _);
+    internal static bool Check(object o) => o is Point(1, _);
 }
 
 internal static class PiperEntryPoint

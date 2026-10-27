@@ -4,7 +4,7 @@ using System.Collections.Generic;
 
 trait Convert<T> {
     fn Convert() => T;
-    fn Describe() => string = "converts to {this.Convert()}";
+    fn Describe() => string = $"converts to {this.Convert()}";
 }
 
 trait Comparable<T: Comparable<T>> {
@@ -17,7 +17,7 @@ record Money(pence: int);
 record Box<T>(value: T);
 
 extend Celsius: Convert<string> {
-    fn Convert() => string = "{this.degrees} C";
+    fn Convert() => string = $"{this.degrees} C";
 }
 
 extend Money: Comparable<Money>, Convert<int> {

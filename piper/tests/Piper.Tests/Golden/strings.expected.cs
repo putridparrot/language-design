@@ -6,9 +6,9 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class Strings
+internal static class Strings
 {
-    public static void Main()
+    internal static void Main()
     {
         string name = "Piper";
         double version = 1.5;

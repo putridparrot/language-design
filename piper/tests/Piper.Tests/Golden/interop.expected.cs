@@ -6,17 +6,17 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Point(int x, int y);
+internal sealed record Point(int x, int y);
 
-public static class Interop
+internal static class Interop
 {
-    public static string Describe(string path)
+    internal static string Describe(string path)
     {
         Option<string> extension = global::Piper.Runtime.PiperInterop.FromNullableReference(global::System.IO.Path.GetExtension(path));
         return $"{path}: {(extension.IsSome ? extension.Value : "no extension")}";
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(global::System.Math.Sqrt(16));
         global::System.Console.WriteLine(global::System.Math.Max(3, 7));

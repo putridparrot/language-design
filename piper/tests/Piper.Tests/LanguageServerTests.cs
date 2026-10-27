@@ -125,6 +125,21 @@ public sealed class LanguageServerTests : IDisposable
     }
 
     [Fact]
+    public async Task Hover_shows_what_a_library_exports()
+    {
+        var text = "public record Point(x: int, y: int);\nrecord Cache(hits: int);\npublic fn Origin() => Point = Point(0, 0);\n" +
+                   "fn Main() { let p: Point = Origin(); let c = Cache(1); }";
+        var uri = await OpenAsync(text);
+
+        string Hover(JsonNode? hover) => hover!["contents"]!["value"]!.GetValue<string>();
+        Assert.Contains("public record Point(x: int, y: int)", Hover(await _server.HandleAsync("textDocument/hover", At(uri, text, "Point = Origin"))));
+        Assert.Contains("public fn Origin() => Point", Hover(await _server.HandleAsync("textDocument/hover", At(uri, text, "Origin();"))));
+        var cache = Hover(await _server.HandleAsync("textDocument/hover", At(uri, text, "Cache(1)")));
+        Assert.Contains("record Cache(hits: int)", cache);
+        Assert.DoesNotContain("public", cache);
+    }
+
+    [Fact]
     public async Task Class_properties_show_in_hover_completion_and_the_outline()
     {
         var text = "class Account {\n    mut balance = 0m;\n    prop Balance => decimal = balance;\n    prop Count: int { get; private set; } = 0;\n    static mut opened = 0;\n}\n" +
@@ -463,14 +478,14 @@ public sealed class LanguageServerTests : IDisposable
     [Fact]
     public async Task Signature_help_lists_records_and_dotnet_overloads()
     {
-        var text = "fn Main() {\n    let p = Point(1.0, 2.0);\n    System.Console.WriteLine(\"{p.x}\");\n}\nrecord Point(x: double, y: double);";
+        var text = "fn Main() {\n    let p = Point(1.0, 2.0);\n    System.Console.WriteLine($\"{p.x}\");\n}\nrecord Point(x: double, y: double);";
         var uri = await OpenAsync(text);
 
         var record = await _server.HandleAsync("textDocument/signatureHelp", At(uri, text, "1.0, 2.0", "1.0, ".Length));
         Assert.Equal("Point(x: double, y: double)", record!["signatures"]![0]!["label"]!.GetValue<string>());
         Assert.Equal(1, record["activeParameter"]!.GetValue<int>());
 
-        var overloads = await _server.HandleAsync("textDocument/signatureHelp", At(uri, text, "\"{p.x}\""));
+        var overloads = await _server.HandleAsync("textDocument/signatureHelp", At(uri, text, "$\"{p.x}\""));
         var labels = overloads!["signatures"]!.AsArray().Select(s => s!["label"]!.GetValue<string>()).ToList();
         Assert.Contains("fn Console.WriteLine(value: string)", labels);
         Assert.Contains("fn Console.WriteLine()", labels);

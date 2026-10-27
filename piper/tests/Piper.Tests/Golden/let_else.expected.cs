@@ -6,9 +6,10 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record User(string name, Option<int> managerId);
+internal sealed record User(string name, Option<int> managerId);
 
-public abstract record Shape
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record Shape
 {
     private Shape()
     {
@@ -21,13 +22,13 @@ public abstract record Shape
     public sealed record Empty() : Shape { public override string ToString() => "Empty"; }
 }
 
-public sealed record Point(int x, int y);
+internal sealed record Point(int x, int y);
 
-public static class Let_else
+internal static class Let_else
 {
-    public static Option<User> Find(int id) => id == 1 ? Option<User>.Some(new User("Ada", Option<int>.None)) : id == 2 ? Option<User>.Some(new User("Grace", Option<int>.Some(1))) : Option<User>.None;
+    internal static Option<User> Find(int id) => id == 1 ? Option<User>.Some(new User("Ada", Option<int>.None)) : id == 2 ? Option<User>.Some(new User("Grace", Option<int>.Some(1))) : Option<User>.None;
 
-    public static string ManagerName(int id)
+    internal static string ManagerName(int id)
     {
         Option<User> temp = Find(id);
         User user;
@@ -65,7 +66,7 @@ public static class Let_else
         return $"{user.name} reports to {manager.name}";
     }
 
-    public static Option<int> ToInt(string text)
+    internal static Option<int> ToInt(string text)
     {
         int v;
         if (int.TryParse(text, out v))
@@ -78,7 +79,7 @@ public static class Let_else
         }
     }
 
-    public static Result<int, string> Parse(string text)
+    internal static Result<int, string> Parse(string text)
     {
         Option<int> temp = ToInt(text);
         int n;
@@ -94,7 +95,7 @@ public static class Let_else
         return Result<int, string>.Ok(n * 2);
     }
 
-    public static int Sum(global::System.Collections.Generic.List<int> items)
+    internal static int Sum(global::System.Collections.Generic.List<int> items)
     {
         int first;
         global::System.Collections.Generic.List<int> rest;
@@ -111,7 +112,7 @@ public static class Let_else
         return first + Sum(rest);
     }
 
-    public static double Radius(Shape s)
+    internal static double Radius(Shape s)
     {
         double r;
         if (s is Shape.Circle(var r_1))
@@ -131,7 +132,7 @@ public static class Let_else
         return r;
     }
 
-    public static async global::System.Threading.Tasks.Task<string> Later(int id)
+    internal static async global::System.Threading.Tasks.Task<string> Later(int id)
     {
         await global::System.Threading.Tasks.Task.Yield();
         Option<User> temp = Find(id);
@@ -148,7 +149,7 @@ public static class Let_else
         return u.name;
     }
 
-    public static void Main()
+    internal static void Main()
     {
         Point temp = new Point(3, 4);
         int px;

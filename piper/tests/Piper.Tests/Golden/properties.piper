@@ -23,12 +23,12 @@ class Account(owner: string, opening: decimal) {
         get = name;
         set {
             name = value.Trim();
-            history.Add("renamed to {name}");
+            history.Add($"renamed to {name}");
         }
     }
 
     // Private: only Account sees it.
-    private prop Summary => string = "{name} has {balance}";
+    private prop Summary => string = $"{name} has {balance}";
 
     // Static, computed from a static field.
     static mut opened = 0;
@@ -44,7 +44,7 @@ class Account(owner: string, opening: decimal) {
         Deposits += 1;                       // the private setter, from inside
     }
 
-    fn Describe() => string = "#{id} {Summary}; {string.Join(", ", history)}";
+    fn Describe() => string = $"#{id} {Summary}; {string.Join(", ", history)}";
 }
 
 // Abstract and overridden properties.
@@ -52,7 +52,7 @@ abstract class Shape {
     abstract prop Area => double { get; }
     virtual prop Label => string = "shape";
 
-    fn Describe() => string = "{Label} of area {Math.Round(Area, 2)}";
+    fn Describe() => string = $"{Label} of area {Math.Round(Area, 2)}";
 }
 
 class Square(side: double): Shape {
@@ -123,9 +123,9 @@ fn Main() {
     ada.Deposit(5m);
     ada.Deposit(1m);
     ada.Name = "  Ada Lovelace ";
-    Print("{ada.Name}: {ada.Balance}, {ada.Deposits} deposits, overdrawn {ada.IsOverdrawn}");
+    Print($"{ada.Name}: {ada.Balance}, {ada.Deposits} deposits, overdrawn {ada.IsOverdrawn}");
     Print(ada.Describe());
-    Print("{Account.Opened} opened");
+    Print($"{Account.Opened} opened");
 
     let shapes: List<Shape> = [Square(2.0), Circle(1.0)];
     for shape in shapes {
@@ -134,14 +134,14 @@ fn Main() {
 
     let zeros = Zeros(10L);
     let buffer = byte[4];
-    Print("read {zeros.Read(buffer, 0, 4)}, now at {zeros.Position} of {zeros.Length}");
+    Print($"read {zeros.Read(buffer, 0, 4)}, now at {zeros.Position} of {zeros.Length}");
     zeros.Position = 8L;
-    Print("read {zeros.Read(buffer, 0, 4)}, now at {zeros.Position}");
+    Print($"read {zeros.Read(buffer, 0, 4)}, now at {zeros.Position}");
 
     let done: IAsyncResult = Done();
-    Print("completed {done.IsCompleted}, state {done.AsyncState is None}");
+    Print($"completed {done.IsCompleted}, state {done.AsyncState is None}");
     let countdown: IReadOnlyCollection<int> = Countdown(3);
-    Print("{countdown.Count}: {string.Join(", ", countdown)}");
+    Print($"{countdown.Count}: {string.Join(", ", countdown)}");
     let data: IExtensibleDataObject = Extensible();
     data.ExtensionData = None;
     Print(data.ExtensionData is None);

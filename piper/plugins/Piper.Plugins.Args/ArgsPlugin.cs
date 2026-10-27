@@ -167,7 +167,7 @@ public sealed class ArgsPlugin : IPiperPlugin
             }
             bool required = field.Default is null && !field.IsOptional;
             options.Add($"{Runtime}.PiperOption(\"{optionName}\", \"{field.Kind}\", {fieldDescription}, {(required ? "true" : "false")}, " +
-                        $"{(defaultName is null ? "None" : $"\"{{{defaultName}}}\"")})");
+                        $"{(defaultName is null ? "None" : $"$\"{{{defaultName}}}\"")})");
             var read = $"$arguments.{Readers[field.Kind]}(\"{optionName}\")";
             // A required option that's missing has already made Parse fail; the fallback is never used.
             values.Add(field.IsOptional ? read : $"{read} ?? {defaultName ?? (field.Kind == "string" ? "\"\"" : "0")}");
@@ -188,7 +188,7 @@ public sealed class ArgsPlugin : IPiperPlugin
                         return Err($arguments.Usage);
                     }
                     if $arguments.Error is Some(error) {
-                        return Err("{error}\n\n{$arguments.Usage}");
+                        return Err($"{error}\n\n{$arguments.Usage}");
                     }
                     Ok($name({{string.Join(", ", values)}}))
                 }

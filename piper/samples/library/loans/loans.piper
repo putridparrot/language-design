@@ -37,5 +37,5 @@ extend Book {
 
 extend Loan {
     fn IsOverdue(today: DateOnly) => bool = today > this.due;
-    fn Describe() => string = "{this.member.name} has {this.book.title} until {this.due:yyyy-MM-dd}";
+    fn Describe() => string = $"{this.member.name} has {this.book.title} until {this.due:yyyy-MM-dd}";
 }

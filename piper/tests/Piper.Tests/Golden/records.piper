@@ -12,10 +12,10 @@ fn Origin() => Point = Point(0, 0);
 
 fn Main() {
     let line = Line(Origin(), Point(3, 4));
-    Print("squared length: {LengthSquared(line)}");
+    Print($"squared length: {LengthSquared(line)}");
     Print(Point(1, 2) == Point(1, 2));
     Print(Point(1, 2) != Point(2, 1));
     let person = Person("Ada", 36, true);
-    Print("{person.name} is {person.age}, active: {person.active}");
+    Print($"{person.name} is {person.age}, active: {person.active}");
     Print(person);
 }

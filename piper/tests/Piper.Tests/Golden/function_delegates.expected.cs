@@ -6,27 +6,27 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Point(int x)
+internal sealed record Point(int x)
 {
     public static Point Make(int x) => new Point(x);
 }
 
-public static class Function_delegates
+internal static class Function_delegates
 {
-    public static int Square(int n) => n * n;
+    internal static int Square(int n) => n * n;
 
-    public static bool IsEven(int n) => n % 2 == 0;
+    internal static bool IsEven(int n) => n % 2 == 0;
 
-    public static int ByLength(string a, string b) => a.Length - b.Length;
+    internal static int ByLength(string a, string b) => a.Length - b.Length;
 
-    public static string Describe(int n) => $"#{n}";
+    internal static string Describe(int n) => $"#{n}";
 
-    public static void Work()
+    internal static void Work()
     {
         global::System.Console.WriteLine("working on another thread");
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Collections.Generic.List<int> numbers = new global::System.Collections.Generic.List<int> { 1, 2, 3, 4 };
         global::System.Console.WriteLine(string.Join<int>(",", numbers.ConvertAll<int>(Square)));

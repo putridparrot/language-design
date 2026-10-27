@@ -61,7 +61,7 @@ public class RemoteActorPluginTests
                 try {
                     await counter.Fail();
                 } catch (e: System.InvalidOperationException) {
-                    Print("fault: {e.Message}");
+                    Print($"fault: {e.Message}");
                 }
                 await counter.Stop();
                 await client.Remote().ShutdownAsync(true);

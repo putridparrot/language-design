@@ -248,7 +248,9 @@ public sealed partial class CSharpEmitter
 
     private void EmitModuleClass(SourceText file, List<BoundFunction> functions, bool fileClass)
     {
-        _writer.WriteLine($"{(fileClass ? "file" : "public")} static class {ModuleClassName(file, fileClass)}");
+        // Public only when it holds a public function, so a library exports no empty class.
+        var access = fileClass ? "file" : functions.Any(f => f.Symbol.IsExported) ? "public" : "internal";
+        _writer.WriteLine($"{access} static class {ModuleClassName(file, fileClass)}");
         _writer.OpenBrace();
         _moduleFile = file;
         _inFileClass = fileClass;
@@ -256,7 +258,7 @@ public sealed partial class CSharpEmitter
         {
             if (i > 0)
                 _writer.WriteLine();
-            EmitFunction(functions[i], functions[i].Symbol.IsPrivate ? "internal static " : "public static ");
+            EmitFunction(functions[i], functions[i].Symbol.IsExported ? "public static " : "internal static ");
         }
         _moduleFile = null;
         _inFileClass = false;
@@ -307,12 +309,17 @@ public sealed partial class CSharpEmitter
         _program.Types.OfType<GenericTypeDefinition>()
             .Where(t => HomeFile(t) != file && (MethodsFrom(t, file).Any() || TraitsFrom(t, file).Any()));
 
-    private static string Visibility(Symbol symbol) => symbol.IsPrivate ? "file" : "public";
+    /// <summary>A type's C# access: <c>file</c> for private, <c>public</c> when exported, otherwise <c>internal</c>.</summary>
+    private static string Visibility(Symbol symbol) => symbol.IsPrivate ? "file" : symbol.IsExported ? "public" : "internal";
 
     /// <summary>
     /// <c>public sealed record Pair&lt;A, B&gt;(A first, B second) : Trait where A : Bound</c>, with a body
     /// holding any extend methods (which is what lets the record implement trait interfaces).
     /// </summary>
+    /// <summary>Whether a type chooses its own JSON converter, which then replaces Piper's.</summary>
+    private static bool HasJsonConverter(Symbol type) =>
+        type.Attributes.Any(a => a.Type is ClrTypeSymbol { Type.FullName: "System.Text.Json.Serialization.JsonConverterAttribute" });
+
     private void EmitRecord(RecordSymbol record, SourceText file)
     {
         var partial = IsPartial(record) ? "partial " : "";
@@ -321,6 +328,9 @@ public sealed partial class CSharpEmitter
         var methods = MethodsFrom(record, file).ToList();
         EmitDocumentation(record, record.Fields);
         EmitAttributes(record);
+        // JSON its invariants reject is bad input (a JsonException, so a 400 from ASP.NET Core), not a failure.
+        if (!record.Invariants.IsEmpty && !HasJsonConverter(record))
+            _writer.WriteLine("[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperRecordJsonConverterFactory))]");
         if (methods.Count == 0 && record.Invariants.IsEmpty)
         {
             _writer.WriteLine(header + ";");
@@ -347,8 +357,9 @@ public sealed partial class CSharpEmitter
     private void EmitClass(ClassSymbol @class, SourceText file)
     {
         var modifiers = @class.IsAbstract ? "abstract " : @class.IsSealed ? "sealed " : "";
-        // Base arguments and other constructors need a primary constructor, so a class with either has one, if only an empty one.
-        var parameters = @class.Parameters.IsEmpty && @class.BaseArguments.IsEmpty && @class.Constructors.IsEmpty
+        // Base arguments and other constructors need a primary constructor, so a class with either has one, if only an
+        // empty one. So does one whose base constructor sets the required members it inherits, to say it does too.
+        var parameters = @class.Parameters.IsEmpty && @class.BaseArguments.IsEmpty && @class.Constructors.IsEmpty && !@class.SetsRequiredMembers
             ? ""
             : $"({string.Join(", ", @class.Parameters.Select(p => $"{TypeName(p.Type)} {Escape(p.Name)}{DefaultValue(p.Default)}"))})";
         _names = new NameAllocator(@class.Parameters.Select(p => p.Name));
@@ -361,6 +372,8 @@ public sealed partial class CSharpEmitter
 
         EmitDocumentation(@class, @class.Parameters);
         EmitAttributes(@class);
+        if (@class.SetsRequiredMembers)
+            _writer.WriteLine($"[method: {SetsRequiredMembers}]");
         _writer.WriteLine($"{Visibility(@class)} {modifiers}partial class {Escape(@class.Name)}{TypeParameterList(@class.TypeParameters)}{parameters}{baseList}{Constraints(@class.TypeParameters)}");
         _writer.OpenBrace();
         // Its invariants are checked before anything else runs: in its first field's initializer, as instance field
@@ -429,7 +442,34 @@ public sealed partial class CSharpEmitter
             _writer.WriteLine();
             EmitPropertyBridge(bridge);
         }
+        foreach (var bridge in @class.IndexerBridges)
+        {
+            _writer.WriteLine();
+            EmitIndexerBridge(bridge);
+        }
         _writer.CloseBrace();
+    }
+
+    /// <summary>
+    /// <c>string? IStore.this[string? key] { get =&gt; PiperInterop.ToNullableReference(this[PiperInterop.FromNullableReference(key)]); set =&gt; … }</c>:
+    /// implements a .NET interface indexer that may take or give null with the class's indexer of Options.
+    /// </summary>
+    private void EmitIndexerBridge(ClrIndexerBridge bridge)
+    {
+        static string Kind(ClrBoundary boundary) => boundary == ClrBoundary.NullableReference ? "NullableReference" : "NullableValue";
+        string CSharpType(TypeSymbol type, ClrBoundary boundary) => TypeName(type) + (boundary == ClrBoundary.None ? "" : "?");
+        string FromNullable(string value, ClrBoundary boundary) =>
+            boundary == ClrBoundary.None ? value : $"global::{InteropClassName}.From{Kind(boundary)}({value})";
+
+        // Named as the interface's parameters, which don't clash with `value`.
+        var names = bridge.Parameters.Select((_, i) => $"piperIndex{i}").ToList();
+        var parameters = string.Join(", ", bridge.Parameters.Select((p, i) => $"{CSharpType(p.Type, p.Boundary)} {names[i]}"));
+        var element = $"this[{string.Join(", ", bridge.Parameters.Select((p, i) => FromNullable(names[i], p.Boundary)))}]";
+        var get = bridge.Boundary == ClrBoundary.None ? element : $"global::{InteropClassName}.To{Kind(bridge.Boundary)}({element})";
+        var header = $"{CSharpType(bridge.Type, bridge.Boundary)} {TypeName(bridge.Interface)}.this[{parameters}]";
+        _writer.WriteLine(bridge.Settable
+            ? $"{header} {{ get => {get}; set => {element} = {FromNullable("value", bridge.Boundary)}; }}"
+            : $"{header} => {get};");
     }
 
     /// <summary>
@@ -520,6 +560,9 @@ public sealed partial class CSharpEmitter
         _writer.CloseBrace();
     }
 
+    /// <summary>Marks a class's constructors as setting the .NET required members it inherits, as its base constructor does.</summary>
+    private const string SetsRequiredMembers = "global::System.Diagnostics.CodeAnalysis.SetsRequiredMembers";
+
     /// <summary><c>public Account(string owner) : this(owner, 0m) { … }</c>: a constructor besides the primary one.</summary>
     private void EmitConstructor(ClassSymbol @class, ClassConstructor constructor)
     {
@@ -530,6 +573,8 @@ public sealed partial class CSharpEmitter
         var parameters = string.Join(", ", method.Parameters.Select(p => $"{TypeName(p.Type)} {Escape(_names.Get(p))}{DefaultValue(p.Default)}"));
         EmitDocumentation(method, method.Parameters);
         EmitAttributes(method);
+        if (@class.SetsRequiredMembers)
+            _writer.WriteLine($"[{SetsRequiredMembers}]");
         LineDirective(method.Declaration!.Span);
         try
         {
@@ -614,6 +659,9 @@ public sealed partial class CSharpEmitter
 
         EmitDocumentation(@enum, []);
         EmitAttributes(@enum);
+        // In JSON a variant is its name, or an object naming it in "kind", unless the enum says otherwise.
+        if (!HasJsonConverter(@enum))
+            _writer.WriteLine("[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]");
         _writer.WriteLine($"{Visibility(@enum)} abstract {partial}record {name}{TypeParameterList(@enum.TypeParameters)}" +
                           $"{BaseList(TraitsFrom(@enum, file))}{Constraints(@enum.TypeParameters)}");
         _writer.OpenBrace();
@@ -677,17 +725,25 @@ public sealed partial class CSharpEmitter
 
     private void EmitTraitMembers(IReadOnlyList<MethodSymbol> methods)
     {
+        bool first = true;
         for (int i = 0; i < methods.Count; i++)
         {
-            if (i > 0)
-                _writer.WriteLine();
             var method = methods[i];
+            // A settable property's setter is written with its getter, `string Name { get; set; }`.
+            if (SetterOf(method) is not null)
+                continue;
+            if (!first)
+                _writer.WriteLine();
+            first = false;
             _thisName = "this";
-            // A property: `double Area { get; }`, or with a default, `string Label => "shape";`.
+            // A property: `double Area { get; }`, or with a default, `string Label => "shape";`. A static one is static
+            // abstract, or with a default static virtual, as a static method is.
             if (PropertyOf(method) is { } property)
             {
+                var @static = !method.IsStatic ? "" : _methodBodies.ContainsKey(method) ? "static virtual " : "static abstract ";
+                var setter = methods.FirstOrDefault(m => SetterOf(m) == property);
                 EmitDocumentation(method, []);
-                EmitAccessors($"{TypeName(method.ReturnType)} {Escape(property)}", method, null);
+                EmitAccessors($"{@static}{TypeName(method.ReturnType)} {Escape(property)}", method, setter);
                 continue;
             }
             // A static trait method is a C# 11 static abstract (or, with a body, static virtual) interface member.
@@ -805,7 +861,8 @@ public sealed partial class CSharpEmitter
             if (c > 0)
                 _writer.WriteLine();
             var groups = classes[c].GroupBy(m => (m.ContainingType, m.IsStatic)).ToList();
-            _writer.WriteLine($"public static class {Escape(classes[c].Key)}");
+            // Public only when a `public extend` block adds to it.
+            _writer.WriteLine($"{(classes[c].Any(m => m.IsExported) ? "public" : "internal")} static class {Escape(classes[c].Key)}");
             _writer.OpenBrace();
             for (int i = 0; i < groups.Count; i++)
             {
@@ -824,7 +881,7 @@ public sealed partial class CSharpEmitter
                     if (j > 0)
                         _writer.WriteLine();
                     _thisName = "self";
-                    var access = methods[j].IsPrivate ? "internal " : "public ";
+                    var access = methods[j].IsExported ? "public " : "internal ";
                     // A C# 14 extension property: `public bool IsEven => self % 2 == 0;`.
                     if (PropertyOf(methods[j]) is { } property)
                         EmitAccessors($"{access}{(isStatic ? "static " : "")}{TypeName(methods[j].ReturnType)} {Escape(property)}", methods[j], null);
@@ -1319,7 +1376,12 @@ public sealed partial class CSharpEmitter
             BoundObjectInitializerExpression initializer => (
                 initializer.Members.IsEmpty
                     ? Expr(initializer.Creation, PrimaryPrecedence)
-                    : $"{Expr(initializer.Creation, PrimaryPrecedence)} {{ {string.Join(", ", initializer.Members.Select(m => $"{Escape(m.Member)} = {Expr(m.Value, AssignmentPrecedence)}"))} }}",
+                    : $"{Expr(initializer.Creation, PrimaryPrecedence)} {InitializerMembers(initializer.Members)}",
+                PrimaryPrecedence),
+            // Only a member's value in an initializer: `Font = { Size = 12 }`, `Items = { "a", { "k", 1 } }`.
+            BoundNestedInitializer nested => (InitializerMembers(nested.Members), PrimaryPrecedence),
+            BoundCollectionInitializer collection => (
+                $"{{ {string.Join(", ", collection.Elements.Select(e => e.Length == 1 ? Expr(e[0], AssignmentPrecedence) : $"{{ {string.Join(", ", e.Select(a => Expr(a, AssignmentPrecedence)))} }}"))} }}",
                 PrimaryPrecedence),
             BoundFieldAssignmentExpression assignment =>
                 ($"{Expr(assignment.Target, PrimaryPrecedence)}.{Escape(assignment.Field.Name)} {(assignment.CompoundOperator is { } op ? Operators.GetText(op) + "=" : "=")} {Expr(assignment.Value, AssignmentPrecedence)}", AssignmentPrecedence),
@@ -1327,7 +1389,7 @@ public sealed partial class CSharpEmitter
             BoundBinaryExpression binary => Binary(binary),
             BoundAssignmentExpression assignment => (Assignment(assignment), AssignmentPrecedence),
             BoundCallExpression call => (Call(call), PrimaryPrecedence),
-            BoundMethodCallExpression call => (MethodCall(call), PrimaryPrecedence),
+            BoundMethodCallExpression call => (MethodCall(call), SetterOf(call.Method) is not null && !UsesWitnessFor(call) ? AssignmentPrecedence : PrimaryPrecedence),
             BoundRecordCreationExpression creation =>
                 ($"new {TypeName(creation.Type)}({Arguments(creation.Arguments, creation.ArgumentNames)})", PrimaryPrecedence),
             // Option/Result: static factories on the struct, e.g. `Option<int>.Some(1)` and `Option<int>.None`.
@@ -1500,17 +1562,42 @@ public sealed partial class CSharpEmitter
             .Select(_names.NameOf)
             .OfType<string>()
             .ToHashSet();
-        var parameters = string.Join(", ", lambda.Parameters.Select(p => $"{TypeName(p.Type)} {Escape(_names.DeclareLambdaParameter(p, taken))}"));
+        // A lambda whose Options may be left out takes them nullable, `Option<string>? name`, so ASP.NET Core binds a
+        // request lacking one (no ?name=) rather than refusing it; the body reads it as an Option under another name.
+        var parameters = new List<string>();
+        var unwrapped = new List<string>();
+        foreach (var parameter in lambda.Parameters)
+        {
+            var name = Escape(_names.DeclareLambdaParameter(parameter, taken));
+            if (lambda.OptionsMayBeLeftOut && parameter.Type.IsOption)
+            {
+                var type = TypeName(parameter.Type);
+                parameters.Add($"{type}? {name}");
+                unwrapped.Add($"{type} {Escape(_names.Declare(parameter))} = {name} ?? default;");
+            }
+            else
+                parameters.Add($"{TypeName(parameter.Type)} {name}");
+        }
+        var head = $"{(lambda.IsAsync ? "async " : "")}({string.Join(", ", parameters)}) =>";
         var body = (BoundBlockStatement)lambda.Body;
-        if (lambda.IsExpressionBodied && ExpressionBody(body) is { } expression)
-            return $"{(lambda.IsAsync ? "async " : "")}({parameters}) => {Expr(expression, AssignmentPrecedence)}";
+        if (unwrapped.Count == 0 && lambda.IsExpressionBodied && ExpressionBody(body) is { } expression)
+            return $"{head} {Expr(expression, AssignmentPrecedence)}";
 
         var outer = _writer;
         _writer = new CodeWriter(outer.Indent);
         try
         {
+            if (unwrapped.Count == 0)
+            {
+                EmitBlock(body);
+                return $"{head} {_writer.ToString().Trim()}";
+            }
+            _writer.OpenBrace();
+            foreach (var line in unwrapped)
+                _writer.WriteLine(line);
             EmitBlock(body);
-            return $"{(lambda.IsAsync ? "async " : "")}({parameters}) => {_writer.ToString().Trim()}";
+            _writer.CloseBrace();
+            return $"{head} {_writer.ToString().Trim()}";
         }
         finally
         {
@@ -1626,6 +1713,10 @@ public sealed partial class CSharpEmitter
     private static string? PropertyOf(MethodSymbol method) =>
         method.IsAccessor && !method.IsIndexerAccessor && method.Name.StartsWith("get_", StringComparison.Ordinal) ? method.Declaration!.AccessorOf : null;
 
+    /// <summary>For a property's setter (<c>set_Name</c>): the property, which C# code assigns by name. Null for other methods.</summary>
+    private static string? SetterOf(MethodSymbol method) =>
+        method.IsAccessor && !method.IsIndexerAccessor && method.Name.StartsWith("set_", StringComparison.Ordinal) ? method.Declaration!.AccessorOf : null;
+
     private string MethodCall(BoundMethodCallExpression call)
     {
         var typeArguments = TypeArgumentList(call.TypeArguments);
@@ -1633,7 +1724,7 @@ public sealed partial class CSharpEmitter
 
         // A type parameter, builtin, .NET or runtime type reaches a trait's methods through its witness:
         // `PiperTraits.Witness<Shape.PiperWitness<T>>().area(x)`. So does a static default on any type.
-        if (call.TraitType is { } trait && !call.ReceiverType.IsTrait && (UsesWitness(call.ReceiverType) || call.Receiver is null))
+        if (UsesWitnessFor(call) && call.TraitType is { } trait)
         {
             var receiver = call.Receiver is null ? "" : Expr(call.Receiver, ConditionalPrecedence);
             var all = receiver == "" ? arguments : arguments == "" ? receiver : $"{receiver}, {arguments}";
@@ -1647,8 +1738,10 @@ public sealed partial class CSharpEmitter
             return ExtensionCall(call.Method, call.ReceiverType, receiver, typeArguments, arguments);
         }
 
-        // A property's getter is read as the property.
-        var method = PropertyOf(call.Method) is { } property ? Escape(property) : $"{Escape(call.Method.Name)}{typeArguments}({arguments})";
+        // A property's getter is read as the property, and its setter assigns it.
+        var method = PropertyOf(call.Method) is { } property ? Escape(property)
+            : SetterOf(call.Method) is { } settable ? $"{Escape(settable)} = {Expr(call.Arguments[0], AssignmentPrecedence)}"
+            : $"{Escape(call.Method.Name)}{typeArguments}({arguments})";
         if (call.Receiver is null)
             return $"{TypeName(call.ReceiverType)}.{method}";
 
@@ -1658,8 +1751,16 @@ public sealed partial class CSharpEmitter
         return $"{Expr(call.Receiver, PrimaryPrecedence)}.{method}";
     }
 
+    /// <summary>Whether <paramref name="call"/> reaches its trait method through the trait's witness.</summary>
+    private bool UsesWitnessFor(BoundMethodCallExpression call) =>
+        call.TraitType is not null && !call.ReceiverType.IsTrait && (UsesWitness(call.ReceiverType) || call.Receiver is null);
+
     private string TypeArgumentList(ImmutableArray<TypeSymbol> arguments) =>
         arguments.IsEmpty ? "" : $"<{string.Join(", ", arguments.Select(a => TypeName(a)))}>";
+
+    /// <summary><c>{ Title = "x", Font = { Size = 12 } }</c>: an object initializer's members.</summary>
+    private string InitializerMembers(ImmutableArray<(string Member, BoundExpression Value)> members) =>
+        $"{{ {string.Join(", ", members.Select(m => $"{Escape(m.Member)} = {Expr(m.Value, AssignmentPrecedence)}"))} }}";
 
     /// <param name="names">Named arguments' names, by position (empty when all are positional), written as C#'s `name: value`.</param>
     private string Arguments(IEnumerable<BoundExpression> arguments, ImmutableArray<string?> names = default) =>

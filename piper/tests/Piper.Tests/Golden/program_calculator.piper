@@ -26,9 +26,9 @@ trait Describe {
 
 extend Token: Describe {
     fn Describe() => string = match this {
-        Number(v) => "number {v}",
-        Name(t) => "name '{t}'",
-        Op(c) => "'{c}'",
+        Number(v) => $"number {v}",
+        Name(t) => $"name '{t}'",
+        Op(c) => $"'{c}'",
         Open => "'('",
         Close => "')'",
     };
@@ -48,7 +48,7 @@ fn Tokenize(source: string) => Result<List<Token>, string> {
             }
             let text = source.Substring(start, i - start);
             if !double.TryParse(text, out let value) {
-                return Err("bad number '{text}' at {start}");
+                return Err($"bad number '{text}' at {start}");
             }
             tokens.Add(Token.Number(value));
         } else if char.IsLetter(c) {
@@ -67,7 +67,7 @@ fn Tokenize(source: string) => Result<List<Token>, string> {
             tokens.Add(Token.Close);
             i += 1;
         } else {
-            return Err("unexpected '{c}' at {i}");
+            return Err($"unexpected '{c}' at {i}");
         }
     }
     Ok(tokens)
@@ -138,7 +138,7 @@ fn ParsePrimary(p: Parser) => Result<Expr, string> {
             Expect(p, Token.Close)?;
             Ok(inner)
         }
-        Some(other) => Err("unexpected {other.Describe()}"),
+        Some(other) => Err($"unexpected {other.Describe()}"),
         None => Err("unexpected end of input"),
     }
 }
@@ -149,12 +149,12 @@ fn Expect(p: Parser, wanted: Token) => Result<int, string> {
         Advance(p);
         return Ok(0);
     }
-    Err("expected {wanted.Describe()} but found {found?.Describe() ?? "end of input"}")
+    Err($"expected {wanted.Describe()} but found {found?.Describe() ?? "end of input"}")
 }
 
 fn Evaluate(e: Expr, variables: Dictionary<string, double>) => Result<double, string> = match e {
     Num(v) => Ok(v),
-    Var(name) => if variables.TryGetValue(name, out let value) { Ok(value) } else { Err("unknown variable '{name}'") },
+    Var(name) => if variables.TryGetValue(name, out let value) { Ok(value) } else { Err($"unknown variable '{name}'") },
     Neg(operand) => Ok(-Evaluate(operand, variables)?),
     Bin(op, left, right) => {
         let (a, b) = (Evaluate(left, variables)?, Evaluate(right, variables)?);
@@ -171,17 +171,17 @@ fn Evaluate(e: Expr, variables: Dictionary<string, double>) => Result<double, st
         match function {
             "sqrt" => Ok(Math.Sqrt(x)),
             "abs" => Ok(Math.Abs(x)),
-            _ => Err("unknown function '{function}'"),
+            _ => Err($"unknown function '{function}'"),
         }
     }
 };
 
 fn Show(e: Expr) => string = match e {
-    Num(v) => "{v}",
+    Num(v) => $"{v}",
     Var(name) => name,
-    Neg(operand) => "(-{Show(operand)})",
-    Bin(op, left, right) => "({Show(left)} {op} {Show(right)})",
-    Call(function, argument) => "{function}({Show(argument)})",
+    Neg(operand) => $"(-{Show(operand)})",
+    Bin(op, left, right) => $"({Show(left)} {op} {Show(right)})",
+    Call(function, argument) => $"{function}({Show(argument)})",
 };
 
 fn Calculate(source: string, variables: Dictionary<string, double>) => Result<string, string> {
@@ -189,10 +189,10 @@ fn Calculate(source: string, variables: Dictionary<string, double>) => Result<st
     let parser = Parser(tokens, int[1]);
     let tree = ParseExpression(parser, 1)?;
     if Peek(parser) is Some(extra) {
-        return Err("unexpected {extra.Describe()} after the expression");
+        return Err($"unexpected {extra.Describe()} after the expression");
     }
     let value = Evaluate(tree, variables)?;
-    Ok("{Show(tree)} = {value}")
+    Ok($"{Show(tree)} = {value}")
 }
 
 fn Main() {
@@ -214,8 +214,8 @@ fn Main() {
     ];
     for input in inputs {
         match Calculate(input, variables) {
-            Ok(result) => Print("{input.PadRight(22)} → {result}"),
-            Err(message) => Print("{input.PadRight(22)} ✗ {message}"),
+            Ok(result) => Print($"{input.PadRight(22)} → {result}"),
+            Err(message) => Print($"{input.PadRight(22)} ✗ {message}"),
         }
     }
 }

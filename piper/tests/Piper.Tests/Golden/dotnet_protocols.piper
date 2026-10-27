@@ -10,12 +10,12 @@ using System.Xml.Linq;
 // ToString: records and enums replace the one C# generates.
 record Money(amount: decimal);
 extend Money {
-    override fn ToString() => string = "£{this.amount}";
+    override fn ToString() => string = $"£{this.amount}";
 }
 
 enum Suit { Hearts, Spades, Joker(n: int) }
 extend Suit {
-    override fn ToString() => string = match this { Hearts => "♥", Spades => "♠", Joker(n) => "Joker {n}" };
+    override fn ToString() => string = match this { Hearts => "♥", Spades => "♠", Joker(n) => $"Joker {n}" };
 }
 
 // IComparable<T> for the type itself: sorting, Max, and the comparison operators.
@@ -25,7 +25,7 @@ extend Version: IComparable<Version> {
         Some(o) => if this.major != o.major { this.major - o.major } else { this.minor - o.minor },
         None => 1,
     };
-    override fn ToString() => string = "{this.major}.{this.minor}";
+    override fn ToString() => string = $"{this.major}.{this.minor}";
 }
 
 class Score(points: int): IComparable<Score> {
@@ -58,7 +58,7 @@ fn Doubled(n: BigInteger) => BigInteger = n * 2;
 
 fn Main() {
     Print(Money(2.5m));
-    Print("{Suit.Hearts} {Suit.Joker(2)} {Option.Some(Money(1m))}");
+    Print($"{Suit.Hearts} {Suit.Joker(2)} {Option.Some(Money(1m))}");
 
     let versions = [Version(1, 5), Version(1, 2), Version(0, 9)];
     Print(Version(1, 2) < Version(1, 3));

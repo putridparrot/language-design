@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Person([property: global::System.Text.Json.Serialization.JsonPropertyNameAttribute("first_name")] string first, [property: global::System.Text.Json.Serialization.JsonPropertyNameAttribute("years")] int age, [property: global::System.Text.Json.Serialization.JsonIgnoreAttribute(Condition = global::System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)] int stars) : Greeter
+internal sealed record Person([property: global::System.Text.Json.Serialization.JsonPropertyNameAttribute("first_name")] string first, [property: global::System.Text.Json.Serialization.JsonPropertyNameAttribute("years")] int age, [property: global::System.Text.Json.Serialization.JsonIgnoreAttribute(Condition = global::System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)] int stars) : Greeter
 {
     public string Greet() => $"Hello, {this.first}";
 
@@ -15,7 +15,8 @@ public sealed record Person([property: global::System.Text.Json.Serialization.Js
 }
 
 [global::System.ObsoleteAttribute("Use Shape instead.")]
-public abstract record OldShape
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record OldShape
 {
     private OldShape()
     {
@@ -25,9 +26,9 @@ public abstract record OldShape
 }
 
 [global::System.SerializableAttribute]
-public sealed record Point(int x, int y);
+internal sealed record Point(int x, int y);
 
-public interface Greeter
+internal interface Greeter
 {
     [global::System.ObsoleteAttribute]
     string Greet();
@@ -51,14 +52,14 @@ public interface Greeter
     }
 }
 
-public static class Attributes
+internal static class Attributes
 {
     [global::System.ObsoleteAttribute("Use parse.", DiagnosticId = "PIPDEMO1")]
-    public static int LegacyParse(string text) => int.Parse(text);
+    internal static int LegacyParse(string text) => int.Parse(text);
 
-    public static bool Matches([global::System.Diagnostics.CodeAnalysis.StringSyntaxAttribute(global::System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.Regex)] string pattern, string text) => global::System.Text.RegularExpressions.Regex.IsMatch(text, pattern);
+    internal static bool Matches([global::System.Diagnostics.CodeAnalysis.StringSyntaxAttribute(global::System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.Regex)] string pattern, string text) => global::System.Text.RegularExpressions.Regex.IsMatch(text, pattern);
 
-    public static void Main()
+    internal static void Main()
     {
         string json = global::System.Text.Json.JsonSerializer.Serialize<Person>(new Person("Ada", 36, 0));
         global::System.Console.WriteLine(json);

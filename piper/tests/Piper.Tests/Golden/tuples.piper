@@ -29,18 +29,18 @@ fn Main() {
     Print(pair);
     Print(pair.Item1 + 1);
     let result = Divide(17, 5);
-    Print("{result.quotient} r {result.remainder}");
+    Print($"{result.quotient} r {result.remainder}");
     Print(result.Item2);
 
     // Names are inferred from variables and members, as in C#.
     let p = Point(3, 4);
     let name = "p";
     let labelled = (name, p.x);
-    Print("{labelled.name} {labelled.x}");
+    Print($"{labelled.name} {labelled.x}");
 
     // Deconstruction: tuples, records (by field), and .NET types with Deconstruct.
     let (q, r) = Divide(7, 2);
-    Print("{q} {r}");
+    Print($"{q} {r}");
     let (px, py) = p;
     Print(px * py);
     let (first, (_, third)) = (1, (2, 3));
@@ -49,16 +49,16 @@ fn Main() {
     mut a = 1;
     mut b = 2;
     (a, b) = (b, a);
-    Print("{a} {b}");
+    Print($"{a} {b}");
 
     let ages: Dictionary<string, int> = Dictionary();
     ages["Ada"] = 36;
     ages["Grace"] = 45;
     for (who, age) in ages {
-        Print("{who}: {age}");
+        Print($"{who}: {age}");
     }
     for (index, word) in [(1, "a"), (2, "b")] {
-        Print("{index}{word}");
+        Print($"{index}{word}");
     }
 
     // Generic functions, conversions and equality.
@@ -78,17 +78,17 @@ fn Main() {
 
     // .NET methods returning tuples.
     let (quotient, remainder) = Math.DivRem(20, 6);
-    Print("{quotient} {remainder}");
+    Print($"{quotient} {remainder}");
 
     // Their element names come with them, even inside other types.
     let division = Math.DivRem(20, 6);
-    Print("{division.Quotient} r {division.Remainder}");
+    Print($"{division.Quotient} r {division.Remainder}");
     let unnamed: (int, int) = division;
     Print(unnamed.Item1);
     for entry in System.Linq.Enumerable.Index(["a", "b"]) {
-        Print("{entry.Index}:{entry.Item}");
+        Print($"{entry.Index}:{entry.Item}");
     }
 
     let pairs: List<(string, int)> = [("x", 1), ("y", 2)];
-    Print(string.Join(";", System.Linq.Enumerable.Select(pairs, entry => "{entry.Item1}={entry.Item2 * 10}")));
+    Print(string.Join(";", System.Linq.Enumerable.Select(pairs, entry => $"{entry.Item1}={entry.Item2 * 10}")));
 }

@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public interface Named
+internal interface Named
 {
     string Name();
 
@@ -34,7 +34,7 @@ public interface Named
     }
 }
 
-public interface Titled : Named
+internal interface Titled : Named
 {
     string Title();
 
@@ -73,16 +73,16 @@ public interface Titled : Named
     }
 }
 
-public sealed record Person(string name) : Titled
+internal sealed record Person(string name) : Titled
 {
     public string Name() => this.name;
 
     public string Title() => "Dr";
 }
 
-public static class Trait_bare_calls
+internal static class Trait_bare_calls
 {
-    public static void Main()
+    internal static void Main()
     {
         Person p = new Person("Ada");
         global::System.Console.WriteLine(((Titled)p).Formal());

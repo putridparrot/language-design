@@ -6,12 +6,14 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Percentage(int @value)
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperRecordJsonConverterFactory))]
+internal sealed record Percentage(int @value)
 {
     public int @value { get; init; } = global::Piper.Runtime.PiperContract.Invariant(@value, @value >= 0 && @value <= 100, "value >= 0 && value <= 100", $"value = {@value}");
 }
 
-public sealed record Range(int low, int high)
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperRecordJsonConverterFactory))]
+internal sealed record Range(int low, int high)
 {
     public int low { get; init; } = global::Piper.Runtime.PiperContract.Invariant(low, low <= high, "low <= high", $"low = {low}, high = {high}");
     public int high { get; init; } = high;
@@ -31,15 +33,15 @@ public sealed record Range(int low, int high)
     }
 }
 
-public static class Contracts
+internal static class Contracts
 {
-    public static double Sqrt(double x)
+    internal static double Sqrt(double x)
     {
         global::Piper.Runtime.PiperContract.Require(x >= 0.0, "x >= 0.0", $"x = {x}", "x");
         return global::System.Math.Sqrt(x);
     }
 
-    public static global::System.Collections.Generic.List<int> Slice(global::System.Collections.Generic.List<int> items, int start, int count)
+    internal static global::System.Collections.Generic.List<int> Slice(global::System.Collections.Generic.List<int> items, int start, int count)
     {
         global::Piper.Runtime.PiperContract.Require(start >= 0, "start >= 0", $"start = {start}", "start");
         global::Piper.Runtime.PiperContract.Require(count >= 0, "count >= 0", $"count = {count}", "count");
@@ -47,20 +49,20 @@ public static class Contracts
         return items.GetRange(start, count);
     }
 
-    public static int Positive(Option<int> n)
+    internal static int Positive(Option<int> n)
     {
         global::Piper.Runtime.PiperContract.Require(n is { IsSome: true, Value: var v } && v > 0, "n is Some(v) && v > 0", $"n = {n}", "n");
         return n.IsSome ? n.Value : 0;
     }
 
-    public static async global::System.Threading.Tasks.Task<int> Delay(int ms)
+    internal static async global::System.Threading.Tasks.Task<int> Delay(int ms)
     {
         global::Piper.Runtime.PiperContract.Require(ms >= 0, "ms >= 0", $"ms = {ms}", "ms");
         await global::System.Threading.Tasks.Task.Delay(ms);
         return ms;
     }
 
-    public static void Attempt(string label, global::System.Func<string> action)
+    internal static void Attempt(string label, global::System.Func<string> action)
     {
         try
         {
@@ -72,7 +74,7 @@ public static class Contracts
         }
     }
 
-    public static async global::System.Threading.Tasks.Task Main()
+    internal static async global::System.Threading.Tasks.Task Main()
     {
         double size = 16.0;
         Attempt("sqrt 16", () => Sqrt(size).ToString());

@@ -154,7 +154,7 @@ public class ParserTests
     public void Interpolation_holes_are_parsed_as_expressions()
     {
         var diagnostics = new DiagnosticBag();
-        var expression = Parser.ParseExpression(new SourceText("\"sum={a + b}\""), diagnostics);
+        var expression = Parser.ParseExpression(new SourceText("$\"sum={a + b}\""), diagnostics);
         Assert.Empty(diagnostics);
         var interpolated = Assert.IsType<InterpolatedStringExpressionSyntax>(expression);
         var hole = Assert.Single(interpolated.Parts.OfType<InterpolationSyntax>());

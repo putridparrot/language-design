@@ -34,7 +34,7 @@ public class ServicesPluginTests
         trait Clock { fn Now() => string; }
         record FixedClock(time: string);
         extend FixedClock: Clock { fn Now() => string = this.time; }
-        class Report(clock: Clock) { fn Text() => string = "at {clock.Now()}"; }
+        class Report(clock: Clock) { fn Text() => string = $"at {clock.Now()}"; }
         """;
 
     /// <summary>The one error <paramref name="text"/> has, which must be the plugin's, at <paramref name="at"/>.</summary>

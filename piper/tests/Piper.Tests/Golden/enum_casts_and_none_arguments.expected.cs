@@ -6,11 +6,11 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class Enum_casts_and_none_arguments
+internal static class Enum_casts_and_none_arguments
 {
-    public static string Describe(global::System.Net.HttpStatusCode status) => $"{(int)status} {status}";
+    internal static string Describe(global::System.Net.HttpStatusCode status) => $"{(int)status} {status}";
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(Describe(global::System.Net.HttpStatusCode.NotFound));
         global::System.Console.WriteLine(Describe((global::System.Net.HttpStatusCode)201));

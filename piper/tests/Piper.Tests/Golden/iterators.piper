@@ -34,11 +34,11 @@ fn TakeWhileSmall<T>(items: IEnumerable<T>, limit: int, size: (T) => int) => IEn
 }
 
 fn Noisy(name: string) => IEnumerable<string> {
-    Print("start {name}");
-    yield return "{name}1";
-    Print("middle {name}");
-    yield return "{name}2";
-    Print("end {name}");
+    Print($"start {name}");
+    yield return $"{name}1";
+    Print($"middle {name}");
+    yield return $"{name}2";
+    Print($"end {name}");
 }
 
 record Tree(value: int, children: List<Tree>);
@@ -92,5 +92,5 @@ async fn Main() {
     await for tick in Ticks(3) {
         total += tick;
     }
-    Print("ticks total {total}");
+    Print($"ticks total {total}");
 }

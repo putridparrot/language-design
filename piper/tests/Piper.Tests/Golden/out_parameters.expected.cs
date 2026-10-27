@@ -6,9 +6,9 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class Out_parameters
+internal static class Out_parameters
 {
-    public static int ParseOr(string text, int fallback)
+    internal static int ParseOr(string text, int fallback)
     {
         int n;
         if (int.TryParse(text, out n))
@@ -21,7 +21,7 @@ public static class Out_parameters
         }
     }
 
-    public static string Describe(string text)
+    internal static string Describe(string text)
     {
         double @value;
         if (!double.TryParse(text, out @value))
@@ -31,7 +31,7 @@ public static class Out_parameters
         return $"'{text}' is {@value * 2} doubled";
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(ParseOr("42", 0));
         global::System.Console.WriteLine(ParseOr("forty-two", -1));
@@ -84,7 +84,7 @@ public static class Out_parameters
         global::System.Console.WriteLine(total);
     }
 
-    public static string Lookup(global::System.Collections.Generic.Dictionary<string, string> names, string key)
+    internal static string Lookup(global::System.Collections.Generic.Dictionary<string, string> names, string key)
     {
         string name;
         if (!names.TryGetValue(key, out name))

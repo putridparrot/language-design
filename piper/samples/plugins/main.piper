@@ -11,7 +11,7 @@ fn Retry(times: int, body: () => bool) => bool {
         if body() {
             return true;
         }
-        Print("attempt {attempt} failed");
+        Print($"attempt {attempt} failed");
     }
     false
 }
@@ -19,7 +19,7 @@ fn Retry(times: int, body: () => bool) => bool {
 // A closure that awaits is async, so it can be passed where a `() => Task` is wanted.
 async fn Timed(label: string, body: () => Task) {
     await body();
-    Print("{label}: done");
+    Print($"{label}: done");
 }
 
 fn Square(n: int) => int {
@@ -39,7 +39,7 @@ fn Squares() {
     parallel for n in [1, 2, 3, 4, 5] {
         Interlocked.Add(ref total, Square(n));
     }
-    Print("sum of squares: {total}");
+    Print($"sum of squares: {total}");
 
     // `concurrency` (from the plugin) runs each statement at once, and waits until all have finished.
     mut first = 0;
@@ -48,7 +48,7 @@ fn Squares() {
         first = Square(6);
         second = Square(7);
     }
-    Print("{first} and {second}");
+    Print($"{first} and {second}");
 }
 
 async fn Main() {
@@ -63,7 +63,7 @@ async fn Main() {
             b = await Fetch(2);
         }
     };
-    Print("{a} and {b}");
+    Print($"{a} and {b}");
 
     // The plugin's keywords are still ordinary names elsewhere.
     let parallel = "not a keyword here";
@@ -74,7 +74,7 @@ async fn Main() {
         tries += 1;
         tries == 2
     };
-    Print("succeeded: {ok} after {tries} tries");
+    Print($"succeeded: {ok} after {tries} tries");
 }
 
 test "parallel for visits every item" {

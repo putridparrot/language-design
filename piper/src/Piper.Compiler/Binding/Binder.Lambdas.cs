@@ -145,6 +145,7 @@ public sealed partial class Binder
         return new BoundLambdaExpression([.. parameters], body, returnType, bodyType, syntax.Body is not BlockExpressionSyntax, delegateType)
         {
             IsAsync = isAsync,
+            OptionsMayBeLeftOut = syntax.OptionsMayBeLeftOut,
         };
     }
 

@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public interface Shape
+internal interface Shape
 {
     double Area();
 
@@ -29,14 +29,14 @@ public interface Shape
     }
 }
 
-public sealed record Square(double side) : Shape
+internal sealed record Square(double side) : Shape
 {
     public double Area() => this.side * this.side;
 }
 
-public static class Numbers
+internal static class Numbers
 {
-    public static string Describe(byte b)
+    internal static string Describe(byte b)
     {
         if (b is 0)
         {
@@ -56,7 +56,7 @@ public static class Numbers
         }
     }
 
-    public static void Main()
+    internal static void Main()
     {
         float f = 1.5f;
         double d = 2.5;

@@ -37,9 +37,9 @@ async fn Delay(ms: int) => Task<int> requires ms >= 0 {
 
 fn Attempt(label: string, action: () => string) {
     try {
-        Print("{label}: {action()}");
+        Print($"{label}: {action()}");
     } catch (e: ArgumentException) {
-        Print("{label}: {e.Message}");
+        Print($"{label}: {e.Message}");
     }
 }
 
@@ -57,26 +57,26 @@ async fn Main() {
     let half = Percentage(50);
     Print(half);
     let big = 150;
-    Attempt("150%", () => "{Percentage(big)}");
+    Attempt("150%", () => $"{Percentage(big)}");
     // A copy is checked too.
-    Attempt("copy to 75%", () => "{{ ...half, value: 75 }}");
-    Attempt("copy to -1%", () => "{{ ...half, value: -1 }}");
+    Attempt("copy to 75%", () => $"{ { ...half, value: 75 } }");
+    Attempt("copy to -1%", () => $"{ { ...half, value: -1 } }");
 
     let r = Range(1, 5);
-    Print("{r.Contains(3)} {r.Widen(2)} {r + Range(3, 9)}");
+    Print($"{r.Contains(3)} {r.Widen(2)} {r + Range(3, 9)}");
     let shrink = -1;
-    Attempt("widen -1", () => "{r.Widen(shrink)}");
-    Attempt("add lower", () => "{r + Range(0, 2)}");
+    Attempt("widen -1", () => $"{r.Widen(shrink)}");
+    Attempt("add lower", () => $"{r + Range(0, 2)}");
 
     Print(Positive(3));
     let none: int? = null;
-    Attempt("positive none", () => "{Positive(none)}");
+    Attempt("positive none", () => $"{Positive(none)}");
 
     Print(await Delay(1));
     try {
         let wait = -1;
         Print(await Delay(wait));
     } catch (e: ArgumentException) {
-        Print("delay: {e.Message} [{e.ParamName ?? "?"}]");
+        Print($"delay: {e.Message} [{e.ParamName ?? "?"}]");
     }
 }

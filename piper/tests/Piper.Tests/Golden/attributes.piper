@@ -23,7 +23,7 @@ trait Greeter {
 }
 
 extend Person: Greeter {
-    fn Greet() => string = "Hello, {this.first}";
+    fn Greet() => string = $"Hello, {this.first}";
 
     [Obsolete("Use greet.", false)]
     fn Hello() => string = this.Greet();
@@ -39,7 +39,7 @@ fn Main() {
     let json = JsonSerializer.Serialize(Person("Ada", 36, 0));
     Print(json);
     match JsonSerializer.Deserialize<Person>("""{"first_name":"Grace","years":45,"stars":5}""") {
-        Some(p) => Print("{p.first} {p.age} {p.stars}"),
+        Some(p) => Print($"{p.first} {p.age} {p.stars}"),
         None => Print("nothing"),
     }
     Print(Matches("^a+$", "aaa"));

@@ -20,7 +20,7 @@ trait Priced {
     fn PriceText() => string {
         let pounds = this.UnitPrice().pence / 100;
         let pence = this.UnitPrice().pence % 100;
-        "£{pounds}.{pence.ToString().PadLeft(2, '0')}"
+        $"£{pounds}.{pence.ToString().PadLeft(2, '0')}"
     }
 }
 

@@ -7,9 +7,9 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class MainModule
+internal static class MainModule
 {
-    public static void Main()
+    internal static void Main()
     {
         global::Shop.Store.Inventory inventory = global::Shop.Store.Store.Create(new global::System.Collections.Generic.List<global::Shop.Model.Item> { new global::Shop.Model.Item("F-1", "Apples", new global::Shop.Model.Category.Food(), new global::Shop.Model.Money(45), 20), new global::Shop.Model.Item("F-2", "Bread", new global::Shop.Model.Category.Food(), new global::Shop.Model.Money(120), 4), new global::Shop.Model.Item("T-1", "Hammer", new global::Shop.Model.Category.Tools(), new global::Shop.Model.Money(1299), 2), new global::Shop.Model.Item("B-1", "SICP", new global::Shop.Model.Category.Books(), new global::Shop.Model.Money(4500), 1) });
         global::System.Collections.Generic.List<global::Shop.Model.Item> everything = new global::System.Collections.Generic.List<global::Shop.Model.Item>(inventory.items.Values);
@@ -72,7 +72,7 @@ using Piper.Runtime;
 
 namespace Shop.Model
 {
-    public sealed record Money(long pence)
+    internal sealed record Money(long pence)
     {
         public Money Plus(Money other) => new Money(this.pence + other.pence);
 
@@ -81,7 +81,8 @@ namespace Shop.Model
         public static Money Zero() => new Money(0);
     }
 
-    public abstract record Category
+    [global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+    internal abstract record Category
     {
         private Category()
         {
@@ -94,12 +95,12 @@ namespace Shop.Model
         public sealed record Books() : Category { public override string ToString() => "Books"; }
     }
 
-    public sealed record Item(string sku, string name, Category category, Money price, int stock) : Priced
+    internal sealed record Item(string sku, string name, Category category, Money price, int stock) : Priced
     {
         public Money UnitPrice() => this.price;
     }
 
-    public interface Priced
+    internal interface Priced
     {
         Money UnitPrice();
 
@@ -132,12 +133,12 @@ namespace Shop.Model
         }
     }
 
-    public static class Model
+    internal static class Model
     {
         /// <summary>
         /// The total value of anything priced.
         /// </summary>
-        public static Money Total<T>(global::System.Collections.Generic.List<T> items)
+        internal static Money Total<T>(global::System.Collections.Generic.List<T> items)
         {
             Money sum = Money.Zero();
             foreach (T item in items)
@@ -159,7 +160,8 @@ using Piper.Runtime;
 
 namespace Shop.Store
 {
-    public abstract record OrderError
+    [global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+    internal abstract record OrderError
     {
         private OrderError()
         {
@@ -172,11 +174,11 @@ namespace Shop.Store
         public sealed record InvalidQuantity(int quantity) : OrderError;
     }
 
-    public sealed record Inventory(global::System.Collections.Generic.Dictionary<string, global::Shop.Model.Item> items);
+    internal sealed record Inventory(global::System.Collections.Generic.Dictionary<string, global::Shop.Model.Item> items);
 
-    public static class Store
+    internal static class Store
     {
-        public static Inventory Create(global::System.Collections.Generic.List<global::Shop.Model.Item> items)
+        internal static Inventory Create(global::System.Collections.Generic.List<global::Shop.Model.Item> items)
         {
             global::System.Collections.Generic.Dictionary<string, global::Shop.Model.Item> bySku = new global::System.Collections.Generic.Dictionary<string, global::Shop.Model.Item>();
             foreach (global::Shop.Model.Item item in items)
@@ -190,7 +192,7 @@ namespace Shop.Store
             return new Inventory(bySku);
         }
 
-        public static Option<global::Shop.Model.Item> Find(Inventory inventory, string sku)
+        internal static Option<global::Shop.Model.Item> Find(Inventory inventory, string sku)
         {
             global::Shop.Model.Item item;
             if (inventory.items.TryGetValue(sku, out item))
@@ -206,7 +208,7 @@ namespace Shop.Store
         /// <summary>
         /// Takes stock for an order, returning what it costs, or why it can&apos;t be filled.
         /// </summary>
-        public static Result<global::Shop.Model.Money, OrderError> Order(Inventory inventory, string sku, int quantity)
+        internal static Result<global::Shop.Model.Money, OrderError> Order(Inventory inventory, string sku, int quantity)
         {
             if (quantity <= 0)
             {
@@ -230,7 +232,7 @@ namespace Shop.Store
             return Result<global::Shop.Model.Money, OrderError>.Ok(item.price.Times(quantity));
         }
 
-        public static string Explain(OrderError error)
+        internal static string Explain(OrderError error)
         {
             if (error is OrderError.UnknownItem(var sku))
             {
@@ -253,10 +255,10 @@ namespace Shop.Store
         /// <summary>
         /// (category, number of items, units in stock) per category, largest stock first.
         /// </summary>
-        public static global::System.Collections.Generic.List<(global::Shop.Model.Category category, int items, int units)> StockByCategory(Inventory inventory) => global::System.Linq.Enumerable.ToList<(global::Shop.Model.Category Key, int, int)>(global::System.Linq.Enumerable.OrderByDescending<(global::Shop.Model.Category Key, int, int), int>(global::System.Linq.Enumerable.Select<global::System.Linq.IGrouping<global::Shop.Model.Category, global::Shop.Model.Item>, (global::Shop.Model.Category Key, int, int)>(global::System.Linq.Enumerable.GroupBy<global::Shop.Model.Item, global::Shop.Model.Category>(inventory.items.Values, (global::Shop.Model.Item item) => item.category), (global::System.Linq.IGrouping<global::Shop.Model.Category, global::Shop.Model.Item> group) => (group.Key, global::System.Linq.Enumerable.Count<global::Shop.Model.Item>(group), global::System.Linq.Enumerable.Sum<global::Shop.Model.Item>(group, (global::Shop.Model.Item item) => item.stock))), ((global::Shop.Model.Category Key, int, int) entry) => entry.Item3));
+        internal static global::System.Collections.Generic.List<(global::Shop.Model.Category category, int items, int units)> StockByCategory(Inventory inventory) => global::System.Linq.Enumerable.ToList<(global::Shop.Model.Category Key, int, int)>(global::System.Linq.Enumerable.OrderByDescending<(global::Shop.Model.Category Key, int, int), int>(global::System.Linq.Enumerable.Select<global::System.Linq.IGrouping<global::Shop.Model.Category, global::Shop.Model.Item>, (global::Shop.Model.Category Key, int, int)>(global::System.Linq.Enumerable.GroupBy<global::Shop.Model.Item, global::Shop.Model.Category>(inventory.items.Values, (global::Shop.Model.Item item) => item.category), (global::System.Linq.IGrouping<global::Shop.Model.Category, global::Shop.Model.Item> group) => (group.Key, global::System.Linq.Enumerable.Count<global::Shop.Model.Item>(group), global::System.Linq.Enumerable.Sum<global::Shop.Model.Item>(group, (global::Shop.Model.Item item) => item.stock))), ((global::Shop.Model.Category Key, int, int) entry) => entry.Item3));
 
         internal static int LowStockThreshold() => 3;
 
-        public static global::System.Collections.Generic.List<global::Shop.Model.Item> LowStock(Inventory inventory) => global::System.Linq.Enumerable.ToList<global::Shop.Model.Item>(global::System.Linq.Enumerable.OrderBy<global::Shop.Model.Item, string>(global::System.Linq.Enumerable.Where<global::Shop.Model.Item>(inventory.items.Values, (global::Shop.Model.Item item) => item.stock <= LowStockThreshold()), (global::Shop.Model.Item item) => item.sku));
+        internal static global::System.Collections.Generic.List<global::Shop.Model.Item> LowStock(Inventory inventory) => global::System.Linq.Enumerable.ToList<global::Shop.Model.Item>(global::System.Linq.Enumerable.OrderBy<global::Shop.Model.Item, string>(global::System.Linq.Enumerable.Where<global::Shop.Model.Item>(inventory.items.Values, (global::Shop.Model.Item item) => item.stock <= LowStockThreshold()), (global::Shop.Model.Item item) => item.sku));
     }
 }

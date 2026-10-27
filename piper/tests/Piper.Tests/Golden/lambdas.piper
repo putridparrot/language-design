@@ -48,7 +48,7 @@ fn Main() {
     Print(string.Join(", ", evens));
     Print(numbers.Any(n => n > 8));
     Print(numbers.Sum());
-    Print(string.Join(" ", numbers.OrderBy(n => n).Select(n => "<{n}>")));
+    Print(string.Join(" ", numbers.OrderBy(n => n).Select(n => $"<{n}>")));
 
     // .NET delegate types other than Func/Action.
     let names: List<string> = ["Grace", "Ada", "Linus"];

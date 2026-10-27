@@ -27,7 +27,7 @@ trait Greeter {
 record FriendlyGreeter();
 
 extend FriendlyGreeter: Greeter {
-    fn Greet(name: string) => string = "Hello, {name}!";
+    fn Greet(name: string) => string = $"Hello, {name}!";
 }
 
 record Todo(id: int, title: string);
@@ -43,7 +43,7 @@ services AppServices {
 // string or, like `greeter`, from the services.
 endpoints Api "/api" {
     get "/hello/{name}" (name: string, greeter: Greeter) => greeter.Greet(name);
-    get "/time" (clock: Clock) => "It's {clock.Now()}";
+    get "/time" (clock: Clock) => $"It's {clock.Now()}";
     get "/add" (a: int, b: int) => a + b;
     get "/todos/{id:int}" async (id: int) => {
         await Task.Delay(1);
@@ -64,7 +64,7 @@ async fn Main() {
     let address = app.Urls.First();
     using let client = HttpClient();
     for path in ["/api/hello/Ada", "/api/time", "/api/add?a=2&b=40", "/api/todos/7"] {
-        Print("{path} → {await client.GetStringAsync(address + path)}");
+        Print($"{path} → {await client.GetStringAsync(address + path)}");
     }
     await app.StopAsync();
 }

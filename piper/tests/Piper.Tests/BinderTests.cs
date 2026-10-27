@@ -423,7 +423,7 @@ public class BinderTests
     [InlineData("PIP0347", "fn F(x: int?) => int { let Some(v) = x; v }")]
     [InlineData("PIP0347", "enum S { A(n: int), B } fn F(s: S) => int { let A(n) = s; n }")]
     [InlineData("PIP0347", "fn F(xs: int[]) => int { let [a, b] = xs; a + b }")]
-    [InlineData("PIP0342", "fn F(n: int) => string = \"{n,wide}\";")]
+    [InlineData("PIP0342", "fn F(n: int) => string = $\"{n,wide}\";")]
     [InlineData("PIP0345", "fn F(a: int = 1, b: int) => int = a;")]
     [InlineData("PIP0345", "record R(x: int); fn F(r: R = R(1)) => int = 0;")]
     [InlineData("PIP0345", "record V(x: int); extend V { operator +(o: V = V(0)) => V = o; }")]
@@ -652,7 +652,7 @@ public class BinderTests
             fn k(x: int?) => bool = x == null || x == 3;
             fn m<T>(v: T?) => bool = v is Some(_);
             fn n() => bool = m(5);
-            fn p(x: int?) => string { if x is Some(v) && v > 1 { "{v}" } else { "none" } }
+            fn p(x: int?) => string { if x is Some(v) && v > 1 { $"{v}" } else { "none" } }
             fn q(x: int?) => int = match x { Some(v) if v is 1 | 2 => v, _ => 0 };
             fn r(flag: bool) => long? = if flag { 1 } else { null };
             fn s() => Result<int, string> = if true { Ok(1) } else { Err("no") };
@@ -689,6 +689,36 @@ public class BinderTests
     {
         AssertSingleError(code, program);
     }
+
+    /// <summary>What's public is a library's API, so it can mention only public types; what isn't stays out of it.</summary>
+    [Theory]
+    [InlineData("PIP0363", "record P(x: int); public fn F(p: P) {}", "'F' is public, so it can't mention 'P'")]
+    [InlineData("PIP0363", "record P(x: int); public fn F() => List<P> = [];", "can't mention 'P'")]
+    [InlineData("PIP0363", "record P(x: int); public record Q(p: P);", "'Q' is public")]
+    [InlineData("PIP0363", "record P(x: int); public enum E { A(p: P) }", "'E' is public")]
+    [InlineData("PIP0363", "trait T { fn M(); } public trait U: T { }", "'U' is public")]
+    [InlineData("PIP0363", "class B { } public class C: B { }", "'C' is public")]
+    [InlineData("PIP0363", "record P(x: int); public class C { public let p = P(1); }", "'C' is public")]
+    [InlineData("PIP0363", "record P(x: int); public class C { fn Make() => P = P(1); }", "'Make' is public")]
+    [InlineData("PIP0363", "record P(x: int); public record Q(x: int); extend Q { fn Make() => P = P(1); }", "'Make' is public")]
+    [InlineData("PIP0362", "public private fn F() {}", "can't be both public and private")]
+    [InlineData("PIP0247", "public record P(x: int); public extend P { fn M() {} }", "make 'P' public instead")]
+    public void Public_declarations_mention_only_public_types(string code, string program, string message)
+    {
+        var diagnostics = Compilation.Compile("using System.Collections.Generic;\n" + program).Diagnostics;
+        var error = Assert.Single(diagnostics);
+        Assert.Equal(code, error.Code);
+        Assert.Contains(message, error.Message);
+    }
+
+    [Theory]
+    [InlineData("record P(x: int); public fn F() => int = 1; fn G(p: P) {}")]
+    [InlineData("record P(x: int); public class C { private fn Make() => P = P(1); let p = P(1); }")]
+    [InlineData("public record P(x: int); public fn F(p: P) => List<P> = [p];")]
+    [InlineData("record P(x: int); public extend int { fn Twice() => int = this * 2; private fn Make() => P = P(this); }")]
+    [InlineData("public trait T { fn M(); } public record R(x: int); extend R: T { fn M() {} }")]
+    public void What_isnt_exported_can_mention_anything(string program) =>
+        Assert.Empty(Compilation.Compile("using System.Collections.Generic;\n" + program).Diagnostics);
 
     [Fact]
     public void Private_declarations_are_invisible_to_other_files()
@@ -944,6 +974,66 @@ public class BinderTests
         Assert.Equal(code, error.Code);
     }
 
+    /// <summary>`Font: { … }` and `Items: { … }` change the object a member holds, which must be one, and can't be made with a block.</summary>
+    [Theory]
+    [InlineData("class F { prop S: int { get; set; } = 0; } class A { prop Font: F { get; } = F(); } fn Main() { let a = A() { Font: { S: 1 } }; }")]
+    [InlineData("class A { prop Items: List<int> { get; } = []; } fn Main() { let a = A() { Items: {} }; }")]
+    [InlineData("class A { prop Items: List<int> { get; } = []; } fn Main() { let a = A() { Items: { 1, ({ 2 }) } }; }")]
+    [InlineData("using System.Collections.ObjectModel; class A { prop D: Dictionary<string, int> { get; } = Dictionary<string, int>(); prop C: Collection<string> { get; } = Collection<string>(); } fn Main() { let a = A() { D: { { \"k\", 1 } }, C: { \"x\" } }; }")]
+    [InlineData("class A { prop Items: List<int> { get; set; } = []; } fn Main() { let a = A() { Items: [1, 2] }; }")]
+    public void Nested_initializers_change_members_in_place(string program) =>
+        Assert.Empty(Compilation.Compile("using System.Collections.Generic; " + program).Diagnostics);
+
+    [Theory]
+    [InlineData("PIP0359", "class F { prop S: int { get; init; } = 0; } class A { prop Font: F { get; } = F(); } fn Main() { let a = A() { Font: { S: 1 } }; }")]
+    [InlineData("PIP0365", "class F { prop S: int { get; set; } = 0; } class A { prop Font: F? { get; } = None; } fn Main() { let a = A() { Font: { S: 1 } }; }")]
+    [InlineData("PIP0366", "class A { prop P: (int, int) { get; set; } = (0, 0); } fn Main() { let a = A() { P: { Item1: 1 } }; }")]
+    [InlineData("PIP0367", "class F { } class A { prop Font: F { get; } = F(); } fn Main() { let a = A() { Font: { 1 } }; }")]
+    [InlineData("PIP0243", "class A { prop Name: string { get; } = \"\"; } fn Main() { let a = A() { Name: { \"x\" } }; }")]
+    [InlineData("PIP0217", "class A { fn Items() => List<int> = []; } fn Main() { let a = A() { Items: { 1 } }; }")]
+    [InlineData("PIP0274", "class A { prop Items: List<int> { get; } = []; } fn Main() { let a = A() { Items: { \"x\" } }; }")]
+    [InlineData("PIP0207", "class A { prop Items: List<int> { get; } = []; } fn Main() { let a = A() { Items: [1, 2] }; }")]
+    [InlineData("PIP0212", "class F { } class A { prop Font: F { get; } = F(); } fn Main() { let a = A() { Font: { Size: 1 } }; }")]
+    [InlineData("PIP0308", "class F { prop S: int { get; set; } = 0; } class A { prop Font: F { get; } = F(); } fn Main() { let a = A() { Font: { S: 1, S: 2 } }; }")]
+    public void Nested_initializer_errors(string code, string program)
+    {
+        var error = Assert.Single(Compilation.Compile("using System.Collections.Generic; " + program).Diagnostics);
+        Assert.Equal(code, error.Code);
+    }
+
+    private const string NamedTrait = "trait Named { prop Name => string { get; set; } } ";
+    private const string ZeroedTrait = "trait Zeroed<T: Zeroed<T>> { static prop Zero => T; } ";
+
+    /// <summary>A trait's settable property is implemented by a class's public, settable property, and its static ones as its static methods are.</summary>
+    [Theory]
+    [InlineData(NamedTrait + "class A: Named { prop Name: string { get; set; } = \"\"; } fn Main() { let n: Named = A(); n.Name = \"x\"; }")]
+    [InlineData(NamedTrait + "class A: Named { public mut Name = \"\"; } fn Main() { let a = A(); a.Name = \"x\"; }")]
+    [InlineData(NamedTrait + "class A: Named { mut stored = \"\"; prop Name => string { get = stored; set { stored = value; } } } fn Main() { }")]
+    [InlineData(NamedTrait + "fn F<T: Named>(t: T) { t.Name += \"!\"; } fn Main() { }")]
+    [InlineData(ZeroedTrait + "class A: Zeroed<A> { static prop Zero => A = A(); } fn Z<T: Zeroed<T>>() => T = T.Zero; fn Main() { let a = Z<A>(); }")]
+    public void Trait_property_kinds_are_implemented_and_used(string program) =>
+        Assert.Empty(Compilation.Compile(program).Diagnostics);
+
+    [Theory]
+    [InlineData("PIP0371", NamedTrait + "record R(n: int); extend R: Named { prop Name => string = \"r\"; } fn Main() { }")]
+    [InlineData("PIP0371", NamedTrait + "extend int: Named { prop Name => string = \"i\"; } fn Main() { }")]
+    [InlineData("PIP0245", NamedTrait + "class A: Named { } fn Main() { }")]
+    [InlineData("PIP0246", NamedTrait + "class A: Named { prop Name: string { get; private set; } = \"\"; } fn Main() { }")]
+    [InlineData("PIP0246", NamedTrait + "class A: Named { public let Name = \"\"; } fn Main() { }")]
+    [InlineData("PIP0246", NamedTrait + "class A: Named { prop Name: int { get; set; } = 0; } fn Main() { }")]
+    [InlineData("PIP0109", "trait Named { prop Name => string { get = \"\"; set { } } } fn Main() { }")]
+    [InlineData("PIP0109", "trait Named { static prop Name => string { get; set; } } fn Main() { }")]
+    [InlineData("PIP0109", "extend int { prop Name => string { get; set; } } fn Main() { }")]
+    [InlineData("PIP0372", NamedTrait + "class A: Named { public mut Name = \"\"; } fn Get() => Named = A(); fn Main() { Get().Name += \"!\"; }")]
+    [InlineData("PIP0285", "trait Sized { prop Size => int; } fn F(s: Sized) { s.Size = 1; } fn Main() { }")]
+    [InlineData("PIP0245", ZeroedTrait + "class A: Zeroed<A> { } fn Main() { }")]
+    [InlineData("PIP0319", ZeroedTrait + "class A: Zeroed<A> { static prop Zero => A = A(); } fn Main() { let z: Zeroed<A> = A(); }")]
+    public void Trait_property_kind_errors(string code, string program)
+    {
+        var error = Assert.Single(Compilation.Compile(program).Diagnostics);
+        Assert.Equal(code, error.Code);
+    }
+
     [Fact]
     public void A_dotnet_init_property_is_set_only_in_an_initializer()
     {
@@ -1027,13 +1117,13 @@ public class BinderTests
     public void Constructor_and_init_errors(string code, string program) => AssertSingleError(code, program);
 
     [Theory]
-    [InlineData("PIP0109", "trait T { prop X => int { get; set; } } fn Main() { }")]
+    [InlineData("PIP0109", "trait T { prop X => int { get; init; } } fn Main() { }")]
     [InlineData("PIP0109", "extend int { prop X: int { get; } = 1; } fn Main() { }")]
     [InlineData("PIP0109", "extend int { prop X { get = 1; } } fn Main() { }")]
     [InlineData("PIP0109", "extend int { prop this[i: int] => int = i; } fn Main() { }")]
     [InlineData("PIP0245", "trait T { prop X => int; } record R(a: int); extend R: T { } fn Main() { }")]
-    [InlineData("PIP0245", "trait T { prop X => int; } class C: T { public let X = \"\"; } fn Main() { }")]
-    [InlineData("PIP0245", "trait T { prop X => int; } class C: T { let X = 1; } fn Main() { }")]
+    [InlineData("PIP0246", "trait T { prop X => int; } class C: T { public let X = \"\"; } fn Main() { }")]
+    [InlineData("PIP0246", "trait T { prop X => int; } class C: T { let X = 1; } fn Main() { }")]
     [InlineData("PIP0246", "trait T { prop X => int; } record R(a: int); extend R: T { prop X => string = \"\"; } fn Main() { }")]
     [InlineData("PIP0243", "extend int { prop X => int = 1; } fn Main() { Print(1.get_X()); }")]
     [InlineData("PIP0285", "extend int { static prop X => int = 1; } fn Main() { int.X = 2; }")]
@@ -1097,7 +1187,7 @@ public class BinderTests
 
     [Theory]
     [InlineData("class B: A { fn G() => int = F() + P + x + S() + this[1]; fn H(other: B) => int = other.F() + other.x; fn K() { Q = 5; } } fn Main() { }")]
-    [InlineData("class B: A { override fn ToString() => string = \"{base.ToString()}\"; } fn Main() { }")]
+    [InlineData("class B: A { override fn ToString() => string = $\"{base.ToString()}\"; } fn Main() { }")]
     public void Protected_members_are_usable_in_derived_classes(string program)
     {
         var result = Compilation.Compile(ProtectedBase + program);
@@ -1111,7 +1201,7 @@ public class BinderTests
     public void A_class_can_override_a_dotnet_property()
     {
         var result = Compilation.Compile(
-            "class NotFound(id: int): System.Exception { override prop Message => string = \"No item {id}\"; }\n" +
+            "class NotFound(id: int): System.Exception { override prop Message => string = $\"No item {id}\"; }\n" +
             "fn Main() { try { throw NotFound(3); } catch (e: System.Exception) { Print(e.Message); } }");
         Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
         Assert.Equal("No item 3", Runner.Run(result.Files).Output.Trim());
@@ -1149,9 +1239,9 @@ public class BinderTests
     public void Records_and_enums_can_override_ToString()
     {
         var result = Compilation.Compile(
-            "record Money(amount: decimal);\nextend Money { override fn ToString() => string = \"£{this.amount}\"; }\n" +
-            "enum Suit { Hearts, Joker(n: int) }\nextend Suit { override fn ToString() => string = match this { Hearts => \"H\", Joker(n) => \"J{n}\" }; }\n" +
-            "fn Main() { Print(\"{Money(2m)} {Suit.Hearts} {Suit.Joker(3)} {Option.Some(Money(1m))}\"); }");
+            "record Money(amount: decimal);\nextend Money { override fn ToString() => string = $\"£{this.amount}\"; }\n" +
+            "enum Suit { Hearts, Joker(n: int) }\nextend Suit { override fn ToString() => string = match this { Hearts => \"H\", Joker(n) => $\"J{n}\" }; }\n" +
+            "fn Main() { Print($\"{Money(2m)} {Suit.Hearts} {Suit.Joker(3)} {Option.Some(Money(1m))}\"); }");
         Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
         Assert.Equal("£2 H J3 Some(£1)", Runner.Run(result.Files).Output.Trim());
     }
@@ -1189,7 +1279,7 @@ public class BinderTests
         var result = Compilation.Compile(
             "using System.Numerics;\nusing System.Xml.Linq;\nfn Twice(b: BigInteger) => BigInteger = b * 2;\n" +
             "fn Main() {\n    let big: BigInteger = 5;\n    let e = XElement(\"root\", XElement(\"child\", \"hi\"));\n" +
-            "    Print(\"{BigInteger.Pow(2, 70)} {big + 1} {Twice(21)} {e.Element(\"child\")?.Value ?? \"\"}\");\n}");
+            "    Print($\"{BigInteger.Pow(2, 70)} {big + 1} {Twice(21)} {e.Element(\"child\")?.Value ?? \"\"}\");\n}");
         Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
         Assert.Equal("1180591620717411303424 6 42 hi", Runner.Run(result.Files).Output.Trim());
     }
@@ -1208,7 +1298,7 @@ public class BinderTests
             "class A { virtual fn Name() => string = \"A\"; }\n" +
             "class B: A { override fn Name() => string = \"B<\" + base.Name() + \">\"; }\n" +
             "fn Kind(o: object) => string = match o { b: B => b.Name(), _: A => \"plain A\", s: string => s, _ => \"?\" };\n" +
-            "fn Main() { let a: A = B(); Print(\"{Kind(a)} {Kind(A())} {Kind(\"s\")} {Kind(1)} {((B)a).Name()}\"); }");
+            "fn Main() { let a: A = B(); Print($\"{Kind(a)} {Kind(A())} {Kind(\"s\")} {Kind(1)} {((B)a).Name()}\"); }");
         Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
         Assert.Equal("B<A> plain A s ? B<A>", Runner.Run(result.Files).Output.Trim());
     }
@@ -1216,7 +1306,7 @@ public class BinderTests
     public void A_class_names_inherited_dotnet_members_bare_including_protected_ones()
     {
         var result = Compilation.Compile(
-            "class Upper: System.Collections.ObjectModel.Collection<string> {\n    override fn InsertItem(index: int, item: string) { Items.Insert(index, item.ToUpper()); }\n    fn Size() => int = Count;\n}\nclass Oops: System.Exception(\"oops\") { fn Shout() => string = Message.ToUpper(); }\nfn Main() { let u = Upper(); u.Add(\"a\"); Print(\"{u[0]} {u.Size()} {Oops().Shout()}\"); }");
+            "class Upper: System.Collections.ObjectModel.Collection<string> {\n    override fn InsertItem(index: int, item: string) { Items.Insert(index, item.ToUpper()); }\n    fn Size() => int = Count;\n}\nclass Oops: System.Exception(\"oops\") { fn Shout() => string = Message.ToUpper(); }\nfn Main() { let u = Upper(); u.Add(\"a\"); Print($\"{u[0]} {u.Size()} {Oops().Shout()}\"); }");
         Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
         Assert.Equal("A 1 OOPS", Runner.Run(result.Files).Output.Trim());
     }

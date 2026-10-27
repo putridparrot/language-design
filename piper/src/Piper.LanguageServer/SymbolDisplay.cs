@@ -5,7 +5,11 @@ namespace Piper.LanguageServer;
 /// <summary>Describes symbols in Piper syntax, for hovers and completion details: <c>fn area() =&gt; double</c>.</summary>
 public static class SymbolDisplay
 {
-    public static string Describe(Symbol symbol) => symbol switch
+    /// <remarks>An exported top-level declaration (or a method a <c>public extend</c> adds) shows its <c>public</c>.</remarks>
+    public static string Describe(Symbol symbol) =>
+        (symbol.IsExported && symbol is GenericTypeDefinition or FunctionSymbol ? "public " : "") + DescribeCore(symbol);
+
+    private static string DescribeCore(Symbol symbol) => symbol switch
     {
         VariableSymbol { Kind: VariableKind.Parameter } v => $"{v.Name}: {v.Type}",
         VariableSymbol { Kind: VariableKind.This } v => $"this: {v.Type}",

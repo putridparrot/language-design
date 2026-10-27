@@ -29,13 +29,13 @@ fn Discounted(
 //// four slashes: an ordinary comment
 fn Main() {
     let items = [Product("Tea", 2.5m), Product("Teapot", 24.99m), Product("Cake", 3m)];
-    Print("{"Item",-8}|{"Price",8}|{"Sale",8}");
+    Print($"{"Item",-8}|{"Price",8}|{"Sale",8}");
     for item in items {
-        Print("{item.name,-8}|{item.price,8:F2}|{Discounted(item, Discount.Percent(0.1)),8:F2}");
+        Print($"{item.name,-8}|{item.price,8:F2}|{Discounted(item, Discount.Percent(0.1)),8:F2}");
     }
     let date = DateTime(2026, 3, 14);
     let ratio = 0.256;
-    Print("{date:yyyy-MM-dd} {date:ddd} {ratio:P0} {1234567:N0} {42:D5} {255:X}");
+    Print($"{date:yyyy-MM-dd} {date:ddd} {ratio:P0} {1234567:N0} {42:D5} {255:X}");
     let pair = (a: 1, b: 2);
-    Print("{pair.b} {((x: int) => x * 2)(4):D3}");
+    Print($"{pair.b} {((x: int) => x * 2)(4):D3}");
 }

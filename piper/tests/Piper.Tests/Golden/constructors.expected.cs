@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public partial class Account(string owner, decimal opening)
+internal partial class Account(string owner, decimal opening)
 {
     private decimal balance = global::Piper.Runtime.PiperContract.Invariant(opening >= 0m, "opening >= 0m", $"opening = {opening}") ? (opening) : default!;
     public string Source { get; init; } = "opened";
@@ -26,7 +26,7 @@ public partial class Account(string owner, decimal opening)
     public string Describe() => $"{owner}: {this.balance} ({this.Source}, {this.Opened})";
 }
 
-public partial class Temperature(double celsius)
+internal partial class Temperature(double celsius)
 {
     public double Celsius => celsius;
 
@@ -41,7 +41,7 @@ public partial class Temperature(double celsius)
     public static Temperature FromFahrenheit(double fahrenheit) => new Temperature(fahrenheit, true);
 }
 
-public partial class Freezing() : Temperature
+internal partial class Freezing() : Temperature
 {
     public string Label { get; init; } = "";
 
@@ -51,7 +51,7 @@ public partial class Freezing() : Temperature
     }
 }
 
-public partial class Counter()
+internal partial class Counter()
 {
     private int count = 0;
 
@@ -67,7 +67,7 @@ public partial class Counter()
     }
 }
 
-public partial class Range<T>(T first, T last)
+internal partial class Range<T>(T first, T last)
 {
     private readonly global::System.Collections.Generic.List<T> items = new global::System.Collections.Generic.List<T> { first, last };
 
@@ -78,9 +78,9 @@ public partial class Range<T>(T first, T last)
     public string Describe() => string.Join<T>("..", this.items);
 }
 
-public static class Constructors
+internal static class Constructors
 {
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(new Account("Ada", 10m).Describe());
         global::System.Console.WriteLine(new Account("Bob").Describe());

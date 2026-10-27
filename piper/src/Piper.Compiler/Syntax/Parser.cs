@@ -197,6 +197,13 @@ public sealed partial class Parser
             return ParseDeclaration() is { } declaration ? declaration with { Private = @private } : null;
         }
 
+        // `public fn Area(…)`: exported from a library. `public` is reserved, so it can't be a name here.
+        if (Current is { Kind: TokenKind.Identifier, Text: "public" })
+        {
+            var @public = NextToken();
+            return ParseDeclaration() is { } declaration ? declaration with { Public = @public } : null;
+        }
+
         switch (Current.Kind)
         {
             case TokenKind.FnKeyword or TokenKind.StaticKeyword:
@@ -710,32 +717,48 @@ public sealed partial class Parser
     }
 
     /// <summary>
-    /// A property in a trait or `extend` block as its getter, a method named <c>get_Name</c> as .NET names it: read-only,
-    /// with a type, and with no initial value, since neither can store one. Null after reporting one that isn't.
+    /// A property in a trait or `extend` block as its accessors, methods named <c>get_Name</c> and <c>set_Name</c> as .NET
+    /// names them. It has a type and no initial value, since neither can store one, and so is read-only, except that a
+    /// trait can require a settable one (`prop Name => string { get; set; }`, with no bodies), which only a class can
+    /// implement. None after reporting one that isn't valid.
     /// </summary>
-    private FunctionDeclarationSyntax? PropertyGetter(ClassFieldSyntax property)
+    private IEnumerable<FunctionDeclarationSyntax> PropertyAccessors(ClassFieldSyntax property, bool inTrait)
     {
+        var name = property.Name.Text;
+        var set = property.Accessors.FirstOrDefault(a => a.IsSetter);
         string? problem = property switch
         {
             { IsIndexer: true } => "Indexers can only be declared in classes.",
-            { Arrow: null } => $"A trait's or extend block's property computes its value, so it's written as a function is: 'prop {property.Name.Text} => Type = …;' (or 'prop {property.Name.Text} => Type;' for a trait to require).",
-            _ when property.Accessors.Any(a => a.IsSetter) || property.Initializer is not null =>
-                $"A trait's or extend block's properties can only be read, as there's nowhere to store a value; give '{property.Name.Text}' a 'get' alone.",
-            _ when property.Accessors.Count(a => !a.IsSetter) != 1 => $"'{property.Name.Text}' needs a single 'get'.",
+            { Arrow: null } => $"A trait's or extend block's property computes its value, so it's written as a function is: 'prop {name} => Type = …;' (or 'prop {name} => Type;' for a trait to require).",
+            { Initializer: not null } => $"A trait's or extend block's property has nowhere to store a value, so it can't have an initial one; compute it: 'prop {name} => Type = …;'.",
+            _ when set is not null && !inTrait =>
+                $"An extend block's properties can only be read, as there's nowhere to store a value; give '{name}' a 'get' alone.",
+            _ when set is not null && (set.IsInit || property.Accessors.Any(a => a.HasBody)) =>
+                $"A trait's settable property has nowhere to store a value, so it can't have a default: write '{{ get; set; }}', which each class implementing the trait gives a property of its own.",
+            _ when property.Accessors.Count(a => !a.IsSetter) != 1 || property.Accessors.Count(a => a.IsSetter) > 1 =>
+                $"'{name}' needs a single 'get'{(inTrait ? ", and at most one 'set'" : "")}.",
             _ => null,
         };
         if (problem is not null)
         {
             _diagnostics.ReportClassMember(property.Name.Span, problem);
-            return null;
+            yield break;
         }
-        var get = property.Accessors[0];
-        return new FunctionDeclarationSyntax(property.Span, new Token(TokenKind.Identifier, property.Name.Span, "get_" + property.Name.Text), [], null, [],
+        var get = property.Accessors.First(a => !a.IsSetter);
+        yield return new FunctionDeclarationSyntax(property.Span, new Token(TokenKind.Identifier, property.Name.Span, "get_" + name), [], null, [],
             property.Type, get.BlockBody, get.ExpressionBody)
         {
             IsIterator = get.IsIterator,
-            AccessorOf = property.Name.Text,
+            AccessorOf = name,
         };
+        if (set is not null)
+        {
+            ImmutableArray<ParameterSyntax> value = [new ParameterSyntax(set.Keyword.Span, new Token(TokenKind.Identifier, set.Keyword.Span, "value"), property.Type!)];
+            yield return new FunctionDeclarationSyntax(set.Span, new Token(TokenKind.Identifier, property.Name.Span, "set_" + name), [], null, value, null, null, null)
+            {
+                AccessorOf = name,
+            };
+        }
     }
 
     /// <summary>An accessor's body: never async, and an iterator if it yields.</summary>
@@ -877,7 +900,7 @@ public sealed partial class Parser
                 parents.Add(ParseType());
             }
         }
-        var methods = ParseMethodBlock();
+        var methods = ParseMethodBlock(inTrait: true);
         return new TraitDeclarationSyntax(SpanFrom(keyword), name, typeParameters, parents.ToImmutable(), methods);
     }
 
@@ -897,11 +920,11 @@ public sealed partial class Parser
                 traits.Add(ParseType());
             }
         }
-        var methods = ParseMethodBlock();
+        var methods = ParseMethodBlock(inTrait: false);
         return new ExtendDeclarationSyntax(SpanFrom(keyword), target.Name, target, traits.ToImmutable(), methods);
     }
 
-    private ImmutableArray<FunctionDeclarationSyntax> ParseMethodBlock()
+    private ImmutableArray<FunctionDeclarationSyntax> ParseMethodBlock(bool inTrait)
     {
         Expect(TokenKind.OpenBrace);
         var methods = ImmutableArray.CreateBuilder<FunctionDeclarationSyntax>();
@@ -946,8 +969,16 @@ public sealed partial class Parser
             {
                 var @private = Current.Kind == TokenKind.PrivateKeyword ? NextToken() : null;
                 var @static = Current.Kind == TokenKind.StaticKeyword ? NextToken() : null;
-                if (PropertyGetter(ParseProperty()) is { } getter)
-                    methods.Add(getter with { Private = @private, Static = @static, Documentation = documentation });
+                foreach (var accessor in PropertyAccessors(ParseProperty(), inTrait))
+                {
+                    // C# allows static abstract settable properties, but nothing in Piper could store the value.
+                    if (@static is not null && accessor.Name.Text.StartsWith("set_", StringComparison.Ordinal))
+                    {
+                        _diagnostics.ReportClassMember(accessor.Span, $"A trait's static property can only be read: give '{accessor.AccessorOf}' a 'get' alone.");
+                        continue;
+                    }
+                    methods.Add(accessor with { Private = @private, Static = @static, Documentation = documentation });
+                }
                 continue;
             }
 
@@ -1705,12 +1736,25 @@ public sealed partial class Parser
         Peek(1).Kind == TokenKind.Identifier && Peek(2).Kind == TokenKind.Colon;
 
     /// <summary>
-    /// objectInitializer = call "{" memberInit { "," memberInit } [ "," ] "}" ;
-    /// memberInit        = IDENT ":" expression ;
+    /// objectInitializer = call "{" memberInits "}" ;
     /// </summary>
     private ExpressionSyntax ParseObjectInitializer(ExpressionSyntax creation)
     {
-        NextToken();
+        var members = ParseInitializerMembers();
+        var initializer = new ObjectInitializerExpressionSyntax(TextSpan.FromBounds(creation.Span.Start, Previous.Span.End), creation, members);
+
+        // As after a trailing closure: `Window() { … }.Show()` carries on, but a `(`, `[` or `{` on the next line starts
+        // a new statement.
+        return Current.Kind is TokenKind.Dot or TokenKind.QuestionDot or TokenKind.Question ? ParsePostfix(initializer) : initializer;
+    }
+
+    /// <summary>
+    /// memberInits = "{" [ memberInit { "," memberInit } [ "," ] ] "}" ;
+    /// memberInit  = IDENT ":" ( nestedInit | expression ) ;
+    /// </summary>
+    private ImmutableArray<FieldUpdateSyntax> ParseInitializerMembers()
+    {
+        Expect(TokenKind.OpenBrace);
         var members = ImmutableArray.CreateBuilder<FieldUpdateSyntax>();
         var noTrailingClosure = _noTrailingClosure;
         _noTrailingClosure = false;
@@ -1718,7 +1762,7 @@ public sealed partial class Parser
         {
             var name = Expect(TokenKind.Identifier);
             Expect(TokenKind.Colon);
-            var value = ParseExpression();
+            var value = Current.Kind == TokenKind.OpenBrace && !AtRecordSpread() ? ParseNestedInitializer() : ParseExpression();
             members.Add(new FieldUpdateSyntax(SpanFrom(name), name, value));
             if (Current.Kind != TokenKind.Comma)
                 break;
@@ -1726,11 +1770,58 @@ public sealed partial class Parser
         }
         _noTrailingClosure = noTrailingClosure;
         Expect(TokenKind.CloseBrace);
-        var initializer = new ObjectInitializerExpressionSyntax(TextSpan.FromBounds(creation.Span.Start, Previous.Span.End), creation, members.ToImmutable());
+        return members.ToImmutable();
+    }
 
-        // As after a trailing closure: `Window() { … }.Show()` carries on, but a `(`, `[` or `{` on the next line starts
-        // a new statement.
-        return Current.Kind is TokenKind.Dot or TokenKind.QuestionDot or TokenKind.Question ? ParsePostfix(initializer) : initializer;
+    /// <summary>
+    /// A member's value in braces, as in C#: properties of the object it holds (`{ Size: 12 }`, or `{}`), or elements to
+    /// add to the collection it holds (`{ "a", "b" }`), each `{ … }` in that giving `Add` several arguments. A block
+    /// as the value needs parentheses.
+    /// nestedInit       = memberInits | "{" collectionElement { "," collectionElement } [ "," ] "}" ;
+    /// collectionElement = expression | "{" expression { "," expression } [ "," ] "}" ;
+    /// </summary>
+    private ExpressionSyntax ParseNestedInitializer()
+    {
+        var open = Current;
+        if (Peek(1).Kind == TokenKind.CloseBrace || (Peek(1).Kind == TokenKind.Identifier && Peek(2).Kind == TokenKind.Colon))
+        {
+            var members = ParseInitializerMembers();
+            return new NestedInitializerSyntax(SpanFrom(open), members);
+        }
+
+        NextToken();
+        var elements = ImmutableArray.CreateBuilder<CollectionElementSyntax>();
+        var noTrailingClosure = _noTrailingClosure;
+        _noTrailingClosure = false;
+        while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
+        {
+            var start = Current;
+            if (Current.Kind == TokenKind.OpenBrace && !AtRecordSpread())
+            {
+                NextToken();
+                var arguments = ImmutableArray.CreateBuilder<ExpressionSyntax>();
+                while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
+                {
+                    arguments.Add(ParseExpression());
+                    if (Current.Kind != TokenKind.Comma)
+                        break;
+                    NextToken();
+                }
+                Expect(TokenKind.CloseBrace);
+                elements.Add(new CollectionElementSyntax(SpanFrom(start), arguments.ToImmutable()));
+            }
+            else
+            {
+                var element = ParseExpression();
+                elements.Add(new CollectionElementSyntax(element.Span, [element]));
+            }
+            if (Current.Kind != TokenKind.Comma)
+                break;
+            NextToken();
+        }
+        _noTrailingClosure = noTrailingClosure;
+        Expect(TokenKind.CloseBrace);
+        return new CollectionInitializerSyntax(SpanFrom(open), elements.ToImmutable());
     }
 
     /// <summary>

@@ -31,14 +31,14 @@ fn Identity<T>(value: T) => T = value;
 fn Empty<T>() => List<T> = List.Nil;
 
 fn Describe(found: Option<int>) => string = match found {
-    Some(i) => "found at {i}",
+    Some(i) => $"found at {i}",
     None => "missing",
 };
 
 fn Main() {
     let p = Pair(1, "one");
     let q = Swap(p);
-    Print("{q.first} {q.second}");
+    Print($"{q.first} {q.second}");
 
     let some: Option<int> = Option.Some(42);
     let none: Option<int> = Option.None;
@@ -55,7 +55,7 @@ fn Main() {
     Print(match flag { Some(true) => "yes", Some(false) => "no", None => "unknown" });
 
     let widened: Pair<long, double> = Pair(1, 2);
-    Print("{widened.first} {widened.second}");
+    Print($"{widened.first} {widened.second}");
 
     // Explicit type arguments, as in C#: where nothing can be inferred, or to choose the type.
     let nothing = Empty<string>();

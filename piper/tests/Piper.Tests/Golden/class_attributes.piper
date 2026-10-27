@@ -23,16 +23,16 @@ class Customer(id: int, name: string) {
     prop OrderCount: int { get; set; } = 0;
 
     [JsonIgnore]
-    prop Secret => string = "{id}:{name}";
+    prop Secret => string = $"{id}:{name}";
 
-    prop Display => string = "#{id} {name}";
+    prop Display => string = $"#{id} {name}";
 
     // A private field: a C# field, which the attribute marks.
     [Obsolete("Use Display")]
     let legacy = "";
 
     [IndexerName("Tag")]
-    prop this[i: int] => string = "tag{i}";
+    prop this[i: int] => string = $"tag{i}";
 }
 
 fn Main() {

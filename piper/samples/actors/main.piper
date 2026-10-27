@@ -20,7 +20,7 @@ actor Account(owner: string, opening: decimal) {
     // An ask: `await account.Withdraw(…)` waits for the reply. If the handler throws, so does the caller's await.
     on Withdraw(amount: decimal, note: string) => decimal {
         if amount > balance {
-            throw System.InvalidOperationException("{owner} can't withdraw {amount}: the balance is {balance}");
+            throw System.InvalidOperationException($"{owner} can't withdraw {amount}: the balance is {balance}");
         }
         balance -= amount;
         history.Add(Transfer(-amount, note));
@@ -33,7 +33,7 @@ actor Account(owner: string, opening: decimal) {
     on Statement() => string {
         await Task.Delay(1);
         let tips = history.Count(t => t.note == "tip");
-        "{owner}: {tips} tips, then {string.Join(", ", history.Where(t => t.note != "tip").Select(t => "{t.note} {t.amount}"))} → {balance}"
+        $"{owner}: {tips} tips, then {string.Join(", ", history.Where(t => t.note != "tip").Select(t => $"{t.note} {t.amount}"))} → {balance}"
     }
 }
 
@@ -43,13 +43,13 @@ async fn Main() {
     // A hundred tasks deposit at once; the actor handles their messages one by one, so none is lost.
     let deposits = Enumerable.Range(1, 100).Select(i => Task.Run(() => account.Deposit(1m, "tip")));
     await Task.WhenAll(deposits);
-    Print("after tips: {await account.Balance()}");
+    Print($"after tips: {await account.Balance()}");
 
-    Print("after rent: {await account.Withdraw(150m, "rent")}");
+    Print($"after rent: {await account.Withdraw(150m, "rent")}");
     try {
         await account.Withdraw(1000m, "car");
     } catch (e: System.InvalidOperationException) {
-        Print("refused: {e.Message}");
+        Print($"refused: {e.Message}");
     }
     Print(await account.Statement());
 }

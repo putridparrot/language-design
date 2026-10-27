@@ -18,6 +18,12 @@ public abstract class Symbol(string name)
     /// <summary>Declared <c>private</c>: visible only in <see cref="DeclaringFile"/>.</summary>
     public bool IsPrivate { get; internal set; }
 
+    /// <summary>
+    /// Declared <c>public</c> at the top level (or, for a method, in a <c>public extend</c> block): part of the
+    /// assembly's API. Other top-level declarations are visible throughout the program but not outside it (C#'s internal).
+    /// </summary>
+    public bool IsExported { get; internal set; }
+
     /// <summary>Its `///` doc comment, for the editor and the generated C#'s XML documentation.</summary>
     public string? Documentation { get; internal set; }
 

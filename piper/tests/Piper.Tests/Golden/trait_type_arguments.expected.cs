@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public interface Shape
+internal interface Shape
 {
     double Area();
 
@@ -29,32 +29,32 @@ public interface Shape
     }
 }
 
-public sealed record Circle(double r) : Shape
+internal sealed record Circle(double r) : Shape
 {
     public double Area() => 3.0 * this.r * this.r;
 }
 
-public sealed record Square(double side) : Shape
+internal sealed record Square(double side) : Shape
 {
     public double Area() => this.side * this.side;
 }
 
-public abstract partial class Animal
+internal abstract partial class Animal
 {
     public abstract string Sound();
 }
 
-public partial class Dog : Animal
+internal partial class Dog : Animal
 {
     public override string Sound() => "woof";
 }
 
-public partial class Cat : Animal
+internal partial class Cat : Animal
 {
     public override string Sound() => "meow";
 }
 
-public sealed record ByArea() : global::System.Collections.Generic.IComparer<Shape>
+internal sealed record ByArea() : global::System.Collections.Generic.IComparer<Shape>
 {
     public int Compare(Option<Shape> a, Option<Shape> b)
     {
@@ -67,9 +67,9 @@ public sealed record ByArea() : global::System.Collections.Generic.IComparer<Sha
     int global::System.Collections.Generic.IComparer<Shape>.Compare(Shape? a, Shape? b) => Compare(global::Piper.Runtime.PiperInterop.FromNullableReference(a), global::Piper.Runtime.PiperInterop.FromNullableReference(b));
 }
 
-public static class Trait_type_arguments
+internal static class Trait_type_arguments
 {
-    public static void Main()
+    internal static void Main()
     {
         global::System.Collections.Generic.List<Shape> shapes = new global::System.Collections.Generic.List<Shape>();
         shapes.Add(new Circle(1.0));
@@ -118,11 +118,11 @@ file static class PiperWitnesses
     }
 }
 
-public static class Trait_type_argumentsExtensions
+internal static class Trait_type_argumentsExtensions
 {
     extension(int self)
     {
-        public double Area() => (double)self;
+        internal double Area() => (double)self;
     }
 }
 

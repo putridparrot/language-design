@@ -21,7 +21,7 @@ class Grid(width: int, height: int) {
 
     private fn Index(x: int, y: int) => int {
         if x < 0 || x >= width || y < 0 || y >= height {
-            throw IndexOutOfRangeException("({x}, {y}) is outside the grid");
+            throw IndexOutOfRangeException($"({x}, {y}) is outside the grid");
         }
         y * width + x
     }
@@ -69,7 +69,7 @@ fn Main() {
     grid[1, 1] = 5;
     grid[1, 1] += 2;
     grid[2, 0] = 9;
-    Print("{grid[1, 1]} {grid["2,0"]}");
+    Print($"{grid[1, 1]} {grid["2,0"]}");
     try {
         grid[5, 5] = 1;
     } catch (e: IndexOutOfRangeException) {
@@ -80,10 +80,10 @@ fn Main() {
     for word in ["a", "b", "c", "d", "e"] {
         ring.Add(word);
     }
-    Print("{ring[0]} {ring.Count}: {string.Join(" ", ring)}");
+    Print($"{ring[0]} {ring.Count}: {string.Join(" ", ring)}");
     let list: IReadOnlyList<string> = ring;
     Print(list[2]);
 
     let lookup: Lookup = Upper();
-    Print("{lookup["piper"] ?? "-"} {lookup[""] ?? "-"}");
+    Print($"{lookup["piper"] ?? "-"} {lookup[""] ?? "-"}");
 }

@@ -11,7 +11,7 @@ class Account(owner: string, opening: decimal) {
 
     fn Deposit(amount: decimal) {
         balance += amount;
-        Record("deposit {amount}");
+        Record($"deposit {amount}");
     }
 
     fn Withdraw(amount: decimal) {
@@ -19,7 +19,7 @@ class Account(owner: string, opening: decimal) {
             throw InsufficientFunds(name, amount - balance);
         }
         balance -= amount;
-        Record("withdraw {amount}");
+        Record($"withdraw {amount}");
     }
 
     // Methods of Account can use any Account's private members.
@@ -33,18 +33,18 @@ class Account(owner: string, opening: decimal) {
 
     private fn Record(entry: string) { history.Add(entry); }
 
-    override fn ToString() => string = "{name}: {balance}";
+    override fn ToString() => string = $"{name}: {balance}";
 }
 
 // Deriving from a .NET class, passing its constructor arguments.
-class InsufficientFunds(who: string, shortfall: decimal): Exception("{who} is {shortfall} short") {
+class InsufficientFunds(who: string, shortfall: decimal): Exception($"{who} is {shortfall} short") {
     public let shortBy = shortfall;
 }
 
 // Abstract classes, virtual methods and overrides.
 abstract class Shape(name: string) {
     abstract fn Area() => double;
-    virtual fn Describe() => string = "{name} with area {Math.Round(Area(), 2)}";
+    virtual fn Describe() => string = $"{name} with area {Math.Round(Area(), 2)}";
 }
 
 class Rect(width: double, height: double): Shape("rect") {
@@ -53,7 +53,7 @@ class Rect(width: double, height: double): Shape("rect") {
 
 sealed class Circle(radius: double): Shape("circle") {
     override fn Area() => double = Math.PI * radius * radius;
-    override fn Describe() => string = "a circle of radius {radius}";
+    override fn Describe() => string = $"a circle of radius {radius}";
 }
 
 // Type patterns get the derived class back: 'name: Type', C#'s 'Type name'.
@@ -93,7 +93,7 @@ fn Main() {
     try {
         bob.Withdraw(80m);
     } catch (e: InsufficientFunds) {
-        Print("{e.Message} (by {e.shortBy})");
+        Print($"{e.Message} (by {e.shortBy})");
     }
 
     // The same object, not a copy.
@@ -103,9 +103,9 @@ fn Main() {
 
     let shapes: List<Shape> = [Rect(2.0, 3.0), Circle(1.0)];
     for shape in shapes {
-        Print("{shape.Describe()}, {Corners(shape)} corners");
+        Print($"{shape.Describe()}, {Corners(shape)} corners");
         if shape is r: Rect {
-            Print("  a rect of area {r.Area()}");
+            Print($"  a rect of area {r.Area()}");
         }
     }
     let first = (Rect)shapes[0];      // a cast throws InvalidCastException if it isn't one

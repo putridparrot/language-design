@@ -62,21 +62,21 @@ fn Main() {
         """;
 
     let counts = CountWords(text);
-    Print("{counts.Count} distinct words, {counts.Values.Sum()} in total");
+    Print($"{counts.Count} distinct words, {counts.Values.Sum()} in total");
 
     for (index, entry) in Top(counts, 5).Select((w, i) => (i + 1, w)) {
-        Print("{index}. {entry.word.PadRight(6)} {entry.count} {Bar(entry.count, 2)}");
+        Print($"{index}. {entry.word.PadRight(6)} {entry.count} {Bar(entry.count, 2)}");
     }
 
     let (shortWords, longWords) = counts.Keys.Aggregate((0, 0), (acc, word) =>
         if word.Length <= 3 { (acc.Item1 + 1, acc.Item2) } else { (acc.Item1, acc.Item2 + 1) });
-    Print("short: {shortWords}, long: {longWords}");
+    Print($"short: {shortWords}, long: {longWords}");
 
     match Longest(counts.Keys) {
-        Some(word) => Print("longest: {word} ({word.Length} letters)"),
+        Some(word) => Print($"longest: {word} ({word.Length} letters)"),
         None => Print("no words"),
     }
 
     let once = counts.Where(pair => pair.Value == 1).Select(pair => pair.Key).Order().ToArray();
-    Print("seen once: {string.Join(", ", once)}");
+    Print($"seen once: {string.Join(", ", once)}");
 }

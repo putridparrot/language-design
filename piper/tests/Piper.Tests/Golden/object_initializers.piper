@@ -12,7 +12,7 @@ class Window(title: string) {
     // A secondary constructor, which an initializer can follow too.
     Window(): this("Untitled") { }
 
-    fn Describe() => string = "{Title} {Width}x{Height}{if visible { " (visible)" } else { "" }}";
+    fn Describe() => string = $"{Title} {Width}x{Height}{if visible { " (visible)" } else { "" }}";
 }
 
 class Settings {
@@ -21,14 +21,14 @@ class Settings {
 }
 
 fn Parse(text: string) => Result<int, string> =
-    if int.TryParse(text, out let n) { Ok(n) } else { Err("not a number: {text}") };
+    if int.TryParse(text, out let n) { Ok(n) } else { Err($"not a number: {text}") };
 
 // A value that needs statements first (here, `?`) is still evaluated after the constructor's arguments.
 fn FromText(width: string) => Result<Window, string> = Ok(Window(Name("sized")) { Width: Parse(width)?, Height: 200 });
 
 fn Name(prefix: string) => string {
-    Console.WriteLine("naming {prefix}");
-    "{prefix} window"
+    Console.WriteLine($"naming {prefix}");
+    $"{prefix} window"
 }
 
 fn Main() {
@@ -43,7 +43,7 @@ fn Main() {
 
     // `init` properties keep their defaults when left out.
     let s = Settings() { Tags: ["a", "b"] };
-    Console.WriteLine("{s.Retries} {s.Tags.Count}");
+    Console.WriteLine($"{s.Retries} {s.Tags.Count}");
 
     // .NET types.
     let builder = UriBuilder() { Scheme: "https", Host: "example.com", Port: 8443 };

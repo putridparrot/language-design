@@ -6,17 +6,17 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Box(int @value);
+internal sealed record Box(int @value);
 
-public static class Pipe
+internal static class Pipe
 {
-    public static int Twice(int n) => n * 2;
+    internal static int Twice(int n) => n * 2;
 
-    public static int Add(int n, int amount) => n + amount;
+    internal static int Add(int n, int amount) => n + amount;
 
-    public static string Describe(int n, string what) => $"{n} {what}";
+    internal static string Describe(int n, string what) => $"{n} {what}";
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(Twice(5));
         global::System.Console.WriteLine(Describe(Twice(Add(5, 10)), "apples"));

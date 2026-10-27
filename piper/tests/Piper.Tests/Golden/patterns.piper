@@ -7,7 +7,7 @@ fn Classify(n: int) => string = match n {
     1 | 2 | 3 => "small",
     4..9 => "digit",
     -9..<0 => "small negative",
-    n if n < 0 => "negative {n}",
+    n if n < 0 => $"negative {n}",
     _ => "large",
 };
 
@@ -36,7 +36,7 @@ fn Greet(language: string) => string = match language {
     "en" => "Hello",
     "fr" => "Bonjour",
     "es" | "pt" => "Hola",
-    other => "? ({other})",
+    other => $"? ({other})",
 };
 
 fn Size(n: long) => string = match n {
@@ -47,17 +47,17 @@ fn Size(n: long) => string = match n {
 
 fn Main() {
     for n in -12..<12 {
-        if n % 4 == 0 || n == -3 || n == 2 || n == 7 { Print("{n}: {Classify(n)}"); }
+        if n % 4 == 0 || n == -3 || n == 2 || n == 7 { Print($"{n}: {Classify(n)}"); }
     }
     Print(Quadrant(Point(0, 0)));
     Print(Quadrant(Point(0, 5)));
     Print(Quadrant(Point(3, 4)));
     Print(Quadrant(Point(-3, 4)));
     Print(Quadrant(Point(1, -1)));
-    Print("{Kind('q')} {Kind('Q')} {Kind('7')} {Kind('?')}");
-    Print("{Bits(true, false)} {Bits(false, true)}");
-    Print("{Greet("fr")} {Greet("pt")} {Greet("de")}");
-    Print("{Size(0L)} {Size(500L)} {Size(5000000000L)}");
+    Print($"{Kind('q')} {Kind('Q')} {Kind('7')} {Kind('?')}");
+    Print($"{Bits(true, false)} {Bits(false, true)}");
+    Print($"{Greet("fr")} {Greet("pt")} {Greet("de")}");
+    Print($"{Size(0L)} {Size(500L)} {Size(5000000000L)}");
 
     // break and continue inside match arms affect the enclosing loop.
     mut found = -1;
@@ -70,7 +70,7 @@ fn Main() {
             _ => continue,
         }
     }
-    Print("first multiple of 7: {found}");
+    Print($"first multiple of 7: {found}");
 
     // A match passed straight to a function.
     Print(match found { 7 => "as expected", _ => "surprising" });

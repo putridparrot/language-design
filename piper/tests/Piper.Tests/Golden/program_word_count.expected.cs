@@ -6,11 +6,11 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record WordCount(string word, int count);
+internal sealed record WordCount(string word, int count);
 
-public static class Program_word_count
+internal static class Program_word_count
 {
-    public static string Normalize(string word)
+    internal static string Normalize(string word)
     {
         global::System.Text.StringBuilder builder = new global::System.Text.StringBuilder();
         foreach (char c in word)
@@ -23,7 +23,7 @@ public static class Program_word_count
         return builder.ToString();
     }
 
-    public static global::System.Collections.Generic.Dictionary<string, int> CountWords(string text)
+    internal static global::System.Collections.Generic.Dictionary<string, int> CountWords(string text)
     {
         global::System.Collections.Generic.Dictionary<string, int> counts = new global::System.Collections.Generic.Dictionary<string, int>();
         global::System.Collections.Generic.List<char> separators = new global::System.Collections.Generic.List<char> { ' ', '\n', '\t', ',', '.', ';', '!', '?' };
@@ -47,11 +47,11 @@ public static class Program_word_count
         return counts;
     }
 
-    public static global::System.Collections.Generic.List<WordCount> Top(global::System.Collections.Generic.Dictionary<string, int> counts, int n) => global::System.Linq.Enumerable.ToList<WordCount>(global::System.Linq.Enumerable.Take<WordCount>(global::System.Linq.Enumerable.ThenBy<WordCount, string>(global::System.Linq.Enumerable.OrderByDescending<WordCount, int>(global::System.Linq.Enumerable.Select<global::System.Collections.Generic.KeyValuePair<string, int>, WordCount>(counts, (global::System.Collections.Generic.KeyValuePair<string, int> pair) => new WordCount(pair.Key, pair.Value)), (WordCount w) => w.count), (WordCount w) => w.word), n));
+    internal static global::System.Collections.Generic.List<WordCount> Top(global::System.Collections.Generic.Dictionary<string, int> counts, int n) => global::System.Linq.Enumerable.ToList<WordCount>(global::System.Linq.Enumerable.Take<WordCount>(global::System.Linq.Enumerable.ThenBy<WordCount, string>(global::System.Linq.Enumerable.OrderByDescending<WordCount, int>(global::System.Linq.Enumerable.Select<global::System.Collections.Generic.KeyValuePair<string, int>, WordCount>(counts, (global::System.Collections.Generic.KeyValuePair<string, int> pair) => new WordCount(pair.Key, pair.Value)), (WordCount w) => w.count), (WordCount w) => w.word), n));
 
-    public static string Bar(int count, int scale) => new string('#', count * scale);
+    internal static string Bar(int count, int scale) => new string('#', count * scale);
 
-    public static Option<string> Longest(global::System.Collections.Generic.IEnumerable<string> words)
+    internal static Option<string> Longest(global::System.Collections.Generic.IEnumerable<string> words)
     {
         Option<string> best = Option<string>.None;
         foreach (string word in words)
@@ -65,7 +65,7 @@ public static class Program_word_count
         return best;
     }
 
-    public static void Main()
+    internal static void Main()
     {
         string text = "The quick brown fox jumps over the lazy dog. The dog sleeps;\nthe fox doesn't. Quick, quick! The fox is quick and the dog is lazy.";
         global::System.Collections.Generic.Dictionary<string, int> counts = CountWords(text);

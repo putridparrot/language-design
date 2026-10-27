@@ -11,12 +11,13 @@ using Piper.Runtime;
 /// </summary>
 /// <param name="name">What it&apos;s called.</param>
 /// <param name="price">Its price, in pounds.</param>
-public sealed record Product(string name, decimal price);
+internal sealed record Product(string name, decimal price);
 
 /// <summary>
 /// Kinds of discount.
 /// </summary>
-public abstract record Discount
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record Discount
 {
     private Discount()
     {
@@ -30,13 +31,13 @@ public abstract record Discount
     public sealed record None() : Discount { public override string ToString() => "None"; }
 }
 
-public static class Doc_comments
+internal static class Doc_comments
 {
     /// <summary>
     /// The price after a discount.
     /// </summary>
     /// <param name="product">What&apos;s being bought.</param>
-    public static decimal Discounted(Product product, Discount discount)
+    internal static decimal Discounted(Product product, Discount discount)
     {
         if (discount is Discount.Percent(var rate))
         {
@@ -48,7 +49,7 @@ public static class Doc_comments
         }
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Collections.Generic.List<Product> items = new global::System.Collections.Generic.List<Product> { new Product("Tea", 2.5m), new Product("Teapot", 24.99m), new Product("Cake", 3m) };
         global::System.Console.WriteLine($"{"Item",-8}|{"Price",8}|{"Sale",8}");

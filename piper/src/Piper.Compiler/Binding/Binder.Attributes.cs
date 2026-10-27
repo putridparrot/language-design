@@ -257,7 +257,8 @@ public sealed partial class Binder
     /// </summary>
     private void CheckClrObsolete(Piper.Text.TextSpan span, MemberInfo member)
     {
-        if (member.GetCustomAttribute<ObsoleteAttribute>(inherit: false) is not { } obsolete || !_obsoleteReported.Add((_file.Source, span.Start)))
+        if (member.GetCustomAttribute<ObsoleteAttribute>(inherit: false) is not { } obsolete ||
+            RequiredMembers.IsObsoleteOnlyForOlderCompilers(member) || !_obsoleteReported.Add((_file.Source, span.Start)))
             return;
         var name = member switch
         {

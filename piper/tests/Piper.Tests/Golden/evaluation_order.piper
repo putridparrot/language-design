@@ -2,7 +2,7 @@
 // Piper's left-to-right evaluation order survives that.
 
 fn Log(label: string, value: int) => int {
-    Print("eval {label}");
+    Print($"eval {label}");
     value
 }
 
@@ -11,23 +11,23 @@ fn Sum3(a: int, b: int, c: int) => int = a + b + c;
 fn Main() {
     // Arguments are evaluated left to right even when one of them is a block.
     let total = Sum3(Log("a", 1), { let t = Log("b", 2); t * 10 }, Log("c", 3));
-    Print("total = {total}");
+    Print($"total = {total}");
 
     // The right side of && and || only runs when needed, even if it contains statements.
     let skipped = false && { Print("should not print"); true };
-    Print("skipped = {skipped}");
+    Print($"skipped = {skipped}");
     let ran = true && { Print("right side ran"); true };
-    Print("ran = {ran}");
+    Print($"ran = {ran}");
     let either = true || { Print("should not print"); false };
-    Print("either = {either}");
+    Print($"either = {either}");
 
     // The left side of += is read before the right side's statements run.
     mut x = 1;
     x += { x = 100; 5 };
-    Print("x = {x}");
+    Print($"x = {x}");
 
     // A for loop's upper bound is evaluated exactly once.
     mut count = 0;
     for i in 0..<Log("bound", 3) { count += 1; }
-    Print("count = {count}");
+    Print($"count = {count}");
 }

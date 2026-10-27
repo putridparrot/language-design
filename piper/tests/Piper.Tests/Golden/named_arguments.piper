@@ -6,13 +6,13 @@ trait Greeter {
 }
 record English();
 extend English: Greeter {
-    fn Greet(name: string, punctuation: string = "!") => string = "Hello, {name}{punctuation}";
+    fn Greet(name: string, punctuation: string = "!") => string = $"Hello, {name}{punctuation}";
 }
 
 fn Connect(host: string, port: int = 80, retries: int = 3, timeout: double = 1.5) => string =
-    "{host}:{port} retries={retries} timeout={timeout}";
+    $"{host}:{port} retries={retries} timeout={timeout}";
 
-fn Log(tag: string) => string { Print("evaluating {tag}"); tag }
+fn Log(tag: string) => string { Print($"evaluating {tag}"); tag }
 
 fn GreetAll<T: Greeter>(g: T) => string = g.Greet("generic");
 

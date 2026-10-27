@@ -5,10 +5,10 @@ using System.Text;
 
 trait Shape {
     fn Area() => double;
-    fn Describe() => string = "area {this.Area()}";
+    fn Describe() => string = $"area {this.Area()}";
 }
-trait Named { fn Name() => string; fn Greet() => string = "Hello, {this.Name()}"; }
-trait Formal: Named { fn Greet() => string = "Good day, {this.Name()}"; }
+trait Named { fn Name() => string; fn Greet() => string = $"Hello, {this.Name()}"; }
+trait Formal: Named { fn Greet() => string = $"Good day, {this.Name()}"; }
 trait Monoid<T: Monoid<T>> {
     static fn Identity() => T;
     fn Combine(other: T) => T;
@@ -24,7 +24,7 @@ extend string: Formal { fn Name() => string = this; }
 extend int: Monoid<int> { static fn Identity() => int = 0; fn Combine(other: int) => int = this + other; }
 extend string: Monoid<string> { static fn Identity() => string = ""; fn Combine(other: string) => string = this + other; }
 extend StringBuilder: Named { fn Name() => string = this.ToString(); }
-extend Option: Convert<string> { fn Convert() => string = match this { Some(v) => "some {v}", None => "none" }; }
+extend Option: Convert<string> { fn Convert() => string = match this { Some(v) => $"some {v}", None => "none" }; }
 
 // A bounded generic record instantiated with int.
 record Holder<T: Shape>(item: T);

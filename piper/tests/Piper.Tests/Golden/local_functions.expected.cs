@@ -6,9 +6,9 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class Local_functions
+internal static class Local_functions
 {
-    public static void Main()
+    internal static void Main()
     {
         int total = 10;
         global::System.Console.WriteLine(Fib(10));

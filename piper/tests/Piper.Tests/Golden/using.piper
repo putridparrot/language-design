@@ -31,9 +31,9 @@ fn Main() {
     {
         using let stream = first;
         stream.SetLength(3);
-        Print("in the block: {stream.CanRead}");
+        Print($"in the block: {stream.CanRead}");
     }
-    Print("after the block: {first.CanRead}");
+    Print($"after the block: {first.CanRead}");
 
     // ...even when the block is an expression.
     let second = MemoryStream();
@@ -42,7 +42,7 @@ fn Main() {
         stream.SetLength(2);
         stream.Length
     };
-    Print("length {length}, still open: {second.CanRead}");
+    Print($"length {length}, still open: {second.CanRead}");
 
     // The statement form, with a declaration or with any expression.
     using (let writer = StringWriter()) {
@@ -53,5 +53,5 @@ fn Main() {
     let third = MemoryStream();
     third.SetLength(5);
     Print(Size(third));
-    Print("after using (third): {third.CanRead}");
+    Print($"after using (third): {third.CanRead}");
 }

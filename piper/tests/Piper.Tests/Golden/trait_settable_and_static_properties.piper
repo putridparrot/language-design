@@ -1,0 +1,100 @@
+// Settable and static properties in traits: C#'s `{ get; set; }` and `static abstract` interface properties.
+using System.Collections.Generic;
+
+// A settable property, which only a class can implement, as only a class can store its value.
+trait Named {
+    prop Name => string { get; set; }
+    fn Shout() => string = $"{Name.ToUpper()}!";
+}
+
+// With an automatic property, or a public mutable field.
+class Dog(name: string): Named {
+    prop Name: string { get; set; } = name;
+}
+
+class Cat: Named {
+    public mut Name = "cat";
+}
+
+// Set through a bound, and compound assignment through a name.
+fn Rename<T: Named>(item: T, name: string) {
+    item.Name = name;
+    item.Name += " the great";
+}
+
+// A static property: required, or with a default implementers may replace.
+trait Zeroed<T: Zeroed<T>> {
+    static prop Zero => T;
+    static prop Label => string = "zeroed";
+    fn Plus(other: T) => T;
+}
+
+// A record, through extend.
+record Money(cents: int);
+extend Money: Zeroed<Money> {
+    static prop Zero => Money = Money(0);
+    fn Plus(other: Money) => Money = Money(this.cents + other.cents);
+}
+
+// A class, which can now implement a trait with static members.
+class Tally(count: int): Zeroed<Tally> {
+    static prop Zero => Tally = Tally(0);
+    static prop Label => string = "tally";
+    prop Count => int = count;
+    fn Plus(other: Tally) => Tally = Tally(count + other.Count);
+}
+
+// A builtin type.
+extend int: Zeroed<int> {
+    static prop Zero => int = 0;
+    fn Plus(other: int) => int = this + other;
+}
+
+// `T.Zero` reads the implementing type's static property.
+fn Sum<T: Zeroed<T>>(items: List<T>) => T {
+    mut total = T.Zero;
+    for item in items {
+        total = total.Plus(item);
+    }
+    total
+}
+
+fn Label<T: Zeroed<T>>() => string = T.Label;
+
+// Static methods, which a class can implement too.
+trait Monoid<T: Monoid<T>> {
+    static fn Empty() => T;
+    fn Combine(other: T) => T;
+}
+
+class Bag(items: List<string>): Monoid<Bag> {
+    static fn Empty() => Bag = Bag([]);
+    prop Items => List<string> = items;
+    fn Combine(other: Bag) => Bag = Bag([...items, ...other.Items]);
+}
+
+fn Fold<T: Monoid<T>>(items: List<T>) => T {
+    mut result = T.Empty();
+    for item in items {
+        result = result.Combine(item);
+    }
+    result
+}
+
+fn Main() {
+    let pets: List<Named> = [Dog("rex"), Cat()];
+    for pet in pets {
+        pet.Name = pet.Name + "y";
+        Print(pet.Shout());
+    }
+    let dog = Dog("fido");
+    Rename(dog, "spot");
+    Print(dog.Name);
+
+    Print(Sum([Money(1), Money(2)]));
+    Print(Sum([Tally(3), Tally(4)]).Count);
+    Print(Sum([1, 2, 3]));
+    Print($"{Label<Money>()} {Label<Tally>()} {Label<int>()}");
+    Print($"{Money.Zero} {Tally.Zero.Count}");
+    Print(string.Join(",", Fold([Bag(["a"]), Bag(["b", "c"])]).Items));
+}

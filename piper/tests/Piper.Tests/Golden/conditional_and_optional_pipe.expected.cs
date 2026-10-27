@@ -6,17 +6,17 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class Conditional_and_optional_pipe
+internal static class Conditional_and_optional_pipe
 {
-    public static int Clamp(int n, int low, int high) => n < low ? low : n > high ? high : n;
+    internal static int Clamp(int n, int low, int high) => n < low ? low : n > high ? high : n;
 
-    public static Option<int> Half(int n) => n % 2 == 0 ? Option<int>.Some(n / 2) : Option<int>.None;
+    internal static Option<int> Half(int n) => n % 2 == 0 ? Option<int>.Some(n / 2) : Option<int>.None;
 
-    public static string Shout(string s) => s.ToUpper() + "!";
+    internal static string Shout(string s) => s.ToUpper() + "!";
 
-    public static string Describe(Option<string> s) => s.IsSome ? s.Value : "nothing";
+    internal static string Describe(Option<string> s) => s.IsSome ? s.Value : "nothing";
 
-    public static Result<int, string> ParsePort(string text)
+    internal static Result<int, string> ParsePort(string text)
     {
         int n;
         if (int.TryParse(text, out n))
@@ -29,9 +29,9 @@ public static class Conditional_and_optional_pipe
         }
     }
 
-    public static Result<int, string> Positive(int n) => n > 0 ? Result<int, string>.Ok(n) : Result<int, string>.Err($"{n} isn't positive");
+    internal static Result<int, string> Positive(int n) => n > 0 ? Result<int, string>.Ok(n) : Result<int, string>.Err($"{n} isn't positive");
 
-    public static Option<int> Early(Option<int> x)
+    internal static Option<int> Early(Option<int> x)
     {
         if (!x.IsSome)
         {
@@ -46,7 +46,7 @@ public static class Conditional_and_optional_pipe
         return Option<int>.Some(x.Value * 2);
     }
 
-    public static void Main()
+    internal static void Main()
     {
         int count = 3;
         global::System.Console.WriteLine(count == 1 ? "one item" : $"{count} items");

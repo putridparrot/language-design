@@ -8,7 +8,7 @@ using System.Threading;
 fn Square(n: int) => int = n * n;
 fn IsEven(n: int) => bool = n % 2 == 0;
 fn ByLength(a: string, b: string) => int = a.Length - b.Length;
-fn Describe(n: int) => string = "#{n}";
+fn Describe(n: int) => string = $"#{n}";
 fn Work() { Print("working on another thread"); }
 
 record Point(x: int);
@@ -27,23 +27,23 @@ fn Main() {
     Print(numbers.ConvertAll(Point.Make)[3]);
 
     // Predicate<T> and Comparison<T>.
-    Print("{numbers.FindAll(IsEven).Count} even, any {numbers.Exists(IsEven)}, first {numbers.Find(IsEven)}");
+    Print($"{numbers.FindAll(IsEven).Count} even, any {numbers.Exists(IsEven)}, first {numbers.Find(IsEven)}");
     let words: List<string> = ["ccc", "a", "bb"];
     words.Sort(ByLength);
     Print(string.Join(",", words));
 
     // A generic method whose type arguments come from the function: Array.ConvertAll<TInput, TOutput>.
     let array: int[] = [5, 6];
-    Print("{Array.ConvertAll(array, Describe)[1]} {Array.Find(array, IsEven)} {Array.TrueForAll(array, IsEven)}");
+    Print($"{Array.ConvertAll(array, Describe)[1]} {Array.Find(array, IsEven)} {Array.TrueForAll(array, IsEven)}");
 
     // Func still works where it's what's asked for, and a local function converts too.
     fn Odd(n: int) => bool = n % 2 == 1;
-    Print("{string.Join(",", numbers.Select(Square))} {numbers.FindAll(Odd).Count} {numbers.Count(Odd)}");
+    Print($"{string.Join(",", numbers.Select(Square))} {numbers.FindAll(Odd).Count} {numbers.Count(Odd)}");
 
     // Delegate-typed variables, and a constructor taking a ThreadStart.
     let isEven: Predicate<int> = IsEven;
     let describe: Converter<int, string> = Describe;
-    Print("{isEven(4)} {describe(7)}");
+    Print($"{isEven(4)} {describe(7)}");
     let thread = Thread(Work);
     thread.Start();
     thread.Join();

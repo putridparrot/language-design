@@ -5,8 +5,8 @@ enum Message { Add(n: int), Get }
 record Point(x: int, y: int);
 fn Describe(o: object) => string {
     match o {
-        Point(x, y) => "point {x},{y}",
-        Message.Add(n) => "add {n}",
+        Point(x, y) => $"point {x},{y}",
+        Message.Add(n) => $"add {n}",
         Message.Get => "get",
         _ => "other",
     }
@@ -24,7 +24,7 @@ record Square(side: double);
 extend Square: Shape { fn Area() => double = this.side * this.side; }
 fn Kind(s: Shape) => string {
     match s {
-        Square(side) => "square {side}",
+        Square(side) => $"square {side}",
         _ => "some shape",
     }
 }

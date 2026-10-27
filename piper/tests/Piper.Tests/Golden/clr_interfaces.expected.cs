@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Money(int pence) : global::System.IComparable<Money>
+internal sealed record Money(int pence) : global::System.IComparable<Money>
 {
     public int CompareTo(Option<Money> other)
     {
@@ -28,7 +28,7 @@ public sealed record Money(int pence) : global::System.IComparable<Money>
     public static bool operator >=(Money left, Money right) => ((global::System.IComparable<Money>)left).CompareTo(right) >= 0;
 }
 
-public sealed record Connection(string name) : global::System.IDisposable
+internal sealed record Connection(string name) : global::System.IDisposable
 {
     public void Dispose()
     {
@@ -36,7 +36,7 @@ public sealed record Connection(string name) : global::System.IDisposable
     }
 }
 
-public sealed record ByLength() : global::System.Collections.Generic.IComparer<string>
+internal sealed record ByLength() : global::System.Collections.Generic.IComparer<string>
 {
     public int Compare(Option<string> x, Option<string> y)
     {
@@ -49,9 +49,9 @@ public sealed record ByLength() : global::System.Collections.Generic.IComparer<s
     int global::System.Collections.Generic.IComparer<string>.Compare(string? x, string? y) => Compare(global::Piper.Runtime.PiperInterop.FromNullableReference(x), global::Piper.Runtime.PiperInterop.FromNullableReference(y));
 }
 
-public static class Clr_interfaces
+internal static class Clr_interfaces
 {
-    public static T Largest<T>(global::System.Collections.Generic.List<T> items) where T : global::System.IComparable<T>
+    internal static T Largest<T>(global::System.Collections.Generic.List<T> items) where T : global::System.IComparable<T>
     {
         T best = items[0];
         foreach (T item in items)
@@ -64,7 +64,7 @@ public static class Clr_interfaces
         return best;
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Collections.Generic.List<Money> wallet = new global::System.Collections.Generic.List<Money> { new Money(250), new Money(1200), new Money(75) };
         wallet.Sort();

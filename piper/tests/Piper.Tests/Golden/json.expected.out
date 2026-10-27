@@ -1,0 +1,14 @@
+{"id":1,"note":"milk","due":null}
+Some(Todo { id = 2, note = None, due = Some(5) })
+Some(Todo { id = 3, note = None, due = None })
+"Open"
+{"kind":"Closed","reason":"done"}
+Some(Order { id = 1, status = Closed { reason = late }, tags = None })
+{"id":2,"status":"Open","tags":["a","b"]}
+{"id":3,"status":"Open","tags":["x"]}
+{"kind":"Node","value":1,"left":"Leaf","right":{"kind":"Node","value":2,"left":"Leaf","right":"Leaf"}}
+True
+{"amount":2}
+Some(Quantity { amount = 5 })
+rejected: Invariant failed: amount > 0 (amount = 0)
+rejected: 'Pending' isn't a variant of Status without fields.

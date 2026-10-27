@@ -24,7 +24,7 @@ actor Account(owner: string, opening: decimal) {
 
     on Withdraw(amount: decimal) => decimal {
         if amount > balance {
-            throw System.InvalidOperationException("{owner} can't withdraw {amount}: the balance is {balance}");
+            throw System.InvalidOperationException($"{owner} can't withdraw {amount}: the balance is {balance}");
         }
         balance -= amount;
         transfers += 1;
@@ -33,7 +33,7 @@ actor Account(owner: string, opening: decimal) {
 
     on Summary() => string {
         await Task.Delay(1);
-        "{owner}: {balance} after {transfers} transfers"
+        $"{owner}: {balance} after {transfers} transfers"
     }
 }
 
@@ -47,11 +47,11 @@ async fn StartNode(port: int) => Task<ActorSystem> {
 /// What a client does with an account, wherever it is.
 async fn UseAccount(account: Account) {
     account.Deposit(Transfer(25m, "salary"));
-    Print("after withdrawing 50: {await account.Withdraw(50m)}");
+    Print($"after withdrawing 50: {await account.Withdraw(50m)}");
     try {
         await account.Withdraw(1000m);
     } catch (e: System.InvalidOperationException) {
-        Print("refused: {e.Message}");
+        Print($"refused: {e.Message}");
     }
     Print(await account.Summary());
 }
@@ -60,7 +60,7 @@ async fn Main(args: string[]) {
     if args.Length >= 2 && args[0] == "host" {
         let node = await StartNode(int.Parse(args[1]));
         Account.Spawn(node, "ada", "Ada", 100m);
-        Print("Hosting Ada's account at {node.Address}; press Enter to stop.");
+        Print($"Hosting Ada's account at {node.Address}; press Enter to stop.");
         System.Console.ReadLine();
         await node.Remote().ShutdownAsync(true);
     } else if args.Length >= 3 && args[0] == "client" {

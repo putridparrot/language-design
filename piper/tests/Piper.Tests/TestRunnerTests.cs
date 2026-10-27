@@ -135,7 +135,7 @@ public class TestRunnerTests
 
     [Theory]
     [InlineData("PIP0336", "test \"t\" { AssertEqual(1, \"one\"); }")]
-    [InlineData("PIP0337", "test \"t{1}\" { }")]
+    [InlineData("PIP0337", "test $\"t{1}\" { }")]
     [InlineData("PIP0338", "test \"t\" { } test \"t\" { }")]
     [InlineData("PIP0205", "test \"t\" { Assert(); }")]
     [InlineData("PIP0205", "test \"t\" { AssertEqual(1); }")]

@@ -71,6 +71,40 @@
 - **`piper run --watch`:** runs the program, and when a `.piper` file or `piper.json` changes (not under `bin/` or
   `obj/`), stops it and runs it again; a version that doesn't compile waits for the next save. A web server is
   restarted on its port, and a run ends with its watcher however that ends, so none is left holding the port.
+- **Library visibility (breaking for libraries):** a top-level declaration is now visible throughout the program or
+  library but not outside it, as C#'s `internal` (and C#'s default) is; `public` exports it as part of a library's API
+  (`public record Point(…)`, `public fn Distance(…)`, `public extend string { … }`), and `private` still keeps it to
+  its file. Programs are unaffected. A library built before needs `public` on what its users call. A public
+  declaration can't mention a type that isn't public (PIP0363), and a declaration can't be both (PIP0362). Hovers
+  show `public`.
+- **Nested object and collection initializers:** in an object initializer, `Font: { Size: 14 }` sets properties of
+  the object `Font` already holds, and `Tags: { "a", "b" }` adds to the collection `Tags` holds with its `Add`
+  (`Scores: { { "x", 1 } }` for an `Add` taking several arguments), as C#'s `Font = { Size = 14 }` and
+  `Tags = { "a", "b" }` do; they nest. The member must hold an object, not an optional (PIP0365) or a value type
+  (PIP0366), and a collection must implement `IEnumerable` (PIP0367). Its `init` properties can't be set there, as in
+  C#. A block straight after `Name:` in an initializer now needs parentheses. New errors PIP0364 to PIP0368.
+- **Settable and static trait properties:** `prop Name => string { get; set; }` in a trait requires a settable
+  property, which a class implements with a public settable property (or `public mut` field) and code sets through the
+  trait or a bound (`pet.Name = "Rex"`, `item.Name += "!"`); only a class can implement one (PIP0371), and a compound
+  assignment through an expression other than a name is reported (PIP0372). `static prop Zero => T;` is a static
+  abstract property, with an optional default, implemented like a static method and read as `T.Zero` or `Money.Zero`.
+  As C#: `string Name { get; set; }` and `static abstract T Zero { get; }`. **Fix:** a class can now implement a trait
+  with static methods or properties; it was reported as using the trait as a value's type (PIP0319). A class property
+  that doesn't match a trait's is now reported as not matching (PIP0246) rather than missing.
+- **Piper's types in JSON and web requests:** System.Text.Json now writes an Option as its value or `null` (it was
+  `{"IsSome":…,"Value":…}`, and `null` couldn't be read back), reading a missing field as None; an enum's variant as its
+  name or an object naming it in `"kind"` (it was `{}`); and JSON a record's `requires` rejects as a `JsonException`, so
+  a web API answers it 400 rather than 500. An optional handler parameter in `endpoints` (`name: string?`) is None when
+  the request leaves it out, rather than a 400, through `Option`'s new `TryParse`. The todo-api sample uses all of them.
+- **.NET interface indexers that may take or give null:** a class can implement one (`string? this[string? key]`) with an
+  indexer of Options (`prop this[key: string?] => string?`), as it already could a property; it was reported as an
+  interface Piper can't implement.
+- **`required` members:** making a .NET type with `required` members needs them set in its initializer
+  (`Person() { Name: "Ada", Age: 36 }`), as in C#, unless its constructor is `[SetsRequiredMembers]`; one left out is
+  reported (PIP0369) where it used to fail in the C# compiler, and so is one changed in braces rather than given a
+  value (PIP0370). A Piper class deriving from such a type has them too, unless its base constructor sets them, and
+  then its own constructors are marked as setting them. **Fix:** such types' constructors could not be called at all,
+  as C# marks them obsolete for older compilers; that marker is now ignored, as C# ignores it.
 - **The args plugin:** `args Options { port: int = 5080 "The port"; verbose: bool; files: List<string>; }` declares a
   program's command-line options as a record, with `Options.FromArgs(args)` (which prints the usage on `--help`, and
   the mistake and usage on a bad command line, and exits) and `Options.Parse(args)` (a Result, for tests). Flags,

@@ -7,14 +7,14 @@ class Ticket(holder: string) {
     static mut issued = 0;
     public static let prefix = "T";
     public static let firstNumber = 100;
-    static let pattern = "{prefix}-{firstNumber}+";
+    static let pattern = $"{prefix}-{firstNumber}+";
 
     // An instance field's initializer can use static fields.
     let number = firstNumber + issued;
 
     fn Issue() => string {
         issued += 1;                                 // named bare inside the class
-        "{prefix}{number} for {holder}"
+        $"{prefix}{number} for {holder}"
     }
 
     static fn Issued() => int = issued;
@@ -36,7 +36,7 @@ class Config(name: string) {
 
 // A static field holding a function.
 class Hooks {
-    public static mut onEvent: (string) => unit = (s) => Print("default: {s}");
+    public static mut onEvent: (string) => unit = (s) => Print($"default: {s}");
 }
 
 // Each instantiation of a generic class has its own static fields.
@@ -66,7 +66,7 @@ fn Main() {
     Print(ada.Issue());
     let bob = Ticket("Bob");                         // made after one was issued
     Print(bob.Issue());
-    Print("{Ticket.Issued()} issued, prefix {Ticket.prefix}, pattern {Ticket.Pattern()}");
+    Print($"{Ticket.Issued()} issued, prefix {Ticket.prefix}, pattern {Ticket.Pattern()}");
     Ticket.Reset();
     Print(Ticket.Issued());
 
@@ -76,7 +76,7 @@ fn Main() {
     Print(Config.created);
 
     Hooks.onEvent("first");
-    Hooks.onEvent = (s) => Print("custom: {s}");
+    Hooks.onEvent = (s) => Print($"custom: {s}");
     Hooks.onEvent("second");
 
     let ints = Pool<int>();
@@ -84,7 +84,7 @@ fn Main() {
     ints.Add(2);
     let words = Pool<string>();
     words.Add("a");
-    Print("{Pool<int>.Made()} ints, {Pool<string>.Made()} strings");
+    Print($"{Pool<int>.Made()} ints, {Pool<string>.Made()} strings");
 
     Derived().Bump();
     Base.total += 1;

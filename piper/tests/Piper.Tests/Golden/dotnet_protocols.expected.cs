@@ -6,12 +6,13 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Money(decimal amount)
+internal sealed record Money(decimal amount)
 {
     public override string ToString() => $"£{this.amount}";
 }
 
-public abstract record Suit
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record Suit
 {
     private Suit()
     {
@@ -44,7 +45,7 @@ public abstract record Suit
     }
 }
 
-public sealed record Version(int major, int minor) : global::System.IComparable<Version>
+internal sealed record Version(int major, int minor) : global::System.IComparable<Version>
 {
     public int CompareTo(Option<Version> other)
     {
@@ -68,7 +69,7 @@ public sealed record Version(int major, int minor) : global::System.IComparable<
     public static bool operator >=(Version left, Version right) => ((global::System.IComparable<Version>)left).CompareTo(right) >= 0;
 }
 
-public partial class Score(int points) : global::System.IComparable<Score>
+internal partial class Score(int points) : global::System.IComparable<Score>
 {
     public int @value { get; } = points;
 
@@ -86,7 +87,7 @@ public partial class Score(int points) : global::System.IComparable<Score>
     public static bool operator >=(Score left, Score right) => ((global::System.IComparable<Score>)left).CompareTo(right) >= 0;
 }
 
-public sealed record Countdown(int from) : global::System.Collections.Generic.IEnumerable<int>
+internal sealed record Countdown(int from) : global::System.Collections.Generic.IEnumerable<int>
 {
     public global::System.Collections.Generic.IEnumerator<int> GetEnumerator()
     {
@@ -101,7 +102,7 @@ public sealed record Countdown(int from) : global::System.Collections.Generic.IE
     global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
-public partial class Deck(global::System.Collections.Generic.List<Suit> suits) : global::System.Collections.Generic.IEnumerable<Suit>
+internal partial class Deck(global::System.Collections.Generic.List<Suit> suits) : global::System.Collections.Generic.IEnumerable<Suit>
 {
     public global::System.Collections.Generic.IEnumerator<Suit> GetEnumerator()
     {
@@ -114,11 +115,11 @@ public partial class Deck(global::System.Collections.Generic.List<Suit> suits) :
     global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
-public static class Dotnet_protocols
+internal static class Dotnet_protocols
 {
-    public static global::System.Numerics.BigInteger Doubled(global::System.Numerics.BigInteger n) => n * 2;
+    internal static global::System.Numerics.BigInteger Doubled(global::System.Numerics.BigInteger n) => n * 2;
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(new Money(2.5m));
         global::System.Console.WriteLine($"{new Suit.Hearts()} {new Suit.Joker(2)} {Option<Money>.Some(new Money(1m))}");

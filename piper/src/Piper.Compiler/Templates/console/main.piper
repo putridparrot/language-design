@@ -1,7 +1,7 @@
 // __NAME__: `piper run .` runs it (`piper run . -- Ada` greets Ada), `piper test .` runs its tests, and
 // `piper build .` makes an executable in bin/.
 
-fn Greeting(name: string) => string = "Hello, {name}!";
+fn Greeting(name: string) => string = $"Hello, {name}!";
 
 fn Main(args: string[]) {
     let name = args.Length > 0 ? args[0] : "world";

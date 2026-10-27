@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public interface Convert<T>
+internal interface Convert<T>
 {
     T Convert();
 
@@ -34,7 +34,7 @@ public interface Convert<T>
     }
 }
 
-public interface Comparable<T>
+internal interface Comparable<T>
 {
     int CompareTo(T other);
 
@@ -62,26 +62,26 @@ public interface Comparable<T>
     }
 }
 
-public sealed record Celsius(double degrees) : Convert<string>
+internal sealed record Celsius(double degrees) : Convert<string>
 {
     public string Convert() => $"{this.degrees} C";
 }
 
-public sealed record Money(int pence) : Comparable<Money>, Convert<int>
+internal sealed record Money(int pence) : Comparable<Money>, Convert<int>
 {
     public int CompareTo(Money other) => this.pence - other.pence;
 
     public int Convert() => this.pence;
 }
 
-public sealed record Box<T>(T @value) : Convert<T>
+internal sealed record Box<T>(T @value) : Convert<T>
 {
     public T Convert() => this.@value;
 }
 
-public static class Generic_traits
+internal static class Generic_traits
 {
-    public static T Largest<T>(global::System.Collections.Generic.List<T> items)
+    internal static T Largest<T>(global::System.Collections.Generic.List<T> items)
     {
         T best = items[0];
         foreach (T item in items)
@@ -94,7 +94,7 @@ public static class Generic_traits
         return best;
     }
 
-    public static int Total<T>(global::System.Collections.Generic.List<T> items)
+    internal static int Total<T>(global::System.Collections.Generic.List<T> items)
     {
         int sum = 0;
         foreach (T item in items)
@@ -104,7 +104,7 @@ public static class Generic_traits
         return sum;
     }
 
-    public static void Main()
+    internal static void Main()
     {
         Celsius c = new Celsius(21.5);
         global::System.Console.WriteLine(c.Convert());

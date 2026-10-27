@@ -6,24 +6,24 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Point(int x, int y);
+internal sealed record Point(int x, int y);
 
-public sealed record Line(Point start, Point end);
+internal sealed record Line(Point start, Point end);
 
-public sealed record Person(string name, int age, bool active);
+internal sealed record Person(string name, int age, bool active);
 
-public static class Records
+internal static class Records
 {
-    public static int LengthSquared(Line line)
+    internal static int LengthSquared(Line line)
     {
         int dx = line.end.x - line.start.x;
         int dy = line.end.y - line.start.y;
         return dx * dx + dy * dy;
     }
 
-    public static Point Origin() => new Point(0, 0);
+    internal static Point Origin() => new Point(0, 0);
 
-    public static void Main()
+    internal static void Main()
     {
         Line line = new Line(Origin(), new Point(3, 4));
         global::System.Console.WriteLine($"squared length: {LengthSquared(line)}");

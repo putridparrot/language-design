@@ -46,11 +46,11 @@ fn Main() {
 
     let grid = double[2, 3];
     grid[1, 2] = 1.5;
-    Print("{grid.Length} {grid[1, 2]}");
+    Print($"{grid.Length} {grid[1, 2]}");
 
     let slots = string?[2];
     slots[1] = "full";
-    Print("{slots[0] ?? "empty"} {slots[1] ?? "empty"}");
+    Print($"{slots[0] ?? "empty"} {slots[1] ?? "empty"}");
 
     let points: Point[] = [Point(1, 2), Point(3, 4)];
     Print(SumX(points));
@@ -83,7 +83,7 @@ fn Main() {
     Print(ages["Ada"]);
 
     for pair in ages {
-        Print("{pair.Key} is {pair.Value}, at most {Math.Max(pair.Value, 40)}");
+        Print($"{pair.Key} is {pair.Value}, at most {Math.Max(pair.Value, 40)}");
     }
 
     // A generic .NET member returning T gives the element type itself; one returning T? gives an Option.

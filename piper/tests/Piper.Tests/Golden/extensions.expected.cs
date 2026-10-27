@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Point(int x, int y)
+internal sealed record Point(int x, int y)
 {
     public static Point Origin() => new Point(0, 0);
 
@@ -15,9 +15,9 @@ public sealed record Point(int x, int y)
     public int LengthSquared() => this.x.Squared() + this.y.Squared();
 }
 
-public static class Extensions
+internal static class Extensions
 {
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(7.Squared());
         global::System.Console.WriteLine((-3).Squared());
@@ -36,27 +36,27 @@ public static class Extensions
     }
 }
 
-public static class ExtensionsExtensions
+internal static class ExtensionsExtensions
 {
     extension(int self)
     {
-        public int Squared() => self * self;
+        internal int Squared() => self * self;
 
-        public bool IsEven() => self % 2 == 0;
+        internal bool IsEven() => self % 2 == 0;
 
-        public int ClampTo(int low, int high) => self < low ? low : self > high ? high : self;
+        internal int ClampTo(int low, int high) => self < low ? low : self > high ? high : self;
     }
 
     extension(int)
     {
-        public static int Zero() => 0;
+        internal static int Zero() => 0;
     }
 
     extension(string self)
     {
-        public string Shout() => self + "!";
+        internal string Shout() => self + "!";
 
-        public string Repeat(int times)
+        internal string Repeat(int times)
         {
             string result = "";
             for (int i = 0; i < times; i++)
@@ -69,12 +69,12 @@ public static class ExtensionsExtensions
 
     extension(double self)
     {
-        public double Half() => self / 2.0;
+        internal double Half() => self / 2.0;
     }
 
     extension<T>(Option<T> self)
     {
-        public bool HasValue()
+        internal bool HasValue()
         {
             if (self is { IsSome: true })
             {
@@ -86,7 +86,7 @@ public static class ExtensionsExtensions
             }
         }
 
-        public T GetOr(T fallback)
+        internal T GetOr(T fallback)
         {
             if (self is { IsSome: true, Value: var v })
             {
@@ -101,7 +101,7 @@ public static class ExtensionsExtensions
 
     extension<T>(Option<T>)
     {
-        public static Option<T> Nothing() => Option<T>.None;
+        internal static Option<T> Nothing() => Option<T>.None;
     }
 }
 

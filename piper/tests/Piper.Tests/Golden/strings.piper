@@ -1,15 +1,15 @@
 fn Main() {
     let name = "Piper";
     let version = 1.5;
-    Print("Hello, {name}! Version {version}.");
+    Print($"Hello, {name}! Version {version}.");
     Print("Braces: \{ and \}, quote: \", backslash: \\, tab:[\t]");
-    Print("Nested: {"inner {name}"}");
-    Print("Math: {1 + 2 * 3}, conditional: {if version > 1.0 { "new" } else { "old" }}");
+    Print($"Nested: {$"inner {name}"}");
+    Print($"Math: {1 + 2 * 3}, conditional: {if version > 1.0 { "new" } else { "old" }}");
     let c = 'P';
-    Print("char: {c}, newline escape: [\n]");
+    Print($"char: {c}, newline escape: [\n]");
     Print("Unicode: \u{1F99C}");
     Print(true);
-    Print("bool in string: {1 < 2}");
+    Print($"bool in string: {1 < 2}");
     Print("con" + "cat" + "enation");
     Print(0.1 + 0.2);
     Print(10 / 4);

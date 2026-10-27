@@ -405,6 +405,10 @@ but only compiled in by `piper test`.
 Each file can declare a `namespace`, and `private` hides a declaration from other files. A program is all of its
 `.piper` files together: `piper run src/` compiles every file under `src`.
 
+In a library (`piper build src/ --library`), only what's marked `public` is visible to the code using it:
+`public record Point(x: double, y: double);`, `public fn Distance(a: Point, b: Point) => double = …`. Everything
+else is shared by the library's own files and nothing more, as in C#, so its helpers don't become its API by accident.
+
 ## Using Piper in a .NET project
 
 Reference the `Piper.Build` package and a project compiles its `.piper` files along with its C#:

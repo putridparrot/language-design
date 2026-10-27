@@ -76,6 +76,7 @@ public sealed class Lexer
         switch (c)
         {
             case '"': return ScanString();
+            case '$' when Peek(1) == '"': return ScanString();
             case '\'': return ScanChar();
             case '(': return Punctuation(TokenKind.OpenParen, 1);
             case ')': return Punctuation(TokenKind.CloseParen, 1);
@@ -399,15 +400,25 @@ public sealed class Lexer
     }
 
     /// <summary>
-    /// string = '"' { char | escape | "{" expression "}" } '"' ;
-    /// A string containing holes becomes an InterpolatedStringLiteral; the hole spans are re-lexed by the parser.
+    /// string = [ "$" ] '"' { char | escape | "{" expression "}" | "{{" | "}}" } '"' ;
+    /// As in C#, only a <c>$"…"</c> string interpolates: its holes make it an InterpolatedStringLiteral (whose hole spans
+    /// the parser re-lexes), and <c>{{</c> and <c>}}</c> are literal braces. In a plain string, braces are just text.
     /// </summary>
     private Token ScanString()
     {
-        if (Peek(1) == '"' && Peek(2) == '"')
-            return ScanRawString();
-
         int start = _position;
+        bool interpolated = Current == '$';
+        if (interpolated)
+            _position++;
+        if (Peek(1) == '"' && Peek(2) == '"')
+        {
+            if (!interpolated)
+                return ScanRawString();
+            _diagnostics.ReportRawStringLayout(new TextSpan(start, 1), "A raw string can't be interpolated; use a $\"…\" string, or concatenate.");
+            _position = start + 1;
+            return ScanRawString();
+        }
+
         _position++;
 
         var parts = ImmutableArray.CreateBuilder<InterpolationPart>();
@@ -439,7 +450,15 @@ public sealed class Lexer
                 continue;
             }
 
-            if (c == '{')
+            // `{{` and `}}` in a $"…" string are literal braces, as in C#.
+            if (interpolated && c is '{' or '}' && Peek(1) == c)
+            {
+                text.Append(c);
+                _position += 2;
+                continue;
+            }
+
+            if (c == '{' && interpolated)
             {
                 hasHoles = true;
                 FlushText(parts, text, textStart, _position);
@@ -473,6 +492,7 @@ public sealed class Lexer
 
         var span = TextSpan.FromBounds(start, _position);
         var tokenText = _source.ToString(span);
+        // A $"…" string without holes is a plain string, as in C#.
         if (!hasHoles)
         {
             var value = string.Concat(parts.OfType<InterpolationText>().Select(p => p.Value));
@@ -585,7 +605,7 @@ public sealed class Lexer
                     index++;
                     break;
                 case '"':
-                    index = SkipNestedQuoted(index, '"');
+                    index = SkipNestedQuoted(index, '"', interpolated: index > 0 && _source[index - 1] == '$');
                     if (index < 0)
                         return -1;
                     break;
@@ -602,7 +622,8 @@ public sealed class Lexer
         return -1;
     }
 
-    private int SkipNestedQuoted(int index, char quote)
+    /// <summary>Skips a string or char literal inside a hole; a nested $"…" string's own holes are skipped too.</summary>
+    private int SkipNestedQuoted(int index, char quote, bool interpolated = false)
     {
         index++;
         while (index < _end)
@@ -617,7 +638,12 @@ public sealed class Lexer
             }
             if (c == quote)
                 return index + 1;
-            if (c == '{' && quote == '"')
+            if (interpolated && c is '{' or '}' && index + 1 < _end && _source[index + 1] == c)
+            {
+                index += 2;
+                continue;
+            }
+            if (c == '{' && interpolated)
             {
                 int end = FindHoleEnd(index + 1);
                 if (end < 0)

@@ -6,9 +6,9 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class Trailing_closures
+internal static class Trailing_closures
 {
-    public static void Repeat(int times, global::System.Action<int> body)
+    internal static void Repeat(int times, global::System.Action<int> body)
     {
         for (int i = 0; i < times; i++)
         {
@@ -16,14 +16,14 @@ public static class Trailing_closures
         }
     }
 
-    public static int Measure(string label, global::System.Func<int> body)
+    internal static int Measure(string label, global::System.Func<int> body)
     {
         int result = body();
         global::System.Console.WriteLine($"{label}: {result}");
         return result;
     }
 
-    public static void Guarded(global::System.Action body)
+    internal static void Guarded(global::System.Action body)
     {
         try
         {
@@ -35,9 +35,9 @@ public static class Trailing_closures
         }
     }
 
-    public static bool IsSmall(int n, global::System.Func<int, bool> check) => check(n);
+    internal static bool IsSmall(int n, global::System.Func<int, bool> check) => check(n);
 
-    public static void Main()
+    internal static void Main()
     {
         Repeat(3, (int i) => {
             global::System.Console.WriteLine($"tick {i}");

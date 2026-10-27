@@ -9,9 +9,9 @@ using Piper.Runtime;
 
 file sealed record Totals(int count, double area);
 
-public static class MainModule
+internal static class MainModule
 {
-    public static void Main()
+    internal static void Main()
     {
         global::Geometry.Shape circle = new global::Geometry.Shape.Circle(new global::Geometry.Point(0.0, 0.0), 1.0);
         global::Geometry.Shape rect = new global::Geometry.Shape.Rect(new global::Geometry.Point(1.0, 2.0), 3.0, 4.0);
@@ -54,9 +54,10 @@ using Piper.Runtime;
 
 namespace Geometry
 {
-    public sealed partial record Point(double x, double y);
+    internal sealed partial record Point(double x, double y);
 
-    public abstract partial record Shape
+    [global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+    internal abstract partial record Shape
     {
         private Shape()
         {
@@ -67,9 +68,9 @@ namespace Geometry
         public sealed record Rect(Point corner, double width, double height) : Shape;
     }
 
-    public static class Shapes
+    internal static class Shapes
     {
-        public static double Area(Shape shape)
+        internal static double Area(Shape shape)
         {
             if (shape is Shape.Circle(_, var r))
             {
@@ -99,7 +100,7 @@ using Piper.Runtime;
 
 namespace Geometry
 {
-    public partial interface Describe
+    internal partial interface Describe
     {
         string Describe();
 
@@ -155,11 +156,11 @@ namespace Geometry
         }
     }
 
-    public static class TextExtensions
+    internal static class TextExtensions
     {
         extension(double self)
         {
-            public long Rounded() => (long)global::System.Math.Round(self);
+            internal long Rounded() => (long)global::System.Math.Round(self);
         }
     }
 }

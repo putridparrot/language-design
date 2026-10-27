@@ -10,7 +10,7 @@ record Point(x: int, y: int);
 fn Describe(path: string) => string {
     // Path.GetExtension is annotated as possibly returning null, so it comes back as string?.
     let extension = System.IO.Path.GetExtension(path);
-    "{path}: {extension ?? "no extension"}"
+    $"{path}: {extension ?? "no extension"}"
 }
 
 fn Main() {
@@ -67,6 +67,6 @@ fn Main() {
     // ...and None becomes null where .NET accepts it.
     let missing: string? = null;
     let present: string? = "here";
-    Print("{string.IsNullOrEmpty(missing)} {string.IsNullOrEmpty(present)}");
+    Print($"{string.IsNullOrEmpty(missing)} {string.IsNullOrEmpty(present)}");
     Print(string.Join(", ", "a", "b", "c"));
 }

@@ -7,7 +7,7 @@ using Piper.Runtime;
 #pragma warning restore CS0612, CS0618
 
 [global::System.ComponentModel.DescriptionAttribute("A customer, as the API sends it")]
-public partial class Customer(int id, string name)
+internal partial class Customer(int id, string name)
 {
     [global::System.Text.Json.Serialization.JsonPropertyNameAttribute("customer_id")]
     public int Id { get; } = id;
@@ -28,9 +28,9 @@ public partial class Customer(int id, string name)
     public string this[int i] => $"tag{i}";
 }
 
-public static class Class_attributes
+internal static class Class_attributes
 {
-    public static void Main()
+    internal static void Main()
     {
         Customer customer = new Customer(7, "Ada");
         customer.OrderCount = 3;

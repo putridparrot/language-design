@@ -26,24 +26,24 @@ fn Main() {
     let builder = StringBuilder();
     builder.Append("Piper").Append(' ').Append(1.0);
     builder.Length -= 2;
-    Print("{builder} has {builder.Length} characters");
+    Print($"{builder} has {builder.Length} characters");
 
     // .NET APIs that may return null give optionals.
     let reader = StringReader("first\nsecond");
     while reader.ReadLine() is Some(line) {
-        Print("read '{line}'");
+        Print($"read '{line}'");
     }
-    Print("then {reader.ReadLine() ?? "nothing"}");
+    Print($"then {reader.ReadLine() ?? "nothing"}");
 
     // `out` parameters, statics, and C#'s format specifiers in interpolation.
     if DateTime.TryParse("2026-03-14", CultureInfo.InvariantCulture, DateTimeStyles.None, out let date) {
-        Print("{date:yyyy-MM-dd} is a {date.DayOfWeek}");
+        Print($"{date:yyyy-MM-dd} is a {date.DayOfWeek}");
     }
-    Print("pi to 3 places: {Math.PI:F3}, max int: {int.MaxValue:N0}");
+    Print($"pi to 3 places: {Math.PI:F3}, max int: {int.MaxValue:N0}");
 
     // Events: `+=` subscribes a lambda.
     let names = ObservableCollection<string>();
-    names.CollectionChanged += (sender, change) => Print("collection: {change.Action}");
+    names.CollectionChanged += (sender, change) => Print($"collection: {change.Action}");
     names.Add("Ada");
     names.Clear();
 
@@ -56,16 +56,16 @@ fn Main() {
     let json = JsonSerializer.Serialize(books[2]);
     Print(json);
     match JsonSerializer.Deserialize<Book>("""{"title": "Hyperion", "year": 1989, "rating": 5}""") {
-        Some(book) => Print("{book.name} ({book.year}), rated {book.rating}"),
+        Some(book) => Print($"{book.name} ({book.year}), rated {book.rating}"),
         None => Print("no book"),
     }
 
     // Exceptions, caught by type.
     try {
         let size = File.ReadAllText(Path.Combine(Path.GetTempPath(), "no-such-piper-file.txt")).Length;
-        Print("{size} bytes");
+        Print($"{size} bytes");
     } catch (e: FileNotFoundException) {
         // .NET says GetFileName may return null, so its result is optional too.
-        Print("not found: {Path.GetFileName(e.FileName ?? "?") ?? "?"}");
+        Print($"not found: {Path.GetFileName(e.FileName ?? "?") ?? "?"}");
     }
 }

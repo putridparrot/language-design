@@ -4,7 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 
-fn Describe(status: HttpStatusCode) => string = "{(int)status} {status}";
+fn Describe(status: HttpStatusCode) => string = $"{(int)status} {status}";
 
 fn Main() {
     // An enum to a number, a number to an enum, and one enum to another.
@@ -12,7 +12,7 @@ fn Main() {
     Print(Describe((HttpStatusCode)201));
     let day = (DayOfWeek)3;
     let weekend = (long)DayOfWeek.Saturday + (long)DayOfWeek.Sunday;
-    Print("{day} {weekend} {(byte)ConsoleColor.Red} {(ConsoleColor)(int)DayOfWeek.Friday}");
+    Print($"{day} {weekend} {(byte)ConsoleColor.Red} {(ConsoleColor)(int)DayOfWeek.Friday}");
     let codes: List<int> = [200, 404, 500];
     for code in codes {
         Print(Describe((HttpStatusCode)code));
@@ -20,6 +20,6 @@ fn Main() {
 
     // None where .NET takes null: String.Concat has string and object overloads, chosen by the other arguments.
     Print(String.Concat("a", None, "b"));
-    Print("{String.IsNullOrEmpty(None)} {String.IsNullOrEmpty("x")}");
+    Print($"{String.IsNullOrEmpty(None)} {String.IsNullOrEmpty("x")}");
     Print(String.Equals(None, None));
 }

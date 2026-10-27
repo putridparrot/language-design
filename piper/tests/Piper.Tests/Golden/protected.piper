@@ -12,7 +12,7 @@ abstract class Shape(name: string) {
     prop Sides: int { get; protected set; } = 0;
 
     // The template: derived classes supply the steps.
-    fn Describe() => string = "{label} with {Sides} sides and area {Math.Round(Area() * Scale, 2)}";
+    fn Describe() => string = $"{label} with {Sides} sides and area {Math.Round(Area() * Scale, 2)}";
 
     protected abstract fn Area() => double;
 
@@ -75,13 +75,13 @@ fn Main() {
     rect.Double();
     Print(rect.Describe());
     let small = Circle(1.0);
-    Print("{small.Describe()}; bigger than a circle of 2: {small.Bigger(Circle(2.0))}");
+    Print($"{small.Describe()}; bigger than a circle of 2: {small.Bigger(Circle(2.0))}");
 
     let readings = Smoothed();
     readings.Add(1.0);
     readings.Add(2.0);
     readings.Record(6.0);
-    Print("latest {readings.Latest}, average of all {readings.Average(3)}");
+    Print($"latest {readings.Latest}, average of all {readings.Average(3)}");
 
     let upper = Upper();
     upper.Add("piper");

@@ -6,7 +6,8 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public abstract record MathError
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record MathError
 {
     private MathError()
     {
@@ -17,11 +18,11 @@ public abstract record MathError
     public sealed record Negative(int @value) : MathError;
 }
 
-public static class Results
+internal static class Results
 {
-    public static Result<int, MathError> Divide(int a, int b) => b == 0 ? Result<int, MathError>.Err(new MathError.DivideByZero()) : Result<int, MathError>.Ok(a / b);
+    internal static Result<int, MathError> Divide(int a, int b) => b == 0 ? Result<int, MathError>.Err(new MathError.DivideByZero()) : Result<int, MathError>.Ok(a / b);
 
-    public static Result<int, MathError> Root(int n)
+    internal static Result<int, MathError> Root(int n)
     {
         if (n < 0)
         {
@@ -35,7 +36,7 @@ public static class Results
         return Result<int, MathError>.Ok(r);
     }
 
-    public static Result<int, MathError> Compute(int a, int b)
+    internal static Result<int, MathError> Compute(int a, int b)
     {
         Result<int, MathError> temp = Divide(a, b);
         if (!temp.IsOk)
@@ -52,7 +53,7 @@ public static class Results
         return Result<int, MathError>.Ok(r * 10);
     }
 
-    public static Result<int, MathError> Digits(int a, int b)
+    internal static Result<int, MathError> Digits(int a, int b)
     {
         Result<int, MathError> temp = Divide(a, b);
         if (!temp.IsOk)
@@ -69,7 +70,7 @@ public static class Results
         return Result<int, MathError>.Ok(temp_1 + temp_2.Value.CompareTo(0));
     }
 
-    public static string Show(Result<int, MathError> result)
+    internal static string Show(Result<int, MathError> result)
     {
         if (result is { IsOk: true, Value: var v })
         {
@@ -89,7 +90,7 @@ public static class Results
         }
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(Show(Compute(100, 4)));
         global::System.Console.WriteLine(Show(Compute(1, 0)));

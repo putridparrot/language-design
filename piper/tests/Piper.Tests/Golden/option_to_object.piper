@@ -7,7 +7,7 @@ fn Main() {
     let some: List<int>? = [1, 2, 3];
     Console.WriteLine(none?.Count);
     Console.WriteLine(some?.Count);
-    Console.WriteLine("[{none?.Count}]");
+    Console.WriteLine($"[{none?.Count}]");
     let name: string? = "Ada";
     Console.WriteLine(name);
     Show(5);

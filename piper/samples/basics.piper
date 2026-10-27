@@ -7,7 +7,7 @@ fn Square(x: int) => int = x * x;
 
 /// Parameters can have default values, and calls can name their arguments.
 fn Describe(name: string, age: int = 0, title: string = "") => string =
-    if age > 0 { "{title}{name}, {age}" } else { "{title}{name}" };
+    if age > 0 { $"{title}{name}, {age}" } else { $"{title}{name}" };
 
 // `if` and `match` are expressions, so they can be a function's value.
 fn Fizzbuzz(n: int) => string = match (n % 3, n % 5) {
@@ -37,7 +37,7 @@ fn Main() {
     for i in 1..5 {
         total += Square(i);
     }
-    Print("{name}: the squares of 1 to 5 add up to {total}");
+    Print($"{name}: the squares of 1 to 5 add up to {total}");
 
     let words = List<string>();
     for n in 1..15 {
@@ -46,17 +46,17 @@ fn Main() {
     Print(string.Join(" ", words));
 
     let (min, max) = MinMax([7, 3, 9, 1, 4]);
-    Print("min {min}, max {max}");
+    Print($"min {min}, max {max}");
 
     // Blocks are expressions too: their value is the last expression.
     let grade = {
         let score = 82;
         if score >= 90 { 'A' } else if score >= 75 { 'B' } else { 'C' }
     };
-    Print("grade {grade}");
+    Print($"grade {grade}");
 
     // C#'s numeric types and rules: integer division, casts, decimal.
-    Print("{7 / 2} {7 % 2} {(double)7 / 2} {(int)3.9} {0.1m + 0.2m}");
+    Print($"{7 / 2} {7 % 2} {(double)7 / 2} {(int)3.9} {0.1m + 0.2m}");
 
     // `while` loops as in C#; `if` gives a value, so it can be assigned.
     mut n = 27;
@@ -65,14 +65,14 @@ fn Main() {
         n = if n % 2 == 0 { n / 2 } else { 3 * n + 1 };
         steps += 1;
     }
-    Print("27 reaches 1 in {steps} steps");
+    Print($"27 reaches 1 in {steps} steps");
 
     Print(Describe("Ada"));
     Print(Describe("Grace", 85, title: "Rear Admiral "));
     Print(Describe(age: 41, name: "Linus"));
 
     // Every string interpolates, with C#'s alignment and formats; raw strings keep quotes and braces as they are.
-    Print("{name.ToUpper()} has {name.Length} letters");
-    Print("[{name,-8}] [{3.14159:F2}] [{1234567:N0}]");
+    Print($"{name.ToUpper()} has {name.Length} letters");
+    Print($"[{name,-8}] [{3.14159:F2}] [{1234567:N0}]");
     Print("""{"json": true}""");
 }

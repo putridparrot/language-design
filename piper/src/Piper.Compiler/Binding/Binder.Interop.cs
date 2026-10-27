@@ -524,17 +524,18 @@ public sealed partial class Binder
 
     /// <summary>
     /// A .NET interface's indexer (<c>IReadOnlyList&lt;T&gt;</c>'s <c>this[int]</c>), which a class implements with a public
-    /// indexer taking the same parameter types, of the same type, settable from outside if the interface's is.
+    /// indexer taking the same parameter types, of the same type, settable from outside if the interface's is. Where .NET
+    /// marks a parameter or the result as possibly null, the Piper indexer's is an Option (<c>prop this[key: string]: string?</c>
+    /// for <c>string? this[string key]</c>), and a bridge is recorded for the emitter to convert.
     /// </summary>
     private void CheckClrIndexerConformance(ClassSymbol @class, TypeSymbol @interface, PropertyInfo required, ClrCandidate? getter, TypeSyntax syntax)
     {
-        // Possibly-null types would need converting between Option and null, which indexers don't do yet.
-        if (getter is null || getter.ReturnBoundary != ClrBoundary.None || getter.Parameters.Any(p => p.Boundary != ClrBoundary.None))
+        if (getter is null)
         {
             _diagnostics.ReportUnsupportedInterface(syntax.Span, @interface);
             return;
         }
-        var parameters = getter.Parameters.Select(p => p.Type).ToList();
+        var parameters = getter.Parameters.Select(ImplementingParameterType).ToList();
         var implementation = @class.SelfAndBases().SelectMany(c => c.Indexers).FirstOrDefault(i => i.Parameters.Select(p => p.Type).SequenceEqual(parameters));
         var expected = $"prop this[{string.Join(", ", parameters)}]: {getter.ReturnType}";
         if (implementation is null)
@@ -544,9 +545,34 @@ public sealed partial class Binder
         }
         bool settable = required.SetMethod is not null;
         if (implementation.IsPublic && implementation.Type == getter.ReturnType && (!settable || implementation is { Setter: not null, HasPrivateSetter: false }))
+        {
+            // C# needs an implementation with the interface's nullable types, which converts.
+            if (getter.ReturnBoundary != ClrBoundary.None || getter.Parameters.Any(p => p.Boundary != ClrBoundary.None))
+            {
+                @class.IndexerBridges.Add(new ClrIndexerBridge(implementation, @interface,
+                    [.. getter.Parameters.Select(p => (BridgedParameterType(p), p.Boundary))],
+                    Unwrapped(getter.ReturnType, getter.ReturnBoundary), getter.ReturnBoundary, settable));
+            }
             return;
+        }
         _diagnostics.ReportTraitSignatureMismatch(syntax.Span, "this[]", @interface, $"a public {expected}{(settable ? " with a public 'set'" : "")}");
     }
+
+    /// <summary>The C# type of a result crossing <paramref name="boundary"/>, without its <c>?</c>: T for an Option&lt;T&gt; that may be null.</summary>
+    private static TypeSymbol Unwrapped(TypeSymbol type, ClrBoundary boundary) =>
+        boundary == ClrBoundary.None ? type : type.TypeArguments[0];
+
+    /// <summary>
+    /// The type a Piper method or indexer implementing a .NET one takes for <paramref name="parameter"/>: an Option where
+    /// .NET may pass null. (A <c>string?</c> parameter is described by its plain type, as a call can pass a string; an
+    /// <c>int?</c> is already an Option.)
+    /// </summary>
+    private TypeSymbol ImplementingParameterType(ClrParameter parameter) =>
+        parameter.Boundary == ClrBoundary.NullableReference ? _option.Construct([parameter.Type]) : parameter.Type;
+
+    /// <summary>The C# type of <paramref name="parameter"/> in a bridge, without its <c>?</c>.</summary>
+    private static TypeSymbol BridgedParameterType(ClrParameter parameter) =>
+        parameter.Boundary == ClrBoundary.NullableValue ? parameter.Type.TypeArguments[0] : parameter.Type;
 
     /// <summary>
     /// <c>extend Money: IComparable&lt;Money&gt;</c>: each abstract method of the .NET interface needs a public Piper method of
@@ -605,7 +631,7 @@ public sealed partial class Binder
                 continue;
             }
 
-            var parameterTypes = candidate.Parameters.Select(p => p.Boundary == ClrBoundary.NullableReference ? _option.Construct([p.Type]) : p.Type).ToList();
+            var parameterTypes = candidate.Parameters.Select(ImplementingParameterType).ToList();
             bool matches = !implementation.IsStatic && !implementation.IsPrivate && implementation.TypeParameters.IsEmpty &&
                            implementation.ReturnType == candidate.ReturnType &&
                            implementation.Parameters.Select(p => p.Type).SequenceEqual(parameterTypes);
@@ -627,14 +653,11 @@ public sealed partial class Binder
             }
 
             // C#'s own types: an Option stands for a .NET `T?`.
-            static TypeSymbol Inner(TypeSymbol type, ClrBoundary boundary) => boundary == ClrBoundary.None ? type : type.TypeArguments[0];
-            var parameters = candidate.Parameters
-                .Select(p => (p.Boundary == ClrBoundary.NullableValue ? p.Type.TypeArguments[0] : p.Type, p.Boundary))
-                .ToImmutableArray();
+            var parameters = candidate.Parameters.Select(p => (BridgedParameterType(p), p.Boundary)).ToImmutableArray();
             if (candidate.ReturnBoundary != ClrBoundary.None || parameters.Any(p => p.Boundary != ClrBoundary.None))
             {
                 definition.InterfaceBridges.Add(new ClrInterfaceBridge(
-                    implementation, @interface, parameters, Inner(candidate.ReturnType, candidate.ReturnBoundary), candidate.ReturnBoundary));
+                    implementation, @interface, parameters, Unwrapped(candidate.ReturnType, candidate.ReturnBoundary), candidate.ReturnBoundary));
             }
         }
         return true;

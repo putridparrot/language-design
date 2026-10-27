@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using System.Text;
 using Piper.Plugins;
 using Piper.Syntax;
 using Piper.Text;
@@ -42,7 +41,7 @@ public sealed class WebPlugin : IPiperPlugin
     private static IEnumerable<DeclarationSyntax> Endpoints(PluginParser p)
     {
         var name = p.Expect(TokenKind.Identifier);
-        var prefix = p.Current.Kind is TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral ? Route(p.NextToken()) : null;
+        var prefix = p.Current.Kind is TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral ? Route(p, p.NextToken()) : null;
         p.Expect(TokenKind.OpenBrace);
 
         var router = prefix is null ? null : p.FreshName("group");
@@ -66,7 +65,7 @@ public sealed class WebPlugin : IPiperPlugin
                 continue;
             }
             var routeToken = p.NextToken();
-            var route = Route(routeToken);
+            var route = Route(p, routeToken);
             if (!mapped.Add($"{verb.Text} {route.Value}"))
                 p.Report(routeToken.Span, $"'{verb.Text} {route.Value}' is already mapped.");
 
@@ -123,7 +122,12 @@ public sealed class WebPlugin : IPiperPlugin
             body = p.ParseExpression();
             p.Expect(TokenKind.Semicolon);
         }
-        return new LambdaExpressionSyntax(TextSpan.FromBounds(async?.Span.Start ?? start, body.Span.End), parameters, body) { Async = async };
+        // An optional parameter (`name: string?`) is None in a request without it, rather than a 400.
+        return new LambdaExpressionSyntax(TextSpan.FromBounds(async?.Span.Start ?? start, body.Span.End), parameters, body)
+        {
+            Async = async,
+            OptionsMayBeLeftOut = true,
+        };
     }
 
     /// <summary>Reports a route parameter (<c>{id}</c>, <c>{id:int}</c>, <c>{*path}</c>) that no handler parameter takes.</summary>
@@ -141,21 +145,17 @@ public sealed class WebPlugin : IPiperPlugin
         }
     }
 
-    /// <summary>A route as a string literal, its braces kept: the lexer read <c>"/users/{id}"</c> as interpolation.</summary>
-    private static LiteralExpressionSyntax Route(Token token)
+    /// <summary>
+    /// A route, as a plain string: <c>"/users/{id}"</c>, whose braces are ASP.NET Core's route parameters. A
+    /// <c>$"…"</c> route is reported, as its holes would be read as Piper rather than as parameters.
+    /// </summary>
+    private static LiteralExpressionSyntax Route(PluginParser p, Token token)
     {
         if (token.Kind == TokenKind.StringLiteral)
             return new LiteralExpressionSyntax(token.Span, token, token.Value);
 
-        var route = new StringBuilder();
-        foreach (var part in token.Parts)
-        {
-            if (part is InterpolationText text)
-                route.Append(text.Value);
-            else
-                route.Append('{').Append(token.Text, part.Span.Start - token.Span.Start, part.Span.Length).Append('}');
-        }
-        var value = route.ToString();
+        p.Report(token.Span, "A route is a plain string, \"/users/{id}\", whose braces are route parameters; drop the '$'.");
+        var value = token.Text.TrimStart('$').Trim('"');
         return new LiteralExpressionSyntax(token.Span, new Token(TokenKind.StringLiteral, token.Span, token.Text, value), value);
     }
 

@@ -29,8 +29,8 @@ class Names: Repository<string>("names") {
         items.Add(item.ToUpper());
     }
 
-    override fn Describe(item: string) => string = "'{item}' ({item.Length} letters)";
-    override fn Name() => string = "{base.Name()}!";
+    override fn Describe(item: string) => string = $"'{item}' ({item.Length} letters)";
+    override fn Name() => string = $"{base.Name()}!";
 
     fn First() => string = items[0];
     fn Shout() { Latest = Some(this[Count - 1]); }
@@ -77,7 +77,7 @@ fn Main() {
     let names = Names();
     names.AddTwice("ada");
     names.Shout();
-    Print("{names.Name()}: {names.Count} items, {names[1]}, first {names.First()}, latest {names.Latest ?? "-"}");
+    Print($"{names.Name()}: {names.Count} items, {names[1]}, first {names.First()}, latest {names.Latest ?? "-"}");
     Print(names.Describe(names[0]));
     names.lastAdded = Some("bob");
     Print(names.lastAdded ?? "-");
@@ -85,11 +85,11 @@ fn Main() {
     let grid = Grid();
     grid.AddPair(1, 2);
     grid.AddPair(3, 4);
-    Print("{grid.Name()}: {grid.Describe(grid[1])}, sum {grid.Sum()}");
-    Print("{Repository<string>.Made()} strings, {Repository<List<int>>.Made()} lists");
+    Print($"{grid.Name()}: {grid.Describe(grid[1])}, sum {grid.Sum()}");
+    Print($"{Repository<string>.Made()} strings, {Repository<List<int>>.Made()} lists");
 
     let ints = Ints();
     ints.AddAll([5, 6, 7]);
     ints.Add(8);
-    Print("{ints.Count} ints, {ints[0]}..{ints[ints.Count - 1]}, total {ints.Total()}");
+    Print($"{ints.Count} ints, {ints[0]}..{ints[ints.Count - 1]}, total {ints.Total()}");
 }

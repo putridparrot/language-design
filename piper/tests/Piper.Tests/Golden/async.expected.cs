@@ -6,9 +6,9 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record User(int id, string name);
+internal sealed record User(int id, string name);
 
-public interface Store
+internal interface Store
 {
     global::System.Threading.Tasks.Task<Option<User>> Load(int id);
 
@@ -31,7 +31,7 @@ public interface Store
     }
 }
 
-public sealed record MemoryStore(global::System.Collections.Generic.List<User> users) : Store
+internal sealed record MemoryStore(global::System.Collections.Generic.List<User> users) : Store
 {
     public async global::System.Threading.Tasks.Task<Option<User>> Load(int id)
     {
@@ -47,21 +47,21 @@ public sealed record MemoryStore(global::System.Collections.Generic.List<User> u
     }
 }
 
-public static class Async
+internal static class Async
 {
-    public static async global::System.Threading.Tasks.Task<int> Twice(int x)
+    internal static async global::System.Threading.Tasks.Task<int> Twice(int x)
     {
         await global::System.Threading.Tasks.Task.Yield();
         return x * 2;
     }
 
-    public static async global::System.Threading.Tasks.Task Log(string message)
+    internal static async global::System.Threading.Tasks.Task Log(string message)
     {
         await global::System.Threading.Tasks.Task.Delay(1);
         global::System.Console.WriteLine($"log: {message}");
     }
 
-    public static async global::System.Threading.Tasks.Task<Option<string>> NameOf(Store store, int id)
+    internal static async global::System.Threading.Tasks.Task<Option<string>> NameOf(Store store, int id)
     {
         Option<User> temp = await store.Load(id);
         if (!temp.IsSome)
@@ -72,15 +72,15 @@ public static class Async
         return Option<string>.Some(user.name.ToUpper());
     }
 
-    public static async global::System.Threading.Tasks.Task<int> Fail()
+    internal static async global::System.Threading.Tasks.Task<int> Fail()
     {
         await global::System.Threading.Tasks.Task.Delay(1);
         throw new global::System.InvalidOperationException("boom");
     }
 
-    public static int Sum(int[] values) => global::System.Linq.Enumerable.Sum(values);
+    internal static int Sum(int[] values) => global::System.Linq.Enumerable.Sum(values);
 
-    public static async global::System.Threading.Tasks.Task Main()
+    internal static async global::System.Threading.Tasks.Task Main()
     {
         global::System.Console.WriteLine(await Twice(21));
         await Log("started");

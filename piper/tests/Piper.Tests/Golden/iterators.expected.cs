@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Tree(int @value, global::System.Collections.Generic.List<Tree> children)
+internal sealed record Tree(int @value, global::System.Collections.Generic.List<Tree> children)
 {
     public global::System.Collections.Generic.IEnumerable<int> Walk()
     {
@@ -21,9 +21,9 @@ public sealed record Tree(int @value, global::System.Collections.Generic.List<Tr
     }
 }
 
-public static class Iterators
+internal static class Iterators
 {
-    public static global::System.Collections.Generic.IEnumerable<long> Fibonacci()
+    internal static global::System.Collections.Generic.IEnumerable<long> Fibonacci()
     {
         var (a, b) = (0L, 1L);
         while (true)
@@ -33,7 +33,7 @@ public static class Iterators
         }
     }
 
-    public static global::System.Collections.Generic.IEnumerable<int> Countdown(int from)
+    internal static global::System.Collections.Generic.IEnumerable<int> Countdown(int from)
     {
         for (int i = 0; i <= from; i++)
         {
@@ -45,7 +45,7 @@ public static class Iterators
         }
     }
 
-    public static global::System.Collections.Generic.IEnumerable<T> TakeWhileSmall<T>(global::System.Collections.Generic.IEnumerable<T> items, int limit, global::System.Func<T, int> size)
+    internal static global::System.Collections.Generic.IEnumerable<T> TakeWhileSmall<T>(global::System.Collections.Generic.IEnumerable<T> items, int limit, global::System.Func<T, int> size)
     {
         foreach (T item in items)
         {
@@ -57,7 +57,7 @@ public static class Iterators
         }
     }
 
-    public static global::System.Collections.Generic.IEnumerable<string> Noisy(string name)
+    internal static global::System.Collections.Generic.IEnumerable<string> Noisy(string name)
     {
         global::System.Console.WriteLine($"start {name}");
         yield return $"{name}1";
@@ -66,7 +66,7 @@ public static class Iterators
         global::System.Console.WriteLine($"end {name}");
     }
 
-    public static global::System.Collections.Generic.IEnumerable<int> Guarded()
+    internal static global::System.Collections.Generic.IEnumerable<int> Guarded()
     {
         try
         {
@@ -79,7 +79,7 @@ public static class Iterators
         }
     }
 
-    public static async global::System.Collections.Generic.IAsyncEnumerable<int> Ticks(int count)
+    internal static async global::System.Collections.Generic.IAsyncEnumerable<int> Ticks(int count)
     {
         for (int i = 1; i <= count; i++)
         {
@@ -88,7 +88,7 @@ public static class Iterators
         }
     }
 
-    public static async global::System.Threading.Tasks.Task Main()
+    internal static async global::System.Threading.Tasks.Task Main()
     {
         global::System.Console.WriteLine(string.Join<long>(", ", global::System.Linq.Enumerable.Take<long>(Fibonacci(), 10)));
         global::System.Console.WriteLine(string.Join<int>(", ", Countdown(3)));

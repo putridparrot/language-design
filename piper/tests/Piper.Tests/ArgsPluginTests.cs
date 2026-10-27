@@ -35,8 +35,8 @@ public class ArgsPluginTests
         }
 
         fn Show(args: string[]) => string = match Options.Parse(args) {
-            Ok(o) => "{o.greeting}|{o.times}|{o.loud}|{o.name ?? "-"}|{o.ratio}|{o.dryRun}|{string.Join(",", o.files)}",
-            Err(e) => "error: {e.Split('\n')[0]}",
+            Ok(o) => $"{o.greeting}|{o.times}|{o.loud}|{o.name ?? "-"}|{o.ratio}|{o.dryRun}|{string.Join(",", o.files)}",
+            Err(e) => $"error: {e.Split('\n')[0]}",
         };
 
         """;
@@ -110,7 +110,7 @@ public class ArgsPluginTests
                 let lines: string[][] = [[], ["--port", "1", "extra"], ["--port", "8"]];
                 for args in lines {
                     match Options.Parse(args) {
-                        Ok(o) => Print("port {o.port}"),
+                        Ok(o) => Print($"port {o.port}"),
                         Err(e) => Print(e.Split('\n')[0]),
                     }
                 }

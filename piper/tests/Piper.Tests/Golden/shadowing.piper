@@ -9,20 +9,20 @@ fn Main() {
         let x = x + 10;
         x * 2
     };
-    Print("x={x} y={y}");
+    Print($"x={x} y={y}");
 
     for i in 0..<2 {
         let x = i * 100;
-        Print("loop x={x}");
+        Print($"loop x={x}");
     }
 
     let event = "a C# keyword as a name";
     let fixed = 42;
-    Print("{event} / {fixed}");
+    Print($"{event} / {fixed}");
 
     let temp = 7;   // the lowerer also introduces temporaries named `temp`
     let r = if temp > 5 { let z = temp; z + 1 } else { 0 };
-    Print("r={r} temp={temp}");
+    Print($"r={r} temp={temp}");
 
     Print(Value(21));
 }

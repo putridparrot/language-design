@@ -35,7 +35,7 @@ public sealed class AssemblyOutputTests : IDisposable
         var result = Compile("""
             fn Main() {
                 let (q, r) = (17 / 5, 17 % 5);
-                Print("{q} r {r}");
+                Print($"{q} r {r}");
             }
             """);
 
@@ -118,5 +118,56 @@ public sealed class AssemblyOutputTests : IDisposable
         Assert.True(File.Exists(Path.Combine(_directory, "maths.dll")));
         Assert.False(File.Exists(Path.Combine(_directory, "maths.runtimeconfig.json")));
         Assert.False(result.HasMain);
+    }
+
+    /// <summary>A library exports what's declared `public`; the rest is visible only to the library itself.</summary>
+    [Fact]
+    public void A_library_exports_only_its_public_declarations()
+    {
+        var result = Compile("""
+            namespace Shapes;
+
+            using System;
+
+            public record Point(x: double, y: double);
+            record Cache(hits: int);
+            public trait Shape { fn Area() => double; }
+            trait Helper { fn Help() => int; }
+            public class Circle(radius: double) { fn Area() => double = Square(radius) * 3.14; }
+            public enum Size { Small, Large }
+
+            public fn Distance(a: Point, b: Point) => double = Math.Sqrt(Square(a.x - b.x) + Square(a.y - b.y));
+            fn Square(x: double) => double = x * x;
+            private fn Cube(x: double) => double = x * x * x;
+
+            public extend double { fn Doubled() => double = this * 2.0; }
+            extend int { fn Tripled() => int = this * 3; }
+            """);
+        var output = AssemblyWriter.Write(result.Files, _directory, "shapes", executable: false);
+        Assert.True(output.Success, string.Join("\n", output.Errors));
+
+        // Loaded on its own, and from memory, so the file isn't locked when the test's folder is deleted.
+        var context = new System.Runtime.Loader.AssemblyLoadContext("exports", isCollectible: true);
+        try
+        {
+            using var image = new MemoryStream(File.ReadAllBytes(Path.Combine(_directory, "shapes.dll")));
+            var assembly = context.LoadFromStream(image);
+            // The types, the file's module class (for Distance) and its extensions class (for Doubled).
+            var exported = assembly.GetExportedTypes().Where(t => !t.IsNested).Select(t => t.Name).Order().ToArray();
+            Assert.Equal(["Circle", "Point", "Shape", "Size"], exported.Where(n => !n.StartsWith("App", StringComparison.Ordinal)).ToArray());
+            Assert.Equal(2, exported.Count(n => n.StartsWith("App", StringComparison.Ordinal)));
+
+            // The module class holds Distance (public) and Square (internal); the extensions class Doubled only.
+            var functions = assembly.GetExportedTypes().SelectMany(t => t.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
+                .Select(m => m.Name).ToHashSet();
+            Assert.Contains("Distance", functions);
+            Assert.DoesNotContain("Square", functions);
+            Assert.DoesNotContain("Cube", functions);
+            Assert.DoesNotContain("Tripled", functions);
+        }
+        finally
+        {
+            context.Unload();
+        }
     }
 }

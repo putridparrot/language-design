@@ -39,9 +39,9 @@ class Derived(n: int): Base(10 / n) requires n != 0 {
 fn Attempt(name: string, make: () => unit) {
     try {
         make();
-        Print("{name}: ok");
+        Print($"{name}: ok");
     } catch (e: ArgumentException) {
-        Print("{name}: {e.Message}");
+        Print($"{name}: {e.Message}");
     }
 }
 

@@ -13,7 +13,7 @@ fn Parse(text: string) => int {
     try {
         return int.Parse(text);
     } catch (e: FormatException) {
-        Print("not a number: {text}");
+        Print($"not a number: {text}");
     }
     -1
 }
@@ -26,7 +26,7 @@ fn Main() {
     try {
         Print(Divide(1, 0));
     } catch (e: ArgumentException) {
-        Print("caught: {e.Message}");
+        Print($"caught: {e.Message}");
     } finally {
         Print("finally runs");
     }

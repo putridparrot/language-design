@@ -9,7 +9,7 @@ trait Shape {
     prop Label => string = "shape";
 
     // A default method names the trait's properties bare.
-    fn Describe() => string = "{Label} of area {Math.Round(Area, 2)}";
+    fn Describe() => string = $"{Label} of area {Math.Round(Area, 2)}";
 }
 
 // A record implements them in an extend block.
@@ -58,6 +58,6 @@ fn Main() {
         Print(shape.Describe());
     }
     let sides: List<int> = [2, 3];
-    Print("{Total(sides)} {Total([Square(1.0), Square(2.0)])}");
-    Print("{4.IsEven} {7.IsEven} {int.Answer} {Circle(1.5).Diameter}");
+    Print($"{Total(sides)} {Total([Square(1.0), Square(2.0)])}");
+    Print($"{4.IsEven} {7.IsEven} {int.Answer} {Circle(1.5).Diameter}");
 }

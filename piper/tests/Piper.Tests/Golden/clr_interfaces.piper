@@ -19,7 +19,7 @@ record Connection(name: string);
 // IDisposable makes a Piper record usable with `using`.
 extend Connection: IDisposable {
     fn Dispose() {
-        Print("closing {this.name}");
+        Print($"closing {this.name}");
     }
 }
 
@@ -51,7 +51,7 @@ fn Main() {
 
     {
         using let c = Connection("db");
-        Print("using {c.name}");
+        Print($"using {c.name}");
     }
 
     let words = ["banana", "fig", "apple"];

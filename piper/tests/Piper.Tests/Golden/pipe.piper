@@ -6,7 +6,7 @@ fn Twice(n: int) => int = n * 2;
 
 fn Add(n: int, amount: int) => int = n + amount;
 
-fn Describe(n: int, what: string) => string = "{n} {what}";
+fn Describe(n: int, what: string) => string = $"{n} {what}";
 
 record Box(value: int);
 
@@ -36,5 +36,5 @@ fn Main() {
     // Evaluated left to right: the piped value before the other arguments.
     mut log = "";
     let result = { log += "a"; 1 } |> Add({ log += "b"; 2 });
-    Print("{result} {log}");
+    Print($"{result} {log}");
 }

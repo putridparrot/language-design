@@ -13,7 +13,7 @@ trait Aged {
 
 // A child trait can call its parents' methods in its own defaults.
 trait Person: Named, Aged {
-    fn Introduce() => string = "I'm {this.Name()}, {this.Age()}";
+    fn Introduce() => string = $"I'm {this.Name()}, {this.Age()}";
 }
 
 // Generic traits inherit with their type arguments.
@@ -50,7 +50,7 @@ fn GreetAll(people: List<Person>) {
 }
 
 // A bound by a child trait gives its parents' methods too.
-fn Label<T: Person>(p: T) => string = "{p.Shout()} ({p.Age()})";
+fn Label<T: Person>(p: T) => string = $"{p.Shout()} ({p.Age()})";
 
 fn Earliest<T: Ordered<T>>(items: List<T>) => T {
     mut best = items[0];
@@ -72,7 +72,7 @@ fn Main() {
     let named: Named = ada;
     let person: Person = ada;
     let aged: Aged = person;
-    Print("{named.Name()} {aged.Age()}");
+    Print($"{named.Name()} {aged.Age()}");
     GreetAll([ada, Employee("Grace", 45)]);
 
     let versions = [Version(2, 1), Version(1, 9), Version(1, 10)];

@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public interface Monoid<T>
+internal interface Monoid<T>
 {
     static abstract T Empty();
 
@@ -36,14 +36,14 @@ public interface Monoid<T>
     }
 }
 
-public sealed record Total(int amount) : Monoid<Total>
+internal sealed record Total(int amount) : Monoid<Total>
 {
     public static Total Empty() => new Total(0);
 
     public Total Combine(Total other) => new Total(this.amount + other.amount);
 }
 
-public sealed record Text(string @value) : Monoid<Text>
+internal sealed record Text(string @value) : Monoid<Text>
 {
     public static Text Empty() => new Text("");
 
@@ -52,9 +52,9 @@ public sealed record Text(string @value) : Monoid<Text>
     public static string Describe() => "text, joined";
 }
 
-public static class Static_trait_methods
+internal static class Static_trait_methods
 {
-    public static T Concat<T>(global::System.Collections.Generic.List<T> items)
+    internal static T Concat<T>(global::System.Collections.Generic.List<T> items)
     {
         T result = global::Piper.Runtime.PiperTraits.Witness<Monoid<T>.PiperWitness<T>>().Empty();
         foreach (T item in items)
@@ -64,9 +64,9 @@ public static class Static_trait_methods
         return result;
     }
 
-    public static string Describe<T>() => global::Piper.Runtime.PiperTraits.Witness<Monoid<T>.PiperWitness<T>>().Describe();
+    internal static string Describe<T>() => global::Piper.Runtime.PiperTraits.Witness<Monoid<T>.PiperWitness<T>>().Describe();
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(Concat<Total>(new global::System.Collections.Generic.List<Total> { new Total(1), new Total(2), new Total(3) }));
         global::System.Console.WriteLine(Concat<Text>(new global::System.Collections.Generic.List<Text> { new Text("pi"), new Text("p"), new Text("er") }));

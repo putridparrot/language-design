@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public abstract partial class Repository<T>(string name)
+internal abstract partial class Repository<T>(string name)
 {
     protected static int made = 0;
     protected readonly global::System.Collections.Generic.List<T> items = new global::System.Collections.Generic.List<T>();
@@ -39,7 +39,7 @@ public abstract partial class Repository<T>(string name)
     public static int Made() => Repository<T>.made;
 }
 
-public partial class Names() : Repository<string>("names")
+internal partial class Names() : Repository<string>("names")
 {
     public void AddTwice(string item)
     {
@@ -59,7 +59,7 @@ public partial class Names() : Repository<string>("names")
     }
 }
 
-public partial class Pairs<U>(string label) : Repository<global::System.Collections.Generic.List<U>>(label)
+internal partial class Pairs<U>(string label) : Repository<global::System.Collections.Generic.List<U>>(label)
 {
     public void AddPair(U a, U b)
     {
@@ -69,7 +69,7 @@ public partial class Pairs<U>(string label) : Repository<global::System.Collecti
     public override string Describe(global::System.Collections.Generic.List<U> item) => string.Join<U>("+", item);
 }
 
-public partial class Grid() : Pairs<int>("grid")
+internal partial class Grid() : Pairs<int>("grid")
 {
     public int Sum()
     {
@@ -85,7 +85,7 @@ public partial class Grid() : Pairs<int>("grid")
     }
 }
 
-public partial class Bag<T> : global::System.Collections.Generic.List<T>
+internal partial class Bag<T> : global::System.Collections.Generic.List<T>
 {
     public void AddAll(global::System.Collections.Generic.List<T> values)
     {
@@ -96,7 +96,7 @@ public partial class Bag<T> : global::System.Collections.Generic.List<T>
     }
 }
 
-public partial class Ints : Bag<int>
+internal partial class Ints : Bag<int>
 {
     public int Total()
     {
@@ -109,9 +109,9 @@ public partial class Ints : Bag<int>
     }
 }
 
-public static class Generic_bases
+internal static class Generic_bases
 {
-    public static void Main()
+    internal static void Main()
     {
         Names names = new Names();
         names.AddTwice("ada");

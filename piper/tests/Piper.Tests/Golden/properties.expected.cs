@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public partial class Account(string owner, decimal opening)
+internal partial class Account(string owner, decimal opening)
 {
     private static int opened = 0;
     private decimal balance = opening;
@@ -48,7 +48,7 @@ public partial class Account(string owner, decimal opening)
     public string Describe() => $"#{this.id} {this.Summary}; {string.Join(", ", this.history)}";
 }
 
-public abstract partial class Shape
+internal abstract partial class Shape
 {
     public abstract double Area { get; }
 
@@ -57,19 +57,19 @@ public abstract partial class Shape
     public string Describe() => $"{this.Label} of area {(global::System.Math.Round(this.Area, 2))}";
 }
 
-public partial class Square(double side) : Shape
+internal partial class Square(double side) : Shape
 {
     public override double Area => side * side;
 
     public override string Label => "square";
 }
 
-public partial class Circle(double radius) : Shape
+internal partial class Circle(double radius) : Shape
 {
     public override double Area => global::System.Math.PI * radius * radius;
 }
 
-public partial class Zeros(long length) : global::System.IO.Stream
+internal partial class Zeros(long length) : global::System.IO.Stream
 {
     private long position = 0L;
 
@@ -122,7 +122,7 @@ public partial class Zeros(long length) : global::System.IO.Stream
     }
 }
 
-public partial class Done : global::System.IAsyncResult
+internal partial class Done : global::System.IAsyncResult
 {
     public Option<object> AsyncState => Option<object>.None;
 
@@ -135,7 +135,7 @@ public partial class Done : global::System.IAsyncResult
     object? global::System.IAsyncResult.AsyncState => global::Piper.Runtime.PiperInterop.ToNullableReference(this.AsyncState);
 }
 
-public partial class Countdown(int n) : global::System.Collections.Generic.IReadOnlyCollection<int>
+internal partial class Countdown(int n) : global::System.Collections.Generic.IReadOnlyCollection<int>
 {
     public int Count => n;
 
@@ -150,16 +150,16 @@ public partial class Countdown(int n) : global::System.Collections.Generic.IRead
     global::System.Collections.IEnumerator global::System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
-public partial class Extensible : global::System.Runtime.Serialization.IExtensibleDataObject
+internal partial class Extensible : global::System.Runtime.Serialization.IExtensibleDataObject
 {
     public Option<global::System.Runtime.Serialization.ExtensionDataObject> ExtensionData { get; set; } = Option<global::System.Runtime.Serialization.ExtensionDataObject>.None;
 
     global::System.Runtime.Serialization.ExtensionDataObject? global::System.Runtime.Serialization.IExtensibleDataObject.ExtensionData { get => global::Piper.Runtime.PiperInterop.ToNullableReference(this.ExtensionData); set => this.ExtensionData = global::Piper.Runtime.PiperInterop.FromNullableReference(value); }
 }
 
-public static class Properties
+internal static class Properties
 {
-    public static void Main()
+    internal static void Main()
     {
         Account ada = new Account("Ada", 10m);
         ada.Deposit(5m);

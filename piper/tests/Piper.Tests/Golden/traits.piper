@@ -4,7 +4,7 @@
 trait Shape {
     fn Area() => double;
     fn Name() => string;
-    fn Describe() => string = "{this.Name()} with area {this.Area()}";
+    fn Describe() => string = $"{this.Name()} with area {this.Area()}";
 }
 
 record Circle(radius: double);
@@ -18,7 +18,7 @@ extend Circle: Shape {
 extend Rect: Shape {
     fn Area() => double = this.width * this.height;
     fn Name() => string = if this.width == this.height { "square" } else { "rectangle" };
-    fn Describe() => string = "a {this.width}x{this.height} {this.Name()}";
+    fn Describe() => string = $"a {this.width}x{this.height} {this.Name()}";
 }
 
 enum List<T> {
@@ -37,7 +37,7 @@ fn TotalArea(shapes: List<Shape>) => double = match shapes {
 
 trait Speak {
     fn Sound() => string;
-    fn Speak() => string = "says {this.Sound()}";
+    fn Speak() => string = $"says {this.Sound()}";
 }
 
 enum Animal {
@@ -72,6 +72,6 @@ fn Main() {
     Print(TotalArea(shapes));
 
     let tom = Animal.Cat("Tom", 9);
-    Print("{tom.Nickname()} {tom.Speak()}");
-    Print("{Animal.Dog("Rex").Nickname()} {Animal.Dog("Rex").Speak()}");
+    Print($"{tom.Nickname()} {tom.Speak()}");
+    Print($"{Animal.Dog("Rex").Nickname()} {Animal.Dog("Rex").Speak()}");
 }

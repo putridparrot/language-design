@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public abstract partial class Shape(string name)
+internal abstract partial class Shape(string name)
 {
     protected readonly string label = name;
     protected double Scale { get; set; } = 1.0;
@@ -24,7 +24,7 @@ public abstract partial class Shape(string name)
     protected static double Square(double x) => x * x;
 }
 
-public partial class Rect(double width, double height) : Shape("rect")
+internal partial class Rect(double width, double height) : Shape("rect")
 {
     private readonly int corners = 4;
 
@@ -37,14 +37,14 @@ public partial class Rect(double width, double height) : Shape("rect")
     }
 }
 
-public sealed partial class Circle(double radius) : Shape("circle")
+internal sealed partial class Circle(double radius) : Shape("circle")
 {
     protected override double Area() => global::System.Math.PI * Shape.Square(radius);
 
     public bool Bigger(Circle other) => other.Area() > this.Area();
 }
 
-public partial class Readings
+internal partial class Readings
 {
     private readonly global::System.Collections.Generic.List<double> values = new global::System.Collections.Generic.List<double>();
 
@@ -65,7 +65,7 @@ public partial class Readings
     }
 }
 
-public partial class Smoothed : Readings
+internal partial class Smoothed : Readings
 {
     public double Average(int n)
     {
@@ -83,7 +83,7 @@ public partial class Smoothed : Readings
     }
 }
 
-public partial class Upper : global::System.Collections.ObjectModel.Collection<string>
+internal partial class Upper : global::System.Collections.ObjectModel.Collection<string>
 {
     protected override void InsertItem(int index, string item)
     {
@@ -91,9 +91,9 @@ public partial class Upper : global::System.Collections.ObjectModel.Collection<s
     }
 }
 
-public static class Protected
+internal static class Protected
 {
-    public static void Main()
+    internal static void Main()
     {
         Rect rect = new Rect(2.0, 3.0);
         rect.Double();

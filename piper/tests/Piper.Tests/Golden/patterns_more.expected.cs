@@ -6,9 +6,10 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Point(int x, int y);
+internal sealed record Point(int x, int y);
 
-public abstract record Shape
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record Shape
 {
     private Shape()
     {
@@ -19,9 +20,9 @@ public abstract record Shape
     public sealed record Rect(double width, double height) : Shape;
 }
 
-public static class Patterns_more
+internal static class Patterns_more
 {
-    public static string Describe(global::System.Collections.Generic.List<int> xs)
+    internal static string Describe(global::System.Collections.Generic.List<int> xs)
     {
         if (xs is [])
         {
@@ -45,7 +46,7 @@ public static class Patterns_more
         }
     }
 
-    public static string Ends(int[] xs)
+    internal static string Ends(int[] xs)
     {
         if (xs is [])
         {
@@ -65,7 +66,7 @@ public static class Patterns_more
         }
     }
 
-    public static int Sum(int[] xs)
+    internal static int Sum(int[] xs)
     {
         if (xs is [])
         {
@@ -81,7 +82,7 @@ public static class Patterns_more
         }
     }
 
-    public static string Initials(string name)
+    internal static string Initials(string name)
     {
         if (name is [var first, .. var rest] && rest.Length > 0)
         {
@@ -97,7 +98,7 @@ public static class Patterns_more
         }
     }
 
-    public static string Sign(int n)
+    internal static string Sign(int n)
     {
         if (n is < 0)
         {
@@ -113,7 +114,7 @@ public static class Patterns_more
         }
     }
 
-    public static char Grade(double score)
+    internal static char Grade(double score)
     {
         if (score is >= 90.0)
         {
@@ -129,7 +130,7 @@ public static class Patterns_more
         }
     }
 
-    public static string Half(byte b)
+    internal static string Half(byte b)
     {
         if (b is < 128)
         {
@@ -141,7 +142,7 @@ public static class Patterns_more
         }
     }
 
-    public static string OnAxis(Point p)
+    internal static string OnAxis(Point p)
     {
         if (p is Point(0, 0))
         {
@@ -161,7 +162,7 @@ public static class Patterns_more
         }
     }
 
-    public static string Kind(Shape s)
+    internal static string Kind(Shape s)
     {
         if (s is Shape.Circle(< 1.0))
         {
@@ -181,7 +182,7 @@ public static class Patterns_more
         }
     }
 
-    public static string Size(string text)
+    internal static string Size(string text)
     {
         if (text is { Length: 0 })
         {
@@ -197,7 +198,7 @@ public static class Patterns_more
         }
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(Describe(new global::System.Collections.Generic.List<int>()));
         global::System.Console.WriteLine(Describe(new global::System.Collections.Generic.List<int> { 7 }));

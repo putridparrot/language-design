@@ -18,7 +18,7 @@ fn Create(items: List<Item>) => Inventory {
     let bySku: Dictionary<string, Item> = Dictionary();
     for item in items {
         if bySku.ContainsKey(item.sku) {
-            throw ArgumentException("duplicate SKU {item.sku}");
+            throw ArgumentException($"duplicate SKU {item.sku}");
         }
         bySku[item.sku] = item;
     }
@@ -45,9 +45,9 @@ fn Order(inventory: Inventory, sku: string, quantity: int) => Result<Money, Orde
 }
 
 fn Explain(error: OrderError) => string = match error {
-    UnknownItem(sku) => "no item {sku}",
-    OutOfStock(sku, wanted, available) => "only {available} of {sku} left, {wanted} wanted",
-    InvalidQuantity(quantity) => "can't order {quantity}",
+    UnknownItem(sku) => $"no item {sku}",
+    OutOfStock(sku, wanted, available) => $"only {available} of {sku} left, {wanted} wanted",
+    InvalidQuantity(quantity) => $"can't order {quantity}",
 };
 
 /// (category, number of items, units in stock) per category, largest stock first.

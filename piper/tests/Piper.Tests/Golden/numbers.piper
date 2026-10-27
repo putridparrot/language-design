@@ -27,7 +27,7 @@ fn Main() {
     let m = 19.99m;
     let u = 4_000_000_000u;
     let ul = 10UL;
-    Print("{f} {d} {m} {u} {ul}");
+    Print($"{f} {d} {m} {u} {ul}");
 
     // decimal is exact, double isn't.
     Print(0.1 + 0.2 == 0.3);
@@ -38,7 +38,7 @@ fn Main() {
     let b: byte = 200;
     mut small: short = -5;
     small += 10;
-    Print("{b} {small}");
+    Print($"{b} {small}");
 
     // Arithmetic on small types is done as int: byte + byte is an int.
     let sum = b + b;
@@ -52,7 +52,7 @@ fn Main() {
     stream.WriteByte(7);
     stream.WriteByte(255);
     let bytes = stream.ToArray();
-    Print("{bytes.Length} bytes, last {bytes[1]}, {Describe(bytes[1])}, {Describe(bytes[0])}");
+    Print($"{bytes.Length} bytes, last {bytes[1]}, {Describe(bytes[1])}, {Describe(bytes[0])}");
     let buffer = byte[4];
     buffer[0] = 1;
     Print(string.Join(",", buffer));

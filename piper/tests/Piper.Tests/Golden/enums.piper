@@ -16,7 +16,7 @@ fn Describe(shape: Shape) => string {
     match shape {
         Shape.Circle(r) if r > 10.0 => "a big circle",
         Circle(_) => "a circle",
-        Rect(w, h) if w == h => "a {w}x{h} square",
+        Rect(w, h) if w == h => $"a {w}x{h} square",
         Rect(_, _) => "a rectangle",
         Empty => "nothing",
     }
@@ -41,7 +41,7 @@ fn Main() {
     Print(Describe(Shape.Rect(4.0, 4.0)));
     Print(Describe(shapes));
     Print(Describe(Shape.Empty));
-    Print("{Initial(shapes)}{Initial(Shape.Circle(1.0))}{Initial(Shape.Empty)}");
+    Print($"{Initial(shapes)}{Initial(Shape.Circle(1.0))}{Initial(Shape.Empty)}");
     Print(Shape.Rect(2.0, 3.0) == shapes);
     Print(shapes);
 

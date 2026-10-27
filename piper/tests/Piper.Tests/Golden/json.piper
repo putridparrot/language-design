@@ -1,0 +1,50 @@
+// Piper's types in JSON (System.Text.Json): an Option is its value or null, an enum's variant its name or an object
+// naming it in "kind", and a record's invariants reject bad JSON as a JsonException.
+using System.Collections.Generic;
+using System.Text.Json;
+
+record Todo(id: int, note: string?, due: int?);
+
+enum Status { Open, Closed(reason: string) }
+
+// A generic enum, nested in itself.
+enum Tree<T> { Leaf, Node(value: T, left: Tree<T>, right: Tree<T>) }
+
+record Order(id: int, status: Status, tags: List<string>?);
+
+record Quantity(amount: int) requires amount > 0;
+
+fn Main() {
+    // Options: Some is the value, None is null, and a missing field reads as None.
+    Print(JsonSerializer.Serialize(Todo(1, Some("milk"), None)));
+    Print(JsonSerializer.Deserialize<Todo>("{\"id\":2,\"note\":null,\"due\":5}"));
+    Print(JsonSerializer.Deserialize<Todo>("{\"id\":3}"));
+
+    // Enums: a variant without fields is its name; one with fields an object with "kind".
+    Print(JsonSerializer.Serialize(Status.Open));
+    Print(JsonSerializer.Serialize(Status.Closed("done")));
+    Print(JsonSerializer.Deserialize<Order>("{\"id\":1,\"status\":{\"kind\":\"Closed\",\"reason\":\"late\"}}"));
+    Print(JsonSerializer.Serialize(JsonSerializer.Deserialize<Order>("{\"id\":2,\"status\":\"Open\",\"tags\":[\"a\",\"b\"]}")));
+    Print(JsonSerializer.Serialize(Order(3, Status.Open, Some(["x"]))));
+
+    let tree: Tree<int> = Tree.Node(1, Tree.Leaf, Tree.Node(2, Tree.Leaf, Tree.Leaf));
+    let text = JsonSerializer.Serialize(tree);
+    Print(text);
+    Print(JsonSerializer.Deserialize<Tree<int>>(text) == Some(tree));
+
+    // Invariants: valid JSON reads as usual; what they reject is a JsonException, so a web API answers 400.
+    Print(JsonSerializer.Serialize(Quantity(2)));
+    Print(JsonSerializer.Deserialize<Quantity>("{\"amount\":5}"));
+    try {
+        JsonSerializer.Deserialize<Quantity>("{\"amount\":0}");
+    } catch (e: JsonException) {
+        Print($"rejected: {e.Message}");
+    }
+
+    // A name that isn't a variant.
+    try {
+        JsonSerializer.Deserialize<Status>("\"Pending\"");
+    } catch (e: JsonException) {
+        Print($"rejected: {e.Message}");
+    }
+}

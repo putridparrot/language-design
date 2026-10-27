@@ -11,13 +11,13 @@ fn Initials(name: string) => string =
 
 fn ParseAge(text: string) => Result<int, string> {
     if !int.TryParse(text, out let age) {
-        return Err("'{text}' isn't a number");
+        return Err($"'{text}' isn't a number");
     }
     if age < 0 { Err("an age can't be negative") } else { Ok(age) }
 }
 
 fn Main() {
-    Print("{WordCount("the quick brown fox")} words, initials {Initials("Grace Brewster Hopper")}");
+    Print($"{WordCount("the quick brown fox")} words, initials {Initials("Grace Brewster Hopper")}");
 }
 
 test "counts words, ignoring extra spaces" {

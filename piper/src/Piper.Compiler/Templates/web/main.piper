@@ -33,7 +33,7 @@ services AppServices {
 // Becomes `fn Api(app: IEndpointRouteBuilder)`. A handler's parameters come from the query string (name), the
 // request's JSON body (a NewNote), or the services (store).
 endpoints Api "/api" {
-    get "/hello" (name: string) => "Hello, {name}!";
+    get "/hello" (name: string) => $"Hello, {name}!";
 
     get "/notes" (store: NoteStore) => store.All();
 
@@ -42,7 +42,7 @@ endpoints Api "/api" {
             return Results.BadRequest("A note needs some text");
         }
         let note = store.Add(request.text.Trim());
-        Results.Created("/api/notes/{note.id}", note)
+        Results.Created($"/api/notes/{note.id}", note)
     }
 }
 
@@ -59,8 +59,8 @@ async fn Main(args: string[]) {
     let app = builder.Build();
     Api(app);
 
-    Print("Serving on http://localhost:{port} (try /api/hello?name=Ada). Ctrl+C to stop.");
-    await app.RunAsync("http://localhost:{port}");
+    Print($"Serving on http://localhost:{port} (try /api/hello?name=Ada). Ctrl+C to stop.");
+    await app.RunAsync($"http://localhost:{port}");
 }
 
 test "numbers notes in order" {

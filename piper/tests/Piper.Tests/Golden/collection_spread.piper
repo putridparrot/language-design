@@ -22,7 +22,7 @@ fn Main() {
 
     // The target type decides what is built, and items widen as C# allows.
     let longs: long[] = [...xs, 99];
-    Print("{longs.GetType().Name} {string.Join(",", longs)}");
+    Print($"{longs.GetType().Name} {string.Join(",", longs)}");
 
     // A string is a sequence of chars.
     let letters = [..."abc", 'd'];
@@ -35,5 +35,5 @@ fn Main() {
     // Evaluated left to right, once each.
     mut calls = 0;
     let counted = [...{ calls += 1; xs }, calls];
-    Print("{string.Join(",", counted)} {calls}");
+    Print($"{string.Join(",", counted)} {calls}");
 }

@@ -6,9 +6,10 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Pair<A, B>(A first, B second);
+internal sealed record Pair<A, B>(A first, B second);
 
-public abstract record List<T>
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record List<T>
 {
     private List()
     {
@@ -19,11 +20,11 @@ public abstract record List<T>
     public sealed record Nil() : List<T> { public override string ToString() => "Nil"; }
 }
 
-public static class Generics
+internal static class Generics
 {
-    public static Pair<B, A> Swap<A, B>(Pair<A, B> p) => new Pair<B, A>(p.second, p.first);
+    internal static Pair<B, A> Swap<A, B>(Pair<A, B> p) => new Pair<B, A>(p.second, p.first);
 
-    public static T UnwrapOr<T>(Option<T> o, T fallback)
+    internal static T UnwrapOr<T>(Option<T> o, T fallback)
     {
         if (o is { IsSome: true, Value: var v })
         {
@@ -35,7 +36,7 @@ public static class Generics
         }
     }
 
-    public static int Length<T>(List<T> items)
+    internal static int Length<T>(List<T> items)
     {
         if (items is List<T>.Cons(_, var tail))
         {
@@ -47,7 +48,7 @@ public static class Generics
         }
     }
 
-    public static Option<int> IndexOf(List<string> items, string target, int start)
+    internal static Option<int> IndexOf(List<string> items, string target, int start)
     {
         if (items is List<string>.Cons(var head, _) && head == target)
         {
@@ -63,11 +64,11 @@ public static class Generics
         }
     }
 
-    public static T Identity<T>(T @value) => @value;
+    internal static T Identity<T>(T @value) => @value;
 
-    public static List<T> Empty<T>() => new List<T>.Nil();
+    internal static List<T> Empty<T>() => new List<T>.Nil();
 
-    public static string Describe(Option<int> found)
+    internal static string Describe(Option<int> found)
     {
         if (found is { IsSome: true, Value: var i })
         {
@@ -79,7 +80,7 @@ public static class Generics
         }
     }
 
-    public static void Main()
+    internal static void Main()
     {
         Pair<int, string> p = new Pair<int, string>(1, "one");
         Pair<string, int> q = Swap<int, string>(p);

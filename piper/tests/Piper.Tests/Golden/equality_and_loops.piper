@@ -48,14 +48,14 @@ fn FirstSquareAbove(limit: int) => int {
 }
 
 fn Describe(event: Event) => string = match event {
-    Click(x, y) | Touch(x, y) if x == y => "on the diagonal at {x}",
-    Click(x, y) | Touch(x, y) => "pointer at ({x}, {y})",
-    Key(code) => "key {code}",
+    Click(x, y) | Touch(x, y) if x == y => $"on the diagonal at {x}",
+    Click(x, y) | Touch(x, y) => $"pointer at ({x}, {y})",
+    Key(code) => $"key {code}",
 };
 
 fn Bucket(pair: (int, int?)) => string = match pair {
-    (0, Some(n)) | (n, None) => "one number: {n}",
-    (a, Some(b)) => "two numbers: {a}, {b}",
+    (0, Some(n)) | (n, None) => $"one number: {n}",
+    (a, Some(b)) => $"two numbers: {a}, {b}",
 };
 
 fn Main() {

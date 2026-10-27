@@ -6,9 +6,9 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class Collection_spread
+internal static class Collection_spread
 {
-    public static global::System.Collections.Generic.IEnumerable<int> Evens(int limit)
+    internal static global::System.Collections.Generic.IEnumerable<int> Evens(int limit)
     {
         for (int i = 0; i < limit; i++)
         {
@@ -19,7 +19,7 @@ public static class Collection_spread
         }
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Collections.Generic.List<int> xs = new global::System.Collections.Generic.List<int> { 1, 2, 3 };
         global::System.Collections.Generic.List<int> more = (global::System.Collections.Generic.List<int>)[0, .. xs, 4];

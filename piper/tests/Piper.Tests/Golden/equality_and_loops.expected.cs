@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public interface Shape
+internal interface Shape
 {
     double Area();
 
@@ -29,17 +29,18 @@ public interface Shape
     }
 }
 
-public sealed record Circle(double radius) : Shape
+internal sealed record Circle(double radius) : Shape
 {
     public double Area() => 3.0 * this.radius * this.radius;
 }
 
-public sealed record Square(double side) : Shape
+internal sealed record Square(double side) : Shape
 {
     public double Area() => this.side * this.side;
 }
 
-public abstract record Event
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record Event
 {
     private Event()
     {
@@ -52,9 +53,9 @@ public abstract record Event
     public sealed record Key(int code) : Event;
 }
 
-public static class Equality_and_loops
+internal static class Equality_and_loops
 {
-    public static int IndexOf<T>(global::System.Collections.Generic.List<T> items, T wanted)
+    internal static int IndexOf<T>(global::System.Collections.Generic.List<T> items, T wanted)
     {
         int temp = items.Count;
         for (int i = 0; i < temp; i++)
@@ -67,9 +68,9 @@ public static class Equality_and_loops
         return -1;
     }
 
-    public static bool Same(Shape a, Shape b) => global::System.Collections.Generic.EqualityComparer<Shape>.Default.Equals(a, b);
+    internal static bool Same(Shape a, Shape b) => global::System.Collections.Generic.EqualityComparer<Shape>.Default.Equals(a, b);
 
-    public static int FirstSquareAbove(int limit)
+    internal static int FirstSquareAbove(int limit)
     {
         int n = 1;
         while (true)
@@ -82,7 +83,7 @@ public static class Equality_and_loops
         }
     }
 
-    public static string Describe(Event @event)
+    internal static string Describe(Event @event)
     {
         if (@event is Event.Click(var x, var y) && x == y)
         {
@@ -110,7 +111,7 @@ public static class Equality_and_loops
         }
     }
 
-    public static string Bucket((int, Option<int>) pair)
+    internal static string Bucket((int, Option<int>) pair)
     {
         if (pair is (0, { IsSome: true, Value: var n }))
         {
@@ -130,7 +131,7 @@ public static class Equality_and_loops
         }
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Collections.Generic.List<string> names = new global::System.Collections.Generic.List<string> { "ann", "bob", "cy" };
         global::System.Console.WriteLine(IndexOf<string>(names, "bob"));

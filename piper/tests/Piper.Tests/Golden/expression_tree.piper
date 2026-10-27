@@ -15,11 +15,11 @@ fn Eval(e: Expr) => int = match e {
 };
 
 fn Show(e: Expr) => string = match e {
-    Num(n) if n < 0 => "({n})",
-    Num(n) => "{n}",
-    Add(l, r) => "({Show(l)} + {Show(r)})",
-    Mul(l, r) => "{Show(l)} * {Show(r)}",
-    Neg(x) => "-{Show(x)}",
+    Num(n) if n < 0 => $"({n})",
+    Num(n) => $"{n}",
+    Add(l, r) => $"({Show(l)} + {Show(r)})",
+    Mul(l, r) => $"{Show(l)} * {Show(r)}",
+    Neg(x) => $"-{Show(x)}",
 };
 
 fn Simplify(e: Expr) => Expr = match e {

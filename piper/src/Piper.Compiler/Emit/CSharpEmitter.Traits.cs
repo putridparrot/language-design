@@ -68,9 +68,9 @@ public sealed partial class CSharpEmitter
     }
 
     private static string ForwardedCall(MethodSymbol method, string receiver) =>
-        PropertyOf(method) is { } property
-            ? $"{receiver}.{Escape(property)}"
-            : $"{receiver}.{Escape(method.Name)}{TypeParameterList(method.TypeParameters)}({string.Join(", ", method.Parameters.Select(p => Escape(p.Name)))})";
+        PropertyOf(method) is { } property ? $"{receiver}.{Escape(property)}"
+        : SetterOf(method) is { } settable ? $"{receiver}.{Escape(settable)} = {Escape(method.Parameters[0].Name)}"
+        : $"{receiver}.{Escape(method.Name)}{TypeParameterList(method.TypeParameters)}({string.Join(", ", method.Parameters.Select(p => Escape(p.Name)))})";
 
     /// <summary>The witness interface and its two implementations, nested in the trait's interface.</summary>
     private void EmitWitnessTypes(TraitSymbol trait)
@@ -101,7 +101,13 @@ public sealed partial class CSharpEmitter
                     _writer.WriteLine($"{TypeName(ancestor)} {TypeName(ancestor)}.PiperWitness<{Self}>.PiperBox({Self} {SelfParameter}) => {box};");
             }
             foreach (var (method, map) in methods)
-                _writer.WriteLine($"{WitnessSignature(method, map, "public ", withSelf: true)} => {ForwardedCall(method, receiver(method))};");
+            {
+                // Only a class can implement a settable property, and classes aren't boxed: the box's would be a copy's.
+                var forwarded = SetterOf(method) is not null && box != SelfParameter
+                    ? "throw new global::System.Diagnostics.UnreachableException()"
+                    : ForwardedCall(method, receiver(method));
+                _writer.WriteLine($"{WitnessSignature(method, map, "public ", withSelf: true)} => {forwarded};");
+            }
             _writer.CloseBrace();
         }
 
@@ -205,9 +211,10 @@ public sealed partial class CSharpEmitter
                 continue;
             var arguments = string.Join(", ", method.Parameters.Select(p => Escape(p.Name)));
             var call = ExtensionCall(implementation, target, method.IsStatic ? null : "Value", TypeParameterList(method.TypeParameters), arguments);
-            // A trait property, implemented by the type's extension property: `public double Area => Value.Area;`.
+            // A trait property, implemented by the type's extension property: `public double Area => Value.Area;`, or
+            // `public static int Zero => int.Zero;`.
             var signature = PropertyOf(method) is { } property
-                ? $"public {TypeName(TypeSubstitution.Substitute(method.ReturnType, map))} {Escape(property)}"
+                ? $"public {(method.IsStatic ? "static " : "")}{TypeName(TypeSubstitution.Substitute(method.ReturnType, map))} {Escape(property)}"
                 : WitnessSignature(method, map, method.IsStatic ? "public static " : "public ", withSelf: false);
             _writer.WriteLine($"{signature} => {call};");
         }

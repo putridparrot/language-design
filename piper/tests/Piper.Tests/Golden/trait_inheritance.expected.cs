@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public interface Named
+internal interface Named
 {
     string Name();
 
@@ -34,7 +34,7 @@ public interface Named
     }
 }
 
-public interface Aged
+internal interface Aged
 {
     int Age();
 
@@ -57,7 +57,7 @@ public interface Aged
     }
 }
 
-public interface Person : Named, Aged
+internal interface Person : Named, Aged
 {
     string Introduce() => $"I'm {this.Name()}, {this.Age()}";
 
@@ -90,7 +90,7 @@ public interface Person : Named, Aged
     }
 }
 
-public interface Equatable<T>
+internal interface Equatable<T>
 {
     bool SameAs(T other);
 
@@ -113,7 +113,7 @@ public interface Equatable<T>
     }
 }
 
-public interface Ordered<T> : Equatable<T>
+internal interface Ordered<T> : Equatable<T>
 {
     bool Before(T other);
 
@@ -145,23 +145,23 @@ public interface Ordered<T> : Equatable<T>
     }
 }
 
-public sealed record Employee(string first, int years) : Person, Named
+internal sealed record Employee(string first, int years) : Person, Named
 {
     public int Age() => this.years;
 
     public string Name() => this.first;
 }
 
-public sealed record Version(int major, int minor) : Ordered<Version>
+internal sealed record Version(int major, int minor) : Ordered<Version>
 {
     public bool SameAs(Version other) => this == other;
 
     public bool Before(Version other) => this.major < other.major || this.major == other.major && this.minor < other.minor;
 }
 
-public static class Trait_inheritance
+internal static class Trait_inheritance
 {
-    public static void GreetAll(global::System.Collections.Generic.List<Person> people)
+    internal static void GreetAll(global::System.Collections.Generic.List<Person> people)
     {
         foreach (Person p in people)
         {
@@ -169,9 +169,9 @@ public static class Trait_inheritance
         }
     }
 
-    public static string Label<T>(T p) => $"{(global::Piper.Runtime.PiperTraits.Witness<Named.PiperWitness<T>>().Shout(p))} ({(global::Piper.Runtime.PiperTraits.Witness<Aged.PiperWitness<T>>().Age(p))})";
+    internal static string Label<T>(T p) => $"{(global::Piper.Runtime.PiperTraits.Witness<Named.PiperWitness<T>>().Shout(p))} ({(global::Piper.Runtime.PiperTraits.Witness<Aged.PiperWitness<T>>().Age(p))})";
 
-    public static T Earliest<T>(global::System.Collections.Generic.List<T> items)
+    internal static T Earliest<T>(global::System.Collections.Generic.List<T> items)
     {
         T best = items[0];
         foreach (T item in items)
@@ -184,7 +184,7 @@ public static class Trait_inheritance
         return best;
     }
 
-    public static void Main()
+    internal static void Main()
     {
         Employee ada = new Employee("Ada", 36);
         global::System.Console.WriteLine(((Person)ada).Introduce());

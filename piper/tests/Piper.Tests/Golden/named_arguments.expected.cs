@@ -6,9 +6,9 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Options(string host, int port = 443, bool secure = true, Option<string> label = default);
+internal sealed record Options(string host, int port = 443, bool secure = true, Option<string> label = default);
 
-public interface Greeter
+internal interface Greeter
 {
     string Greet(string name, string punctuation = "!");
 
@@ -31,30 +31,30 @@ public interface Greeter
     }
 }
 
-public sealed record English() : Greeter
+internal sealed record English() : Greeter
 {
     public string Greet(string name, string punctuation = "!") => $"Hello, {name}{punctuation}";
 }
 
-public static class Named_arguments
+internal static class Named_arguments
 {
-    public static string Connect(string host, int port = 80, int retries = 3, double timeout = 1.5) => $"{host}:{port} retries={retries} timeout={timeout}";
+    internal static string Connect(string host, int port = 80, int retries = 3, double timeout = 1.5) => $"{host}:{port} retries={retries} timeout={timeout}";
 
-    public static string Log(string tag)
+    internal static string Log(string tag)
     {
         global::System.Console.WriteLine($"evaluating {tag}");
         return tag;
     }
 
-    public static string GreetAll<T>(T g) => global::Piper.Runtime.PiperTraits.Witness<Greeter.PiperWitness<T>>().Greet(g, "generic");
+    internal static string GreetAll<T>(T g) => global::Piper.Runtime.PiperTraits.Witness<Greeter.PiperWitness<T>>().Greet(g, "generic");
 
-    public static int Positive(int n = 1)
+    internal static int Positive(int n = 1)
     {
         global::Piper.Runtime.PiperContract.Require((n > 0), "n > 0", $"n = {n}", "n");
         return n;
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(Connect("a"));
         global::System.Console.WriteLine(Connect("b", 8080));
@@ -70,7 +70,7 @@ public static class Named_arguments
         DotNet();
     }
 
-    public static void DotNet()
+    internal static void DotNet()
     {
         global::System.Console.WriteLine(global::System.Math.Round(2.567, digits: 2));
         global::System.Console.WriteLine(string.Join(separator: "-", values: new global::System.Collections.Generic.List<string> { "a", "b" }));

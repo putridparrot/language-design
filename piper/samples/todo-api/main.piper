@@ -6,22 +6,30 @@
 //
 // With --serve, try (see README.md for more):
 //   curl http://localhost:5080/api/todos
-//   curl -X POST http://localhost:5080/api/todos -H "Content-Type: application/json" -d "{\"title\":\"Try Piper\"}"
+//   curl -X POST http://localhost:5080/api/todos -H "Content-Type: application/json" -d "{\"title\":\"Try Piper\",\"priority\":\"High\"}"
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
-// The data the API sends and receives. Records become JSON objects: { "id": 1, "title": "…", "done": false }.
-record Todo(id: int, title: string, done: bool);
-record NewTodo(title: string);
+// The data the API sends and receives. Records become JSON objects, an optional field is null when it's None, and an
+// enum's variant is its name: { "id": 1, "title": "…", "done": false, "priority": "High", "note": null }.
+enum Priority { Low, Normal, High }
+
+record Todo(id: int, title: string, done: bool, priority: Priority, note: string?);
+
+// What a client posts. The priority and note may be left out (None), and a title that's blank breaks the invariant,
+// which ASP.NET Core answers with 400 Bad Request before the handler runs.
+record NewTodo(title: string, priority: Priority?, note: string?) requires title.Trim() != "";
+
 record Stats(total: int, done: int, open: int, since: string);
 
 // A service behind a trait, so a test could give the API a fixed clock instead.
@@ -46,7 +54,14 @@ class TodoStore(clock: Clock) {
     prop Done => int = todos.Values.Count(t => t.done);
     prop Since => string = started.ToString("HH:mm:ss");
 
-    fn All() => List<Todo> = todos.Values.OrderBy(t => t.id).ToList();
+    // All of them, or only those done (or not), as asked.
+    fn All(done: bool?) => List<Todo> = todos.Values
+        .Where(t => match done {
+            Some(wanted) => t.done == wanted,
+            None => true,
+        })
+        .OrderBy(t => t.id)
+        .ToList();
 
     fn Find(id: int) => Todo? {
         if todos.TryGetValue(id, out let todo) {
@@ -55,8 +70,8 @@ class TodoStore(clock: Clock) {
         None
     }
 
-    fn Add(title: string) => Todo {
-        let todo = Todo(nextId, title, false);
+    fn Add(request: NewTodo) => Todo {
+        let todo = Todo(nextId, request.title.Trim(), false, request.priority ?? Priority.Normal, request.note);
         todos[todo.id] = todo;
         nextId += 1;
         todo
@@ -75,7 +90,7 @@ class TodoStore(clock: Clock) {
 
 // Turns titles into something friendlier; a new one each time it's asked for (transient).
 class Greeter {
-    fn Welcome(name: string) => string = "Hello, {name}! You have work to do.";
+    fn Welcome(name: string) => string = $"Hello, {name}! You have work to do.";
 }
 
 // Becomes `fn AppServices(services: IServiceCollection) => IServiceCollection`.
@@ -86,33 +101,32 @@ services AppServices {
 }
 
 // Becomes `fn TodoApi(app: IEndpointRouteBuilder)`. Each handler's parameters come from the route ({id}), the query
-// string, the request's JSON body (a NewTodo), or the services (store, greeter, clock).
+// string, the request's JSON body (a NewTodo), or the services (store, greeter, clock). An optional one (`done: bool?`)
+// is None when the request leaves it out.
 endpoints TodoApi "/api" {
-    get "/todos" (store: TodoStore) => store.All();
+    get "/todos" (done: bool?, store: TodoStore) => store.All(done);
 
     get "/todos/{id:int}" (id: int, store: TodoStore) => match store.Find(id) {
         Some(todo) => Results.Ok(todo),
-        None => Results.NotFound("No to-do {id}"),
+        None => Results.NotFound($"No to-do {id}"),
     };
 
+    // A blank title never gets here: NewTodo's invariant rejects it while the body is read.
     post "/todos" (request: NewTodo, store: TodoStore) => {
-        if request.title.Trim() == "" {
-            return Results.BadRequest("A to-do needs a title");
-        }
-        let todo = store.Add(request.title.Trim());
-        Results.Created("/api/todos/{todo.id}", todo)
+        let todo = store.Add(request);
+        Results.Created($"/api/todos/{todo.id}", todo)
     }
 
     put "/todos/{id:int}/done" (id: int, store: TodoStore) => match store.Complete(id) {
         Some(todo) => Results.Ok(todo),
-        None => Results.NotFound("No to-do {id}"),
+        None => Results.NotFound($"No to-do {id}"),
     };
 
-    delete "/todos/{id:int}" (id: int, store: TodoStore) => store.Remove(id) ? Results.NoContent() : Results.NotFound("No to-do {id}");
+    delete "/todos/{id:int}" (id: int, store: TodoStore) => store.Remove(id) ? Results.NoContent() : Results.NotFound($"No to-do {id}");
 
     get "/stats" (store: TodoStore) => Stats(store.Count, store.Done, store.Count - store.Done, store.Since);
 
-    get "/hello" (name: string, greeter: Greeter) => greeter.Welcome(name);
+    get "/hello" (name: string?, greeter: Greeter) => greeter.Welcome(name ?? "there");
 }
 
 // The command line, from the args plugin: `--help` lists these, and a mistake is reported before anything starts.
@@ -128,8 +142,8 @@ async fn Main(args: string[]) {
     let serve = options.serve;
     let port = options.port;
     let urls: string[] = !serve ? ["http://127.0.0.1:0"]
-        : options.https ? ["http://localhost:{port}", "https://localhost:{port + 1}"]
-        : ["http://localhost:{port}"];
+        : options.https ? [$"http://localhost:{port}", $"https://localhost:{port + 1}"]
+        : [$"http://localhost:{port}"];
 
     let builder = WebApplication.CreateBuilder();
     if !serve {
@@ -142,7 +156,7 @@ async fn Main(args: string[]) {
     TodoApi(app);
 
     if serve {
-        Print("Serving on {string.Join(" and ", urls)} (try /api/todos, /api/stats, /api/hello?name=Ada). Ctrl+C to stop.");
+        Print($"Serving on {string.Join(" and ", urls)} (try /api/todos, /api/stats, /api/hello?name=Ada). Ctrl+C to stop.");
         await app.RunAsync();
         return;
     }
@@ -154,21 +168,25 @@ async fn Main(args: string[]) {
 
     async fn Show(what: string, response: HttpResponseMessage) {
         let body = await response.Content.ReadAsStringAsync();
-        Print("{what} → {(int)response.StatusCode} {response.StatusCode} {body}");
+        Print($"{what} → {(int)response.StatusCode} {response.StatusCode} {body}");
     }
 
-    await Show("POST /api/todos", await client.PostAsJsonAsync("/api/todos", NewTodo("Write a Piper server")));
-    await Show("POST /api/todos", await client.PostAsJsonAsync("/api/todos", NewTodo("Call it from curl")));
-    await Show("POST /api/todos (no title)", await client.PostAsJsonAsync("/api/todos", NewTodo("  ")));
+    await Show("POST /api/todos", await client.PostAsJsonAsync("/api/todos", NewTodo("Write a Piper server", Some(Priority.High), None)));
+    await Show("POST /api/todos", await client.PostAsJsonAsync("/api/todos", NewTodo("Call it from curl", None, Some("with -X POST"))));
+    // A NewTodo can't even be made with a blank title, so this sends the JSON itself.
+    let blank = StringContent("""{"title": "  "}""", Encoding.UTF8, "application/json");
+    await Show("POST /api/todos (blank title)", await client.PostAsync("/api/todos", blank));
     await Show("GET /api/todos", await client.GetAsync("/api/todos"));
     await Show("PUT /api/todos/1/done", await client.PutAsync("/api/todos/1/done", None));
+    await Show("GET /api/todos?done=true", await client.GetAsync("/api/todos?done=true"));
     await Show("GET /api/todos/1", await client.GetAsync("/api/todos/1"));
     await Show("GET /api/todos/9", await client.GetAsync("/api/todos/9"));
     await Show("DELETE /api/todos/2", await client.DeleteAsync("/api/todos/2"));
     await Show("GET /api/todos", await client.GetAsync("/api/todos"));
     await Show("GET /api/hello?name=Ada", await client.GetAsync("/api/hello?name=Ada"));
+    await Show("GET /api/hello", await client.GetAsync("/api/hello"));
     let stats = await client.GetFromJsonAsync<Stats>("/api/stats");
-    Print("GET /api/stats → {stats.total} total, {stats.done} done, {stats.open} open");
+    Print($"GET /api/stats → {stats.total} total, {stats.done} done, {stats.open} open");
 
     await app.StopAsync();
 }

@@ -34,7 +34,7 @@ async fn Twice(x: int) => Task<int> {
 // No return type: an async function returns a plain Task.
 async fn Log(message: string) {
     await Task.Delay(1);
-    Print("log: {message}");
+    Print($"log: {message}");
 }
 
 // `?` works inside async functions too.
@@ -74,13 +74,13 @@ async fn Main() {
     if await Twice(2) > 3 {
         Print("big enough");
     }
-    Print("in a string: {await Twice(10)}");
+    Print($"in a string: {await Twice(10)}");
 
     // Exceptions come through await unchanged.
     try {
         Print(await Fail());
     } catch (e: InvalidOperationException) {
-        Print("caught {e.Message}");
+        Print($"caught {e.Message}");
     }
 
     // An async function value.
@@ -97,13 +97,13 @@ async fn Main() {
     await for square in channel.Reader.ReadAllAsync() {
         total += square;
     }
-    Print("squares total {total}");
+    Print($"squares total {total}");
 
     // `await using` disposes with DisposeAsync.
     let stream = System.IO.MemoryStream();
     {
         await using let resource = stream;
-        Print("open: {resource.CanRead}");
+        Print($"open: {resource.CanRead}");
     }
-    Print("after await using: {stream.CanRead}");
+    Print($"after await using: {stream.CanRead}");
 }

@@ -48,6 +48,9 @@ public sealed partial class Binder
     /// <summary>The object an initializer being bound is setting up, whose <c>init</c> properties can be set.</summary>
     private VariableSymbol? _initializing;
 
+    /// <summary>The call an object initializer follows, while it's bound: the initializer checks its required members.</summary>
+    private CallExpressionSyntax? _initializedCreation;
+
     private FileContext _file = null!;
 
     /// <summary>Where names, declarations and expression types are recorded for editor tooling, if anyone asked.</summary>
@@ -458,6 +461,9 @@ public sealed partial class Binder
         symbol.DeclaringFile = file.Source;
         symbol.Namespace = file.Namespace;
         symbol.IsPrivate = declaration.Private is not null;
+        symbol.IsExported = declaration.Public is not null && declaration.Private is null;
+        if (declaration is { Public: { } @public, Private: not null })
+            _diagnostics.ReportConflictingVisibility(@public.Span, declaration.Name.Text);
         symbol.Documentation ??= declaration.Documentation;
         if (_semantic is not null && !declaration.Name.IsMissing)
             _semantic.AddOccurrence(file.Source, declaration.Name.Span, symbol, isDeclaration: true);
@@ -742,6 +748,11 @@ public sealed partial class Binder
                 _diagnostics.ReportInvalidExtendTarget(@private.Span, "'private' applies to the methods in an extend block, not the block itself.");
 
             var symbol = ResolveTypeName(targetSyntax);
+            // `public extend int { … }` exports what it adds to a type Piper doesn't declare; a Piper type's extend
+            // methods are members of the type, so as visible as it is.
+            if (syntax.Public is { } @public && symbol is GenericTypeDefinition and not NamedTypeDefinition { IsRuntimeType: true })
+                _diagnostics.ReportInvalidExtendTarget(@public.Span,
+                    $"'{symbol.Name}' is declared in Piper, so what this block adds is as visible as it is; make '{symbol.Name}' public instead.");
             TypeSymbol? target = symbol switch
             {
                 NamedTypeDefinition definition => definition,
@@ -963,6 +974,7 @@ public sealed partial class Binder
             }
             var info = BindFunctionSignature(syntax, extend.File, outer, target, thisType);
             var method = (MethodSymbol)info.Symbol;
+            method.IsExported = extend.Syntax.Public is not null && syntax.Private is null && IsExternalTarget(target);
             // A class's bodiless methods are checked with its other methods; nothing else may lack a body.
             if (!syntax.HasBody && target is not ClassSymbol)
                 _diagnostics.ReportMissingBody(syntax.Name.Span, syntax.Name.Text);
@@ -1107,26 +1119,50 @@ public sealed partial class Binder
                 var map = TypeSubstitution.MapFor(traitType);
                 foreach (var required in trait.Methods)
                 {
+                    bool isSetter = required.IsAccessor && required.Name.StartsWith("set_", StringComparison.Ordinal);
+                    // A settable property needs somewhere to store its value, which only a class has.
+                    if (isSetter && definition is not ClassSymbol)
+                    {
+                        _diagnostics.ReportSettableTraitPropertyNeedsClass(traitSyntax.Span, definition, required.DisplayName, traitType);
+                        continue;
+                    }
+                    // A class's property is checked once for a settable one, against the setter, which needs the getter too.
+                    if (definition is ClassSymbol && required.IsAccessor && !isSetter &&
+                        trait.Methods.Any(m => m.IsAccessor && m.Name == "set_" + required.DisplayName))
+                    {
+                        continue;
+                    }
                     var implementation = OwnMethods(definition).FirstOrDefault(m => m.Name == required.Name);
+                    // A class's property implements a trait's when it's public, of the same type, and, if the trait's can
+                    // be set, settable by anyone. It may be an automatic property or public field, a C# property too,
+                    // so that's checked once the class's fields are bound.
+                    if (required.IsAccessor && required.IsAbstract && definition is ClassSymbol @class && (implementation is null || isSetter))
+                    {
+                        var (span, file) = (traitSyntax.Span, extend.File);
+                        var type = TypeSubstitution.Substitute(isSetter ? required.Parameters[0].Type : required.ReturnType, map);
+                        _classPropertyConformances.Add(() =>
+                        {
+                            var stored = @class.SelfAndBases().SelectMany(c => c.Fields).FirstOrDefault(f => f.Name == required.DisplayName);
+                            if (stored is { IsPublic: true } && stored.Type == type &&
+                                (!isSetter || stored is { IsMutable: true, HasPrivateSetter: false, HasProtectedSetter: false, IsInitOnly: false }))
+                            {
+                                return;
+                            }
+                            InFile(file);
+                            if (stored is null)
+                                _diagnostics.ReportMissingTraitMethod(span, @class, required.DisplayName, traitType);
+                            else
+                            {
+                                _diagnostics.CurrentSource = stored.DeclaringFile;
+                                _diagnostics.ReportTraitSignatureMismatch(stored.Owner!.Declaration.Fields.First(f => f.Name.Text == stored.Name).Name.Span,
+                                    required.DisplayName, traitType, $"a public prop {required.DisplayName}: {type}{(isSetter ? " with a public 'set'" : "")}");
+                                _diagnostics.CurrentSource = file.Source;
+                            }
+                        });
+                        continue;
+                    }
                     if (implementation is null)
                     {
-                        // A class's automatic property or public field is a C# property too, so it can implement a trait's;
-                        // that's checked once the class's fields are bound.
-                        if (required.IsAccessor && required.IsAbstract && definition is ClassSymbol @class)
-                        {
-                            var (span, file) = (traitSyntax.Span, extend.File);
-                            _classPropertyConformances.Add(() =>
-                            {
-                                if (@class.SelfAndBases().SelectMany(c => c.Fields).FirstOrDefault(f => f.Name == required.DisplayName) is { IsPublic: true } stored &&
-                                    stored.Type == TypeSubstitution.Substitute(required.ReturnType, map))
-                                {
-                                    return;
-                                }
-                                InFile(file);
-                                _diagnostics.ReportMissingTraitMethod(span, @class, required.DisplayName, traitType);
-                            });
-                            continue;
-                        }
                         // A trait the type implements may override the method, supplying (or replacing) its default.
                         var overriders = MostSpecificOverriders([.. TraitsOf(definition)], required);
                         if (overriders is [var first, var second, ..])
@@ -1231,7 +1267,68 @@ public sealed partial class Binder
             if (!method.ContainingType.IsPrivate)
                 Check(method, info.Syntax.Name, SignatureTypes(method));
         }
+
+        CheckExports(types, functions, methods);
     }
+
+    /// <summary>
+    /// A public declaration is part of the library's API, so it can't mention a type that isn't public: code using the
+    /// library could see the declaration but not the type (C# rejects the same, as inconsistent accessibility).
+    /// </summary>
+    private void CheckExports(List<TypeSymbol> types, List<FunctionInfo> functions, List<FunctionInfo> methods)
+    {
+        void Check(Symbol owner, Token name, IEnumerable<TypeSymbol> mentioned)
+        {
+            if (mentioned.Select(HiddenTypeIn).FirstOrDefault(n => n is not null) is not { } hidden)
+                return;
+            InFile(FileOf(owner));
+            _diagnostics.ReportInternalTypeExposed(name.Span, name.Text, hidden);
+        }
+
+        foreach (var type in types.OfType<GenericTypeDefinition>().Where(t => t.IsExported))
+        {
+            switch (type)
+            {
+                case RecordSymbol record:
+                    Check(record, record.Declaration.Name, record.Fields.Select(f => f.Type));
+                    break;
+                case EnumSymbol @enum:
+                    Check(@enum, @enum.Declaration!.Name, @enum.Variants.SelectMany(v => v.Fields.Select(f => f.Type)));
+                    break;
+                case TraitSymbol trait:
+                    Check(trait, trait.Declaration.Name, [.. trait.Parents, .. trait.Methods.SelectMany(SignatureTypes)]);
+                    break;
+                case ClassSymbol @class:
+                    // Its base, its primary constructor's parameters, and the fields code outside it (or deriving from it) sees.
+                    Check(@class, @class.Declaration.Name,
+                    [
+                        .. @class.Base is { } @base ? [@base] : Array.Empty<TypeSymbol>(),
+                        .. @class.Parameters.Select(p => p.Type),
+                        .. @class.Fields.Concat(@class.StaticFields).Where(f => f.IsPublic || f.IsProtected).Select(f => f.Type),
+                    ]);
+                    break;
+            }
+        }
+
+        foreach (var info in functions.Where(f => f.Symbol.IsExported))
+            Check(info.Symbol, info.Syntax.Name, SignatureTypes(info.Symbol));
+
+        foreach (var info in methods)
+        {
+            var method = (MethodSymbol)info.Symbol;
+            bool visible = (method.IsExported || method.ContainingType.IsExported) && !method.IsPrivate;
+            if (visible)
+                Check(method, info.Syntax.Name, SignatureTypes(method));
+        }
+    }
+
+    /// <summary>The name of a Piper type <paramref name="type"/> mentions that isn't public (exported), if any.</summary>
+    private static string? HiddenTypeIn(TypeSymbol type) => type switch
+    {
+        _ when type.OriginalDefinition is GenericTypeDefinition { DeclaringFile: not null, IsExported: false } hidden => hidden.Name,
+        TupleTypeSymbol tuple => tuple.ElementTypes.Select(HiddenTypeIn).FirstOrDefault(n => n is not null),
+        _ => type.TypeArguments.Select(HiddenTypeIn).FirstOrDefault(n => n is not null),
+    };
 
     private static Token NameOf(NamedTypeDefinition definition) => definition switch
     {

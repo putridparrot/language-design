@@ -6,7 +6,7 @@ public class LineMappingTests
     private const string Crashing = """
         fn check(value: int) => int {
             if value < 0 {
-                throw System.InvalidOperationException("negative: {value}");
+                throw System.InvalidOperationException($"negative: {value}");
             }
             value
         }

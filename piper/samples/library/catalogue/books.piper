@@ -37,17 +37,17 @@ fn ByGenre(genre: Genre) => List<Book> = AllBooks().Where(b => b.genre == genre)
 fn Find(isbn: string) => Book? = AllBooks().FirstOrDefault(b => b.isbn == isbn);
 
 extend Book {
-    fn Label() => string = "{this.title} by {this.author}";
+    fn Label() => string = $"{this.title} by {this.author}";
 
     // Methods can be private too: this one is only callable in this file.
     private fn Shelf() => string = match this.genre {
-        Fiction => "F-{Initial(this.author)}",
-        Science => "S-{Initial(this.author)}",
-        History => "H-{Initial(this.author)}",
+        Fiction => $"F-{Initial(this.author)}",
+        Science => $"S-{Initial(this.author)}",
+        History => $"H-{Initial(this.author)}",
     };
 
     // A public method can use private helpers.
-    fn ShelfLabel() => string = "{this.Shelf()}: {this.Label()}";
+    fn ShelfLabel() => string = $"{this.Shelf()}: {this.Label()}";
 }
 
 private fn Initial(author: string) => char = author.Split(' ').Last()[0];

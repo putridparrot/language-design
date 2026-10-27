@@ -11,15 +11,15 @@ enum Shape {
 
 fn Describe(xs: List<int>) => string = match xs {
     [] => "empty",
-    [only] => "just {only}",
-    [first, second] => "a pair: {first} and {second}",
-    [first, ...rest] => "{first} then {rest.Count} more",
+    [only] => $"just {only}",
+    [first, second] => $"a pair: {first} and {second}",
+    [first, ...rest] => $"{first} then {rest.Count} more",
 };
 
 fn Ends(xs: int[]) => string = match xs {
     [] => "none",
-    [x] => "{x} alone",
-    [first, ..., last] => "{first}..{last}",
+    [x] => $"{x} alone",
+    [first, ..., last] => $"{first}..{last}",
 };
 
 fn Sum(xs: int[]) => int = match xs {
@@ -28,8 +28,8 @@ fn Sum(xs: int[]) => int = match xs {
 };
 
 fn Initials(name: string) => string = match name {
-    [first, ...rest] if rest.Length > 0 => "{first}{rest[0]}",
-    [first] => "{first}",
+    [first, ...rest] if rest.Length > 0 => $"{first}{rest[0]}",
+    [first] => $"{first}",
     _ => "?",
 };
 
@@ -60,8 +60,8 @@ fn OnAxis(p: Point) => string = match p {
 
 fn Kind(s: Shape) => string = match s {
     Circle { radius: < 1.0 } => "small circle",
-    Circle { radius: r } => "circle of {r}",
-    Shape.Rect { width: w, height: h } if w == h => "square of {w}",
+    Circle { radius: r } => $"circle of {r}",
+    Shape.Rect { width: w, height: h } if w == h => $"square of {w}",
     Rect { } => "rectangle",
 };
 
@@ -83,9 +83,9 @@ fn Main() {
     Print(Initials("Ada"));
     Print(Initials("A"));
     Print(Initials(""));
-    Print("{Sign(-3)} {Sign(0)} {Sign(8)}");
-    Print("{Grade(95.0)} {Grade(80.0)} {Grade(10.0)}");
-    Print("{Half(3)} {Half(200)}");
+    Print($"{Sign(-3)} {Sign(0)} {Sign(8)}");
+    Print($"{Grade(95.0)} {Grade(80.0)} {Grade(10.0)}");
+    Print($"{Half(3)} {Half(200)}");
     Print(OnAxis(Point(0, 0)));
     Print(OnAxis(Point(0, 4)));
     Print(OnAxis(Point(3, 0)));
@@ -94,14 +94,14 @@ fn Main() {
     Print(Kind(Shape.Circle(2.0)));
     Print(Kind(Shape.Rect(2.0, 2.0)));
     Print(Kind(Shape.Rect(2.0, 3.0)));
-    Print("{Size("")} {Size("abc")} {Size("abcdef")}");
+    Print($"{Size("")} {Size("abc")} {Size("abcdef")}");
 
     let builder = StringBuilder("hi");
     if builder is { Length: > 1 } {
-        Print("a builder with {builder.Length} characters");
+        Print($"a builder with {builder.Length} characters");
     }
     let words = ["alpha", "beta"];
     if words is [first, ...] {
-        Print("starts with {first}");
+        Print($"starts with {first}");
     }
 }

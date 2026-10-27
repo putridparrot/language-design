@@ -39,20 +39,21 @@ piper run samples/todo-api --serve --https --port 5090
 
 | Request | Does | Answers |
 |---|---|---|
-| `GET /api/todos` | lists the to-dos | 200 and a JSON array |
+| `GET /api/todos`, `GET /api/todos?done=true` | lists the to-dos, or those done (or not) | 200 and a JSON array |
 | `GET /api/todos/{id}` | finds one | 200 and the to-do, or 404 |
-| `POST /api/todos` with `{"title": "…"}` | adds one | 201 and the to-do, or 400 for an empty title |
+| `POST /api/todos` with `{"title": "…", "priority": "High", "note": "…"}` (priority and note optional) | adds one | 201 and the to-do, or 400 for a blank title |
 | `PUT /api/todos/{id}/done` | marks one done | 200 and the to-do, or 404 |
 | `DELETE /api/todos/{id}` | removes one | 204, or 404 |
 | `GET /api/stats` | counts them | 200 and `{"total", "done", "open", "since"}` |
-| `GET /api/hello?name=Ada` | greets | 200 and text |
+| `GET /api/hello?name=Ada`, `GET /api/hello` | greets | 200 and text |
 
 ## Trying it
 
 With curl:
 
 ```
-curl -X POST http://localhost:5080/api/todos -H "Content-Type: application/json" -d "{\"title\":\"Try Piper\"}"
+curl -X POST http://localhost:5080/api/todos -H "Content-Type: application/json" -d "{\"title\":\"Try Piper\",\"priority\":\"High\"}"
+curl "http://localhost:5080/api/todos?done=false"
 curl http://localhost:5080/api/todos
 curl -X PUT http://localhost:5080/api/todos/1/done
 curl -i http://localhost:5080/api/todos/5
@@ -74,7 +75,9 @@ The GET requests work in a browser too.
 
 ## What's where
 
-- **The data** is records (`Todo`, `NewTodo`, `Stats`), which ASP.NET Core turns into JSON and back.
+- **The data** is records (`Todo`, `NewTodo`, `Stats`) and an enum (`Priority`), which ASP.NET Core turns into JSON and
+  back: an optional field (`note: string?`) is `null` when it's None, and a variant is its name (`"High"`). `NewTodo`'s
+  `requires` rejects a blank title while the request is read, which answers 400 before the handler runs.
 - **The services** (`services AppServices { … }`):
   - `Clock` is a trait, implemented by `SystemClock`.
   - `TodoStore` is a class whose constructor takes the `Clock`, which DI passes it. It's a singleton, so every request

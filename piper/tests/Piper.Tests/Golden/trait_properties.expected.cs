@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public interface Shape
+internal interface Shape
 {
     double Area { get; }
 
@@ -39,7 +39,7 @@ public interface Shape
     }
 }
 
-public sealed record Circle(double r) : Shape
+internal sealed record Circle(double r) : Shape
 {
     public double Area => global::System.Math.PI * this.r * this.r;
 
@@ -48,19 +48,19 @@ public sealed record Circle(double r) : Shape
     public double Diameter => 2.0 * this.r;
 }
 
-public partial class Square(double side) : Shape
+internal partial class Square(double side) : Shape
 {
     public double Area => side * side;
 }
 
-public partial class Plot(double width, double depth) : Shape
+internal partial class Plot(double width, double depth) : Shape
 {
     public double Area { get; } = width * depth;
 }
 
-public static class Trait_properties
+internal static class Trait_properties
 {
-    public static double Total<T>(global::System.Collections.Generic.List<T> items)
+    internal static double Total<T>(global::System.Collections.Generic.List<T> items)
     {
         double sum = 0.0;
         foreach (T item in items)
@@ -70,7 +70,7 @@ public static class Trait_properties
         return sum;
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Collections.Generic.List<Shape> shapes = new global::System.Collections.Generic.List<Shape> { new Circle(1.0), new Square(2.0), new Plot(2.0, 3.0), global::Piper.Runtime.PiperTraits.Witness<Shape.PiperWitness<int>>().PiperBox(3) };
         foreach (Shape shape in shapes)
@@ -100,18 +100,18 @@ file static class PiperWitnesses
     }
 }
 
-public static class Trait_propertiesExtensions
+internal static class Trait_propertiesExtensions
 {
     extension(int self)
     {
-        public double Area => (double)(self * self);
+        internal double Area => (double)(self * self);
 
-        public bool IsEven => self % 2 == 0;
+        internal bool IsEven => self % 2 == 0;
     }
 
     extension(int)
     {
-        public static int Answer => 42;
+        internal static int Answer => 42;
     }
 }
 

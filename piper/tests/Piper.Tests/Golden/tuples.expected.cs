@@ -6,15 +6,15 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Point(int x, int y);
+internal sealed record Point(int x, int y);
 
-public static class Tuples
+internal static class Tuples
 {
-    public static (int quotient, int remainder) Divide(int a, int b) => (a / b, a % b);
+    internal static (int quotient, int remainder) Divide(int a, int b) => (a / b, a % b);
 
-    public static (B, A) Swap<A, B>((A, B) pair) => (pair.Item2, pair.Item1);
+    internal static (B, A) Swap<A, B>((A, B) pair) => (pair.Item2, pair.Item1);
 
-    public static string Describe((bool, bool) cell)
+    internal static string Describe((bool, bool) cell)
     {
         if (cell is (true, true))
         {
@@ -30,7 +30,7 @@ public static class Tuples
         }
     }
 
-    public static string Classify((int, int) point)
+    internal static string Classify((int, int) point)
     {
         if (point is (0, 0))
         {
@@ -50,7 +50,7 @@ public static class Tuples
         }
     }
 
-    public static void Main()
+    internal static void Main()
     {
         (int, string) pair = (1, "one");
         global::System.Console.WriteLine(pair);

@@ -13,7 +13,7 @@ fn Repeat(times: int, body: (int) => unit) {
 
 fn Measure(label: string, body: () => int) => int {
     let result = body();
-    Print("{label}: {result}");
+    Print($"{label}: {result}");
     result
 }
 
@@ -21,7 +21,7 @@ fn Guarded(body: () => unit) {
     try {
         body();
     } catch (e: InvalidOperationException) {
-        Print("caught: {e.Message}");
+        Print($"caught: {e.Message}");
     }
 }
 
@@ -30,7 +30,7 @@ fn IsSmall(n: int, check: (int) => bool) => bool = check(n);
 fn Main() {
     // `f(args) { x => … }` is `f(args, x => { … })`; a statement ending with one needs no `;`.
     Repeat(3) { i =>
-        Print("tick {i}");
+        Print($"tick {i}");
     }
 
     // Without parentheses the closure is the only argument; without `=>` it has no parameters.

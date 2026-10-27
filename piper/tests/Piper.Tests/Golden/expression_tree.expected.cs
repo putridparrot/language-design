@@ -6,7 +6,8 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public abstract record Expr
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record Expr
 {
     private Expr()
     {
@@ -21,9 +22,9 @@ public abstract record Expr
     public sealed record Neg(Expr operand) : Expr;
 }
 
-public static class Expression_tree
+internal static class Expression_tree
 {
-    public static int Eval(Expr e)
+    internal static int Eval(Expr e)
     {
         if (e is Expr.Num(var n))
         {
@@ -47,7 +48,7 @@ public static class Expression_tree
         }
     }
 
-    public static string Show(Expr e)
+    internal static string Show(Expr e)
     {
         if (e is Expr.Num(var n) && n < 0)
         {
@@ -75,7 +76,7 @@ public static class Expression_tree
         }
     }
 
-    public static Expr Simplify(Expr e)
+    internal static Expr Simplify(Expr e)
     {
         if (e is Expr.Add(Expr.Num(0), var x))
         {
@@ -119,7 +120,7 @@ public static class Expression_tree
         }
     }
 
-    public static void Main()
+    internal static void Main()
     {
         Expr e = new Expr.Add(new Expr.Mul(new Expr.Add(new Expr.Num(2), new Expr.Num(3)), new Expr.Neg(new Expr.Neg(new Expr.Num(4)))), new Expr.Mul(new Expr.Num(0), new Expr.Num(7)));
         global::System.Console.WriteLine(Show(e));

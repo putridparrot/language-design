@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Vector(double x, double y)
+internal sealed record Vector(double x, double y)
 {
     public static Vector operator +(Vector self, Vector other) => new Vector(self.x + other.x, self.y + other.y);
 
@@ -21,7 +21,7 @@ public sealed record Vector(double x, double y)
     public double Length() => global::System.Math.Sqrt(this.x * this.x + this.y * this.y);
 }
 
-public sealed record Money(long cents)
+internal sealed record Money(long cents)
 {
     public static Money operator +(Money self, Money other) => new Money(self.cents + other.cents);
 
@@ -30,7 +30,8 @@ public sealed record Money(long cents)
     public static long operator %(Money self, int parts) => self.cents % parts;
 }
 
-public abstract record Interval
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record Interval
 {
     private Interval()
     {
@@ -62,14 +63,14 @@ public abstract record Interval
     }
 }
 
-public sealed record Pair<T>(T first, T second)
+internal sealed record Pair<T>(T first, T second)
 {
     public static Pair<T> operator -(Pair<T> p) => new Pair<T>(p.second, p.first);
 }
 
-public static class User_operators
+internal static class User_operators
 {
-    public static void Main()
+    internal static void Main()
     {
         Vector a = new Vector(1.0, 2.0);
         Vector b = new Vector(3.0, 4.0);

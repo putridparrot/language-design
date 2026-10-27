@@ -12,14 +12,14 @@ class Account(owner: string, opening: decimal) {
     fn Deposit(amount: decimal) {
         balance += amount;
         deposits += 1;
-        Log("deposit {amount}");
+        Log($"deposit {amount}");
     }
 
     fn Balance() => decimal = balance;
 
     // A parameter hides a field; 'this.' still reaches it.
     fn Rename(owner: string) => string {
-        "{this.name} → {owner}"
+        $"{this.name} → {owner}"
     }
 
     // Another Account's private fields are visible inside Account.
@@ -28,7 +28,7 @@ class Account(owner: string, opening: decimal) {
         to.balance += amount;
     }
 
-    private fn Log(message: string) { Print("{owner}: {message}"); }
+    private fn Log(message: string) { Print($"{owner}: {message}"); }
 
     static fn Empty(owner: string) => Account = Account(owner, 0m);
 }
@@ -36,7 +36,7 @@ class Account(owner: string, opening: decimal) {
 // Abstract and virtual methods, and overrides.
 abstract class Shape(name: string) {
     abstract fn Area() => double;
-    virtual fn Describe() => string = "{name} with area {Area()}";
+    virtual fn Describe() => string = $"{name} with area {Area()}";
     fn Name() => string = name;
 }
 
@@ -46,37 +46,37 @@ class Square(side: double): Shape("square") {
 
 class Circle(radius: double): Shape("circle") {
     override fn Area() => double = 3.0 * radius * radius;
-    override fn Describe() => string = "a round {Name()}";
+    override fn Describe() => string = $"a round {Name()}";
     public fn Radius() => double = radius;
 }
 
 // 'base' calls the version an override replaces.
 class Ring(radius: double, width: double): Circle(radius) {
-    override fn Describe() => string = "{base.Describe()}, {width} wide";
+    override fn Describe() => string = $"{base.Describe()}, {width} wide";
 }
 
 // Type tests: 'name: Type' in a pattern.
 fn Classify(shape: Shape) => string = match shape {
-    r: Ring => "ring: {r.Describe()}",
+    r: Ring => $"ring: {r.Describe()}",
     c: Circle if c.Radius() > 1.0 => "big circle",
     _: Circle => "small circle",
-    other => "{other.Name()}",
+    other => $"{other.Name()}",
 };
 
 // Deriving from .NET classes.
-class NotFound(id: int): System.Exception("No item {id}") {
+class NotFound(id: int): System.Exception($"No item {id}") {
     public let item = id;
 }
 
 class Point(x: int, y: int) {
-    override fn ToString() => string = "({x}, {y})";
+    override fn ToString() => string = $"({x}, {y})";
 }
 
 class Recording: Collection<string> {
     public mut inserted = 0;
     override fn InsertItem(index: int, item: string) {
         inserted += 1;
-        Print("inserting {item} at {index}");
+        Print($"inserting {item} at {index}");
         base.InsertItem(index, item.ToUpper());
     }
 }
@@ -84,7 +84,7 @@ class Recording: Collection<string> {
 // Traits and .NET interfaces follow the base class.
 trait Named {
     fn Name() => string;
-    fn Greeting() => string = "Hello, {this.Name()}";
+    fn Greeting() => string = $"Hello, {this.Name()}";
 }
 
 class Dog(name: string): Named {
@@ -116,7 +116,7 @@ fn Main() {
     Print(ada.Rename("Lovelace"));
     let bob = Account.Empty("Bob");
     ada.Transfer(bob, 50m);
-    Print("{ada.Balance()} {bob.Balance()}");
+    Print($"{ada.Balance()} {bob.Balance()}");
     let same = ada;
     Print(same == ada);
 
@@ -128,13 +128,13 @@ fn Main() {
     try {
         throw NotFound(7);
     } catch (e: NotFound) {
-        Print("{e.Message} ({e.item})");
+        Print($"{e.Message} ({e.item})");
     }
     Print(Point(1, 2));
 
     let recording = Recording();
     recording.Add("a");
-    Print("{recording.inserted} inserted, {recording.Count} kept: {recording[0]}");
+    Print($"{recording.inserted} inserted, {recording.Count} kept: {recording[0]}");
 
     let more: List<Shape> = [Square(1.0), Circle(0.5), Circle(2.0), Ring(1.0, 0.25)];
     for shape in more {
@@ -142,7 +142,7 @@ fn Main() {
     }
     let something: object = Ring(3.0, 1.0);
     if something is c: Circle && c.Radius() > 2.0 {
-        Print("an object holding a circle of radius {c.Radius()}");
+        Print($"an object holding a circle of radius {c.Radius()}");
     }
     let circle = (Circle)shapes[1];
     Print(circle.Radius());

@@ -19,7 +19,7 @@ extend Shape: Describe {
                 text.Append(r);
             }
             Rect(corner, w, h) => {
-                text.Append("{w}x{h} rectangle at ");
+                text.Append($"{w}x{h} rectangle at ");
                 text.Append(corner.Label());
             }
         }
@@ -32,5 +32,5 @@ extend double {
 }
 
 extend Point {
-    fn Label() => string = "({this.x}, {this.y})";
+    fn Label() => string = $"({this.x}, {this.y})";
 }

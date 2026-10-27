@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public partial class Account(string owner, decimal opening)
+internal partial class Account(string owner, decimal opening)
 {
     private decimal balance = opening;
     public string name { get; } = owner;
@@ -40,7 +40,7 @@ public partial class Account(string owner, decimal opening)
     public static Account Empty(string owner) => new Account(owner, 0m);
 }
 
-public abstract partial class Shape(string name)
+internal abstract partial class Shape(string name)
 {
     public abstract double Area();
 
@@ -49,12 +49,12 @@ public abstract partial class Shape(string name)
     public string Name() => name;
 }
 
-public partial class Square(double side) : Shape("square")
+internal partial class Square(double side) : Shape("square")
 {
     public override double Area() => side * side;
 }
 
-public partial class Circle(double radius) : Shape("circle")
+internal partial class Circle(double radius) : Shape("circle")
 {
     public override double Area() => 3.0 * radius * radius;
 
@@ -63,22 +63,22 @@ public partial class Circle(double radius) : Shape("circle")
     public double Radius() => radius;
 }
 
-public partial class Ring(double radius, double width) : Circle(radius)
+internal partial class Ring(double radius, double width) : Circle(radius)
 {
     public override string Describe() => $"{base.Describe()}, {width} wide";
 }
 
-public partial class NotFound(int id) : global::System.Exception($"No item {id}")
+internal partial class NotFound(int id) : global::System.Exception($"No item {id}")
 {
     public int item { get; } = id;
 }
 
-public partial class Point(int x, int y)
+internal partial class Point(int x, int y)
 {
     public override string ToString() => $"({x}, {y})";
 }
 
-public partial class Recording : global::System.Collections.ObjectModel.Collection<string>
+internal partial class Recording : global::System.Collections.ObjectModel.Collection<string>
 {
     public int inserted { get; set; } = 0;
 
@@ -90,7 +90,7 @@ public partial class Recording : global::System.Collections.ObjectModel.Collecti
     }
 }
 
-public interface Named
+internal interface Named
 {
     string Name();
 
@@ -118,19 +118,19 @@ public interface Named
     }
 }
 
-public partial class Dog(string name) : Named
+internal partial class Dog(string name) : Named
 {
     public string Name() => name;
 }
 
-public partial class Cat : Named
+internal partial class Cat : Named
 {
     public string Name() => "Tom";
 
     public string Greeting() => "Purr";
 }
 
-public partial class Version(int major) : global::System.IComparable<Version>
+internal partial class Version(int major) : global::System.IComparable<Version>
 {
     public int number { get; } = major;
 
@@ -154,9 +154,9 @@ public partial class Version(int major) : global::System.IComparable<Version>
     public static bool operator >=(Version left, Version right) => ((global::System.IComparable<Version>)left).CompareTo(right) >= 0;
 }
 
-public static class Classes
+internal static class Classes
 {
-    public static string Classify(Shape shape)
+    internal static string Classify(Shape shape)
     {
         if (shape is Ring r)
         {
@@ -177,9 +177,9 @@ public static class Classes
         }
     }
 
-    public static string Greet(Named n) => n.Greeting();
+    internal static string Greet(Named n) => n.Greeting();
 
-    public static void Main()
+    internal static void Main()
     {
         Account ada = new Account("Ada", 100m);
         ada.Deposit(25m);

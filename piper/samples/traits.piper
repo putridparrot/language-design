@@ -7,7 +7,7 @@ using System.Linq;
 trait Shape {
     fn Area() => double;
     fn Name() => string;
-    fn Describe() => string = "{this.Name()} with area {Math.Round(this.Area(), 2)}";
+    fn Describe() => string = $"{this.Name()} with area {Math.Round(this.Area(), 2)}";
 }
 
 record Circle(radius: double);
@@ -22,13 +22,13 @@ extend Circle: Shape {
 extend Square: Shape {
     fn Area() => double = this.side * this.side;
     fn Name() => string = "square";
-    fn Describe() => string = "a {this.side}x{this.side} square";     // overrides the default
+    fn Describe() => string = $"a {this.side}x{this.side} square";     // overrides the default
 }
 
 // Builtin types can be extended, and implement traits, too.
 extend int: Shape {
     fn Area() => double = 0.0;
-    fn Name() => string = "the number {this}";
+    fn Name() => string = $"the number {this}";
 }
 
 extend string {
@@ -53,7 +53,7 @@ trait Named {
 }
 
 trait Greeter: Named {
-    fn Greet() => string = "Hello, {this.Name()}";
+    fn Greet() => string = $"Hello, {this.Name()}";
 }
 
 trait Monoid<T: Monoid<T>> {
@@ -89,8 +89,8 @@ fn Main() {
     for shape in shapes {
         Print(shape.Describe());
     }
-    Print("total area {Math.Round(TotalArea(shapes), 2)}");
-    Print("largest circle: radius {Largest([Circle(1.0), Circle(4.0), Circle(2.0)]).radius}");
+    Print($"total area {Math.Round(TotalArea(shapes), 2)}");
+    Print($"largest circle: radius {Largest([Circle(1.0), Circle(4.0), Circle(2.0)]).radius}");
 
     Print("piper".Shout());
     Print(Person("Ada").Greet());

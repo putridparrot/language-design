@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record User(string name, Option<string> email, int age)
+internal sealed record User(string name, Option<string> email, int age)
 {
     public void Greet()
     {
@@ -14,9 +14,9 @@ public sealed record User(string name, Option<string> email, int age)
     }
 }
 
-public static class Null_safety
+internal static class Null_safety
 {
-    public static Option<User> Find(int id)
+    internal static Option<User> Find(int id)
     {
         if (id == 1)
         {
@@ -29,7 +29,7 @@ public static class Null_safety
         return Option<User>.None;
     }
 
-    public static string Contact(int id)
+    internal static string Contact(int id)
     {
         Option<User> user = Find(id);
         Option<string> temp = user.IsSome ? Option<string>.Some(user.Value.name) : Option<string>.None;
@@ -39,7 +39,7 @@ public static class Null_safety
         return $"{name} <{email}>";
     }
 
-    public static Option<int> AgeNextYear(int id)
+    internal static Option<int> AgeNextYear(int id)
     {
         Option<User> temp = Find(id);
         if (!temp.IsSome)
@@ -50,7 +50,7 @@ public static class Null_safety
         return Option<int>.Some(user.age + 1);
     }
 
-    public static string Describe(Option<int> @value)
+    internal static string Describe(Option<int> @value)
     {
         if (@value is { IsSome: false })
         {
@@ -70,7 +70,7 @@ public static class Null_safety
         }
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(Contact(1));
         global::System.Console.WriteLine(Contact(2));
@@ -113,11 +113,11 @@ public static class Null_safety
     }
 }
 
-public static class Null_safetyExtensions
+internal static class Null_safetyExtensions
 {
     extension<T>(Option<T> self)
     {
-        public bool IsNone() => self is { IsSome: false };
+        internal bool IsNone() => self is { IsSome: false };
     }
 }
 

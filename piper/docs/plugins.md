@@ -315,6 +315,13 @@ A program calls them as `AppServices(builder.Services)` and `Api(app)`.
   program gets dependency injection from ASP.NET Core, whose newer version wins over the package's.
 - **Routes** are written as ASP.NET Core documents them. In plain Piper `{id}` in a string is interpolation, so a
   handwritten call needs `"/users/\{id}"`. The plugin rebuilds the route from the token as written.
+- **Piper's types in requests and responses:**
+  - An optional handler parameter, `(name: string?, page: int?)`, is None when the request leaves it out, rather than a
+    400. (C# gets it as `Option<string>?`, which ASP.NET Core treats as optional, and parses with `Option`'s `TryParse`.)
+  - Records, Options and enums are JSON as [the language describes](language.md#json): None is `null`, and a variant
+    is its name or an object naming it in `"kind"`.
+  - A request body that a record's `requires` rejects is answered 400 before the handler runs, so a record's invariants
+    validate the request.
 - **Checks** report at the clause what ASP.NET Core would only find when the program runs, or not at all:
   - a service registered twice (the later would silently replace the earlier)
   - a route mapped twice with the same verb

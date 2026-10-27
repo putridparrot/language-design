@@ -521,6 +521,7 @@ public sealed class Lowerer
                     lambda.BodyType, lambda.IsExpressionBodied, lambda.Type)
                 {
                     IsAsync = lambda.IsAsync,
+                    OptionsMayBeLeftOut = lambda.OptionsMayBeLeftOut,
                 };
 
             case BoundAwaitExpression await:
@@ -570,10 +571,12 @@ public sealed class Lowerer
                         }),
                     _ => throw new InvalidOperationException($"Unexpected initialized {initializer.Creation.GetType().Name}"),
                 };
-                var operands = LowerOperands([.. arguments, .. initializer.Members.Select(m => m.Value)], prelude);
-                return new BoundObjectInitializerExpression(
-                    rebuild(operands[..arguments.Length]),
-                    [.. initializer.Members.Select((m, i) => (m.Member, operands[arguments.Length + i]))]);
+                // Values set or added in place (`Font: { Size: 12 }`) are lowered with the others, in the order written.
+                var values = new List<BoundExpression>();
+                CollectValues(initializer.Members, values);
+                var operands = LowerOperands([.. arguments, .. values], prelude);
+                int next = arguments.Length;
+                return new BoundObjectInitializerExpression(rebuild(operands[..arguments.Length]), RebuildValues(initializer.Members, operands, ref next));
             }
 
             case BoundArrayCreationExpression creation:
@@ -1159,6 +1162,57 @@ public sealed class Lowerer
         prelude.AddRange(valuePrelude);
         var combined = new BoundBinaryExpression(original, op, value, assignment.Variable.Type);
         return new BoundAssignmentExpression(assignment.Variable, null, combined);
+    }
+
+    /// <summary>The values an initializer's members set or add, in order, including those inside its nested initializers.</summary>
+    private static void CollectValues(ImmutableArray<(string Member, BoundExpression Value)> members, List<BoundExpression> values)
+    {
+        foreach (var (_, value) in members)
+        {
+            switch (value)
+            {
+                case BoundNestedInitializer nested:
+                    CollectValues(nested.Members, values);
+                    break;
+                case BoundCollectionInitializer collection:
+                    values.AddRange(collection.Elements.SelectMany(e => e));
+                    break;
+                default:
+                    values.Add(value);
+                    break;
+            }
+        }
+    }
+
+    /// <summary><paramref name="members"/> with the lowered values from <paramref name="operands"/>, starting at <paramref name="next"/>.</summary>
+    private static ImmutableArray<(string Member, BoundExpression Value)> RebuildValues(
+        ImmutableArray<(string Member, BoundExpression Value)> members, ImmutableArray<BoundExpression> operands, ref int next)
+    {
+        var rebuilt = ImmutableArray.CreateBuilder<(string, BoundExpression)>(members.Length);
+        foreach (var (member, value) in members)
+        {
+            switch (value)
+            {
+                case BoundNestedInitializer nested:
+                    rebuilt.Add((member, new BoundNestedInitializer(RebuildValues(nested.Members, operands, ref next), nested.Type)));
+                    break;
+                case BoundCollectionInitializer collection:
+                {
+                    var elements = ImmutableArray.CreateBuilder<ImmutableArray<BoundExpression>>(collection.Elements.Length);
+                    foreach (var element in collection.Elements)
+                    {
+                        elements.Add(operands.Slice(next, element.Length));
+                        next += element.Length;
+                    }
+                    rebuilt.Add((member, new BoundCollectionInitializer(elements.MoveToImmutable(), collection.Type)));
+                    break;
+                }
+                default:
+                    rebuilt.Add((member, operands[next++]));
+                    break;
+            }
+        }
+        return rebuilt.MoveToImmutable();
     }
 
     /// <summary>

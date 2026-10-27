@@ -38,6 +38,7 @@ public sealed partial class Binder
         TupleExpressionSyntax s => BindTuple(s, expected),
         RecordSpreadExpressionSyntax s => BindRecordSpread(s, expected),
         ObjectInitializerExpressionSyntax s => BindObjectInitializer(s, expected),
+        NestedInitializerSyntax or CollectionInitializerSyntax => BindUncheckedInPlaceInitializer(syntax),
         ThrowExpressionSyntax s => BindThrow(s),
         AwaitExpressionSyntax s => BindAwait(s),
         OutArgumentSyntax s => ReportMisplacedOut(s),
@@ -140,8 +141,13 @@ public sealed partial class Binder
     private BoundExpression BindObjectInitializer(ObjectInitializerExpressionSyntax syntax, TypeSymbol? expected)
     {
         BoundExpression creation;
-        if (syntax.Creation is CallExpressionSyntax)
+        if (syntax.Creation is CallExpressionSyntax call)
+        {
+            var outer = _initializedCreation;
+            _initializedCreation = call;
             creation = RequireValue(BindExpression(syntax.Creation, expected), syntax.Creation.Span);
+            _initializedCreation = outer;
+        }
         else
         {
             // `Window { … }`: binding the type name as a value would only say it isn't one.
@@ -154,15 +160,63 @@ public sealed partial class Binder
         if (!constructs && creation.Type != TypeSymbol.Error)
             _diagnostics.ReportInitializerNotConstruction(syntax.Creation.Span, creation.Type);
 
-        // Each member is bound as an assignment through a stand-in for the new object.
         var initialized = new VariableSymbol("initialized", creation.Type, isMutable: false, VariableKind.Temporary);
-        var (outerInitializing, members, seen) = (_initializing, ImmutableArray.CreateBuilder<(string, BoundExpression)>(), new HashSet<string>());
-        _initializing = initialized;
-        _implicitReceivers.Push(new BoundVariableExpression(initialized));
+        var members = BindInitializerMembers(syntax.Members, initialized, constructs);
+        if (!constructs)
+            return new BoundErrorExpression();
+
+        // A required member changed in place hasn't been given a value, as C# requires.
+        var required = RequiredMembersOf(creation);
         foreach (var member in syntax.Members)
         {
+            if (member.Value is NestedInitializerSyntax or CollectionInitializerSyntax && required.Contains(member.Name.Text))
+                _diagnostics.ReportRequiredMemberInPlace(member.Name.Span, member.Name.Text);
+        }
+        CheckRequiredMembers(creation, syntax.Creation.Span, [.. syntax.Members.Select(m => m.Name.Text)]);
+        return new BoundObjectInitializerExpression(creation, members);
+    }
+
+    /// <summary>
+    /// Reports the .NET <c>required</c> members of the object <paramref name="creation"/> makes (C# 11) that aren't
+    /// among those <paramref name="set"/> by its initializer, if it makes one.
+    /// </summary>
+    private void CheckRequiredMembers(BoundExpression creation, TextSpan span, ImmutableArray<string> set)
+    {
+        var missing = RequiredMembersOf(creation).Except(set).ToList();
+        if (missing.Count > 0)
+            _diagnostics.ReportRequiredMembersNotSet(span, creation.Type, missing);
+    }
+
+    /// <summary>
+    /// The required members whoever makes an object this way must set: none unless <paramref name="creation"/> is a
+    /// constructor call, and none if the constructor sets them itself (<c>[SetsRequiredMembers]</c>). A Piper class has
+    /// those of the .NET class it derives from.
+    /// </summary>
+    private static string[] RequiredMembersOf(BoundExpression creation) => creation switch
+    {
+        BoundClrInvocationExpression { Member: System.Reflection.ConstructorInfo constructor } when !RequiredMembers.AreSetBy(constructor) =>
+            RequiredMembers.Of(constructor.DeclaringType!),
+        BoundObjectCreationExpression { Class.SetsRequiredMembers: false } =>
+            RequiredMembers.Of(TypeSubstitution.ClrBaseOf(creation.Type).Type),
+        _ => [],
+    };
+
+    /// <summary>
+    /// The members of an initializer, each bound as an assignment through <paramref name="initialized"/>, a stand-in
+    /// for the object being set up. When <paramref name="check"/> is false (there's no such object) the values are
+    /// only bound, for their own errors. Its `init` properties can be set only if it's being <paramref name="made"/>:
+    /// in C#, not those of an object a nested initializer changes.
+    /// </summary>
+    private ImmutableArray<(string Member, BoundExpression Value)> BindInitializerMembers(
+        ImmutableArray<FieldUpdateSyntax> syntax, VariableSymbol initialized, bool check, bool made = true)
+    {
+        var (outerInitializing, members, seen) = (_initializing, ImmutableArray.CreateBuilder<(string, BoundExpression)>(), new HashSet<string>());
+        _initializing = made ? initialized : null;
+        _implicitReceivers.Push(new BoundVariableExpression(initialized));
+        foreach (var member in syntax)
+        {
             var value = member.Value ?? new ErrorExpressionSyntax(member.Name.Span);
-            if (!constructs || member.Name.IsMissing)
+            if (!check || member.Name.IsMissing)
             {
                 BindExpression(value);
                 continue;
@@ -171,6 +225,13 @@ public sealed partial class Binder
                 _diagnostics.ReportFieldUpdatedTwice(member.Name.Span, member.Name.Text);
 
             var target = new MemberAccessExpressionSyntax(member.Name.Span, new ImplicitReceiverSyntax(new TextSpan(member.Name.Span.Start, 0)), member.Name);
+            if (value is NestedInitializerSyntax or CollectionInitializerSyntax)
+            {
+                if (BindInPlaceInitializer(target, value) is var (name, inPlace))
+                    members.Add((name, inPlace));
+                continue;
+            }
+
             var equals = new Token(TokenKind.Equals, new TextSpan(member.Name.Span.End, 0), "=");
             switch (BindAssignment(new AssignmentExpressionSyntax(member.Span, target, equals, value)))
             {
@@ -184,9 +245,112 @@ public sealed partial class Binder
         }
         _implicitReceivers.Pop();
         _initializing = outerInitializing;
-
-        return constructs ? new BoundObjectInitializerExpression(creation, members.ToImmutable()) : new BoundErrorExpression();
+        return members.ToImmutable();
     }
+
+    /// <summary>
+    /// `Font: { Size: 12 }` or `Items: { "a", "b" }`: a member whose object is changed in place rather than replaced, so
+    /// it's read (as `w.Font` would be) and must hold an object: not a value type (whose copy would change) and not an
+    /// optional (which may hold nothing). Null if it can't be.
+    /// </summary>
+    private (string Member, BoundExpression Value)? BindInPlaceInitializer(MemberAccessExpressionSyntax target, ExpressionSyntax value)
+    {
+        var read = BindExpression(target);
+        string? name = read switch
+        {
+            BoundFieldAccessExpression field => field.Field.Name,
+            BoundClrMemberExpression clr => clr.Member.Name,
+            _ => null,
+        };
+        var type = read.Type;
+        bool usable = false;
+        if (type == TypeSymbol.Error)
+        {
+            // Already reported.
+        }
+        else if (name is null)
+            _diagnostics.ReportInPlaceInitializerNotMember(target.Member.Span, target.Member.Text);
+        else if (type.IsOption)
+            _diagnostics.ReportInPlaceInitializerOptional(target.Member.Span, name, type.TypeArguments[0]);
+        else if (!ClrTypes.IsReferenceType(type))
+            _diagnostics.ReportInPlaceInitializerValueType(target.Member.Span, name, type);
+        else if (value is CollectionInitializerSyntax && !IsCollection(type))
+            _diagnostics.ReportNotACollection(target.Member.Span, name, type);
+        else
+            usable = true;
+
+        var held = new VariableSymbol(name ?? "held", usable ? type : TypeSymbol.Error, isMutable: false, VariableKind.Temporary);
+        if (value is NestedInitializerSyntax nested)
+        {
+            var members = BindInitializerMembers(nested.Members, held, usable, made: false);
+            return usable ? (name!, new BoundNestedInitializer(members, type)) : null;
+        }
+
+        var elements = BindCollectionInitializer((CollectionInitializerSyntax)value, held, usable);
+        return usable ? (name!, new BoundCollectionInitializer(elements, type)) : null;
+    }
+
+    /// <summary>
+    /// The elements of `Items: { "a", { "k", 1 } }`, each the arguments of a call to <paramref name="held"/>'s `Add`,
+    /// bound as `held.Add("k", 1)` would be. An extension `Add` is fine, as in C#.
+    /// </summary>
+    private ImmutableArray<ImmutableArray<BoundExpression>> BindCollectionInitializer(CollectionInitializerSyntax syntax, VariableSymbol held, bool check)
+    {
+        var elements = ImmutableArray.CreateBuilder<ImmutableArray<BoundExpression>>();
+        _implicitReceivers.Push(new BoundVariableExpression(held));
+        foreach (var element in syntax.Elements)
+        {
+            if (!check)
+            {
+                foreach (var argument in element.Arguments)
+                    BindExpression(argument);
+                continue;
+            }
+
+            var start = new TextSpan(element.Span.Start, 0);
+            var add = new MemberAccessExpressionSyntax(start, new ImplicitReceiverSyntax(start), new Token(TokenKind.Identifier, start, "Add"));
+            switch (BindCall(new CallExpressionSyntax(element.Span, add, element.Arguments), expected: null))
+            {
+                case BoundClrInvocationExpression { Receiver: { } receiver } call when IsVariable(receiver, held):
+                    elements.Add(call.Arguments);
+                    break;
+                case BoundClrInvocationExpression { Receiver: null, Arguments: [var receiver, .. var rest] } when IsVariable(receiver, held):
+                    elements.Add([.. rest]);
+                    break;
+                case BoundMethodCallExpression { Receiver: { } receiver } call when IsVariable(receiver, held):
+                    elements.Add(call.Arguments);
+                    break;
+                case BoundErrorExpression:
+                    break;
+                default:
+                    _diagnostics.ReportCollectionAddUnusable(element.Span, held.Name);
+                    break;
+            }
+        }
+        _implicitReceivers.Pop();
+        return elements.ToImmutable();
+
+        static bool IsVariable(BoundExpression expression, VariableSymbol variable) =>
+            (expression is BoundConversionExpression conversion ? conversion.Expression : expression) is BoundVariableExpression { Variable: var used } && used == variable;
+    }
+
+    /// <summary>
+    /// `{ Size: 12 }` or `{ "a" }` as a member's value in an initializer that already has an error: only its values are
+    /// bound, for their own errors.
+    /// </summary>
+    private BoundExpression BindUncheckedInPlaceInitializer(ExpressionSyntax syntax)
+    {
+        var held = new VariableSymbol("held", TypeSymbol.Error, isMutable: false, VariableKind.Temporary);
+        if (syntax is NestedInitializerSyntax nested)
+            BindInitializerMembers(nested.Members, held, check: false);
+        else
+            BindCollectionInitializer((CollectionInitializerSyntax)syntax, held, check: false);
+        return new BoundErrorExpression();
+    }
+
+    /// <summary>A type C# lets a collection initializer add to: one implementing <c>IEnumerable</c>.</summary>
+    private bool IsCollection(TypeSymbol type) =>
+        SelfAndBaseTypes(type).OfType<ClrTypeSymbol>().Any(t => t.Type == typeof(System.Collections.IEnumerable) || t.Definition.Type == typeof(IEnumerable<>));
     /// <summary>The type arguments written in <c>f&lt;Int&gt;</c>, or null when there are none.</summary>
     private ImmutableArray<TypeSymbol>? ExplicitTypeArguments(ImmutableArray<TypeSyntax> syntax) =>
         syntax.IsEmpty ? null : [.. syntax.Select(t => BindValueType(t, "type argument"))];
@@ -410,6 +574,10 @@ public sealed partial class Binder
             return new BoundErrorExpression();
         }
 
+        // `pet.Name = "Rex"`: a trait's settable property, through a value of the trait or a type parameter it bounds.
+        if (syntax.Target is MemberAccessExpressionSyntax settable && BindPropertySetter(settable, syntax) is { } set)
+            return set;
+
         // `n.IsEven = …`, `int.Answer = …`: a trait's or extend block's property, which can only be read.
         if (syntax.Target is MemberAccessExpressionSyntax readOnly && ReadOnlyPropertyOwner(readOnly) is { } owner)
         {
@@ -533,6 +701,15 @@ public sealed partial class Binder
     }
 
     private BoundExpression BindCall(CallExpressionSyntax syntax, TypeSymbol? expected)
+    {
+        var call = BindCallCore(syntax, expected);
+        // An object made with no initializer after it (an initializer checks once its members are bound).
+        if (!ReferenceEquals(syntax, _initializedCreation))
+            CheckRequiredMembers(call, syntax.Span, []);
+        return call;
+    }
+
+    private BoundExpression BindCallCore(CallExpressionSyntax syntax, TypeSymbol? expected)
     {
         switch (syntax.Callee)
         {
@@ -1043,6 +1220,49 @@ public sealed partial class Binder
 
     /// <summary>Set while binding a property read as a call to its getter, which method lookup then finds.</summary>
     private bool _readingProperty;
+
+    /// <summary>
+    /// <c>pet.Name = "Rex"</c> where <c>Name</c> is a trait's settable property: a call to its setter,
+    /// <c>set_Name("Rex")</c>, through the trait's witness where the receiver needs one. <c>pet.Name += "!"</c> reads it
+    /// first, so the receiver must be a name, evaluated twice. Null if the target isn't such a property.
+    /// </summary>
+    private BoundExpression? BindPropertySetter(MemberAccessExpressionSyntax target, AssignmentExpressionSyntax syntax)
+    {
+        if (Trial(() => ResolveContainer(target.Target), out _) is not null)
+            return null;
+        var receiver = Trial(() => BindExpression(target.Target), out bool failed);
+        if (failed || receiver.Type == TypeSymbol.Error || FindField(receiver.Type, target.Member.Text) is not null)
+            return null;
+
+        var name = new Token(TokenKind.Identifier, target.Member.Span, "set_" + target.Member.Text);
+        var outer = _readingProperty;
+        _readingProperty = true;
+        try
+        {
+            if (FindMethodWithOwner(receiver.Type, name.Text) is not { Method: { IsAccessor: true, IsStatic: false } })
+                return null;
+            receiver = RequireValue(BindExpression(target.Target), target.Target.Span);
+
+            var value = syntax.Value;
+            if (SyntaxFacts.GetCompoundAssignmentOperator(syntax.Operator.Kind) is { } compound)
+            {
+                if (target.Target is not NameExpressionSyntax)
+                {
+                    BindExpression(syntax.Value);
+                    _diagnostics.ReportCompoundThroughExpression(syntax.Operator.Span, syntax.Operator.Text, target.Member.Text);
+                    return new BoundErrorExpression();
+                }
+                var op = new Token(compound, syntax.Operator.Span, syntax.Operator.Text[..^1]);
+                value = new BinaryExpressionSyntax(syntax.Span, target, op, syntax.Value);
+            }
+            var call = new CallExpressionSyntax(syntax.Span, new MemberAccessExpressionSyntax(target.Span, target.Target, name), [value]);
+            return BindMethodCall(receiver, name, call, null, []);
+        }
+        finally
+        {
+            _readingProperty = outer;
+        }
+    }
 
     /// <summary>
     /// <c>shape.Area</c>, <c>n.IsEven</c>, <c>int.Zero</c>: a property declared in a trait or an `extend` block, which is

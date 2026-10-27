@@ -6,7 +6,7 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 
 fn OnChange(sender: object, e: NotifyCollectionChangedEventArgs) {
-    Print("changed: {e.Action}");
+    Print($"changed: {e.Action}");
 }
 
 fn Main() {
@@ -16,12 +16,12 @@ fn Main() {
     Interlocked.Add(ref counter, 10);
     Print(counter);
     let old = Interlocked.Exchange(ref counter, 100);
-    Print("{old} -> {counter}");
+    Print($"{old} -> {counter}");
 
     // Type arguments are inferred through ref, and array elements can be passed too.
     mut items: int[] = [1, 2, 3];
     Array.Resize(ref items, 5);
-    Print("{items.Length}: {string.Join(",", items)}");
+    Print($"{items.Length}: {string.Join(",", items)}");
     Interlocked.Increment(ref items[0]);
     Print(items[0]);
 
@@ -29,7 +29,7 @@ fn Main() {
     let names: ObservableCollection<string> = ObservableCollection();
     names.CollectionChanged += OnChange;
     names.Add("Ada");
-    names.CollectionChanged += (sender, e) => Print("now {names.Count} names");
+    names.CollectionChanged += (sender, e) => Print($"now {names.Count} names");
     names.Add("Bob");
     names.CollectionChanged -= OnChange;
     names.Remove("Ada");

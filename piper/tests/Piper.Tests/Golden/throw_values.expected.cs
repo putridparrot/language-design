@@ -6,56 +6,56 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class Throw_values
+internal static class Throw_values
 {
-    public static void Take(object o)
+    internal static void Take(object o)
     {
         global::System.Console.WriteLine($"took {o}");
     }
 
-    public static void TakeInt(int n)
+    internal static void TakeInt(int n)
     {
         global::System.Console.WriteLine($"took {n}");
     }
 
-    public static void Two(int first, int second)
+    internal static void Two(int first, int second)
     {
         global::System.Console.WriteLine($"{first} {second}");
     }
 
-    public static int Trace(int n)
+    internal static int Trace(int n)
     {
         global::System.Console.WriteLine($"evaluated {n}");
         return n;
     }
 
-    public static void Declare()
+    internal static void Declare()
     {
         int x;
         throw new global::System.Exception("declare");
         global::System.Console.WriteLine(x);
     }
 
-    public static void Argument()
+    internal static void Argument()
     {
         throw new global::System.Exception("argument");
         TakeInt(default!);
     }
 
-    public static void ToObject()
+    internal static void ToObject()
     {
         throw new global::System.Exception("object");
         Take(default!);
     }
 
-    public static void AfterFirst()
+    internal static void AfterFirst()
     {
         int temp = Trace(1);
         throw new global::System.Exception("second");
         Two(temp, default!);
     }
 
-    public static void Maybe(bool fail)
+    internal static void Maybe(bool fail)
     {
         if (fail)
         {
@@ -64,7 +64,7 @@ public static class Throw_values
         Take(1);
     }
 
-    public static void Main()
+    internal static void Main()
     {
         foreach (global::System.Action f in new global::System.Collections.Generic.List<global::System.Action> { Declare, Argument, ToObject, AfterFirst })
         {

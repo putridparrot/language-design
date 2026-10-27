@@ -14,9 +14,9 @@ fn Count(log: System.Collections.Generic.List<int>, n: int) => int {
 
 // A guard with statements, which run only for values the pattern matched.
 fn Describe(n: int?, log: System.Collections.Generic.List<int>) => string = match n {
-    Some(x) if { let doubled = Count(log, x) * 2; doubled > 10 } => "big {x}",
-    Some(x) if x < 0 => "negative {x}",
-    Some(x) => "small {x}",
+    Some(x) if { let doubled = Count(log, x) * 2; doubled > 10 } => $"big {x}",
+    Some(x) if x < 0 => $"negative {x}",
+    Some(x) => $"small {x}",
     None => "none",
 };
 
@@ -37,7 +37,7 @@ fn Greet(id: int, fallback: User?) => string {
         return "hello Ada";
     }
     if Lookup(id) is Some(u) && { let n = u.nickname ?? "?"; n.Length > 1 } {
-        "hi {u.name}"
+        $"hi {u.name}"
     } else {
         "who?"
     }
@@ -49,7 +49,7 @@ fn Main() {
     Print(Describe(Some(3), log));
     Print(Describe(Some(-4), log));
     Print(Describe(None, log));
-    Print("the guard ran for {string.Join(",", log)}");
+    Print($"the guard ran for {string.Join(",", log)}");
 
     Print(FirstBig("12", "10"));
     Print(FirstBig("5", "10"));
@@ -65,5 +65,5 @@ fn Main() {
     while queue.Count > 0 && Parse(queue[0]) is Some(n) && { queue.RemoveAt(0); n < 10 } {
         total += n;
     }
-    Print("{total} {queue.Count}");
+    Print($"{total} {queue.Count}");
 }

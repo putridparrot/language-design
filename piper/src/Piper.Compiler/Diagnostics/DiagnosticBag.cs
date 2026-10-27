@@ -305,6 +305,42 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0359", span, $"'{property}' has an 'init', so it can only be set while the object is made: in braces after the call that makes it, '{owner}(…) {{ {property}: … }}'" +
             (isPiper ? $", or in a constructor of '{owner}' (or a class deriving from it), on 'this'." : "."));
 
+    public void ReportConflictingVisibility(TextSpan span, string name) =>
+        Error("PIP0362", span, $"'{name}' can't be both public and private: 'public' exports it from a library, and 'private' keeps it to its file.");
+
+    public void ReportInternalTypeExposed(TextSpan span, string name, string type) =>
+        Error("PIP0363", span, $"'{name}' is public, so it can't mention '{type}', which isn't: code using the library would see '{name}' but not '{type}'. Make '{type}' public too, or '{name}' not.");
+
+    public void ReportInPlaceInitializerNotMember(TextSpan span, string name) =>
+        Error("PIP0364", span, $"'{name}' isn't a property or field, so it can't be set up in braces.");
+
+    public void ReportInPlaceInitializerOptional(TextSpan span, string member, TypeSymbol type) =>
+        Error("PIP0365", span, $"'{member}' may be None, so its object can't be changed in braces; give it a new one: '{member}: {type}() {{ … }}'.");
+
+    public void ReportInPlaceInitializerValueType(TextSpan span, string member, TypeSymbol type) =>
+        Error("PIP0366", span, $"'{member}' is a '{type}', a value type, so changing it in braces would only change a copy; give it a new value: '{member}: …'.");
+
+    public void ReportNotACollection(TextSpan span, string member, TypeSymbol type) =>
+        Error("PIP0367", span, $"'{member}' is a '{type}', which isn't a collection (it doesn't implement IEnumerable), so nothing can be added to it in braces.");
+
+    public void ReportCollectionAddUnusable(TextSpan span, string member) =>
+        Error("PIP0368", span, $"This element can't be added to '{member}': only a method called 'Add', on it or as an extension, can be.");
+
+    public void ReportRequiredMembersNotSet(TextSpan span, TypeSymbol type, IReadOnlyList<string> members) =>
+        Error("PIP0369", span, members.Count == 1
+            ? $"'{type}' requires '{members[0]}' to be set when it's made: '{type}(…) {{ {members[0]}: … }}'."
+            : $"'{type}' requires {string.Join(", ", members.SkipLast(1).Select(m => $"'{m}'"))} and '{members[^1]}' to be set when it's made: " +
+              $"'{type}(…) {{ {string.Join(", ", members.Select(m => $"{m}: …"))} }}'.");
+
+    public void ReportRequiredMemberInPlace(TextSpan span, string member) =>
+        Error("PIP0370", span, $"'{member}' is required, so it must be given a value here ('{member}: …'), not changed in braces.");
+
+    public void ReportSettableTraitPropertyNeedsClass(TextSpan span, TypeSymbol type, string property, TypeSymbol trait) =>
+        Error("PIP0371", span, $"'{trait}' has a settable property, '{property}', which only a class can implement, with a property of its own; '{type}' has nowhere to store its value.");
+
+    public void ReportCompoundThroughExpression(TextSpan span, string op, string property) =>
+        Error("PIP0372", span, $"'{property}' belongs to a trait, so '{op}' reads it and sets it again, which would evaluate the expression before '.' twice; put that in a 'let' first.");
+
     public void ReportInitializerNeedsCall(TextSpan span, string type) =>
         Error("PIP0360", span, $"An object initializer follows the call that makes the object: '{type}() {{ … }}'.");
 
@@ -381,7 +417,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     // Namespaces, visibility and .NET interop
 
     public void ReportPrivateTypeExposed(TextSpan span, string declaration, string privateType) =>
-        Error("PIP0270", span, $"'{declaration}' is public but uses private type '{privateType}'; make '{declaration}' private too, or make '{privateType}' public.");
+        Error("PIP0270", span, $"'{declaration}' is visible outside its file but uses '{privateType}', which is private to it; make '{declaration}' private too, or '{privateType}' not private.");
 
     public void ReportPrivateDeclaration(TextSpan span, string name, string file) =>
         Error("PIP0271", span, $"'{name}' is private to {Path.GetFileName(file)}.");

@@ -41,7 +41,7 @@ fn Main() {
     let named = Dictionary<string, Shape>();
     named["unit"] = Square(1.0);
     named.Add("five", 5);
-    Print("{shapes.Count} shapes, total area {shapes.Sum(s => s.Area())}, five {named["five"].Area()}");
+    Print($"{shapes.Count} shapes, total area {shapes.Sum(s => s.Area())}, five {named["five"].Area()}");
 
     // A collection of a base class takes its derived classes.
     let animals = List<Animal>();
@@ -53,7 +53,7 @@ fn Main() {
     let pair = Enumerable.Repeat<Shape>(Circle(1.0), 2).ToList();
     let made: Func<Shape> = () => Square(3.0);
     let lazy = Lazy<Shape>(() => Circle(2.0));
-    Print("{pair.Count} {made().Area()} {lazy.Value.Area()} {Task.FromResult<Shape>(Square(2.0)).Result.Area()}");
+    Print($"{pair.Count} {made().Area()} {lazy.Value.Area()} {Task.FromResult<Shape>(Square(2.0)).Result.Area()}");
 
     // Covariance: a List<Circle> is an IEnumerable<Shape>, and a Func<Dog> a Func<Animal>.
     let circles: List<Circle> = [Circle(1.0), Circle(3.0)];
@@ -62,7 +62,7 @@ fn Main() {
     let all: IEnumerable<Shape> = circles;
     let makeDog: Func<Dog> = () => Dog();
     let makeAnimal: Func<Animal> = makeDog;
-    Print("{shapes.Count} {copy.Count} {all.Count()} {makeAnimal().Sound()}");
+    Print($"{shapes.Count} {copy.Count} {all.Count()} {makeAnimal().Sound()}");
 
     // Contravariance: an IComparer<Shape> sorts circles.
     let sorted: List<Circle> = [Circle(3.0), Circle(1.0), Circle(2.0)];

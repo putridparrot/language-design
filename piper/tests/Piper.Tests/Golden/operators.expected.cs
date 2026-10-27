@@ -6,9 +6,9 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class Operators
+internal static class Operators
 {
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(1 + 2 * 3);
         global::System.Console.WriteLine((1 + 2) * 3);

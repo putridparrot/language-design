@@ -6,14 +6,14 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class Control_flow
+internal static class Control_flow
 {
-    public static string Fizzbuzz(int n)
+    internal static string Fizzbuzz(int n)
     {
         return n % 15 == 0 ? "FizzBuzz" : n % 3 == 0 ? "Fizz" : n % 5 == 0 ? "Buzz" : $"{n}";
     }
 
-    public static bool IsPrime(int n)
+    internal static bool IsPrime(int n)
     {
         if (n < 2)
         {
@@ -31,7 +31,7 @@ public static class Control_flow
         return true;
     }
 
-    public static void Main()
+    internal static void Main()
     {
         for (int i = 1; i <= 15; i++)
         {

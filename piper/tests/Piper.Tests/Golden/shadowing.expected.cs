@@ -6,11 +6,11 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class Shadowing
+internal static class Shadowing
 {
-    public static int Value(int x) => x * 2;
+    internal static int Value(int x) => x * 2;
 
-    public static void Main()
+    internal static void Main()
     {
         int x = 1;
         int y;

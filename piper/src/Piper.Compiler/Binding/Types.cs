@@ -200,6 +200,9 @@ public sealed class ClassSymbol : NamedTypeDefinition
     /// <summary>Its properties implementing .NET interface properties that may be null, converting between Option and null.</summary>
     public List<ClrPropertyBridge> PropertyBridges { get; } = [];
 
+    /// <summary>Its indexers' implementations of .NET interface indexers that may take or give null (see <see cref="ClrIndexerBridge"/>).</summary>
+    public List<ClrIndexerBridge> IndexerBridges { get; } = [];
+
     /// <summary>Its constructors besides the primary one, which all call it first (<c>: this(…)</c>).</summary>
     public ImmutableArray<ClassConstructor> Constructors { get; internal set; } = [];
 
@@ -214,6 +217,18 @@ public sealed class ClassSymbol : NamedTypeDefinition
 
     /// <summary>The base constructor's arguments, converted to its parameters' types.</summary>
     public ImmutableArray<BoundExpression> BaseArguments { get; internal set; } = [];
+
+    /// <summary>The constructor of a .NET <see cref="Base"/> it calls, if known.</summary>
+    public System.Reflection.ConstructorInfo? ClrBaseConstructor { get; internal set; }
+
+    /// <summary>
+    /// Whether the .NET constructor its bases end up calling sets the .NET <c>required</c> members it inherits
+    /// (<c>[SetsRequiredMembers]</c>): then so do its own constructors, which C# needs marked too, and making one needs
+    /// none of them set.
+    /// </summary>
+    public bool SetsRequiredMembers => Base?.OriginalDefinition is ClassSymbol piperBase
+        ? piperBase.SetsRequiredMembers
+        : ClrBaseConstructor is { } constructor && RequiredMembers.AreSetBy(constructor);
 
     /// <summary>The .NET interfaces it lists (its traits are in <see cref="NamedTypeDefinition.Conformances"/>).</summary>
     public ImmutableArray<TypeSymbol> Interfaces { get; internal set; } = [];
@@ -508,6 +523,20 @@ public sealed record ClrInterfaceBridge(
 /// PiperInterop.ToNullableReference(AsyncState);</c>. <see cref="Type"/> is the C# one, without the <c>?</c>.
 /// </summary>
 public sealed record ClrPropertyBridge(FieldSymbol Property, TypeSymbol Interface, TypeSymbol Type, ClrBoundary Boundary, bool Settable);
+
+/// <summary>
+/// A class indexer implementing a .NET interface indexer whose result or parameters .NET marks as possibly null, which are
+/// Options in Piper: the emitter adds an explicit implementation that converts, e.g. <c>string? IStore.this[string? key]
+/// { get =&gt; PiperInterop.ToNullableReference(this[PiperInterop.FromNullableReference(key)]); … }</c>. Types are the C#
+/// ones, without the <c>?</c>.
+/// </summary>
+public sealed record ClrIndexerBridge(
+    IndexerSymbol Indexer,
+    TypeSymbol Interface,
+    ImmutableArray<(TypeSymbol Type, ClrBoundary Boundary)> Parameters,
+    TypeSymbol Type,
+    ClrBoundary Boundary,
+    bool Settable);
 
 /// <summary>
 /// A class's constructor besides its primary one: <see cref="Method"/> holds its parameters and body (run after the

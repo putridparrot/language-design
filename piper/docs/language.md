@@ -32,7 +32,7 @@ it implements. Keep the two in step when changing syntax.
 Notation: `{ x }` is zero or more, `[ x ]` is optional, `|` separates alternatives, `"x"` is a literal token.
 
 ```ebnf
-compilationUnit = { using } [ "namespace" qualifiedName ";" ] { using } { attributes [ "private" ] declaration } EOF ;
+compilationUnit = { using } [ "namespace" qualifiedName ";" ] { using } { attributes [ "public" | "private" ] declaration } EOF ;
 using           = "using" qualifiedName ";" ;                (* a Piper or .NET namespace *)
 qualifiedName   = IDENT { "." IDENT } ;
 declaration     = function | record | class | enum | trait | extend | test | pluginDeclaration ;
@@ -60,7 +60,7 @@ enum            = "enum" IDENT [ typeParameters ] "{" [ variant { "," variant } 
 variant         = IDENT [ "(" [ parameters ] ")" ] ;
 trait           = "trait" IDENT [ typeParameters ] [ ":" type { "," type } ] "{" { attributes ( function | property ) } "}" ;   (* ": Named" inherits *)
 extend          = "extend" namedType [ ":" type { "," type } ] "{" { attributes [ "private" ] ( function | [ "static" ] property ) } "}" ;
-                  (* a trait's or extend block's property has a "get" alone *)
+                  (* a trait's or extend block's property has a "get" alone, or a trait's "{ get; set; }" *)
 typeParameters  = "<" typeParameter { "," typeParameter } [ "," ] ">" ;
 typeParameter   = IDENT [ ":" type { "+" type } ] ;           (* bounds must be traits *)
 parameters      = parameter { "," parameter } [ "," ] ;
@@ -98,7 +98,9 @@ unary           = ( "-" | "!" | "await" ) unary | "(" type ")" unary | postfix ;
 postfix         = primary { "(" [ arguments ] ")" [ trailingClosure | initializer ] | "[" arguments "]" | "." IDENT [ typeArguments ] | "?" | "?." IDENT postfix }
                 | ( IDENT | postfix "." IDENT ) trailingClosure ;
                                                               (* after "?." the rest of the chain is skipped on None *)
-initializer     = "{" IDENT ":" expression { "," IDENT ":" expression } [ "," ] "}" ;   (* Window() { Title: "x" }: after a constructor call *)
+initializer     = "{" [ memberInit { "," memberInit } [ "," ] ] "}" ;   (* Window() { Title: "x" }: after a constructor call *)
+memberInit      = IDENT ":" ( initializer | "{" element { "," element } [ "," ] "}" | expression ) ;   (* Font: { Size: 12 }, Items: { "a" } *)
+element         = expression | "{" expression { "," expression } [ "," ] "}" ;   (* { "key", 1 }: Add's arguments *)
 trailingClosure = "{" [ ( IDENT | "(" [ lambdaParam { "," lambdaParam } [ "," ] ] ")" ) "=>" ] { statement } [ expression ] "}" ;
                                                               (* the call's last argument; not in an if/while/for/match/requires head *)
 arguments       = argument { "," argument } [ "," ] ;
@@ -294,7 +296,9 @@ extend Circle: Shape {
 
 - **Implementing a trait:** `extend Type: Trait1, Trait2 { … }` declares that a record or enum implements traits. Every required method must be present, with exactly the trait's signature.
 - **Bare names in defaults:** a trait's methods (and those an `extend Trait` block adds) name its other instance methods and properties, and those it inherits, bare: `fn Describe() => string = "{Label}: {Area()}"` means `this.Label` and `this.Area()`.
-- **Properties:** a trait can declare read-only properties, required (`prop Area => double;`) or with a default (`prop Label => string = "shape";`). A record or enum implements them in its `extend` block (`prop Area => double = …;`), a builtin or .NET type likewise, and a class with a property of the same name and type, or a public field or automatic property. They're read like fields, `shape.Area`, also through a bound `T: Shape`. C# sees them as interface properties. A trait's properties can't have a `set`, since a trait has nowhere to store a value.
+- **Properties:** a trait can declare read-only properties, required (`prop Area => double;`) or with a default (`prop Label => string = "shape";`). A record or enum implements them in its `extend` block (`prop Area => double = …;`), a builtin or .NET type likewise, and a class with a property of the same name and type, or a public field or automatic property. They're read like fields, `shape.Area`, also through a bound `T: Shape`. C# sees them as interface properties.
+  - **Settable:** `prop Name => string { get; set; }` requires a property that can be set, through the trait (`pet.Name = "Rex"`) or a bound `T: Named`. Only a class can implement one, with a public property of the same type and a public `set` (an automatic property, `{ get; set; }`, or a `public mut` field), since nothing else has somewhere to store the value; a trait can't give one a default for the same reason. `pet.Name += "!"` works through a name; through another expression, which it would evaluate twice, it's an error.
+  - **Static:** `static prop Zero => T;` (or with a default, `static prop Label => string = "zeroed";`) is a static abstract (or virtual) property, implemented as static methods are (`static prop Zero => Money = Money(0);`) and read through a bound, `T.Zero`, or on an implementing type, `Money.Zero`. It can only be read.
 - **Traits as types:** a trait is also a type. A `Circle` converts implicitly to `Shape`, and calls through a `Shape` value dispatch dynamically.
 - **Traits as bounds:** a type parameter bound by a trait gets static dispatch.
 - **Using the expected type:** when an `if` or `match` produces different types that all implement the expected trait, the trait is used, e.g. `let s: Shape = if c { circle } else { rect };`.
@@ -308,7 +312,7 @@ extend Circle: Shape {
 - **.NET interfaces:** `extend` can implement a .NET interface too, and one can be a bound. Each method of `extend Money: IComparable<Money> { fn CompareTo(other: Money?) => int = … }` has the interface's signature as Piper sees it: a parameter or result .NET marks as possibly null is an Option, as when calling .NET. Then `wallet.Sort()` uses it, `using let c = Connection(…)` works for an `IDisposable`, and the record passes wherever .NET expects the interface (`words.Sort(ByLength())` for an `IComparer<string>`). `fn Largest<T: IComparable<T>>(items: List<T>)` accepts Piper types that implement it and .NET types such as `int` and `string`, and calls `a.CompareTo(b)` on them. Only interfaces made of instance methods (no properties, events, static or generic methods, or ref and out parameters) can be implemented, except that a class can also implement an interface's properties with its own (see [Classes](#classes)).
   - **Comparison operators:** a type that implements `IComparable<T>` for itself (`extend Version: IComparable<Version>`, or a class listing it) has `<`, `<=`, `>` and `>=`, which call its `CompareTo`. They're C# operators, so C# code can use them too, and sorting, `Max` and `Order` use the same `CompareTo`.
   - **Sequences:** a record, enum or class can implement `IEnumerable<T>` with one method, an iterator: `fn GetEnumerator() => IEnumerator<int> { … yield return i; … }`. Piper supplies the non-generic `IEnumerable.GetEnumerator` that C# also requires. The type then works with `for`, LINQ (`countdown.Where(n => n > 2)`) and anything that takes a sequence (`string.Join`, `List<int>(countdown)`).
-- **Static methods:** `static fn Empty() => T;` in a trait is a C# static abstract member, and one with a body a default (`static virtual`). Implementers write `static fn Empty() => Total = …`. They are called through a type parameter bounded by the trait, as in C#: `fn Concat<T: Monoid<T>>(items: List<T>) => T { mut result = T.Empty(); … }`. They can also be called on a type that implements the trait, including a default it doesn't override (`Total.Describe()`), but not on the trait itself. A trait with static methods can only be a bound, not the type of a value.
+- **Static methods:** `static fn Empty() => T;` in a trait is a C# static abstract member, and one with a body a default (`static virtual`). Implementers write `static fn Empty() => Total = …`. They are called through a type parameter bounded by the trait, as in C#: `fn Concat<T: Monoid<T>>(items: List<T>) => T { mut result = T.Empty(); … }`. They can also be called on a type that implements the trait, including a default it doesn't override (`Total.Describe()`), but not on the trait itself. Records, enums, builtin types and classes (`class Bag: Monoid<Bag> { static fn Empty() => Bag = …; }`) can implement them. A trait with static methods or properties can only be a bound, not the type of a value.
 - **Builtin, .NET and runtime types implement traits too:** `extend int: Shape { fn Area() => double = … }`, and likewise `string`, `StringBuilder` or `Option` (`extend Option: Convert<string> { … }`). They get the trait's defaults (`3.Describe()`), convert to the trait (`let shapes: List<Shape> = [Circle(1.0), 2, 3];`), cast back from it (`(int)s`), and satisfy bounds (`Total([1, 2, 3])` for `fn Total<T: Shape>(items: List<T>)`, `Concat(["a", "b"])` for a `Monoid<T>` with static methods). Only Piper traits, not .NET interfaces: C# has no way to make `int` implement an interface, so a value used as a trait is wrapped in a generated box (see [How bounds are compiled](#how-trait-bounds-are-compiled)).
 
 ### Methods and `extend`
@@ -486,11 +490,34 @@ ada.Deposit(25m);
   - Each is written `Name: value`, as named arguments and record copies are, and set as `w.Width = 640` would be,
     so a private setter, a property without one or a `let` field is an error; but `init` properties can be set here
     too. The values are evaluated in order, after the constructor's arguments.
+  - **`required`:** a .NET type's `required` members must be set here when one is made, as C# requires:
+    `Person() { Name: "Ada", Age: 36 }`, but `Person()` alone is an error. A constructor marked
+    `[SetsRequiredMembers]` sets them itself, so `Person("Ada", 36)` needs none. A Piper class deriving from such a
+    type has them too, unless the base constructor it calls sets them, in which case its own constructors do.
+    A required member must be given a value, not changed in braces (below).
   - They follow a call to a class's or .NET type's constructor, its `()` included (`Window() { … }`, not
     `Window { … }`). A record's fields are given to its constructor instead, or changed in a copy, `{ ...p, y: 5 }`.
   - A `{` after a call starts an initializer when it's followed by `Name:`, and a trailing closure otherwise, so
     `items.ForEach() { x => … }` and `Retry(3) { … }` are unchanged. Unlike a record copy, there's no shorthand
     `{ Width }` for `Width: Width`, as that's a closure returning `Width`.
+  - **In place:** a member's value in braces changes the object the member already holds instead of replacing it, as
+    C#'s nested object and collection initializers do. `Name: { … }` sets its properties, and `Name: { a, b }` adds
+    each element with its `Add` (an extension `Add` too), a `{ … }` element giving `Add` several arguments:
+
+    ```piper
+    let label = Label("Title") {
+        Font: { Size: 14, Margins: { Left: 2 } },   // label.Font.Size = 14; label.Font.Margins.Left = 2
+        Tags: { "a", "b" },                         // label.Tags.Add("a"); label.Tags.Add("b")
+        Scores: { { "x", 1 }, { "y", 2 } },         // label.Scores.Add("x", 1); …
+    };
+    let start = ProcessStartInfo("dotnet") { ArgumentList: { "build", "--nologo" } };
+    ```
+
+    - The member is read, so it needs a `get`, but not a `set`; `Items: [1, 2]` would replace the list, and needs one.
+    - It must hold an object: not an optional, which may be `None` (give it a new object instead), and not a value
+      type such as a struct or tuple, whose copy would change. A collection must implement `IEnumerable`, as in C#.
+    - The object isn't being made, so its `init` properties can't be set here, as in C#.
+    - A `{` right after `Name:` always starts one of these, so a block as the value needs parentheses: `Width: ({ … })`.
   - Inside the class they're named bare, like fields (`Balance`, `Deposits += 1`). `static prop` belongs to the class:
     `Account.Opened`.
   - `get` and `set` are bodies like a method's: `set` is given the new value as `value`, `get` can `yield` (making it an
@@ -527,7 +554,10 @@ ada.Deposit(25m);
   - Overloads must take different parameter types; `value[…]` chooses the one its arguments match exactly, otherwise
     the one they convert to.
   - A class implements a .NET interface's indexer with one of the same parameter and result types:
-    `class Ring<T>: IReadOnlyList<T>` with `prop this[i: int] => T = …`.
+    `class Ring<T>: IReadOnlyList<T>` with `prop this[i: int] => T = …`. Where .NET marks a parameter or the result as
+    possibly null, the indexer's is an Option, as for properties: `string? this[string? key] { get; set; }` is
+    implemented by `prop this[key: string?] => string? { get = …; set { … } }`, and C# gets an implementation that
+    converts between Option and null.
 - **Protected members:** `protected` fields, properties, methods, indexers and constructors are for the class and the
   classes deriving from it. As in C#, a derived class uses an instance member through an instance of its own class
   (`this`, or another of its kind), not through the base class. Overrides keep the access of what they override, so an
@@ -676,8 +706,9 @@ namespace Geometry;          // everything in this file is in Geometry
 using System.Text;           // .NET namespaces...
 using Geometry.Shapes;       // ...and Piper ones alike
 
-record Point(x: double, y: double);
-fn Area(s: Shape) => double = ...;
+public record Point(x: double, y: double);       // part of the library's API
+public fn Area(s: Shape) => double = ...;
+fn Normalize(p: Point) => Point = ...;            // visible throughout the program, but not outside it
 private fn Square(x: double) => double = x * x;   // visible only in this file
 ```
 
@@ -685,10 +716,23 @@ private fn Square(x: double) => double = x * x;   // visible only in this file
 - **Qualified names always work**, without a `using`, in both expressions and types: `Geometry.Area(s)`, `Geometry.Point(1.0, 2.0)`, `System.Text.StringBuilder`.
 - **`using N;` imports** N's types and functions, but not its sub-namespaces, as in C#. A name imported from two namespaces is an error where it's used; qualify it.
 - **Lookup order:** this file's private declarations, then the file's namespace and the namespaces enclosing it, then Piper's builtins, then imports.
-- **Visibility:**
-  - Declarations are public by default.
-  - `private` restricts a function, record, enum, trait or extend-block method to its own file.
-  - A public declaration can't expose a private type in its signature or fields. Make it private too, or make the type public.
+- **Visibility:** a top-level declaration is one of three, as in C#:
+  - **Unmarked:** visible throughout the program, or the library, in every file and namespace, but not to other
+    assemblies (C#'s `internal`). In an executable, that's everything there is, so programs needn't mark anything.
+  - **`public`:** also visible to code using the library: its API. `public` goes on functions, records, enums, traits
+    and classes. A `public extend` block exports what it adds to a builtin, .NET or runtime type
+    (`public extend string { fn Shout() => string = … }`); what an extend block adds to a Piper type is as visible as
+    the type.
+  - **`private`:** visible only in its own file. It also applies to extend-block methods.
+
+  A class's members keep their own defaults (fields private, methods and properties public), and a public method of a
+  class that isn't public is visible only where the class is, as in C#.
+- **What's visible can't mention what isn't:**
+  - A declaration that isn't private can't mention a private type in its signature, fields or base. Make it private too,
+    or the type not private.
+  - A public declaration can't mention a type that isn't public: a public function's parameters and result, a public
+    record's fields, a public class's base, constructor parameters, and the fields and methods code outside it sees.
+    Code using the library would see the declaration but not the type, so make the type public too.
 - **`extend` works across files.** An `extend` block can extend a type declared in another file (the emitted C# uses `partial` types).
 - **One entry point:** exactly one `Main`, in any namespace.
 
@@ -750,6 +794,24 @@ points.Add(Point(1, 2));                   // and can hold Piper values
 - **Variance** works as in C#: a variant interface or delegate converts when its `out` type arguments convert by reference (and its `in` ones the other way), so a `List<Circle>` is an `IEnumerable<Shape>` (`shapes.AddRange(circles)`), a `Func<Dog>` a `Func<Animal>`, and an `IComparer<Shape>` sorts a `List<Circle>`. Value types don't vary: an `int` becomes a `Shape` only by boxing, so a `List<int>` isn't an `IEnumerable<Shape>`. `List<T>` itself is invariant, as in C#.
 - **Spans** (`Span<T>`, `ReadOnlySpan<T>`) aren't supported yet, so methods that take or return them, such as `AsSpan`, can't be called. Most have an overload taking an array or string.
 - **Events:** `list.CollectionChanged += handler` adds a handler and `-=` removes it, as in C#. The handler is a lambda or a function, converted to the event's delegate type. An event can't be read or assigned with `=`.
+
+### JSON
+
+System.Text.Json (and so ASP.NET Core) reads and writes Piper's types as JSON a client would expect:
+
+```piper
+record Todo(id: int, note: string?, status: Status);
+enum Status { Open, Closed(reason: string) }
+
+JsonSerializer.Serialize(Todo(1, None, Status.Open))               // {"id":1,"note":null,"status":"Open"}
+JsonSerializer.Serialize(Todo(2, Some("x"), Status.Closed("done"))) // {"id":2,"note":"x","status":{"kind":"Closed","reason":"done"}}
+```
+
+- **Records** are objects of their fields.
+- **Options** are their value, or `null` for None. A field missing from the JSON reads as None.
+- **Enums:** a variant without fields is its name (`"Open"`), and one with fields an object naming it in `"kind"`, then its fields. Generic enums work too (`Tree<int>`). An enum with a `[JsonConverter(…)]` of its own uses that instead.
+- **Invariants:** JSON that a record's `requires` rejects is a `JsonException` with the invariant's message, as any other bad JSON is, rather than an `ArgumentException`. A web API answers it with 400 rather than 500.
+- **Text:** `Option<T>` has a static `TryParse`, so a framework reading a value from text (a query string, a route) gets None for no text, and otherwise parses a T: a string, a .NET enum, or anything with a `TryParse` (numbers, `bool`, dates, `Guid`).
 
 ### Attributes
 
@@ -1161,8 +1223,8 @@ As in C#, functions and methods are PascalCase (`Print`, `Main`, `Area()`), and 
 
 | Piper | C# |
 |---|---|
-| `record P(x: int)` | `public sealed record P(int x);` |
-| `class A(x: int): B(x), Named { mut n = x; public let m = 1; … }` | `public partial class A(int x) : B(x), Named { private int n = x; public int m { get; } = 1; … }` |
+| `record P(x: int)` | `internal sealed record P(int x);` (`public` when declared `public`) |
+| `class A(x: int): B(x), Named { mut n = x; public let m = 1; … }` | `internal partial class A(int x) : B(x), Named { private int n = x; public int m { get; } = 1; … }` |
 | `static mut count = 0;`, `public static let Empty = A(0);` in a class | `private static int count = 0;`, `public static A Empty { get; } = new A(0);`, used as `A.count` |
 | `prop Total => decimal = t;`, `prop N: int { get; private set; } = 0;`, `prop Name => string { get = n; set { n = value; } }` | `public decimal Total => this.t;`, `public int N { get; private set; } = 0;`, `public string Name { get => this.n; set { this.n = value; } }` |
 | `prop this[i: int] => T { get = …; set { … } }` in a class | `public T this[int i] { get => …; set { … } }` |
@@ -1175,29 +1237,30 @@ As in C#, functions and methods are PascalCase (`Print`, `Main`, `Area()`), and 
 | `virtual fn F()`, `override fn F()`, `abstract fn F();` | `public virtual void F()`, `public override void F()` (`protected` for a protected .NET method), `public abstract void F();` |
 | `{ ...p, y: 5 }` | `p with { y = 5 }` |
 | `[0, ...xs]` | `(List<int>)[0, .. xs]` |
-| `enum Shape { Circle(r: double), Empty }` | `public abstract record Shape` with a private constructor and nested `public sealed record Circle(double r) : Shape;`, `public sealed record Empty() : Shape;` |
+| `enum Shape { Circle(r: double), Empty }` | `internal abstract record Shape` with a private constructor and nested `public sealed record Circle(double r) : Shape;`, `public sealed record Empty() : Shape;` |
 | `Shape.Circle(1.0)` | `new Shape.Circle(1.0)` |
 | `match s { Circle(r) if r > 1.0 => a, Empty => b, … }` | `if (s is Shape.Circle(var r) && r > 1.0) { … } else if … else { … }` |
 | patterns `1 \| 2`, `1..9`, `_`, `< 0` | C# patterns `1 or 2`, `>= 1 and <= 9`, `_`, `< 0` |
 | `[Obsolete("x")] fn F()`, `record P([JsonPropertyName("id")] x: int)` | `[global::System.ObsoleteAttribute("x")] public static void F()`, `record P([property: global::…JsonPropertyNameAttribute("id")] int x)` |
 | `[first, ...rest]`, `[_, ..., last]` | list patterns `[var first, .. var rest]`, `[_, .., var last]` |
 | `Point { x: 0 }`, `{ Length: > 5 }` | `Point(0, _)` (positional, for a Piper record or variant), `{ Length: > 5 }` |
-| `record Pair<A, B: Show>(…)`, `fn F<T: IComparable<T>>` | `public sealed record Pair<A, B>(…)`: trait bounds aren't C# constraints (see below); .NET interface bounds are, `where T : IComparable<T>` |
+| `record Pair<A, B: Show>(…)`, `fn F<T: IComparable<T>>` | `internal sealed record Pair<A, B>(…)`: trait bounds aren't C# constraints (see below); .NET interface bounds are, `where T : IComparable<T>` |
 | `Swap(p)` (generic) | `Swap<int, string>(p)`: type arguments are always explicit |
 | `(int, string)`, `(x: int, y: int)`, `(1, "a")`, `t.x` | `(int, string)`, `(int x, int y)`, `(1, "a")`, `t.Item1` (always by position) |
 | `let (a, b) = t;`, `(a, b) = (b, a);`, `for (k, v) in d` | `var (a, b) = t;`, `(a, b) = (b, a);`, `foreach (var (k, v) in d)` |
 | `int[]`, `int[5]`, `double[2, 3]` | `int[]`, `new int[5]`, `new double[2, 3]` |
 | `int.TryParse(s, out let n)` | `int n;` before the statement, then `int.TryParse(s, out n)`; an optional `out` goes through `PiperInterop.AfterOutReference(…)` |
 | `Interlocked.Increment(ref n)`, `list.Changed += h` | the same: `ref n`, `list.Changed += h` |
-| `trait Shape { fn Area() => double; fn D() => string = …; }` | `public interface Shape { double Area(); string D() => …; }` |
-| `trait Ordered<T: Ordered<T>>: Equatable<T> { … }` | `public interface Ordered<T> : Equatable<T> { … }`, with nested witness types `PiperWitness<TPiperSelf>`, `PiperVia<TPiperSelf>` and `PiperMapped<TPiperSelf, TPiperBox>` |
-| `trait Formal: Named { fn Greet() => string = …; }` (an override) | `public interface Formal : Named { string Named.Greet() => …; }` (an explicit implementation) |
+| `trait Shape { fn Area() => double; fn D() => string = …; }` | `internal interface Shape { double Area(); string D() => …; }` |
+| `trait Ordered<T: Ordered<T>>: Equatable<T> { … }` | `internal interface Ordered<T> : Equatable<T> { … }`, with nested witness types `PiperWitness<TPiperSelf>`, `PiperVia<TPiperSelf>` and `PiperMapped<TPiperSelf, TPiperBox>` |
+| `trait Formal: Named { fn Greet() => string = …; }` (an override) | `internal interface Formal : Named { string Named.Greet() => …; }` (an explicit implementation) |
 | `trait Monoid<T: Monoid<T>> { static fn Empty() => T; static fn D() => string = …; }` | `interface Monoid<T> { static abstract T Empty(); static virtual string D() => …; }` |
+| `trait Named { prop Name => string { get; set; } }`, `trait Zeroed<T> { static prop Zero => T; }` | `interface Named { string Name { get; set; } }`, `interface Zeroed<T> { static abstract T Zero { get; } }` |
 | `x.Area()`, `T.Empty()` and `let s: Shape = x;` for `x: T`, `T: Shape` | `PiperTraits.Witness<Shape.PiperWitness<T>>().Area(x)`, `….Empty()` and `….PiperBox(x)` |
 | `extend int: Shape { … }` | the methods as extension members, plus `file readonly record struct PiperBox_int(int Value) : Shape, IPiperBox<int, PiperBox_int>` forwarding to them, registered by a `[ModuleInitializer]` |
 | `(int)s` for `s: Shape` | `PiperTraits.Unbox<int>(s)` |
 | `extend Money: IComparable<Money> { fn CompareTo(other: Money?) => int … }` | `record Money : IComparable<Money>` with `public int CompareTo(Option<Money> other)`, plus `int IComparable<Money>.CompareTo(Money? other) => CompareTo(PiperInterop.FromNullableReference(other));` where nullability differs |
-| `extend Circle: Shape { fn Area() … }` | members inside `public sealed record Circle(…) : Shape { public double Area() … }` |
+| `extend Circle: Shape { fn Area() … }` | members inside `internal sealed record Circle(…) : Shape { public double Area() … }` |
 | `c.D()` where `D` is an un-overridden default | `((Shape)c).D()` (C# only exposes default interface methods through the interface) |
 | `extend int { fn Squared() … static fn Zero() … }` | C# 14 `extension(int self) { public int Squared() … }` and `extension(int) { public static int Zero() … }` |
 | `this` | `this` in members; in C# extension blocks the receiver parameter is named `self`, since C# reserves `this` |
@@ -1213,14 +1276,18 @@ As in C#, functions and methods are PascalCase (`Print`, `Main`, `Area()`), and 
 | `yield return x;`, `yield break;` | the same, in an iterator method returning `IEnumerable<T>` (or `IAsyncEnumerable<T>`) |
 | `extend Option { … }` | C# 14 `extension<T>(Option<T> self) { … }`, since Option lives in Piper.Runtime |
 | `namespace Geometry;` | `namespace Geometry { … }`; names from other namespaces are written `global::Geometry.Point` |
+| `record R(…)`, `class C`, `trait T` | `internal sealed record R(…)`, `internal partial class C`, `internal interface T` |
+| `public record R(…)`, `public fn F()` | `public sealed record R(…)`, `public static` in the file's module class (itself public when it holds one) |
+| `fn F()` | `internal static` in the file's module class |
+| `public extend string { fn Shout() … }` | a `public static` class of C# 14 extension members, each `public`; without `public`, `internal` |
 | `private record R(…)` / `private trait T` | `file sealed record R(…)` / `file interface T` (C# 11 file-local types) |
 | `private fn F()` / private method | `internal static` in the file's module class / `internal` member |
 | `extend` of a type declared in another file | that type becomes `partial`; the other file holds a `partial record` (or, for a trait, `partial interface`) part with the added members |
 | `extend Named { fn Shout() … }` | default interface methods, in `Named` itself or a `partial interface Named` part |
 | `Math.Sqrt(2.0)`, `StringBuilder()`, `s.Length` | `global::System.Math.Sqrt(2.0)`, `new global::System.Text.StringBuilder()`, `s.Length` |
 | a possibly-null .NET result / a `T?` passed to .NET | `PiperInterop.FromNullableReference(…)` / `PiperInterop.ToNullableReference(…)` (and `…Value` versions for `Nullable<T>`) |
-| `fn F(a: int) => int { … }` | `public static int F(int a) { … }` in a static module class |
-| `fn F(a: int) => int = e;` | `public static int F(int a) => e;` |
+| `fn F(a: int) => int { … }` | `internal static int F(int a) { … }` in a static module class (`public` when declared `public`) |
+| `fn F(a: int) => int = e;` | `internal static int F(int a) => e;` |
 | `let x = e;` / `mut x = e;` | `int x = e;` (immutability is checked by Piper, not C#) |
 | `if` expression, simple branches | `c ? a : b` |
 | `if` expression, branches with statements | a variable assigned in each branch, or `return` in each branch |
@@ -1236,7 +1303,7 @@ As in C#, functions and methods are PascalCase (`Print`, `Main`, `Area()`), and 
 | `"…{e}…"` | `$"…{e}…"` |
 | `test "adds" { … }` | with `piper test`, `[global::Piper.Runtime.PiperTestAttribute("adds")] public static void PiperTest_N() { … }` in the module class; otherwise nothing |
 | `Assert(c)`, `AssertEqual(a, b)` | `global::Piper.Runtime.PiperAssert.True(c, "c")`, `global::Piper.Runtime.PiperAssert.Equal<T>(a, b)` |
-| `fn F(x: int) => int requires x > 0 = …` | `public static int F(int x) { global::Piper.Runtime.PiperContract.Require(x > 0, "x > 0", $"x = {x}", "x"); return …; }` |
+| `fn F(x: int) => int requires x > 0 = …` | `internal static int F(int x) { global::Piper.Runtime.PiperContract.Require(x > 0, "x > 0", $"x = {x}", "x"); return …; }` |
 | `record P(v: int) requires v >= 0;` | `record P(int v) { public int v { get; init; } = global::Piper.Runtime.PiperContract.Invariant(v, v >= 0, "v >= 0", …); }`, and copies construct a new P instead of using `with` |
 | `extend V { operator +(o: V) => V = … }` | `public static V operator +(V self, V o) => …` in the record, with `this` as `self` |
 | `let Some(u) = e else { return; };` | `T u; if (e is { IsSome: true, Value: var u1 }) { u = u1; goto matched; } { return; } matched: ;` |

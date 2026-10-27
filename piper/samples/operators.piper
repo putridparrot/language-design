@@ -25,7 +25,7 @@ extend Money {
     operator *(quantity: int) => Money = Money(this.cents * quantity);
     operator /(parts: int) => Money = Money(this.cents / parts);
     operator %(parts: int) => Money = Money(this.cents % parts);
-    fn Format() => string = "${this.cents / 100}.{this.cents % 100:00}";
+    fn Format() => string = $"${this.cents / 100}.{this.cents % 100:00}";
 }
 
 fn Main() {
@@ -35,15 +35,15 @@ fn Main() {
     Print(b - a);
     Print(-a);
     Print(2 * a);                      // the int widens to double, as in C#
-    Print("length of a + b: {Math.Round((a + b).Length(), 3)}");
+    Print($"length of a + b: {Math.Round((a + b).Length(), 3)}");
 
     // Compound assignment uses the operator too.
     mut position = Vector(0.0, 0.0);
     for step in [a, b, -a] {
         position += step;
     }
-    Print("ended at {position}");
+    Print($"ended at {position}");
 
     let bill = Money.Of(12.50m) * 3 + Money.Of(4.99m);
-    Print("bill {bill.Format()}, split three ways: {(bill / 3).Format()} each and {(bill % 3).Format()} over");
+    Print($"bill {bill.Format()}, split three ways: {(bill / 3).Format()} each and {(bill % 3).Format()} over");
 }

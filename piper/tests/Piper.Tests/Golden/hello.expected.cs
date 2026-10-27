@@ -6,19 +6,19 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Point(int x, int y);
+internal sealed record Point(int x, int y);
 
-public static class Hello
+internal static class Hello
 {
-    public static int Add(int a, int b) => a + b;
+    internal static int Add(int a, int b) => a + b;
 
-    public static string Classify(int n)
+    internal static string Classify(int n)
     {
         string kind = n < 0 ? "negative" : n == 0 ? "zero" : "positive";
         return kind;
     }
 
-    public static void Main()
+    internal static void Main()
     {
         Point p = new Point(1, 2);
         int total = 0;

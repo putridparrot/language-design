@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 // An async function returns a Task, and can `await`.
 async fn Fetch(name: string, delayMs: int) => Task<string> {
     await Task.Delay(delayMs);
-    "{name} (after {delayMs}ms)"
+    $"{name} (after {delayMs}ms)"
 }
 
 // Run several at once and wait for them all.
@@ -37,10 +37,10 @@ async fn Countdown(from: int) => IAsyncEnumerable<int> {
 
 // Disposal: `using let` disposes at the end of the block, and `defer` runs code there.
 fn Process(name: string) {
-    defer { Print("  finished {name}"); }
+    defer { Print($"  finished {name}"); }
     using let log = System.IO.StringWriter();
-    log.Write("processing {name}");
-    Print("  {log}");
+    log.Write($"processing {name}");
+    Print($"  {log}");
 }
 
 // `Main` can be async too.
@@ -50,10 +50,10 @@ async fn Main() {
     Print(string.Join(", ", results));
 
     Print(string.Join(" ", Fibonacci().Take(12)));
-    Print("first Fibonacci number over 1000: {Fibonacci().First(n => n > 1000)}");
+    Print($"first Fibonacci number over 1000: {Fibonacci().First(n => n > 1000)}");
 
     await for n in Countdown(3) {
-        Print("{n}...");
+        Print($"{n}...");
     }
     Print("lift off");
 

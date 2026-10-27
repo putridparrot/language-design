@@ -6,9 +6,9 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class Using
+internal static class Using
 {
-    public static int Lines(string text)
+    internal static int Lines(string text)
     {
         using global::System.IO.StringReader reader = new global::System.IO.StringReader(text);
         int count = 0;
@@ -23,7 +23,7 @@ public static class Using
         return count;
     }
 
-    public static long Size(global::System.IO.MemoryStream stream)
+    internal static long Size(global::System.IO.MemoryStream stream)
     {
         using (stream)
         {
@@ -31,7 +31,7 @@ public static class Using
         }
     }
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(Lines("a\nb\nc"));
         global::System.Console.WriteLine(Lines("a\nstop\nc"));

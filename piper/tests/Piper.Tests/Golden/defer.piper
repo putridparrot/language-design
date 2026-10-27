@@ -8,8 +8,8 @@ fn Log(message: string) {
 
 // Deferred code runs after the block's value is computed, and on every exit path.
 fn Compute(n: int) => int {
-    Log("compute {n}");
-    defer Log("leaving compute {n}");
+    Log($"compute {n}");
+    defer Log($"leaving compute {n}");
     if n < 0 {
         return 0;
     }
@@ -44,17 +44,17 @@ fn Main() {
     try {
         Risky(true);
     } catch (e) {
-        Log("caught {e.Message}");
+        Log($"caught {e.Message}");
     }
     Risky(false);
 
     // Each loop iteration is its own block.
     for i in 0..<3 {
-        defer Log("end of iteration {i}");
+        defer Log($"end of iteration {i}");
         if i == 1 {
             continue;
         }
-        Log("iteration {i}");
+        Log($"iteration {i}");
     }
 
     // A block with a value, and a defer that sees the variables declared before it.
@@ -64,7 +64,7 @@ fn Main() {
         defer counter += 10;
         counter * 100
     };
-    Print("{value} {counter}");
+    Print($"{value} {counter}");
 
     // Temporaries never clash with each other or with your names.
     let result = { defer Log("a"); 1 };

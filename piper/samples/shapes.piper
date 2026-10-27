@@ -21,11 +21,11 @@ fn Area(shape: Shape) => double = match shape {
 };
 
 fn Describe(shape: Shape) => string = match shape {
-    Circle(Point(0.0, 0.0), r) => "a circle of radius {r} at the origin",
+    Circle(Point(0.0, 0.0), r) => $"a circle of radius {r} at the origin",
     Circle(_, r) if r > 10.0 => "a big circle",
     Circle(_, _) => "a circle",
     // Property patterns name the fields they test; the rest match anything.
-    Rect { width: w, height: h } if w == h => "a {w} by {w} square",
+    Rect { width: w, height: h } if w == h => $"a {w} by {w} square",
     Rect { width: < 1.0 } => "a thin rectangle",
     Rect(_, _, _) => "a rectangle",
     Line(a, b) if a == b => "a line that goes nowhere",
@@ -36,8 +36,8 @@ fn Describe(shape: Shape) => string = match shape {
 // List patterns match a list by its elements; `...rest` binds the remainder.
 fn Summarise(shapes: List<Shape>) => string = match shapes {
     [] => "no shapes",
-    [only] => "just {Describe(only)}",
-    [first, ...rest] => "{Describe(first)} and {rest.Count} more",
+    [only] => $"just {Describe(only)}",
+    [first, ...rest] => $"{Describe(first)} and {rest.Count} more",
 };
 
 // Ranges and comparisons are patterns too.
@@ -61,16 +61,16 @@ fn Main() {
 
     for shape in shapes {
         let area = Area(shape);
-        Print("{Describe(shape)}: area {Math.Round(area, 2)} ({Size(area)})");
+        Print($"{Describe(shape)}: area {Math.Round(area, 2)} ({Size(area)})");
     }
     Print(Summarise(shapes));
 
     // Records compare by value, and `{ ...p, y: 5 }` copies with changes.
     let moved = { ...origin, y: 5.0 };
-    Print("{moved} == Point(0, 5)? {moved == Point(0.0, 5.0)}");
+    Print($"{moved} == Point(0, 5)? {moved == Point(0.0, 5.0)}");
 
     // `is` tests a pattern and binds its variables in the `if`.
     if shapes[0] is Circle(_, r) {
-        Print("the first shape is a circle of radius {r}");
+        Print($"the first shape is a circle of radius {r}");
     }
 }

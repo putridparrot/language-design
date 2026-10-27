@@ -6,7 +6,7 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public partial class Window(string title)
+internal partial class Window(string title)
 {
     public string Title { get; set; } = title;
     public int Width { get; init; } = 800;
@@ -20,15 +20,15 @@ public partial class Window(string title)
     public string Describe() => $"{this.Title} {this.Width}x{this.Height}{(this.visible ? " (visible)" : "")}";
 }
 
-public partial class Settings
+internal partial class Settings
 {
     public int Retries { get; init; } = 3;
     public global::System.Collections.Generic.List<string> Tags { get; init; } = new global::System.Collections.Generic.List<string>();
 }
 
-public static class Object_initializers
+internal static class Object_initializers
 {
-    public static Result<int, string> Parse(string text)
+    internal static Result<int, string> Parse(string text)
     {
         int n;
         if (int.TryParse(text, out n))
@@ -41,7 +41,7 @@ public static class Object_initializers
         }
     }
 
-    public static Result<Window, string> FromText(string width)
+    internal static Result<Window, string> FromText(string width)
     {
         string temp = Name("sized");
         Result<int, string> temp_1 = Parse(width);
@@ -52,13 +52,13 @@ public static class Object_initializers
         return Result<Window, string>.Ok(new Window(temp) { Width = temp_1.Value, Height = 200 });
     }
 
-    public static string Name(string prefix)
+    internal static string Name(string prefix)
     {
         global::System.Console.WriteLine($"naming {prefix}");
         return $"{prefix} window";
     }
 
-    public static void Main()
+    internal static void Main()
     {
         Window w = new Window("Piper") { Width = 640, Height = 480, visible = true };
         global::System.Console.WriteLine(w.Describe());

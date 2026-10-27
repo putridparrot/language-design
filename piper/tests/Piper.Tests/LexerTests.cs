@@ -87,10 +87,46 @@ public class LexerTests
         Assert.Equal("a\n\t\"{}\\A", token.Value);
     }
 
+    /// <summary>As in C#, only a $"…" string interpolates; in a plain one, braces are text.</summary>
+    [Theory]
+    [InlineData("\"{x} and {y}\"", "{x} and {y}")]
+    [InlineData("\"/users/{id:int}\"", "/users/{id:int}")]
+    [InlineData("\"}{\"", "}{")]
+    [InlineData("$\"no holes\"", "no holes")]
+    [InlineData("$\"{{literal}}\"", "{literal}")]
+    public void Plain_strings_and_dollar_strings_without_holes_are_text(string text, string value)
+    {
+        var token = Single(text);
+        Assert.Equal(TokenKind.StringLiteral, token.Kind);
+        Assert.Equal(value, token.Value);
+    }
+
+    [Fact]
+    public void Doubled_braces_in_an_interpolated_string_are_literal()
+    {
+        const string text = "$\"{{{x}}}\"";
+        var token = Single(text);
+        Assert.Equal(TokenKind.InterpolatedStringLiteral, token.Kind);
+        Assert.Collection(
+            token.Parts,
+            part => Assert.Equal("{", Assert.IsType<InterpolationText>(part).Value),
+            part => Assert.Equal("x", text.Substring(part.Span.Start, part.Span.Length)),
+            part => Assert.Equal("}", Assert.IsType<InterpolationText>(part).Value));
+    }
+
+    [Fact]
+    public void A_hole_can_hold_strings_plain_and_interpolated()
+    {
+        const string text = "$\"<{f(\"{plain}\", $\"{inner}\")}>\"";
+        var token = Single(text);
+        var hole = Assert.Single(token.Parts.OfType<InterpolationHole>());
+        Assert.Equal("f(\"{plain}\", $\"{inner}\")", text.Substring(hole.Span.Start, hole.Span.Length));
+    }
+
     [Fact]
     public void Interpolated_string_is_split_into_text_and_holes()
     {
-        const string text = "\"x={x + 1}!\"";
+        const string text = "$\"x={x + 1}!\"";
         var token = Single(text);
         Assert.Equal(TokenKind.InterpolatedStringLiteral, token.Kind);
         Assert.Collection(
@@ -103,7 +139,7 @@ public class LexerTests
     [Fact]
     public void Hole_may_contain_braces_and_strings()
     {
-        const string text = "\"<{f(\"}\", { 1 })}>\"";
+        const string text = "$\"<{f(\"}\", { 1 })}>\"";
         var token = Single(text);
         var hole = Assert.Single(token.Parts.OfType<InterpolationHole>());
         Assert.Equal("f(\"}\", { 1 })", text.Substring(hole.Span.Start, hole.Span.Length));
@@ -134,8 +170,9 @@ public class LexerTests
     [InlineData("12abc", "PIP0005")]
     [InlineData("/* never closed", "PIP0006")]
     [InlineData("3000000000", "PIP0007")]
-    [InlineData("\"{oops\"", "PIP0008")]
-    [InlineData("\"{}\"", "PIP0009")]
+    [InlineData("$\"{oops\"", "PIP0008")]
+    [InlineData("$\"{}\"", "PIP0009")]
+    [InlineData("$\"\"\"raw {x}\"\"\"", "PIP0010")]
     public void Lexical_errors_are_reported(string text, string code)
     {
         Assert.Equal(code, ErrorCode(text));

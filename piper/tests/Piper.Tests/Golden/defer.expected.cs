@@ -6,14 +6,14 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class Defer
+internal static class Defer
 {
-    public static void Log(string message)
+    internal static void Log(string message)
     {
         global::System.Console.WriteLine(message);
     }
 
-    public static int Compute(int n)
+    internal static int Compute(int n)
     {
         Log($"compute {n}");
         int result;
@@ -32,7 +32,7 @@ public static class Defer
         return result;
     }
 
-    public static void Risky(bool fail)
+    internal static void Risky(bool fail)
     {
         try
         {
@@ -48,7 +48,7 @@ public static class Defer
         }
     }
 
-    public static global::System.Collections.Generic.IEnumerable<int> Numbers()
+    internal static global::System.Collections.Generic.IEnumerable<int> Numbers()
     {
         try
         {
@@ -61,7 +61,7 @@ public static class Defer
         }
     }
 
-    public static void Main()
+    internal static void Main()
     {
         {
             try

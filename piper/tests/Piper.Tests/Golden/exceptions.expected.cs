@@ -6,9 +6,9 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class Exceptions
+internal static class Exceptions
 {
-    public static int Divide(int a, int b)
+    internal static int Divide(int a, int b)
     {
         if (b == 0)
         {
@@ -17,7 +17,7 @@ public static class Exceptions
         return a / b;
     }
 
-    public static int Parse(string text)
+    internal static int Parse(string text)
     {
         try
         {
@@ -30,9 +30,9 @@ public static class Exceptions
         return -1;
     }
 
-    public static int Check(int @value) => @value >= 0 ? @value : throw new global::System.InvalidOperationException("negative");
+    internal static int Check(int @value) => @value >= 0 ? @value : throw new global::System.InvalidOperationException("negative");
 
-    public static void Main()
+    internal static void Main()
     {
         global::System.Console.WriteLine(Divide(10, 2));
         try

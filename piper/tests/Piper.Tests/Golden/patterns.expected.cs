@@ -6,11 +6,11 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public sealed record Point(int x, int y);
+internal sealed record Point(int x, int y);
 
-public static class Patterns
+internal static class Patterns
 {
-    public static string Classify(int n)
+    internal static string Classify(int n)
     {
         if (n is 0)
         {
@@ -38,7 +38,7 @@ public static class Patterns
         }
     }
 
-    public static string Quadrant(Point p)
+    internal static string Quadrant(Point p)
     {
         if (p is Point(0, 0))
         {
@@ -62,7 +62,7 @@ public static class Patterns
         }
     }
 
-    public static string Kind(char c)
+    internal static string Kind(char c)
     {
         if (c is >= 'a' and <= 'z')
         {
@@ -82,7 +82,7 @@ public static class Patterns
         }
     }
 
-    public static string Bits(bool a, bool b)
+    internal static string Bits(bool a, bool b)
     {
         string first;
         if (a is true)
@@ -105,7 +105,7 @@ public static class Patterns
         return first + temp;
     }
 
-    public static string Greet(string language)
+    internal static string Greet(string language)
     {
         if (language is "en")
         {
@@ -126,7 +126,7 @@ public static class Patterns
         }
     }
 
-    public static string Size(long n)
+    internal static string Size(long n)
     {
         if (n is 0L)
         {
@@ -142,7 +142,7 @@ public static class Patterns
         }
     }
 
-    public static void Main()
+    internal static void Main()
     {
         for (int n = -12; n < 12; n++)
         {

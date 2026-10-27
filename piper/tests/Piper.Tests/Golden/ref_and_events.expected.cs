@@ -6,14 +6,14 @@ using Piper.Runtime;
 #pragma warning disable
 #pragma warning restore CS0612, CS0618
 
-public static class Ref_and_events
+internal static class Ref_and_events
 {
-    public static void OnChange(object sender, global::System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    internal static void OnChange(object sender, global::System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
         global::System.Console.WriteLine($"changed: {e.Action}");
     }
 
-    public static void Main()
+    internal static void Main()
     {
         int counter = 0;
         global::System.Threading.Interlocked.Increment(ref counter);
