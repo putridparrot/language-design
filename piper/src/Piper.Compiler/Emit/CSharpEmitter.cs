@@ -453,11 +453,17 @@ public sealed partial class CSharpEmitter
                 ? $"{access}{@static}{type} {Escape(field.Name)} {{ get;{set} }} = {initializer};"
                 : $"{access}{@static}{(field.IsMutable ? "" : "readonly ")}{type} {Escape(field.Name)} = {initializer};");
         }
+        // Then events, as C# field-like events, which are null until a handler is added.
+        foreach (var @event in @class.Events)
+        {
+            EmitDocumentation(@event, []);
+            _writer.WriteLine($"{(@event.IsPrivate ? "private" : "public")} event {TypeName(@event.Type)}? {Escape(@event.Name)};");
+        }
         // Then properties with accessors, indexers, and methods.
         var properties = @class.StaticFields.Concat(@class.Fields).Where(f => f.IsProperty && f.Initializer is null).ToList();
         // A property an extend block adds to the class has no field; it's emitted with the methods.
         var methods = MethodsFrom(@class, file).Where(m => !m.IsHidden || (PropertyOf(m) is not null && !@class.Fields.Concat(@class.StaticFields).Any(f => f.Getter == m))).ToList();
-        bool any = stored.Count > 0;
+        bool any = stored.Count > 0 || !@class.Events.IsEmpty;
         foreach (var property in properties)
         {
             if (any)
@@ -618,7 +624,7 @@ public sealed partial class CSharpEmitter
         _names = NewNameAllocator(method);
         _thisName = "this";
         var access = method.IsPrivate ? "private " : method.IsProtected ? "protected " : "public ";
-        var parameters = string.Join(", ", method.Parameters.Select(p => $"{TypeName(p.Type)} {Escape(_names.Get(p))}{DefaultValue(p.Default)}"));
+        var parameters = string.Join(", ", method.Parameters.Select(p => $"{(p.IsParams ? "params " : "")}{TypeName(p.Type)} {Escape(_names.Get(p))}{DefaultValue(p.Default)}"));
         EmitDocumentation(method, method.Parameters);
         EmitAttributes(method);
         if (@class.SetsRequiredMembers)
@@ -1092,7 +1098,7 @@ public sealed partial class CSharpEmitter
     /// <param name="name">The C# name, if not the function's own (a local function's, made unique among its method's locals).</param>
     private string Signature(FunctionSymbol symbol, string modifiers, string? name = null)
     {
-        var parameters = string.Join(", ", symbol.Parameters.Select(p => $"{InlineAttributes(p)}{TypeName(p.Type)} {Escape(_names.Declare(p))}{DefaultValue(p.Default)}"));
+        var parameters = string.Join(", ", symbol.Parameters.Select(p => $"{InlineAttributes(p)}{(p.IsParams ? "params " : "")}{TypeName(p.Type)} {Escape(_names.Declare(p))}{DefaultValue(p.Default)}"));
         // `async` belongs to a body, so a required trait (interface) method never has it.
         var @async = symbol.IsAsync && symbol.Declaration?.HasBody == true ? "async " : "";
         // `operator +(other: T)` → `public static T operator +(T self, T other)` (C# operators are public and static).
@@ -1165,7 +1171,8 @@ public sealed partial class CSharpEmitter
     /// <summary>C# only allows calls and assignments as expression statements.</summary>
     private static bool IsStatementExpression(BoundExpression expression) =>
         expression is BoundCallExpression or BoundMethodCallExpression or BoundClrInvocationExpression or BoundAssignmentExpression or BoundFieldAssignmentExpression or BoundObjectCreationExpression
-            or BoundObjectInitializerExpression or BoundDelegateInvocationExpression or BoundClrAssignmentExpression or BoundDeconstructionExpression or BoundAwaitExpression;
+            or BoundObjectInitializerExpression or BoundDelegateInvocationExpression or BoundClrAssignmentExpression or BoundDeconstructionExpression or BoundAwaitExpression
+            or BoundEventSubscription or BoundEventRaise;
 
     // Statements
 
@@ -1217,6 +1224,11 @@ public sealed partial class CSharpEmitter
                     : $"{@using}{type} {name} = {Expr(declaration.Initializer, AssignmentPrecedence)};");
                 break;
             }
+
+            case BoundLockStatement @lock:
+                _writer.WriteLine($"lock ({Expr(@lock.Target, AssignmentPrecedence)})");
+                EmitBlock(@lock.Body);
+                break;
 
             case BoundUsingStatement usingStatement:
             {
@@ -1417,6 +1429,7 @@ public sealed partial class CSharpEmitter
         var (text, precedence) = expression switch
         {
             BoundLiteralExpression literal => (Literal(literal.Value), PrimaryPrecedence),
+            BoundTypeOfExpression typeOf => ($"typeof({TypeName(typeOf.Operand)})", PrimaryPrecedence),
             BoundVariableExpression { Variable.Kind: VariableKind.This } => (_thisName, PrimaryPrecedence),
             BoundVariableExpression { Variable.Kind: VariableKind.Base } => ("base", PrimaryPrecedence),
             BoundVariableExpression variable => (VariableName(variable.Variable), PrimaryPrecedence),
@@ -1456,6 +1469,13 @@ public sealed partial class CSharpEmitter
             BoundClrAssignmentExpression assignment => (ClrAssignment(assignment), AssignmentPrecedence),
             BoundIndexExpression index =>
                 ($"{Expr(index.Target, PrimaryPrecedence)}[{Arguments(index.Arguments)}]", PrimaryPrecedence),
+            // C#'s `^` and `..` bind tighter than `*`, so an operand that isn't unary is parenthesized: `1..(n + 1)`.
+            BoundIndexFromEnd fromEnd => ($"^{Expr(fromEnd.Offset, UnaryPrecedence)}", UnaryPrecedence),
+            BoundEventSubscription subscription =>
+                ($"{Expr(subscription.Receiver, PrimaryPrecedence)}.{Escape(subscription.Event.Name)} {(subscription.Add ? "+=" : "-=")} {Expr(subscription.Handler, AssignmentPrecedence)}", AssignmentPrecedence),
+            BoundEventRaise raise => ($"{Expr(raise.Receiver, PrimaryPrecedence)}.{Escape(raise.Event.Name)}?.Invoke({Arguments(raise.Arguments)})", PrimaryPrecedence),
+            BoundSliceRange slice =>
+                ($"{(slice.Start is null ? "" : Expr(slice.Start, UnaryPrecedence))}..{(slice.End is null ? "" : Expr(slice.End, UnaryPrecedence))}", UnaryPrecedence),
             BoundCollectionExpression { HasSpread: true } collection => (SpreadCollection(collection), UnaryPrecedence),
             BoundCollectionExpression collection => (Collection(collection), PrimaryPrecedence),
             // The operand is parenthesized unless primary: C# reads `(Point)-x` as a subtraction.

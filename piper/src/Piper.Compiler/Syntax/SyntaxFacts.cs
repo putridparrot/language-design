@@ -85,7 +85,7 @@ public static class SyntaxFacts
     /// <summary>Prefix operators bind tighter than any binary operator.</summary>
     public static int GetUnaryPrecedence(TokenKind kind) => kind switch
     {
-        TokenKind.Minus or TokenKind.Bang => 10,
+        TokenKind.Minus or TokenKind.Bang or TokenKind.Caret => 10,
         _ => 0,
     };
 
@@ -149,6 +149,7 @@ public static class SyntaxFacts
         TokenKind.Dot => ".",
         TokenKind.DotDot => "..",
         TokenKind.DotDotLess => "..<",
+        TokenKind.Caret => "^",
         TokenKind.Ellipsis => "...",
         TokenKind.Arrow => "->",
         TokenKind.FatArrow => "=>",

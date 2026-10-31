@@ -11,7 +11,7 @@ correct.
 | [shapes.piper](shapes.piper) | Records and enums, exhaustive `match` with guards, property patterns (`Rect { width: w }`), list patterns (`[first, ...rest]`), relational patterns (`< 10.0`), `{ ...p, y: 5 }` copies, `is` |
 | [option_result.piper](option_result.piper) | No null: `T?`, `?.`, `??`, `?` and `let … else` on optionals; `Result` with `Ok`/`Err` and `?` to propagate errors |
 | [traits.piper](traits.piper) | Traits with default and static methods, trait inheritance, `extend` (like Rust's `impl`) on records and on `int` and `string`, generics with bounds, traits as types |
-| [collections.piper](collections.piper) | Collection literals and spreads, lambdas and function types, LINQ, the pipe operator `\|>`, dictionaries, `out` parameters, grouping, tuples |
+| [collections.piper](collections.piper) | Collection literals and spreads, `xs[^1]` and slices (`xs[1..3]`), lambdas and function types, LINQ, the pipe operator `\|>`, dictionaries, `out` parameters, grouping, tuples |
 | [async.piper](async.piper) | `async`/`await`, `Task.WhenAll`, `yield` iterators, async iterators with `await for`, `using let` and `defer`, async `Main` |
 | [interop.piper](interop.piper) | Calling .NET: constructing types, nullable APIs as optionals, `out` parameters, events, implementing `IComparer<T>`, JSON with attributes, catching exceptions |
 | [contracts.piper](contracts.piper) | `requires`: preconditions on functions and invariants on records, checked on every call and copy, and at compile time for constant arguments |

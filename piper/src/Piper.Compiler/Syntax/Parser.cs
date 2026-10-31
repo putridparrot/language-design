@@ -216,6 +216,8 @@ public sealed partial class Parser
                 return ParseRecord();
             case TokenKind.Identifier when IsClassStart():
                 return ParseClass();
+            case TokenKind.Identifier when IsTypeAliasStart():
+                return ParseTypeAlias();
             case TokenKind.EnumKeyword:
                 return ParseEnum();
             case TokenKind.TraitKeyword:
@@ -224,7 +226,7 @@ public sealed partial class Parser
                 return ParseExtend();
             default:
                 ReportOnce(Current.Span, () => _diagnostics.ReportExpectedDeclaration(Current.Span, Current));
-                while (!IsDeclarationStart(Current.Kind) && !IsClassStart() && Current.Kind != TokenKind.EndOfFile)
+                while (!IsDeclarationStart(Current.Kind) && !IsClassStart() && !IsTypeAliasStart() && Current.Kind != TokenKind.EndOfFile)
                     NextToken();
                 return null;
         }
@@ -482,11 +484,34 @@ public sealed partial class Parser
         var name = Expect(TokenKind.Identifier);
         var typeParameters = ParseTypeParameters();
         Expect(TokenKind.OpenParen);
-        var fields = ParseSeparatedList(ParseParameter, TokenKind.CloseParen);
+        var fields = NoParams(ParseSeparatedList(ParseParameter, TokenKind.CloseParen));
         Expect(TokenKind.CloseParen);
         var requires = ParseRequires();
         Expect(TokenKind.Semicolon);
         return new RecordDeclarationSyntax(SpanFrom(keyword), name, typeParameters, fields) { Requires = requires };
+    }
+
+    /// <summary>`type` is a keyword only here, at the start of a declaration; the word is reserved, so it can't be a name.</summary>
+    private bool IsTypeAliasStart() => Current is { Kind: TokenKind.Identifier, Text: "type" } && Peek(1).Kind == TokenKind.Identifier;
+
+    /// <summary>typeAlias = "type" IDENT "=" type ";" ;</summary>
+    private TypeAliasDeclarationSyntax? ParseTypeAlias()
+    {
+        var keyword = NextToken();
+        var name = Expect(TokenKind.Identifier);
+        if (Current.Kind == TokenKind.Less)
+        {
+            // `type Pair<T> = (T, T);`: its type would mention parameters that don't exist, so it's skipped.
+            _diagnostics.ReportGenericTypeAlias(Current.Span);
+            while (Current.Kind is not (TokenKind.Semicolon or TokenKind.EndOfFile))
+                NextToken();
+            Expect(TokenKind.Semicolon);
+            return null;
+        }
+        Expect(TokenKind.Equals);
+        var target = ParseType();
+        Expect(TokenKind.Semicolon);
+        return new TypeAliasDeclarationSyntax(SpanFrom(keyword), name, target);
     }
 
     /// <summary>
@@ -517,7 +542,7 @@ public sealed partial class Parser
         if (Current.Kind == TokenKind.OpenParen)
         {
             NextToken();
-            parameters = ParseSeparatedList(ParseParameter, TokenKind.CloseParen);
+            parameters = NoParams(ParseSeparatedList(ParseParameter, TokenKind.CloseParen));
             Expect(TokenKind.CloseParen);
         }
 
@@ -543,6 +568,7 @@ public sealed partial class Parser
 
         var fields = ImmutableArray.CreateBuilder<ClassFieldSyntax>();
         var methods = ImmutableArray.CreateBuilder<FunctionDeclarationSyntax>();
+        var events = ImmutableArray.CreateBuilder<ClassEventSyntax>();
         if (Current.Kind == TokenKind.Semicolon)
         {
             NextToken();
@@ -553,7 +579,7 @@ public sealed partial class Parser
             while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
             {
                 int start = _position;
-                ParseClassMember(name, fields, methods);
+                ParseClassMember(name, fields, methods, events);
                 if (_position == start)
                     NextToken();
             }
@@ -565,6 +591,7 @@ public sealed partial class Parser
             Abstract = @abstract,
             Sealed = @sealed,
             Requires = requires,
+            Events = events.ToImmutable(),
         };
     }
 
@@ -591,7 +618,7 @@ public sealed partial class Parser
         {
             name = NextToken();
             Expect(TokenKind.OpenBracket);
-            parameters = ParseSeparatedList(ParseParameter, TokenKind.CloseBracket);
+            parameters = NoParams(ParseSeparatedList(ParseParameter, TokenKind.CloseBracket));
             Expect(TokenKind.CloseBracket);
         }
         else
@@ -697,7 +724,7 @@ public sealed partial class Parser
     {
         var className = NextToken();
         Expect(TokenKind.OpenParen);
-        var parameters = ParseSeparatedList(ParseParameter, TokenKind.CloseParen);
+        var parameters = NoParams(ParseSeparatedList(ParseParameter, TokenKind.CloseParen));
         Expect(TokenKind.CloseParen);
         Token? @this = null;
         ImmutableArray<ExpressionSyntax> arguments = [];
@@ -772,7 +799,7 @@ public sealed partial class Parser
         return (body, isIterator);
     }
 
-    private void ParseClassMember(Token className, ImmutableArray<ClassFieldSyntax>.Builder fields, ImmutableArray<FunctionDeclarationSyntax>.Builder methods)
+    private void ParseClassMember(Token className, ImmutableArray<ClassFieldSyntax>.Builder fields, ImmutableArray<FunctionDeclarationSyntax>.Builder methods, ImmutableArray<ClassEventSyntax>.Builder events)
     {
         var documentation = DocumentationBefore(Current.Span.Start);
         var attributes = Current.Kind == TokenKind.OpenBracket ? ParseAttributes() : [];
@@ -783,6 +810,27 @@ public sealed partial class Parser
                              (Peek(1).Kind is TokenKind.LetKeyword or TokenKind.MutKeyword || IsPropertyStart(1) || (IsMethodModifier(1) && IsPropertyStart(2)))
             ? NextToken()
             : null;
+
+        // `event Changed: EventHandler;`: `event` is a keyword only here, before the event's name and a colon.
+        if (Current is { Kind: TokenKind.Identifier, Text: "event" } && Peek(1).Kind == TokenKind.Identifier && Peek(2).Kind == TokenKind.Colon)
+        {
+            var keyword = NextToken();
+            var eventName = NextToken();
+            NextToken();
+            var eventType = ParseType();
+            Expect(TokenKind.Semicolon);
+            if (@public is not null)
+                _diagnostics.ReportClassMember(@public.Span, "Events are public unless marked 'private', so 'public' isn't needed.");
+            if ((@protected ?? staticField) is { } unsupported)
+                _diagnostics.ReportClassMember(unsupported.Span, $"An event can't be '{unsupported.Text}': only public or private, on an instance.");
+            events.Add(new ClassEventSyntax(SpanFrom(keyword), keyword, eventName, eventType)
+            {
+                Private = @private,
+                Attributes = attributes,
+                Documentation = documentation,
+            });
+            return;
+        }
 
         if (IsPropertyStart(0) || (IsMethodModifier(0) && IsPropertyStart(1)))
         {
@@ -1001,17 +1049,30 @@ public sealed partial class Parser
         if (Current.Kind == TokenKind.OpenParen)
         {
             NextToken();
-            fields = ParseSeparatedList(ParseParameter, TokenKind.CloseParen);
+            fields = NoParams(ParseSeparatedList(ParseParameter, TokenKind.CloseParen));
             Expect(TokenKind.CloseParen);
         }
         return new VariantSyntax(SpanFrom(name), name, fields) { Attributes = attributes, Documentation = documentation };
     }
 
-    /// <summary>parameter = attributes IDENT ":" type [ "=" expression ] ;</summary>
+    /// <summary>Reports `params` where only a function's or method's parameters can have it: fields, constructors and indexers.</summary>
+    private ImmutableArray<ParameterSyntax> NoParams(ImmutableArray<ParameterSyntax> parameters)
+    {
+        foreach (var parameter in parameters)
+        {
+            if (parameter.Params is { } @params)
+                _diagnostics.ReportParamsNotAllowed(@params.Span);
+        }
+        return parameters;
+    }
+
+    /// <summary>parameter = attributes [ "params" ] IDENT ":" type [ "=" expression ] ;   ("params" only on a function's or method's last)</summary>
     private ParameterSyntax ParseParameter()
     {
         var documentation = DocumentationBefore(Current.Span.Start);
         var attributes = ParseAttributes();
+        // `params args: int[]`: `params` is a keyword only before a parameter's name.
+        var @params = Current is { Kind: TokenKind.Identifier, Text: "params" } && Peek(1).Kind == TokenKind.Identifier ? NextToken() : null;
         var name = Expect(TokenKind.Identifier);
         Expect(TokenKind.Colon);
         var type = ParseType();
@@ -1021,7 +1082,7 @@ public sealed partial class Parser
             NextToken();
             @default = ParseBinary(0);
         }
-        return new ParameterSyntax(Span(name, type), name, type) { Attributes = attributes, Documentation = documentation, Default = @default };
+        return new ParameterSyntax(Span(@params ?? name, type), name, type) { Attributes = attributes, Documentation = documentation, Default = @default, Params = @params };
     }
 
     /// <summary>
@@ -1229,6 +1290,9 @@ public sealed partial class Parser
                 case TokenKind.WhileKeyword:
                     statements.Add(ParseWhile());
                     break;
+                case TokenKind.Identifier when IsLockStart():
+                    statements.Add(ParseLock());
+                    break;
                 case TokenKind.ForKeyword:
                     statements.Add(ParseFor());
                     break;
@@ -1428,6 +1492,22 @@ public sealed partial class Parser
         return new UsingStatementSyntax(Span(keyword, body), keyword, name, type, resource, body);
     }
 
+    /// <summary>
+    /// `lock` starts a lock statement when a name, `this` or `(` follows it, as the thing to lock; otherwise it's a name
+    /// (`lock = …`, `lock.Wait()`).
+    /// </summary>
+    private bool IsLockStart() =>
+        Current is { Kind: TokenKind.Identifier, Text: "lock" } && Peek(1).Kind is TokenKind.Identifier or TokenKind.ThisKeyword or TokenKind.OpenParen;
+
+    /// <summary>lock = "lock" expression block ;</summary>
+    private LockStatementSyntax ParseLock()
+    {
+        var keyword = NextToken();
+        var target = ParseHead(ParseExpression);
+        var body = ParseBlock();
+        return new LockStatementSyntax(Span(keyword, body), keyword, target, body);
+    }
+
     /// <summary>while = "while" expression block ;</summary>
     private WhileStatementSyntax ParseWhile()
     {
@@ -1567,7 +1647,7 @@ public sealed partial class Parser
 
     /// <summary>
     /// binary = unary { binaryOp binary } ;   precedence climbing, see <see cref="SyntaxFacts.GetBinaryPrecedence"/>
-    /// unary  = ( "-" | "!" ) unary | postfix ;
+    /// unary  = ( "-" | "!" | "^" ) unary | ( ".." | "..<" ) [ binary ] | postfix ;   (* "^" and an open range only mean something in "[…]" *)
     /// </summary>
     private ExpressionSyntax ParseBinary(int parentPrecedence)
     {
@@ -1604,6 +1684,13 @@ public sealed partial class Parser
             var operand = ParseBinary(unaryPrecedence);
             left = new UnaryExpressionSyntax(Span(op, operand), op, operand);
         }
+        else if (Current.Kind is TokenKind.DotDot or TokenKind.DotDotLess && RangePrecedence >= parentPrecedence)
+        {
+            // `xs[..3]`, `xs[..<3]`, `xs[..]`: a slice's range without a start.
+            var op = NextToken();
+            var end = AtOpenRangeEnd() ? null : ParseBinary(RangePrecedence);
+            left = new RangeExpressionSyntax(TextSpan.FromBounds(op.Span.Start, end?.Span.End ?? op.Span.End), null, op, end);
+        }
         else
         {
             left = ParsePostfix(ParsePrimary());
@@ -1636,6 +1723,12 @@ public sealed partial class Parser
                 return left;
 
             var op = NextToken();
+            if (op.Kind is TokenKind.DotDot or TokenKind.DotDotLess && AtOpenRangeEnd())
+            {
+                // `xs[2..]`: a slice's range without an end.
+                left = new RangeExpressionSyntax(TextSpan.FromBounds(left.Span.Start, op.Span.End), left, op, null);
+                continue;
+            }
             var right = ParseBinary(SyntaxFacts.IsRightAssociative(op.Kind) ? precedence - 1 : precedence);
             left = op.Kind switch
             {
@@ -1868,6 +1961,22 @@ public sealed partial class Parser
     /// </summary>
     private ExpressionSyntax ParsePrimary()
     {
+        // `typeof(Point)`, `nameof(order.Total)`: as in C#, keywords before a `(`.
+        if (Current is { Kind: TokenKind.Identifier, Text: "typeof" or "nameof" } && Peek(1).Kind == TokenKind.OpenParen)
+        {
+            var keyword = NextToken();
+            NextToken();
+            if (keyword.Text == "typeof")
+            {
+                var type = ParseType();
+                Expect(TokenKind.CloseParen);
+                return new TypeOfExpressionSyntax(SpanFrom(keyword), keyword, type);
+            }
+            var operand = ParseExpression();
+            Expect(TokenKind.CloseParen);
+            return new NameOfExpressionSyntax(SpanFrom(keyword), keyword, operand);
+        }
+
         switch (Current.Kind)
         {
             case TokenKind.IntegerLiteral or TokenKind.DoubleLiteral or TokenKind.CharLiteral or TokenKind.StringLiteral:
@@ -2098,6 +2207,11 @@ public sealed partial class Parser
     }
 
     private static readonly int CastPrecedence = SyntaxFacts.GetUnaryPrecedence(TokenKind.Minus);
+
+    private static readonly int RangePrecedence = SyntaxFacts.GetBinaryPrecedence(TokenKind.DotDot);
+
+    /// <summary>Whether a range's end is left out here, as in <c>xs[2..]</c>: the range ends its index argument.</summary>
+    private bool AtOpenRangeEnd() => Current.Kind is TokenKind.CloseBracket or TokenKind.Comma;
 
     /// <summary>Tokens that can start an operand, so that `await` before one is the operator rather than a name.</summary>
     private static bool StartsOperand(TokenKind kind) => kind is

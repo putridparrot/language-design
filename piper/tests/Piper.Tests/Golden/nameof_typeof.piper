@@ -1,0 +1,46 @@
+// nameof and typeof, as in C#: nameof checks a name and gives its last part as a constant; typeof gives a System.Type,
+// also in an attribute's arguments. And slicing with await in its range.
+using System;
+using System.Collections.Generic;
+using System.Text.Json.Serialization;
+using System.Threading.Tasks;
+
+record Point(x: int, y: int);
+
+[JsonDerivedType(typeof(Circle), "circle")]
+class Shape { }
+
+class Circle(radius: double): Shape {
+    public let r = radius;
+}
+
+enum Colour { Red, Green }
+
+fn Area(p: Point) => int = p.x * p.y;
+
+async fn Two() => Task<int> {
+    await Task.Delay(1);
+    2
+}
+
+async fn Main() {
+    let point = Point(1, 2);
+    Print(nameof(point));
+    Print(nameof(point.x));
+    Print(nameof(Point));
+    Print(nameof(Point.y));
+    Print(nameof(Area));
+    Print(nameof(Colour.Green));
+    Print(nameof(System.Console));
+    Print(nameof(String.Length));
+    Print(typeof(Point).Name);
+    Print(typeof(int).FullName);
+    Print(typeof(List<string>).Name);
+    Print(typeof(Shape).GetCustomAttributes(false).Length);
+    let points = [Point(1, 1), Point(2, 2), Point(3, 3)];
+    Print(points[^1]);
+    Print(points[1..].Count);
+    let xs = [1, 2, 3, 4, 5];
+    Print(string.Join(",", xs[await Two()..]));
+    Print(string.Join(",", xs[1..await Two()]));
+}

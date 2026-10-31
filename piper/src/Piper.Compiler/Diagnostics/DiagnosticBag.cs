@@ -99,6 +99,33 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportClassMember(TextSpan span, string message) =>
         Error("PIP0109", span, message);
 
+    public void ReportParamsNotAllowed(TextSpan span) =>
+        Error("PIP0111", span, "Only a function's or method's last parameter can be 'params'; not a field's, constructor's or indexer's.");
+
+    public void ReportEventType(TextSpan span, TypeSymbol type) =>
+        Error("PIP0385", span, $"An event's type is a delegate that returns nothing, such as 'EventHandler', 'EventHandler<T>' or '(string) => unit'; '{type}' isn't one.");
+
+    public void ReportEventRaisedOutside(TextSpan span, string name, string owner) =>
+        Error("PIP0386", span, $"Only '{owner}' raises '{name}', in its methods; elsewhere, add a handler with '+=' or remove one with '-='.");
+
+    public void ReportDataRace(TextSpan span, string message) =>
+        Warning("PIP0387", span, message);
+
+    public void ReportLockOnValue(TextSpan span, TypeSymbol type) =>
+        Error("PIP0383", span, $"'{type}' values can't be locked: a value is copied, so each lock would hold a different one. Lock an object, such as a 'System.Threading.Lock'.");
+
+    public void ReportAwaitInLock(TextSpan span) =>
+        Error("PIP0384", span, "A 'lock' block can't 'await': the lock belongs to a thread, and the code after an await may run on another. Use a 'SemaphoreSlim' and 'await WaitAsync()' instead.");
+
+    public void ReportParamsParameter(TextSpan span, string message) =>
+        Error("PIP0382", span, message);
+
+    public void ReportGenericTypeAlias(TextSpan span) =>
+        Error("PIP0110", span, "A type alias can't have type parameters, as in C#; name a constructed type instead: 'type Names = List<string>;'.");
+
+    public void ReportTypeAliasCycle(TextSpan span, string name) =>
+        Error("PIP0381", span, $"The type alias '{name}' refers to itself, through its own type or another alias's.");
+
     public void ReportTupleTooShort(TextSpan span) =>
         Error("PIP0107", span, "A tuple needs at least two elements; for a function type, add a return type, e.g. '(int) => bool'.");
 
@@ -181,7 +208,31 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0215", span, $"'{function}' must return a value of type '{type}'.");
 
     public void ReportRangeOutsideFor(TextSpan span) =>
-        Error("PIP0216", span, "Ranges can currently only be used in 'for' loops.");
+        Error("PIP0216", span, "Ranges can only be used in 'for' loops, and to slice, as in 'xs[1..3]'.");
+
+    public void ReportFromEndOutsideIndex(TextSpan span) =>
+        Error("PIP0373", span, "'^' counts from the end of what's indexed, so it's only used in '[…]', as in 'xs[^1]' for the last element.");
+
+    public void ReportCannotCountFromEnd(TextSpan span, TypeSymbol type) =>
+        Error("PIP0374", span, $"Can't count from the end of a '{type}': only arrays, strings and .NET types with an int indexer and a Length or Count can be.");
+
+    public void ReportCannotSlice(TextSpan span, TypeSymbol type) =>
+        Error("PIP0375", span, $"Can't slice a '{type}': only arrays, strings and .NET types with a 'Slice(int, int)' method and a Length or Count (such as List<T>) can be.");
+
+    public void ReportSliceNotAlone(TextSpan span) =>
+        Error("PIP0376", span, "A slice or a '^' index is the only thing in '[…]': 'xs[1..3]', 'xs[^1]'.");
+
+    public void ReportPastTheEnd(TextSpan span) =>
+        Error("PIP0377", span, "'^0' is past the end: the last element is '^1'.");
+
+    public void ReportExclusiveRangeWithoutEnd(TextSpan span) =>
+        Error("PIP0378", span, "'..<' stops before an end, so it needs one; for the rest from a start, write 'xs[2..]'.");
+
+    public void ReportNameOfNeedsName(TextSpan span) =>
+        Error("PIP0380", span, "'nameof' takes a name: a variable, function, type, member or namespace, as in 'nameof(order.Total)'.");
+
+    public void ReportForRangeNeedsBothEnds(TextSpan span) =>
+        Error("PIP0379", span, "A 'for' loop's range needs a start and an end, as in 'for i in 0..<n'.");
 
     public void ReportForRequiresRange(TextSpan span) =>
         Error("PIP0216", span, "A 'for' loop must iterate over a range, e.g. 'for i in 0..10'.");

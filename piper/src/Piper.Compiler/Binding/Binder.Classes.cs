@@ -303,6 +303,7 @@ public sealed partial class Binder
                     parameterScope.TryDeclare(FieldVariable(field));
             }
             @class.Fields = fields.ToImmutable();
+            @class.Events = BindClassEvents(@class, file, names);
             BindClassIndexers(@class);
             @class.BaseArguments = BindBaseArguments(@class, parameterScope);
             BindClassConstructors(@class, file);
@@ -317,6 +318,8 @@ public sealed partial class Binder
                 scope.TryDeclare(StaticFieldVariable(field, @class.SelfType));
             foreach (var parameter in @class.Parameters)
                 scope.TryDeclare(parameter);
+            foreach (var @event in @class.SelfAndBases().SelectMany(c => c.Events).Where(e => e.Owner == @class || !e.IsPrivate))
+                scope.TryDeclare(@event);
             foreach (var method in @class.Methods.Where(m => !m.IsHidden))
                 scope.TryDeclare(method);
             foreach (var @base in SelfAndBaseTypes(@class.SelfType).Skip(1).Where(b => b.OriginalDefinition is ClassSymbol))

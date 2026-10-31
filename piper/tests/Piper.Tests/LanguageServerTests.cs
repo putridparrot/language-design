@@ -413,6 +413,18 @@ public sealed class LanguageServerTests : IDisposable
         Assert.Equal(Program.Split("Point").Length - 1, edits.Count);
     }
 
+    /// <summary>`nameof(total)` names the variable, so renaming the variable renames it there too.</summary>
+    [Fact]
+    public async Task Renaming_reaches_into_nameof()
+    {
+        const string text = "fn Main() {\n    let total = 1;\n    Print(nameof(total));\n    Print(total);\n}\n";
+        var uri = await OpenAsync(text);
+        var parameters = At(uri, text, "total = 1");
+        parameters["newName"] = "sum";
+        var edit = await _server.HandleAsync("textDocument/rename", parameters);
+        Assert.Equal(3, edit!["changes"]![uri]!.AsArray().Count);
+    }
+
     [Fact]
     public async Task Completes_members_after_a_dot_and_names_elsewhere()
     {

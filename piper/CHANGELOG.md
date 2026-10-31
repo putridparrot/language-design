@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- **Events in classes:** `event Changed: EventHandler;` is a C# field-like event, of a delegate type returning nothing
+  (a .NET one or a function type).
+  - The class raises it by calling it (`Changed(this, args)`), and anyone adds and removes handlers with `+=` and `-=`.
+  - A class implements a .NET interface's events, so `class Person: INotifyPropertyChanged` can now be written, for
+    WPF and Avalonia data binding.
+  - New errors PIP0385 (an event's type) and PIP0386 (raising it outside its class).
+- **Type aliases:** `type Lookup = Dictionary<string, List<int>>;`, interchangeable with the type, as C#'s
+  `using Lookup = …;`. Aliases may name other aliases, in any order; a cycle is error PIP0381 and type parameters
+  PIP0110.
+- **`params` parameters:** `fn Log(format: string, params args: object[])` takes any number of arguments as an
+  array, or an array itself, as in C#. Only on a function's or method's last parameter (PIP0111, PIP0382).
+  - A collection literal passed to a generic `T[]` parameter now infers T from its elements (`First([1, 2])`).
+- **`lock`:** `lock gate { … }` (or `lock (gate) { … }`), as C#'s, on a .NET 9 `Lock` or any object.
+  - Locking a value is error PIP0383, and awaiting inside the block PIP0384.
+- **Data-race warnings (PIP0387):** in a parallel loop's body (`parallel for`, `Parallel.ForEach`) or a group of
+  tasks (`concurrency { }`, `Task.WhenAll(Task.Run(…), …)`), changing a variable, field or non-thread-safe collection
+  that other threads use, outside a `lock`, is a warning.
+- **Counting from the end and slicing:** `xs[^1]` is the last element, and `xs[1..3]` a slice, on arrays, strings and
+  .NET collections (anything with a `Length` or `Count`, and for slices a `Slice(int, int)`, such as `List<T>`).
+  - As in a `for` loop, a range includes its end unless it's `..<`, so `xs[1..3]` is three elements and `xs[1..<3]`
+    two (C#'s `xs[1..3]`).
+  - Either end can be left out (`xs[2..]`, `xs[..<2]`) or count from the end (`xs[1..^1]`, to the last element).
+  - They're written as C#'s `^` and `..`.
+  - New errors PIP0373–PIP0379, for a `^` outside `[…]`, something that can't be counted from the end or sliced, a
+    slice that isn't alone in `[…]`, `^0` as an element, `..<` without an end, and a `for` loop over an open range.
+- **`nameof` and `typeof`,** as in C#.
+  - `nameof(order.Total)` is the constant `"Total"`, once the name is checked; it can name a variable, member,
+    instance member through its type, enum variant, type or namespace. Renaming what it names renames it too.
+  - `typeof(Point)` is a `System.Type`, and works in attribute arguments: `[JsonDerivedType(typeof(Circle), "circle")]`.
+  - Both are keywords only before `(`. New error PIP0380, for a `nameof` of something that isn't a name.
 - **State machines plugin:** `plugins/Piper.Plugins.StateMachines` adds `statemachine` declarations, with states,
   events with parameters, `on Pay(amount: decimal) => Paid if … { … }` transitions with guards and actions, and
   `enter`/`exit` blocks.

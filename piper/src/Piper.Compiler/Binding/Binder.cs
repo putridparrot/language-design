@@ -239,6 +239,9 @@ public sealed partial class Binder
             definition.TypeParameters = DeclareTypeParameters(syntax, scope, reserved);
             typeParameterSyntax.Add((definition, syntax, scope));
         }
+        // Aliases name types, generic ones included, so they come once types and their parameters are declared, and
+        // before anything (bounds included) may use them.
+        DeclareTypeAliases();
         foreach (var (definition, syntax, scope) in typeParameterSyntax)
         {
             InFile(FileOf(definition));
@@ -361,6 +364,7 @@ public sealed partial class Binder
             _diagnostics.ReportInvalidMain(main.Declaration!.Name.Span);
         }
 
+        CheckDataRaces([.. boundFunctions, .. boundMethods]);
         return new BoundProgram([.. units.Select(u => u.Source)], [.. _files.Select(f => f.Namespace)], [.. types], [_option, _result], boundFunctions, boundMethods, main)
         {
             ExternalConformances = [.. _externalConformances.SelectMany(e => e.Value.Select(c => new ExternalConformance(e.Key, c.Trait, c.File)))],
@@ -661,7 +665,8 @@ public sealed partial class Binder
     {
         if (syntax.Default is not { } defaultSyntax)
         {
-            if (sawDefault && !syntax.Name.IsMissing)
+            // A `params` parameter can follow those with defaults, as in C#: left out, it's empty.
+            if (sawDefault && !syntax.Name.IsMissing && syntax.Params is null)
                 _diagnostics.ReportInvalidDefault(syntax.Name.Span, $"'{syntax.Name.Text}' needs a default value too: parameters with defaults must come last.");
             return null;
         }
@@ -1374,15 +1379,28 @@ public sealed partial class Binder
         foreach (var parameter in declaration.Parameters)
         {
             var type = BindValueType(parameter.Type, "parameter");
-            var @default = BindDefault(parameter, type, ref sawDefault, declaration.Operator is not null ? "An operator" : null);
+            // A `params` parameter's default is reported below, as one it can't have.
+            var @default = parameter is { Params: not null, Default: not null } ? null : BindDefault(parameter, type, ref sawDefault, declaration.Operator is not null ? "An operator" : null);
             if (parameter.Name.IsMissing)
                 continue;
             if (!names.Add(parameter.Name.Text))
                 _diagnostics.ReportDuplicateDeclaration(parameter.Name.Span, parameter.Name.Text);
+            if (parameter.Params is { } @params)
+            {
+                if (parameter != declaration.Parameters[^1])
+                    _diagnostics.ReportParamsParameter(@params.Span, "'params' goes on the last parameter, which takes the call's remaining arguments.");
+                else if (type != TypeSymbol.Error && type is not ClrTypeSymbol { IsArray: true, Rank: 1 })
+                    _diagnostics.ReportParamsParameter(parameter.Type.Span, $"A 'params' parameter is an array, such as 'params {parameter.Name.Text}: int[]'; '{type}' isn't one.");
+                else if (parameter.Default is not null)
+                    _diagnostics.ReportParamsParameter(parameter.Default.Span, "A 'params' parameter can't have a default: a call that gives no elements passes an empty array.");
+                else if (declaration.Operator is not null)
+                    _diagnostics.ReportParamsParameter(@params.Span, "An operator's parameters can't be 'params'.");
+            }
             parameters.Add(Declared(new VariableSymbol(parameter.Name.Text, type, isMutable: false, VariableKind.Parameter)
             {
                 Documentation = parameter.Documentation,
                 Default = @default,
+                IsParams = parameter.Params is not null && parameter == declaration.Parameters[^1],
             }, parameter.Name));
         }
 
@@ -1666,6 +1684,10 @@ public sealed partial class Binder
                 _diagnostics.ReportUndefinedType(name.Span, name.Text);
                 return TypeSymbol.Error;
 
+            // A type alias whose own type was in error, already reported.
+            case TypeSymbol type when type == TypeSymbol.Error:
+                return TypeSymbol.Error;
+
             default:
                 _diagnostics.ReportNotAType(name.Span, name.Text, symbol is FunctionSymbol ? "function" : "value");
                 return TypeSymbol.Error;
@@ -1836,6 +1858,7 @@ public sealed partial class Binder
         BoundReturnStatement or BoundBreakStatement or BoundContinueStatement or BoundThrowStatement => true,
         BoundTryCatchStatement t => (Diverges(t.Body) && t.Catches.All(c => Diverges(c.Body))) || (t.Finally is { } f && Diverges(f)),
         BoundUsingStatement u => Diverges(u.Body),
+        BoundLockStatement l => Diverges(l.Body),
         BoundWhileStatement { IsInfinite: true } => true,
         BoundYieldStatement { Value: null } => true,
         BoundExpressionStatement e => e.Expression.Type == TypeSymbol.Never,
@@ -1861,6 +1884,7 @@ public sealed partial class Binder
         TryStatementSyntax s => BindTryCatch(s),
         YieldStatementSyntax s => BindYield(s),
         UsingStatementSyntax s => BindUsing(s),
+        LockStatementSyntax s => BindLock(s),
         DeferStatementSyntax s => BindDefer(s),
         BreakStatementSyntax s => BindLoopJump(s.Keyword, new BoundBreakStatement()),
         ContinueStatementSyntax s => BindLoopJump(s.Keyword, new BoundContinueStatement()),
@@ -1957,6 +1981,29 @@ public sealed partial class Binder
     }
 
     /// <summary><c>using (let r = open()) { … }</c>: r is in scope (and read-only) in the body only.</summary>
+    /// <summary>
+    /// <c>lock gate { … }</c>: the thing locked must be a .NET reference type, as in C#. The block can't await, since
+    /// a lock is held by a thread and the code after an await may run on another; C# forbids it too.
+    /// </summary>
+    private BoundStatement BindLock(LockStatementSyntax syntax)
+    {
+        var target = RequireValue(BindExpression(syntax.Target), syntax.Target.Span);
+        if (target.Type != TypeSymbol.Error && !ClrTypes.IsReferenceType(target.Type))
+            _diagnostics.ReportLockOnValue(syntax.Target.Span, target.Type);
+        var body = BindBlock(syntax.Body);
+        foreach (var await in Awaits(syntax.Body))
+            _diagnostics.ReportAwaitInLock(await.Span);
+        return new BoundLockStatement(target, new BoundExpressionStatement(body));
+    }
+
+    /// <summary>The `await`s under <paramref name="node"/>, other than in lambdas and local functions, which run elsewhere.</summary>
+    private static IEnumerable<AwaitExpressionSyntax> Awaits(SyntaxNode node) => node switch
+    {
+        AwaitExpressionSyntax await => [await, .. SyntaxWalker.ChildrenOf(await).SelectMany(Awaits)],
+        LambdaExpressionSyntax or LocalFunctionStatementSyntax => [],
+        _ => SyntaxWalker.ChildrenOf(node).SelectMany(Awaits),
+    };
+
     private BoundStatement BindUsing(UsingStatementSyntax syntax)
     {
         var type = syntax.Type is null ? null : BindValueType(syntax.Type, "variable");
@@ -2018,14 +2065,26 @@ public sealed partial class Binder
         BoundExpression lower, upper;
         TypeSymbol type;
         bool inclusive = false;
-        if (syntax.Range is RangeExpressionSyntax range && syntax.Deconstruction is null && syntax.Await is null)
+        if (syntax.Range is RangeExpressionSyntax { Start: null } or RangeExpressionSyntax { End: null })
+        {
+            // `for i in ..3`: a slice's open range, which says nowhere to start or stop counting.
+            var open = (RangeExpressionSyntax)syntax.Range;
+            if (open.Start is not null)
+                BindExpression(open.Start);
+            if (open.End is not null)
+                BindExpression(open.End);
+            _diagnostics.ReportForRangeNeedsBothEnds(open.Span);
+            BindLoopBody(syntax.Body, out _);
+            return new BoundExpressionStatement(new BoundErrorExpression());
+        }
+        if (syntax.Range is RangeExpressionSyntax { Start: { } start, End: { } end } range && syntax.Deconstruction is null && syntax.Await is null)
         {
             inclusive = range.IsInclusive;
-            lower = BindExpression(range.Start);
-            upper = BindExpression(range.End);
+            lower = BindExpression(start);
+            upper = BindExpression(end);
             type = lower.Type == TypeSymbol.Long || upper.Type == TypeSymbol.Long ? TypeSymbol.Long : TypeSymbol.Int;
-            lower = BindRangeBound(lower, type, range.Start.Span);
-            upper = BindRangeBound(upper, type, range.End.Span);
+            lower = BindRangeBound(lower, type, start.Span);
+            upper = BindRangeBound(upper, type, end.Span);
         }
         else
         {

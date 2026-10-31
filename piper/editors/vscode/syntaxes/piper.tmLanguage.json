@@ -100,6 +100,10 @@
     "keywords": {
       "patterns": [
         { "name": "keyword.control.piper", "match": "\\b(if|else|while|for|in|return|break|continue|match|try|catch|finally|throw|defer|yield|await)\\b" },
+        { "name": "keyword.operator.expression.piper", "match": "\\b(typeof|nameof)(?=\\s*\\()" },
+        { "name": "keyword.control.piper", "match": "^\\s*\\block\\b(?=\\s*[\\w(])" },
+        { "name": "keyword.declaration.piper", "match": "^\\s*\\b(type|event)\\b(?=\\s+\\w)" },
+        { "name": "storage.modifier.piper", "match": "\\bparams\\b(?=\\s+\\w+\\s*:)" },
         { "name": "keyword.declaration.piper", "match": "\\b(fn|record|class|enum|trait|extend|namespace|using|let|mut|test|operator|requires)\\b" },
         { "name": "storage.modifier.piper", "match": "\\b(static|private|public|protected|async|out|ref|abstract|sealed|virtual|override)\\b" },
         { "name": "keyword.operator.word.piper", "match": "\\bis\\b" },

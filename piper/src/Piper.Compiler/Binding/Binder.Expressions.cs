@@ -47,6 +47,8 @@ public sealed partial class Binder
         CastExpressionSyntax s => BindCast(s),
         BinaryExpressionSyntax s => BindBinary(s),
         RangeExpressionSyntax s => BindRange(s),
+        TypeOfExpressionSyntax s => new BoundTypeOfExpression(BindType(s.Type)),
+        NameOfExpressionSyntax s => BindNameOf(s),
         AssignmentExpressionSyntax s => BindAssignment(s),
         CallExpressionSyntax s => BindCall(s, expected),
         PipeExpressionSyntax s => BindPipe(s, expected),
@@ -390,6 +392,12 @@ public sealed partial class Binder
         ImmutableArray<TypeSyntax> typeArguments = default)
     {
         Record(name, symbol);
+        // `let h = Changed`: an event only takes handlers, or is raised by its class.
+        if (symbol is EventSymbol @event)
+        {
+            _diagnostics.ReportEventMisused(name.Span, @event.Name);
+            return new BoundErrorExpression();
+        }
         var explicitArguments = ExplicitTypeArguments(typeArguments.IsDefault ? [] : typeArguments);
         if (explicitArguments is not null && symbol is not (FunctionSymbol or null or ErrorSymbol or AmbiguousSymbol))
         {
@@ -444,6 +452,14 @@ public sealed partial class Binder
 
     private BoundExpression BindUnary(UnaryExpressionSyntax syntax)
     {
+        // `^1` means something only as an index (see BindIndex).
+        if (syntax.Operator.Kind == TokenKind.Caret)
+        {
+            BindExpression(syntax.Operand);
+            _diagnostics.ReportFromEndOutsideIndex(syntax.Operator.Span);
+            return new BoundErrorExpression();
+        }
+
         var operand = RequireValue(BindExpression(syntax.Operand), syntax.Operand.Span);
         if (operand.Type == TypeSymbol.Error)
             return new BoundErrorExpression();
@@ -551,14 +567,20 @@ public sealed partial class Binder
 
     private BoundExpression BindRange(RangeExpressionSyntax syntax)
     {
-        BindExpression(syntax.Start);
-        BindExpression(syntax.End);
+        if (syntax.Start is not null)
+            BindExpression(syntax.Start);
+        if (syntax.End is not null)
+            BindExpression(syntax.End);
         _diagnostics.ReportRangeOutsideFor(syntax.Span);
         return new BoundErrorExpression();
     }
 
     private BoundExpression BindAssignment(AssignmentExpressionSyntax syntax)
     {
+        // `account.Changed += handler`: a Piper class's event.
+        if (BindEventSubscription(syntax) is { } subscription)
+            return subscription;
+
         // `(a, b) = (b, a)`: deconstruction into existing variables.
         if (syntax.Target is TupleExpressionSyntax tupleTarget)
             return BindDeconstructionAssignment(syntax, tupleTarget);
@@ -711,6 +733,8 @@ public sealed partial class Binder
 
     private BoundExpression BindCallCore(CallExpressionSyntax syntax, TypeSymbol? expected)
     {
+        if (BindEventRaise(syntax) is { } raise)
+            return raise;
         switch (syntax.Callee)
         {
             case MemberAccessExpressionSyntax member when ResolveContainer(member.Target) is { } container:
@@ -902,7 +926,7 @@ public sealed partial class Binder
                 if (!ApplyExplicitTypeArguments(explicitArguments, function.TypeParameters, map, syntax.Callee.Span, calleeName))
                     return BindArgumentsForDiagnostics(syntax.Arguments);
                 Seed(function.ReturnType, expected, map, function.TypeParameters);
-                if (BindNamedArguments(syntax.Span, calleeName, Signature(function.Parameters), function.TypeParameters, map, syntax.Arguments) is not var (arguments, names, byParameter))
+                if (BindNamedArguments(syntax.Span, calleeName, Signature(function.Parameters), function.TypeParameters, map, syntax.Arguments, ParamsOf(function.Parameters)) is not var (arguments, names, byParameter))
                     return new BoundErrorExpression();
 
                 var typeArguments = TypeArgumentsFrom(function.TypeParameters, map, syntax.Span);
@@ -1060,7 +1084,7 @@ public sealed partial class Binder
         if (!ApplyExplicitTypeArguments(explicitArguments, method.TypeParameters, map, member.Span, method.Name))
             return BindArgumentsForDiagnostics(arguments);
         Seed(method.ReturnType, expected, map, inferred);
-        if (BindNamedArguments(span, $"{type}.{method.Name}", Signature(method.Parameters), inferred, map, arguments.Value) is not var (boundArguments, names, byParameter))
+        if (BindNamedArguments(span, $"{type}.{method.Name}", Signature(method.Parameters), inferred, map, arguments.Value, ParamsOf(method.Parameters)) is not var (boundArguments, names, byParameter))
             return new BoundErrorExpression();
 
         var receiverType = definition is { IsGeneric: true }
@@ -1149,7 +1173,7 @@ public sealed partial class Binder
         if (!ApplyExplicitTypeArguments(explicitArguments, method.TypeParameters, map, member.Span, method.Name))
             return BindArgumentsForDiagnostics(syntax.Arguments);
         Seed(method.ReturnType, expected, map, method.TypeParameters);
-        if (BindNamedArguments(syntax.Span, method.Name, Signature(method.Parameters), method.TypeParameters, map, syntax.Arguments) is not var (arguments, names, byParameter))
+        if (BindNamedArguments(syntax.Span, method.Name, Signature(method.Parameters), method.TypeParameters, map, syntax.Arguments, ParamsOf(method.Parameters)) is not var (arguments, names, byParameter))
             return new BoundErrorExpression();
 
         var typeArguments = TypeArgumentsFrom(method.TypeParameters, map, syntax.Span);
@@ -1422,8 +1446,11 @@ public sealed partial class Binder
         IReadOnlyList<(string Name, TypeSymbol Type, ParameterDefault? Default)> parameters,
         IReadOnlyList<TypeParameterSymbol> inferred,
         Dictionary<TypeParameterSymbol, TypeSymbol> map,
-        ImmutableArray<ExpressionSyntax> arguments)
+        ImmutableArray<ExpressionSyntax> arguments,
+        VariableSymbol? @params = null)
     {
+        if (@params is not null)
+            arguments = PackParams(parameters, @params, map, arguments);
         if (arguments.Length == parameters.Count && !arguments.Any(a => a is NamedArgumentSyntax))
         {
             var positional = BindArguments(span, calleeName, parameters.Select(p => p.Type), inferred, map, arguments);
@@ -1495,6 +1522,47 @@ public sealed partial class Binder
         return (boundArguments, names.All(n => n is null) ? [] : names, byParameter);
     }
 
+    /// <summary>The last of <paramref name="parameters"/> if it's <c>params</c>, for <see cref="BindNamedArguments"/>.</summary>
+    private static VariableSymbol? ParamsOf(ImmutableArray<VariableSymbol> parameters) =>
+        parameters is [.., { IsParams: true } last] ? last : null;
+
+    /// <summary>
+    /// A call to a function with a <c>params</c> parameter, <c>Log("{0} of {1}", 1, 2)</c>, with the arguments the
+    /// parameter takes gathered into a collection literal and passed by name: <c>Log("…", args: [1, 2])</c>. With as
+    /// many arguments as parameters, the last is the array itself if it is one (<c>Log("…", values)</c>), as in C#.
+    /// A call that names the parameter, or gives too few arguments for the others, is left alone.
+    /// </summary>
+    private ImmutableArray<ExpressionSyntax> PackParams(
+        IReadOnlyList<(string Name, TypeSymbol Type, ParameterDefault? Default)> parameters,
+        VariableSymbol @params,
+        Dictionary<TypeParameterSymbol, TypeSymbol> map,
+        ImmutableArray<ExpressionSyntax> arguments)
+    {
+        int fixedCount = parameters.Count - 1;
+        var positional = arguments.TakeWhile(a => a is not NamedArgumentSyntax).ToList();
+        var named = arguments.Skip(positional.Count).ToList();
+        if (named.Any(a => a is NamedArgumentSyntax n && n.Name.Text == @params.Name) || positional.Count < fixedCount && named.Count == 0 &&
+            parameters.Take(fixedCount).Skip(positional.Count).Any(p => p.Default is null))
+            return arguments;
+        if (positional.Count == parameters.Count)
+        {
+            var arrayType = TypeSubstitution.Substitute(@params.Type, map);
+            var last = Trial(() => BindExpression(positional[^1], arrayType), out bool failed);
+            // For `params items: T[]`, any array is one, and gives T.
+            bool generic = arrayType.TypeArguments is [TypeParameterSymbol];
+            if (!failed && (last.Type == arrayType || last.Type == TypeSymbol.Never || generic && last.Type is ClrTypeSymbol { IsArray: true, Rank: 1 }))
+                return arguments;
+        }
+
+        var elements = positional.Skip(fixedCount).ToImmutableArray();
+        var span = elements.IsEmpty
+            ? new TextSpan(arguments.LastOrDefault()?.Span.End ?? 0, 0)
+            : TextSpan.FromBounds(elements[0].Span.Start, elements[^1].Span.End);
+        var name = new Token(TokenKind.Identifier, span, @params.Name) { IsGenerated = true };
+        var packed = new NamedArgumentSyntax(span, name, new CollectionExpressionSyntax(span, elements));
+        return [.. positional.Take(fixedCount), .. named, packed];
+    }
+
     private static IReadOnlyList<(string Name, TypeSymbol Type, ParameterDefault? Default)> Signature(IEnumerable<VariableSymbol> parameters) =>
         [.. parameters.Select(p => (p.Name, p.Type, p.Default))];
 
@@ -1535,6 +1603,17 @@ public sealed partial class Binder
                 {
                     // Parameter types known, result type not: infer it from the body.
                     argument = BindLambdaWith(lambda, signature.Parameters, returnType: null, delegateType: null);
+                }
+                else if (!known && arguments[i] is CollectionExpressionSyntax collection &&
+                         parameterType is ClrTypeSymbol { IsArray: true, Rank: 1, TypeArguments: [var element] } &&
+                         Trial(() => BindExpression(collection), out bool failedAlone) is { Type.TypeArguments: [var given] } && !failedAlone)
+                {
+                    // `F([1, 2])` or a params call for `xs: T[]`: T comes from the literal's elements, which then make
+                    // the array (alone, the literal would be a List).
+                    Infer(element, given, map, unresolved);
+                    parameterType = TypeSubstitution.Substitute(declared[i], map);
+                    known = !TypeSubstitution.Mentions(parameterType, unresolved);
+                    argument = BindExpression(arguments[i], known ? parameterType : null);
                 }
                 else
                 {

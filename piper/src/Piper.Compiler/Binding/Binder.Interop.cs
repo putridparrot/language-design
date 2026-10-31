@@ -486,6 +486,36 @@ public sealed partial class Binder
             InFile(file);
             CheckClrPropertyConformance(@class, @interface, property, map, syntax);
         }
+        foreach (var (@class, @interface, @event, map, syntax, file) in _eventConformances)
+        {
+            InFile(file);
+            CheckClrEventConformance(@class, @interface, @event, map, syntax);
+        }
+    }
+
+    /// <summary>The .NET interface events classes must implement, checked once their members are bound.</summary>
+    private readonly List<(ClassSymbol Class, TypeSymbol Interface, EventInfo Event, IReadOnlyDictionary<Type, TypeSymbol> Map, TypeSyntax Syntax, FileContext File)>
+        _eventConformances = [];
+
+    /// <summary>
+    /// A .NET interface's event (<c>INotifyPropertyChanged.PropertyChanged</c>), which a class implements with a public
+    /// event of the same name and delegate type: <c>event PropertyChanged: PropertyChangedEventHandler;</c>.
+    /// </summary>
+    private void CheckClrEventConformance(ClassSymbol @class, TypeSymbol @interface, EventInfo required, IReadOnlyDictionary<Type, TypeSymbol> map, TypeSyntax syntax)
+    {
+        var type = ClrTypes.FromClr(required.EventHandlerType!, map, _option);
+        var implementation = @class.SelfAndBases().SelectMany(c => c.Events).FirstOrDefault(e => e.Name == required.Name);
+        if (implementation is null || type is null)
+        {
+            _diagnostics.ReportMissingTraitMethod(syntax.Span, @class, required.Name, @interface);
+            return;
+        }
+        if (implementation.IsPrivate || implementation.Type != type)
+        {
+            _diagnostics.CurrentSource = implementation.DeclaringFile ?? _diagnostics.CurrentSource;
+            var declared = implementation.Owner.Declaration.Events.First(e => e.Name.Text == required.Name);
+            _diagnostics.ReportTraitSignatureMismatch(declared.Name.Span, required.Name, @interface, $"a public 'event {required.Name}: {type}'");
+        }
     }
 
     /// <summary>
@@ -606,7 +636,12 @@ public sealed partial class Binder
             ? members.OfType<PropertyInfo>().Where(p => p.GetMethod is { IsStatic: false }).ToList()
             : [];
         var accessors = properties.SelectMany(p => p.GetAccessors()).ToHashSet();
-        members = [.. members.Except(properties).Where(m => m is not MethodInfo method || !accessors.Contains(method))];
+        // And its events with its own (`event PropertyChanged: PropertyChangedEventHandler;`), checked with its members.
+        var events = definition is ClassSymbol ? members.OfType<EventInfo>().ToList() : [];
+        accessors.UnionWith(events.SelectMany(e => new[] { e.AddMethod, e.RemoveMethod }).OfType<MethodInfo>());
+        members = [.. members.Except(properties).Except(events).Where(m => m is not MethodInfo method || !accessors.Contains(method))];
+        foreach (var @event in events)
+            _eventConformances.Add(((ClassSymbol)definition, @interface, @event, map, syntax, _file));
         if (members.Any(m => m is not MethodInfo { IsStatic: false, IsSpecialName: false, IsGenericMethodDefinition: false }))
         {
             _diagnostics.ReportUnsupportedInterface(syntax.Span, @interface);

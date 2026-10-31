@@ -121,6 +121,35 @@ public class BinderTests
     [InlineData("PIP0215", "fn Main() { return 1; }")]
     [InlineData("PIP0215", "fn f() => int { return; }")]
     [InlineData("PIP0216", "fn Main() { let r = 0..<3; }")]
+    [InlineData("PIP0216", "fn Main() { let xs = [1, 2]; let r = xs[(1..2)]; }")]
+    [InlineData("PIP0373", "fn Main() { let i = ^1; }")]
+    [InlineData("PIP0374", "fn Main() { let s = System.Collections.Generic.HashSet<int>(); let x = s[^1]; }")]
+    [InlineData("PIP0375", "fn Main() { let x = 5[1..2]; }")]
+    [InlineData("PIP0375", "fn Main() { let s = System.Collections.Generic.HashSet<int>(); let x = s[1..2]; }")]
+    [InlineData("PIP0376", "fn Main() { let a = int[2, 2]; let x = a[^1, 0]; }")]
+    [InlineData("PIP0377", "fn Main() { let xs = [1, 2]; let x = xs[^0]; }")]
+    [InlineData("PIP0377", "fn Main() { let xs = [1, 2]; let x = xs[..^0]; }")]
+    [InlineData("PIP0378", "fn Main() { let xs = [1, 2]; let x = xs[1..<]; }")]
+    [InlineData("PIP0379", "fn Main() { for i in ..3 { } }")]
+    [InlineData("PIP0380", "fn Main() { let n = nameof(1 + 2); }")]
+    [InlineData("PIP0110", "type Pair<T> = (T, T); fn Main() { }")]
+    [InlineData("PIP0381", "type A = B; type B = A; fn Main() { }")]
+    [InlineData("PIP0201", "record R(x: int); type R = int; fn Main() { }")]
+    [InlineData("PIP0111", "record R(params xs: int[]); fn Main() { }")]
+    [InlineData("PIP0382", "fn F(params xs: int[], y: int) { } fn Main() { }")]
+    [InlineData("PIP0382", "fn F(params xs: string) { } fn Main() { }")]
+    [InlineData("PIP0382", "fn F(params xs: int[] = []) { } fn Main() { }")]
+    [InlineData("PIP0383", "fn Main() { let n = 1; lock n { } }")]
+    [InlineData("PIP0384", "async fn Main() { let o = System.Object(); lock o { await System.Threading.Tasks.Task.Delay(1); } }")]
+    [InlineData("PIP0385", "class A { event E: int; } fn Main() { }")]
+    [InlineData("PIP0385", "class A { event E: (int) => int; } fn Main() { }")]
+    [InlineData("PIP0386", "class A { event E: System.EventHandler; } fn Main() { let a = A(); a.E(a, System.EventArgs.Empty); }")]
+    [InlineData("PIP0313", "class A { event E: System.EventHandler; fn F() { let h = E; } } fn Main() { }")]
+    [InlineData("PIP0313", "class A { event E: System.EventHandler; } fn Main() { let a = A(); a.E = (s, e) => Print(1); }")]
+    [InlineData("PIP0245", "class A: System.ComponentModel.INotifyPropertyChanged { } fn Main() { }")]
+    [InlineData("PIP0246", "class A: System.ComponentModel.INotifyPropertyChanged { event PropertyChanged: System.EventHandler; } fn Main() { }")]
+    [InlineData("PIP0200", "fn Main() { let n = nameof(nope); }")]
+    [InlineData("PIP0212", "record P(x: int); fn Main() { let n = nameof(P.nope); }")]
     [InlineData("PIP0282", "fn Main() { for i in 3 { } }")]
     [InlineData("PIP0007", "fn Main() { let x = 2147483648; }")]
     [InlineData("PIP0288", "fn Main() { let names = string[3]; }")]
@@ -238,6 +267,37 @@ public class BinderTests
         Assert.True(result.Success, string.Join("\n", result.Diagnostics));
         var warning = Assert.Single(result.Diagnostics);
         Assert.Equal(("PIP0231", Diagnostics.DiagnosticSeverity.Warning), (warning.Code, warning.Severity));
+    }
+
+    private const string Races = "using System.Collections.Generic; using System.Threading; using System.Threading.Tasks; ";
+
+    /// <summary>
+    /// Changing what code on other threads also uses, without a lock, is warned about: in a parallel loop's body,
+    /// anything shared; in a group of tasks, what another task in it uses too.
+    /// </summary>
+    [Theory]
+    [InlineData("mut total = 0; Parallel.For(0, 10, i => { total += i; });", true)]
+    [InlineData("let names: List<string> = []; Parallel.For(0, 10, i => { names.Add($\"{i}\"); });", true)]
+    [InlineData("let seen: Dictionary<int, int> = Dictionary<int, int>(); Parallel.For(0, 10, i => { seen[i] = i; });", true)]
+    [InlineData("mut a = 0; Task.WaitAll(Task.Run(() => { a = 1; }), Task.Run(() => { a = 2; }));", true)]
+    [InlineData("mut a = 0; Task.WaitAll(Task.Run(() => { a = 1; }), Task.Run(() => { Print(a); }));", true)]
+    [InlineData("mut total = 0; let gate = Lock(); Parallel.For(0, 10, i => { lock gate { total += i; } });", false)]
+    [InlineData("mut total = 0; Parallel.For(0, 10, i => { Interlocked.Add(ref total, i); });", false)]
+    [InlineData("Parallel.For(0, 10, i => { mut mine = 0; mine += i; let local: List<int> = []; local.Add(i); });", false)]
+    [InlineData("mut a = 0; mut b = 0; Task.WaitAll(Task.Run(() => { a = 1; }), Task.Run(() => { b = 2; }));", false)]
+    [InlineData("mut a = 0; Task.Run(() => { a = 1; }).Wait();", false)]
+    public void Data_races_are_warnings(string body, bool warned)
+    {
+        var result = Compilation.Compile(Races + $"fn Main() {{ {body} }}");
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        if (warned)
+        {
+            // Each task that writes is warned about, so a pair writing the same variable gets two.
+            Assert.NotEmpty(result.Diagnostics);
+            Assert.All(result.Diagnostics, d => Assert.Equal(("PIP0387", DiagnosticSeverity.Warning), (d.Code, d.Severity)));
+        }
+        else
+            Assert.Empty(result.Diagnostics);
     }
 
     private const string ListPatterns = "using System.Collections.Generic; ";

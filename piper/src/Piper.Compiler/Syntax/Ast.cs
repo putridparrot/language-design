@@ -144,8 +144,25 @@ public sealed record ClassDeclarationSyntax(
 
     public Token? Sealed { get; init; }
 
+    /// <summary>Its events, <c>event Changed: EventHandler;</c>.</summary>
+    public ImmutableArray<ClassEventSyntax> Events { get; init; } = [];
+
     /// <summary>The conditions of its `requires` clauses: invariants its constructor's arguments must meet, checked when one is made.</summary>
     public ImmutableArray<ExpressionSyntax> Requires { get; init; } = [];
+}
+
+/// <summary>
+/// <c>event Changed: EventHandler;</c> in a class: handlers are added with <c>+=</c> and removed with <c>-=</c> from
+/// anywhere, and the class raises it by calling it, <c>Changed(this, EventArgs.Empty)</c>, as a C# field-like event.
+/// Public unless <see cref="Private"/>.
+/// </summary>
+public sealed record ClassEventSyntax(TextSpan Span, Token Keyword, Token Name, TypeSyntax Type) : SyntaxNode(Span)
+{
+    public Token? Private { get; init; }
+
+    public ImmutableArray<AttributeSyntax> Attributes { get; init; } = [];
+
+    public string? Documentation { get; init; }
 }
 
 /// <summary>
@@ -242,6 +259,9 @@ public sealed record AccessorSyntax(TextSpan Span, Token Keyword, BlockExpressio
     public bool HasBody => BlockBody is not null || ExpressionBody is not null;
 }
 
+/// <summary><c>type Lookup = Dictionary&lt;string, List&lt;int&gt;&gt;;</c>: another name for a type, interchangeable with it, as C#'s <c>using Lookup = …;</c>.</summary>
+public sealed record TypeAliasDeclarationSyntax(TextSpan Span, Token Name, TypeSyntax Target) : DeclarationSyntax(Span, Name);
+
 public sealed record RecordDeclarationSyntax(
     TextSpan Span,
     Token Name,
@@ -297,6 +317,9 @@ public sealed record ParameterSyntax(TextSpan Span, Token Name, TypeSyntax Type)
 
     /// <summary>`= 443`: the value used when a call leaves the argument out.</summary>
     public ExpressionSyntax? Default { get; init; }
+
+    /// <summary>`params args: int[]`: the last parameter, taking any number of arguments as an array, as in C#.</summary>
+    public Token? Params { get; init; }
 
     /// <summary>The text of the `///` comment lines directly above it, if any.</summary>
     public string? Documentation { get; init; }
@@ -403,6 +426,13 @@ public sealed record LocalFunctionStatementSyntax(TextSpan Span, FunctionDeclara
 public sealed record WhileStatementSyntax(TextSpan Span, ExpressionSyntax Condition, BlockExpressionSyntax Body)
     : StatementSyntax(Span);
 
+/// <summary>
+/// <c>lock gate { … }</c> (or <c>lock (gate) { … }</c>): runs the block holding <see cref="Target"/>'s lock, so one
+/// thread at a time does, as C#'s <c>lock</c>. <c>lock</c> is a keyword only at the start of a statement.
+/// </summary>
+public sealed record LockStatementSyntax(TextSpan Span, Token Keyword, ExpressionSyntax Target, BlockExpressionSyntax Body)
+    : StatementSyntax(Span);
+
 /// <summary><c>for x in xs</c>, or with <see cref="Deconstruction"/> <c>for (key, value) in dictionary</c> (then <see cref="Variable"/> is missing).</summary>
 public sealed record ForStatementSyntax(TextSpan Span, Token Variable, ExpressionSyntax Range, BlockExpressionSyntax Body)
     : StatementSyntax(Span)
@@ -480,8 +510,11 @@ public sealed record PipeExpressionSyntax(TextSpan Span, ExpressionSyntax Left, 
     public bool IsOptional { get; init; }
 }
 
-/// <summary><c>1..10</c> includes its end, as in Swift; <c>1..&lt;10</c> stops before it.</summary>
-public sealed record RangeExpressionSyntax(TextSpan Span, ExpressionSyntax Start, Token Operator, ExpressionSyntax End)
+/// <summary>
+/// <c>1..10</c> includes its end, as in Swift; <c>1..&lt;10</c> stops before it. In a slice, an end can be left out:
+/// <c>xs[2..]</c>, <c>xs[..&lt;3]</c>; a <c>for</c> loop's range has both.
+/// </summary>
+public sealed record RangeExpressionSyntax(TextSpan Span, ExpressionSyntax? Start, Token Operator, ExpressionSyntax? End)
     : ExpressionSyntax(Span)
 {
     public bool IsInclusive => Operator.Kind == TokenKind.DotDot;
@@ -489,6 +522,15 @@ public sealed record RangeExpressionSyntax(TextSpan Span, ExpressionSyntax Start
 
 public sealed record AssignmentExpressionSyntax(TextSpan Span, ExpressionSyntax Target, Token Operator, ExpressionSyntax Value)
     : ExpressionSyntax(Span);
+
+/// <summary><c>typeof(Point)</c>: the .NET <c>System.Type</c> of a type, as in C#.</summary>
+public sealed record TypeOfExpressionSyntax(TextSpan Span, Token Keyword, TypeSyntax Type) : ExpressionSyntax(Span);
+
+/// <summary>
+/// <c>nameof(order.Total)</c>: the last name in a name that must resolve (a variable, function, type, member or
+/// namespace), as a constant string, as in C#. Renaming what it names renames it too.
+/// </summary>
+public sealed record NameOfExpressionSyntax(TextSpan Span, Token Keyword, ExpressionSyntax Operand) : ExpressionSyntax(Span);
 
 public sealed record CallExpressionSyntax(TextSpan Span, ExpressionSyntax Callee, ImmutableArray<ExpressionSyntax> Arguments)
     : ExpressionSyntax(Span);

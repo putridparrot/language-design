@@ -61,6 +61,8 @@ public enum TokenKind
     Dot,
     DotDot,
     DotDotLess,
+    /// <summary>`^`: an index from the end, as in `xs[^1]`.</summary>
+    Caret,
     /// <summary>`...`: a spread, as in `{ ...p, y: 5 }`.</summary>
     Ellipsis,
     Arrow,

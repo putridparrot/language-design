@@ -118,6 +118,7 @@ public sealed class Lexer
                     _ => Punctuation(TokenKind.Equals, 1),
                 };
             case '!': return Peek(1) == '=' ? Punctuation(TokenKind.BangEquals, 2) : Punctuation(TokenKind.Bang, 1);
+            case '^': return Punctuation(TokenKind.Caret, 1);
             case '<': return Peek(1) == '=' ? Punctuation(TokenKind.LessEquals, 2) : Punctuation(TokenKind.Less, 1);
             case '>': return Peek(1) == '=' ? Punctuation(TokenKind.GreaterEquals, 2) : Punctuation(TokenKind.Greater, 1);
             case '+': return Peek(1) == '=' ? Punctuation(TokenKind.PlusEquals, 2) : Punctuation(TokenKind.Plus, 1);

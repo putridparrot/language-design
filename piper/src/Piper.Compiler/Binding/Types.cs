@@ -209,6 +209,9 @@ public sealed class ClassSymbol : NamedTypeDefinition
     /// <summary>Its indexers (<c>prop this[i: int]: T</c>), which may be overloaded by their parameters' types.</summary>
     public ImmutableArray<IndexerSymbol> Indexers { get; internal set; } = [];
 
+    /// <summary>Its events, `event Changed: EventHandler;`.</summary>
+    public ImmutableArray<EventSymbol> Events { get; internal set; } = [];
+
     /// <summary>Its `static` fields, in the order they're declared (and initialized).</summary>
     public ImmutableArray<FieldSymbol> StaticFields { get; internal set; } = [];
 

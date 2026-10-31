@@ -35,7 +35,8 @@ Notation: `{ x }` is zero or more, `[ x ]` is optional, `|` separates alternativ
 compilationUnit = { using } [ "namespace" qualifiedName ";" ] { using } { attributes [ "public" | "private" ] declaration } EOF ;
 using           = "using" qualifiedName ";" ;                (* a Piper or .NET namespace *)
 qualifiedName   = IDENT { "." IDENT } ;
-declaration     = function | record | class | enum | trait | extend | test | pluginDeclaration ;
+declaration     = function | record | class | enum | trait | extend | typeAlias | test | pluginDeclaration ;
+typeAlias       = "type" IDENT "=" type ";" ;                 (* another name for the type; "type" is a keyword only here *)
 pluginDeclaration = KEYWORD … ;                               (* a plugin's syntax: see plugins.md *)
 test            = [ "async" ] "test" STRING block ;            (* run by piper test, left out of other builds *)
 attributes      = { "[" attribute { "," attribute } [ "," ] "]" } ;
@@ -48,7 +49,8 @@ class           = [ "abstract" | "sealed" ] "class" IDENT [ typeParameters ] [ "
                   [ ":" baseType { "," baseType } ] { requires } "{" { classMember } "}" ;
 baseType        = type [ "(" [ arguments ] ")" ] ;               (* a base class first, with its constructor arguments; then traits and interfaces *)
 classMember     = attributes [ "public" | "private" | "protected" ]
-                  ( field | constructor | [ "static" ] [ "virtual" | "override" | "abstract" ] ( function | property ) ) ;
+                  ( field | event | constructor | [ "static" ] [ "virtual" | "override" | "abstract" ] ( function | property ) ) ;
+event           = "event" IDENT ":" type ";" ;               (* a delegate type returning nothing; public unless "private" *)
 field           = [ "static" ] ( "let" | "mut" ) IDENT [ ":" type ] "=" expression ";" ;   (* private unless "public"; methods are public unless "private" *)
 property        = "prop" ( IDENT | "this" "[" parameters "]" )                            (* "this[…]": an indexer; public unless "private" *)
                   ( "=>" type ( "=" expression ";" | ";" | "{" { accessor } "}" )             (* computes: written as a function is *)
@@ -64,7 +66,7 @@ extend          = "extend" namedType [ ":" type { "," type } ] "{" { attributes 
 typeParameters  = "<" typeParameter { "," typeParameter } [ "," ] ">" ;
 typeParameter   = IDENT [ ":" type { "+" type } ] ;           (* bounds must be traits *)
 parameters      = parameter { "," parameter } [ "," ] ;
-parameter       = attributes IDENT ":" type [ "=" expression ] ;   (* a default: a constant, or null for an optional *)
+parameter       = attributes [ "params" ] IDENT ":" type [ "=" expression ] ;   (* a default: a constant, or null for an optional; "params": a function's last, an array *)
 type            = ( namedType | functionType | tupleType ) { "?" | "[" { "," } "]" } ;   (* T? is Option<T>; int[] an array, int[,] 2-D *)
 functionType    = "(" [ type { "," type } [ "," ] ] ")" "=>" type ;   (* (int) => bool is Func<int, bool> *)
 tupleType       = "(" tupleElement "," tupleElement { "," tupleElement } ")" ;
@@ -72,7 +74,7 @@ tupleElement    = [ IDENT ":" ] type ;                        (* (x: int, y: int
 namedType       = qualifiedName [ "<" type { "," type } [ "," ] ">" ] ;   (* e.g. System.Text.StringBuilder, List<int> *)
 
 block           = "{" { statement } [ expression ] "}" ;      (* final expression = block's value *)
-statement       = variableDecl | while | for | return | try | using | defer | yield | "break" ";" | "continue" ";"
+statement       = variableDecl | while | for | return | try | using | lock | defer | yield | "break" ";" | "continue" ";"
                 | blockLike [ ";" ] | expression ";" | ";" | pluginStatement | localFunction ;
 localFunction   = function ;                                  (* indented: an `fn` starting a line is taken to be the next top-level function *)
 blockLike       = if | match | block | (* an expression ending with a trailingClosure *) ;   (* ends at its '}', no ';' needed *)
@@ -89,6 +91,7 @@ return          = "return" [ expression ] ";" ;
 yield           = "yield" ( "return" expression | "break" ) ";" ;   (* makes the function an iterator *)
 using           = [ "await" ] "using" ( "let" | "mut" ) IDENT [ ":" type ] "=" expression ";"   (* disposed at the end of the block *)
                 | "using" "(" [ ( "let" | "mut" ) IDENT [ ":" type ] "=" ] expression ")" block ;
+lock            = "lock" expression block ;                  (* one thread at a time; "lock" is a keyword only starting a statement *)
 
 expression      = assignment ;
 assignment      = conditional [ ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" ) assignment ] ;
@@ -106,7 +109,11 @@ trailingClosure = "{" [ ( IDENT | "(" [ lambdaParam { "," lambdaParam } [ "," ] 
 arguments       = argument { "," argument } [ "," ] ;
 argument        = [ IDENT ":" ] ( expression | "out" [ "let" | "mut" ] IDENT | "ref" expression ) ;   (* name: a named argument; out and ref: only for .NET out and ref parameters *)
 primary         = INT | DOUBLE | CHAR | STRING | "true" | "false" | "null" | IDENT [ typeArguments ] | "this"
-                | "(" expression ")" | tuple | block | if | match | lambda | collection | recordSpread | "throw" expression ;
+                | "(" expression ")" | tuple | block | if | match | lambda | collection | recordSpread | "throw" expression
+                | "typeof" "(" type ")" | "nameof" "(" expression ")" ;   (* keywords only before "(", as in C# *)
+index           = postfix "[" ( expression { "," expression } | "^" expression | sliceRange ) "]" ;
+sliceRange      = [ indexEnd ] ( ".." | "..<" ) [ indexEnd ] ;   (* ".." includes its end, "..<" excludes it; "..<" needs one *)
+indexEnd        = [ "^" ] expression ;                          (* "^n": counting from the end *)
 recordSpread    = "{" "..." expression { "," IDENT [ ":" expression ] } [ "," ] "}" ;   (* { ...p, y: 5, height } *)
 typeArguments   = "<" type { "," type } ">" ;               (* only where C#'s rule allows; see below *)
 tuple           = "(" [ IDENT ":" ] expression "," [ IDENT ":" ] expression { "," [ IDENT ":" ] expression } ")" ;
@@ -165,7 +172,7 @@ generic call `a<b, c>(d)`, as in C#.
 ### Lexical structure
 
 - **Identifiers:** ASCII letters, digits and `_`, not starting with a digit.
-- **Reserved words:** `requires` is a keyword only after a signature, but can't be a name anywhere. `const operator test where type impl module import self base public internal protected sealed abstract override virtual class struct interface` aren't keywords yet but may become ones, so they can't be used as names (of variables, parameters, fields, functions or types). `class`, `abstract`, `sealed`, `virtual`, `override`, `protected` and `base` are used by [classes](#classes) and still can't be names. `prop`, `get`, `set`, `init` and `value` are keywords only where properties use them, so they can be names elsewhere. They can still follow a dot, to reach a .NET member of that name.
+- **Reserved words:** `requires` is a keyword only after a signature, but can't be a name anywhere. `const operator test where type impl module import self base public internal protected sealed abstract override virtual class struct interface` aren't keywords yet but may become ones, so they can't be used as names (of variables, parameters, fields, functions or types). `class`, `abstract`, `sealed`, `virtual`, `override`, `protected` and `base` are used by [classes](#classes), and `type` by [type aliases](#type-aliases), and still can't be names. `lock`, `event`, `params`, `typeof` and `nameof` are keywords only where they start their constructs, so they can be names elsewhere. `prop`, `get`, `set`, `init` and `value` are keywords only where properties use them, so they can be names elsewhere. They can still follow a dot, to reach a .NET member of that name.
 - **Keywords:** `fn let mut if else while for in return break continue record enum match trait extend static this null is namespace using private try catch finally defer throw out true false`; `async`, `await`, `yield` and `ref`, which are contextual as in C# (still usable as names); and the builtin type names `int long double bool string char object byte sbyte short ushort uint ulong float decimal unit`.
 - **Comments:** `// line` and `/* block */`. Block comments nest. `///` lines directly above a declaration, method, parameter, field or enum variant are its documentation: the editor shows it, and the generated C# carries it as XML documentation (`piper build --exe` and `--library` also write the `.xml` file).
 - **Integers:** `42`, `1_000_000`, `0xFF`, `0b1010`. Suffixes as in C#: `L` long (`3_000_000_000L`), `U` uint (or ulong if it doesn't fit), `UL` ulong. An unsuffixed literal must fit in int (C# would make a larger one a uint or long; Piper asks for the suffix); as in C#, `-2147483648` and `-9223372036854775808L` are allowed too.
@@ -309,7 +316,7 @@ extend Circle: Shape {
   - **Ambiguity:** two parents can't both declare a method with the same name. If two unrelated parents override the same method, a trait or type that inherits both must override it again, as in C#.
 - **Generic methods:** a trait method can take type parameters of its own, `fn MapAll<U>(f: (T) => U) => List<U>;`. An implementation has as many type parameters, with the same bounds, under any names: `fn MapAll<R>(f: (int) => R) => List<R>`.
 - **Adding methods to a trait:** `extend Named { fn Shout() => string = this.Greet().ToUpper(); }` adds default methods to a trait, including one declared in another file or namespace, and every implementer gets them. They must have bodies and can't be static or private, and the block can't make the trait implement other traits (list parents in its declaration).
-- **.NET interfaces:** `extend` can implement a .NET interface too, and one can be a bound. Each method of `extend Money: IComparable<Money> { fn CompareTo(other: Money?) => int = … }` has the interface's signature as Piper sees it: a parameter or result .NET marks as possibly null is an Option, as when calling .NET. Then `wallet.Sort()` uses it, `using let c = Connection(…)` works for an `IDisposable`, and the record passes wherever .NET expects the interface (`words.Sort(ByLength())` for an `IComparer<string>`). `fn Largest<T: IComparable<T>>(items: List<T>)` accepts Piper types that implement it and .NET types such as `int` and `string`, and calls `a.CompareTo(b)` on them. Only interfaces made of instance methods (no properties, events, static or generic methods, or ref and out parameters) can be implemented, except that a class can also implement an interface's properties with its own (see [Classes](#classes)).
+- **.NET interfaces:** `extend` can implement a .NET interface too, and one can be a bound. Each method of `extend Money: IComparable<Money> { fn CompareTo(other: Money?) => int = … }` has the interface's signature as Piper sees it: a parameter or result .NET marks as possibly null is an Option, as when calling .NET. Then `wallet.Sort()` uses it, `using let c = Connection(…)` works for an `IDisposable`, and the record passes wherever .NET expects the interface (`words.Sort(ByLength())` for an `IComparer<string>`). `fn Largest<T: IComparable<T>>(items: List<T>)` accepts Piper types that implement it and .NET types such as `int` and `string`, and calls `a.CompareTo(b)` on them. Only interfaces made of instance methods (no properties, events, static or generic methods, or ref and out parameters) can be implemented, except that a class can also implement an interface's properties and events with its own (see [Classes](#classes)).
   - **Comparison operators:** a type that implements `IComparable<T>` for itself (`extend Version: IComparable<Version>`, or a class listing it) has `<`, `<=`, `>` and `>=`, which call its `CompareTo`. They're C# operators, so C# code can use them too, and sorting, `Max` and `Order` use the same `CompareTo`.
   - **Sequences:** a record, enum or class can implement `IEnumerable<T>` with one method, an iterator: `fn GetEnumerator() => IEnumerator<int> { … yield return i; … }`. Piper supplies the non-generic `IEnumerable.GetEnumerator` that C# also requires. The type then works with `for`, LINQ (`countdown.Where(n => n > 2)`) and anything that takes a sequence (`string.Join`, `List<int>(countdown)`).
 - **Static methods:** `static fn Empty() => T;` in a trait is a C# static abstract member, and one with a body a default (`static virtual`). Implementers write `static fn Empty() => Total = …`. They are called through a type parameter bounded by the trait, as in C#: `fn Concat<T: Monoid<T>>(items: List<T>) => T { mut result = T.Empty(); … }`. They can also be called on a type that implements the trait, including a default it doesn't override (`Total.Describe()`), but not on the trait itself. Records, enums, builtin types and classes (`class Bag: Monoid<Bag> { static fn Empty() => Bag = …; }`) can implement them. A trait with static methods or properties can only be a bound, not the type of a value.
@@ -654,6 +661,34 @@ ada.Deposit(25m);
   `class Dog(name: string): Named { fn Name() => string = name; }`, or
   `class Version(major: int): IComparable<Version> { … }`. A class gets the traits' defaults like any implementer.
 - **`extend`** can add methods to a class from elsewhere, as for records.
+- **Events:** `event Changed: EventHandler;` declares one, as a C# field-like event:
+
+  ```piper
+  class Person(first: string): INotifyPropertyChanged {
+      mut name = first;
+      event PropertyChanged: PropertyChangedEventHandler;
+
+      prop Name => string {
+          get = name;
+          set {
+              name = value;
+              PropertyChanged(this, PropertyChangedEventArgs(nameof(Name)));   // raises it: each handler is called
+          }
+      }
+  }
+
+  person.PropertyChanged += (sender, e) => Print(e.PropertyName);   // anywhere: adds a handler; -= removes one
+  ```
+
+  - **Its type** is a delegate that returns nothing: a .NET one (`EventHandler`, `EventHandler<T>`,
+    `PropertyChangedEventHandler`) or a function type (`(string, string) => unit`).
+  - **Raising:** only the class raises its events, by calling them (`Changed(this, args)` or `other.Changed(…)`).
+    With no handlers, raising does nothing.
+  - **Subscribing:** anyone it's visible to adds a handler with `+=` and removes one with `-=`. An event can't be read
+    or assigned otherwise.
+  - **Visibility:** events are public unless `private`.
+  - **Interfaces:** a class implements a .NET interface's event, such as `INotifyPropertyChanged.PropertyChanged`
+    (which WPF and Avalonia data binding use), by declaring it with the same name and type.
 
 ### Null safety: `Option` and `T?`
 
@@ -828,9 +863,32 @@ fn LegacyParse(text: string) => int = int.Parse(text);
 ```
 
 - **Names:** `Obsolete` means `ObsoleteAttribute` (tried first) or `Obsolete`, found like any type name, so it needs a `using` or a qualified name (`System.Obsolete`). It must be a .NET attribute class; Piper can't declare attributes.
-- **Arguments** are the constructor's, which must be constants (literals, .NET enum members such as `AttributeTargets.Method`, constant fields, and operators on those), followed by `Name = value` for the attribute's settable properties and fields: `[Obsolete("Old", DiagnosticId = "APP001")]`. Several attributes can share brackets: `[Serializable, Obsolete]`.
+- **Arguments** are the constructor's, which must be constants (literals, `typeof(…)`, `nameof(…)`, .NET enum members such as `AttributeTargets.Method`, constant fields, and operators on those), followed by `Name = value` for the attribute's settable properties and fields: `[Obsolete("Old", DiagnosticId = "APP001")]`. Several attributes can share brackets: `[Serializable, Obsolete]`.
 - **Where they go:** on records, enums, enum variants (`[Status(404)] UnknownBook(code: string)`, on the variant's C# class), traits and classes (C# classes and interfaces), functions, methods and constructors, parameters, record and variant fields, and a class's fields, properties and indexers (see [Classes](#classes) for where a class field's attribute lands). A record field's attribute goes on the C# property when it applies to properties (`[property: …]`, so System.Text.Json and similar see it), otherwise on the backing field, otherwise the constructor parameter. An attribute that can't go where it's written (`[Serializable]` on a function) is an error, as is repeating one that doesn't allow it.
 - **`[Obsolete]`** on a Piper declaration makes each use of it a warning, `'F' is obsolete: message` (an error with `[Obsolete("…", true)]`), as in C#. Uses of obsolete .NET types, methods, constructors and properties are reported the same way (`'WebClient' is obsolete: … Use HttpClient instead.`).
+
+### `nameof` and `typeof`
+
+They're as in C#:
+
+```piper
+nameof(order)          // "order": a variable, parameter, field or function
+nameof(order.Total)    // "Total": a member, through a value
+nameof(Order.Total)    // "Total": a member, through its type, even an instance one
+nameof(Shape.Circle)   // "Circle": an enum variant
+typeof(Point)          // the System.Type of Point
+typeof(List<string>)
+
+[JsonDerivedType(typeof(Circle), "circle")]
+class Shape { }
+```
+
+- **`nameof`** gives the last part of a name as a constant string. The name must refer to something: a variable,
+  parameter, field, function, type, member, enum variant or namespace. So a misspelled name is an error, and renaming
+  what it names in the editor renames it too. Other expressions (`nameof(1 + 2)`) are errors.
+- **`typeof`** gives a type's `System.Type`. Piper's types are what they compile to: `typeof(int?)` is the runtime's
+  `Option<int>`.
+- **Keywords:** both are keywords only before a `(`, so they can still name things elsewhere.
 
 ### Named arguments and default values
 
@@ -851,6 +909,40 @@ let quiet = Options();
 - **Named arguments** come after the positional ones, each naming a parameter once; parameters with defaults can be left out. Arguments are evaluated in the order they're written, whatever order the parameters are in.
 - **They work for** Piper functions, methods and records, and .NET methods and constructors (`Math.Round(x, digits: 2)`, `DateTime(year: 2026, month: 3, day: 14)`). Not for function values (lambdas and delegates) or attributes, whose properties are set with `Name = value`.
 - **Through traits:** a trait method's defaults apply when it's called through a generic bound too.
+- **`params`:** a function's or method's last parameter can take any number of arguments as an array, as in C#:
+
+  ```piper
+  fn Log(format: string, params args: object[]) { Print(string.Format(format, args)); }
+
+  Log("{0} of {1}", 1, 2);   // args is [1, 2]
+  Log("none");               // args is empty
+  Log("{0}", values);        // an object[] is passed as the array itself
+  ```
+
+  - **Its type** is an array (`int[]`, `T[]`). It can follow parameters with defaults, but can't have one itself: left
+    out, it's empty.
+  - **Where it can be:** functions and methods. Not records, constructors, indexers or operators.
+  - **In the C#** it's `params`, so C# code calling a Piper library can use it too.
+
+### Type aliases
+
+`type Name = Type;` gives a type another name, as C#'s `using Name = Type;`:
+
+```piper
+type Lookup = Dictionary<string, List<Point>>;
+type Money = decimal;
+type Handler = (int) => string;
+
+let prices: List<Money> = [1.5m];
+let total: decimal = prices[0];   // Money is decimal: they mix freely
+```
+
+- **Just a name:** an alias is interchangeable with its type everywhere, and leaves nothing in the C#. To make a type
+  that can't be mixed up with another (an `Email` that isn't any `string`), declare a record.
+- **What it can name:** any type (generic ones constructed, tuples, function types and other aliases), in any order in
+  the program. A cycle (`type A = B; type B = A;`) is an error, as are type parameters on the alias, which C# doesn't
+  allow either.
+- **Visibility:** an alias belongs to its namespace (`Shop.Cart`) unless it's `private`, which keeps it to its file.
 
 ### Lambdas and function values
 
@@ -936,9 +1028,23 @@ keyword is still an ordinary name wherever its construct can't start. See [plugi
 
 - **Literals:** `[1, 2, 3]` is a `List<int>`. The element type comes from the expected type (`List<T>`, `IEnumerable<T>`, `IReadOnlyList<T>`, … or a .NET array) or else the elements' common type. `[]` needs an expected type.
 - **Spread:** `[0, ...xs, 4]` puts every item of a sequence (a list, array, string, LINQ result or iterator: anything that is an `IEnumerable<T>`) into the literal, in order, as C#'s `[0, ..xs, 4]`. Its items count towards the common element type, and widen as C# allows (`let ys: long[] = [...ints];`), but not to an optional or a tuple of other element types.
-- **Ranges:** `for i in 1..10` counts from 1 to 10, including 10, as in Swift; `for i in 0..<items.Count` stops before the end, for indexes. Ranges only appear in `for` loops and patterns.
+- **Ranges:** `for i in 1..10` counts from 1 to 10, including 10, as in Swift; `for i in 0..<items.Count` stops before the end, for indexes. Ranges only appear in `for` loops, slices and patterns.
 - **`for x in collection`** works on anything implementing `IEnumerable<T>`: lists, arrays, strings (as `char`s), dictionaries and LINQ results.
 - **Indexing:** `xs[i]` on arrays and on any .NET type with an indexer.
+- **From the end:** `xs[^1]` is the last element and `xs[^2]` the one before, as in C#. It works on arrays, strings and .NET types with an int indexer and a `Length` or `Count`, such as `List<T>`. `^0` is past the end, so `xs[^0]` is an error.
+- **Slices:** `xs[1..3]` is the elements from index 1 to 3. As in a `for` loop, a range includes its end unless it's `..<`, so `xs[1..<3]` is C#'s `xs[1..3]`.
+  - **Open ends:** either end can be left out (`xs[2..]`, `xs[..<2]`, `xs[..]`), and either can count from the end. `xs[1..^1]` runs to the last element, and `xs[1..<^1]` stops before it.
+  - **What can be sliced:** arrays and strings give another array or string. A .NET type with a `Slice(int, int)` method returning its own type and a `Length` or `Count`, such as `List<T>` or `Span<T>`, gives what its `Slice` does. A slice is a copy, except of a span.
+  - **The only argument:** a slice or `^` index is the only thing in the brackets.
+
+  ```piper
+  let xs = [10, 20, 30, 40, 50];
+  xs[^1]       // 50
+  xs[1..3]     // [20, 30, 40]
+  xs[1..<3]    // [20, 30]
+  xs[^2..]     // [40, 50]
+  "Piper language"[..4]   // "Piper"
+  ```
 - **Arrays:** `int[]` is an array of int and `int[,]` a two-dimensional one, as in C#. `let xs: int[] = [1, 2, 3];` makes one from a literal, and `int[5]` or `double[2, 3]` creates one of default values, like C#'s `new int[5]`. That needs an element type whose default isn't null (numbers, bool, char, optionals, .NET structs and tuples of those): `string[3]` is an error, as its elements would be null, but `string?[3]` (three `None`s) is fine.
 
 ### Tuples and deconstruction
@@ -963,6 +1069,40 @@ match cell { (0, 0) => "origin", (0, _) | (_, 0) => "axis", _ => "elsewhere" }
 - **Records** deconstruct into their fields, in order: `let (x, y) = point;`.
 - **Patterns:** `(p1, p2)` matches a tuple, and exhaustiveness checks it like a record: `match (a, b) { (true, true) => …, (true, false) | (false, true) => …, (false, false) => … }` is exhaustive.
 - A tuple has at least two elements; .NET methods taking or returning tuples work up to seven.
+
+### Threads and locks
+
+Most of what Piper code shares is safe on several threads, as `let` bindings and records can't change. For what can
+change:
+
+- **`lock gate { … }`** (or `lock (gate) { … }`) runs the block holding `gate`'s lock, so one thread at a time does,
+  as C#'s `lock`. It's a keyword only at the start of a statement, so `lock` can still be a name.
+  - **What to lock:** a .NET 9 `System.Threading.Lock` (`let gate = Lock();`) is best; any object (a reference type)
+    will do. A value (an `int`, a tuple, an optional) is an error, as each lock would hold a copy.
+  - **No awaiting:** the block can't `await`, as the code after an await may run on another thread, which wouldn't
+    hold the lock. For async code, use a `SemaphoreSlim` and `await gate.WaitAsync()`.
+- **Interlocked:** `Interlocked.Increment(ref count)` and `Interlocked.Add(ref total, n)` change a number atomically.
+- **Actors**, from the actors plugin, keep state that one message at a time changes; see [plugins](plugins.md).
+
+**Data races** are warnings (PIP0387). In code that runs on several threads at once, changing what other threads use,
+outside a `lock`, is reported:
+
+```piper
+mut total = 0;
+parallel for n in numbers {
+    total += n;             // warning: 'total' is changed on several threads at once here, so updates can be lost
+}
+Parallel.ForEach(items, item => {
+    names.Add(item.Name);   // warning: 'names' is a List<string>, which isn't safe to change on several threads at once
+});
+```
+
+- **What runs at once:** the body of `Parallel.For`, `Parallel.ForEach` and `Parallel.Invoke` (and the parallel
+  plugin's `parallel for`) runs alongside itself. The `Task.Run` lambdas passed together to `Task.WhenAll` or
+  `Task.WaitAll` (and the statements of `concurrency { }`) run alongside each other.
+- **What's reported:** assigning a variable or field from outside the lambda, and changing a `List`, `Dictionary`,
+  `HashSet` or other collection from outside it. For a group of tasks, only what another task in the group uses too.
+- **What isn't:** anything inside a `lock`, `Interlocked` calls, what the lambda declares itself, and reading.
 
 ### Async and await
 

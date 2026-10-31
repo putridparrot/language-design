@@ -33,6 +33,9 @@ fn Main() {
         |> Enumerable.ToList();
     Print($"top three: {string.Join(", ", top)}");
 
+    // Counting from the end, and slices: a range includes its end unless it's `..<`, as in a for loop.
+    Print($"last {numbers[^1]}, first three {string.Join(", ", numbers[..2])}, all but the ends {string.Join(", ", numbers[1..<^1])}");
+
     // Dictionaries, and `out` parameters as in C#.
     let stock = Dictionary<string, int>();
     stock["apples"] = 3;

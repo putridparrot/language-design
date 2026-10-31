@@ -106,6 +106,14 @@ public sealed class BoundVariableDeclaration(VariableSymbol variable, BoundExpre
 }
 
 /// <summary><c>using (let r = …) { … }</c> or <c>using (expression) { … }</c>: disposes the resource after the body.</summary>
+/// <summary><c>lock gate { … }</c>: C#'s <c>lock</c>, which on a .NET 9 <c>System.Threading.Lock</c> uses its <c>EnterScope</c>.</summary>
+public sealed class BoundLockStatement(BoundExpression target, BoundStatement body) : BoundStatement
+{
+    public BoundExpression Target { get; } = target;
+
+    public BoundStatement Body { get; } = body;
+}
+
 public sealed class BoundUsingStatement(VariableSymbol? variable, BoundExpression resource, BoundStatement body) : BoundStatement
 {
     public VariableSymbol? Variable { get; } = variable;
@@ -739,6 +747,66 @@ public sealed class BoundOutArgument(VariableSymbol? variable, bool declares, Ty
 }
 
 /// <summary><c>target[arguments]</c>: an array element or a .NET indexer (<see cref="Indexer"/> is null for arrays).</summary>
+/// <summary><c>account.Changed += handler</c> or <c>-= handler</c>, on a Piper class's event: C#'s <c>+=</c> and <c>-=</c> on it.</summary>
+public sealed class BoundEventSubscription(BoundExpression receiver, EventSymbol @event, bool add, BoundExpression handler) : BoundExpression
+{
+    public BoundExpression Receiver { get; } = receiver;
+
+    public EventSymbol Event { get; } = @event;
+
+    public bool Add { get; } = add;
+
+    public BoundExpression Handler { get; } = handler;
+
+    public override TypeSymbol Type => TypeSymbol.Unit;
+}
+
+/// <summary><c>Changed(this, EventArgs.Empty)</c> in its class: calls each handler, if there are any, as C#'s <c>Changed?.Invoke(…)</c>.</summary>
+public sealed class BoundEventRaise(BoundExpression receiver, EventSymbol @event, ImmutableArray<BoundExpression> arguments) : BoundExpression
+{
+    public BoundExpression Receiver { get; } = receiver;
+
+    public EventSymbol Event { get; } = @event;
+
+    public ImmutableArray<BoundExpression> Arguments { get; } = arguments;
+
+    public override TypeSymbol Type => TypeSymbol.Unit;
+}
+
+/// <summary><c>typeof(Point)</c>: the System.Type of <see cref="Operand"/>, written as C#'s <c>typeof</c>.</summary>
+public sealed class BoundTypeOfExpression(TypeSymbol operand) : BoundExpression
+{
+    public TypeSymbol Operand { get; } = operand;
+
+    public override TypeSymbol Type { get; } = ClrTypeSymbol.For(typeof(Type));
+}
+
+/// <summary>
+/// <c>^n</c> in an index, <c>xs[^1]</c>: the nth element from the end, written as C#'s <c>^n</c> (a System.Index),
+/// which C# turns into <c>xs[xs.Length - n]</c> or <c>xs[xs.Count - n]</c>.
+/// </summary>
+public sealed class BoundIndexFromEnd(BoundExpression offset) : BoundExpression
+{
+    public static readonly ClrTypeSymbol IndexType = ClrTypeSymbol.For(typeof(Index));
+
+    public BoundExpression Offset { get; } = offset;
+
+    public override TypeSymbol Type => IndexType;
+}
+
+/// <summary>
+/// A slice's range in an index, <c>xs[1..3]</c>: C#'s range (a System.Range), whose end is excluded. A Piper range that
+/// includes its end has had it moved one on when bound. Either end may be missing, and either may count from the end.
+/// </summary>
+public sealed class BoundSliceRange(BoundExpression? start, BoundExpression? end) : BoundExpression
+{
+    public BoundExpression? Start { get; } = start;
+
+    public BoundExpression? End { get; } = end;
+
+    public override TypeSymbol Type { get; } = ClrTypeSymbol.For(typeof(Range));
+}
+
 public sealed class BoundIndexExpression(BoundExpression target, PropertyInfo? indexer, ImmutableArray<BoundExpression> arguments, TypeSymbol type)
     : BoundExpression
 {

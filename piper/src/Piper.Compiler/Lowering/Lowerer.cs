@@ -157,6 +157,10 @@ public sealed class Lowerer
                     new BoundFunction(local.Function.Symbol, LowerFunction(local.Function), local.Function.IsExpressionBodied)));
                 break;
 
+            case BoundLockStatement @lock:
+                output.Add(new BoundLockStatement(LowerForValue(@lock.Target, output), LowerToStatement(@lock.Body)));
+                break;
+
             case BoundUsingStatement usingStatement:
             {
                 var resource = LowerForValue(usingStatement.Resource, output);
@@ -347,7 +351,7 @@ public sealed class Lowerer
                 LowerForEffect(conversion.Expression, output);
                 break;
 
-            case BoundLiteralExpression or BoundVariableExpression:
+            case BoundLiteralExpression or BoundVariableExpression or BoundTypeOfExpression:
                 break;
 
             default:
@@ -441,7 +445,7 @@ public sealed class Lowerer
             case BoundVariableExpression variable when _substitutions.TryGetValue(variable.Variable, out var substitute):
                 return substitute;
 
-            case BoundLiteralExpression or BoundVariableExpression or BoundErrorExpression or BoundOptionalMemberExpression:
+            case BoundLiteralExpression or BoundVariableExpression or BoundErrorExpression or BoundOptionalMemberExpression or BoundTypeOfExpression:
                 return expression;
 
             case BoundConversionExpression conversion:
@@ -544,6 +548,28 @@ public sealed class Lowerer
             {
                 var operands = LowerOperands([index.Target, .. index.Arguments], prelude);
                 return new BoundIndexExpression(operands[0], index.Indexer, operands[1..], index.Type) { PiperIndexer = index.PiperIndexer };
+            }
+
+            case BoundIndexFromEnd fromEnd:
+                return new BoundIndexFromEnd(LowerForValue(fromEnd.Offset, prelude));
+
+            case BoundEventSubscription subscription:
+            {
+                var operands = LowerOperands([subscription.Receiver, subscription.Handler], prelude);
+                return new BoundEventSubscription(operands[0], subscription.Event, subscription.Add, operands[1]);
+            }
+
+            case BoundEventRaise raise:
+            {
+                var operands = LowerOperands([raise.Receiver, .. raise.Arguments], prelude);
+                return new BoundEventRaise(operands[0], raise.Event, operands[1..]);
+            }
+
+            case BoundSliceRange slice:
+            {
+                // The start is evaluated before the end, as written.
+                var operands = LowerOperands([.. new[] { slice.Start, slice.End }.OfType<BoundExpression>()], prelude);
+                return new BoundSliceRange(slice.Start is null ? null : operands[0], slice.End is null ? null : operands[^1]);
             }
 
             case BoundCollectionExpression collection:

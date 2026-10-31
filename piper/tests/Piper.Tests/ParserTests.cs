@@ -33,7 +33,7 @@ public class ParserTests
         CastExpressionSyntax e => $"(cast {Show(e.Operand)})",
         BinaryExpressionSyntax e => $"({Show(e.Left)} {e.Operator.Text} {Show(e.Right)})",
         PipeExpressionSyntax e => $"({Show(e.Left)} |> {Show(e.Right)})",
-        RangeExpressionSyntax e => $"({Show(e.Start)} {e.Operator.Text} {Show(e.End)})",
+        RangeExpressionSyntax e => $"({(e.Start is null ? "" : Show(e.Start) + " ")}{e.Operator.Text}{(e.End is null ? "" : " " + Show(e.End))})",
         AssignmentExpressionSyntax e => $"({Show(e.Target)} {e.Operator.Text} {Show(e.Value)})",
         CallExpressionSyntax e => $"{Show(e.Callee)}({string.Join(", ", e.Arguments.Select(Show))})",
         MemberAccessExpressionSyntax e => $"{Show(e.Target)}.{e.Member.Text}",

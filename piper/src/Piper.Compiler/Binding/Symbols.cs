@@ -33,6 +33,17 @@ public abstract class Symbol(string name)
     public override string ToString() => Name;
 }
 
+/// <summary>
+/// A class's event, `event Changed: EventHandler;`, of a delegate type (a .NET one, or a function type returning unit).
+/// Handlers are added and removed anywhere it's visible; only its class raises it.
+/// </summary>
+public sealed class EventSymbol(string name, TypeSymbol type, ClassSymbol owner) : Symbol(name)
+{
+    public TypeSymbol Type { get; } = type;
+
+    public ClassSymbol Owner { get; } = owner;
+}
+
 public sealed class FieldSymbol(string name, TypeSymbol type) : Symbol(name)
 {
     public TypeSymbol Type { get; } = type;
@@ -153,6 +164,9 @@ public sealed class VariableSymbol(string name, TypeSymbol type, bool isMutable,
 {
     /// <summary>For a parameter: the value a call that leaves it out passes.</summary>
     public ParameterDefault? Default { get; internal set; }
+
+    /// <summary>`params args: int[]`: a call can give its elements one by one, as in C#.</summary>
+    public bool IsParams { get; init; }
 
     public TypeSymbol Type { get; } = type;
 

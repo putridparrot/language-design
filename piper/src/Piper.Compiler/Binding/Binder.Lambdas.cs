@@ -480,11 +480,33 @@ public sealed partial class Binder
         if (target.Type == TypeSymbol.Error)
             return BindArgumentsForDiagnostics(syntax.Arguments);
 
-        if (target.Type is ClrTypeSymbol { IsArray: true } array && array.Rank == syntax.Arguments.Length)
+        // `xs[1..3]`, `xs[^1]`: a slice, or an element counted from the end, each the only argument.
+        if (syntax.Arguments.Length > 1 && syntax.Arguments.FirstOrDefault(a => a is RangeExpressionSyntax || IsFromEnd(a)) is { } alone)
+        {
+            _diagnostics.ReportSliceNotAlone(alone.Span);
+            // Their operands are still checked, without also reporting each `^` and range as out of place.
+            return BindArgumentsForDiagnostics([.. syntax.Arguments.SelectMany(a => a switch
+            {
+                UnaryExpressionSyntax { Operator.Kind: TokenKind.Caret } caret => [caret.Operand],
+                RangeExpressionSyntax range => new[] { range.Start, range.End }.OfType<ExpressionSyntax>(),
+                _ => [a],
+            })]);
+        }
+        if (syntax.Arguments is [RangeExpressionSyntax range])
+            return BindSlice(target, range, syntax);
+        var fromEnd = syntax.Arguments is [UnaryExpressionSyntax { Operator.Kind: TokenKind.Caret } caret] ? caret : null;
+        var arguments = fromEnd is null ? syntax.Arguments : [fromEnd.Operand];
+        if (fromEnd is not null && !CountsFromEnd(target.Type))
+        {
+            _diagnostics.ReportCannotCountFromEnd(fromEnd.Operator.Span, target.Type);
+            return BindArgumentsForDiagnostics(arguments);
+        }
+
+        if (target.Type is ClrTypeSymbol { IsArray: true } array && array.Rank == arguments.Length)
         {
             var element = array.TypeArguments[0];
-            var indices = syntax.Arguments.Select(a => Convert(RequireValue(BindExpression(a, TypeSymbol.Int), a.Span), TypeSymbol.Int, a.Span));
-            return new BoundIndexExpression(target, null, [.. indices], element);
+            var indices = arguments.Select(a => Convert(RequireValue(BindExpression(a, TypeSymbol.Int), a.Span), TypeSymbol.Int, a.Span));
+            return new BoundIndexExpression(target, null, FromEnd([.. indices], fromEnd), element);
         }
 
         if (target.Type.OriginalDefinition is ClassSymbol && BindPiperIndex(target, syntax) is { } piperIndex)
@@ -498,12 +520,15 @@ public sealed partial class Binder
                 .ToList();
             if (indexers.Count > 0)
             {
-                var resolved = ResolveClrOverload(indexers.Select(p => (System.Reflection.MethodBase)p.GetMethod!), target.Type, $"{target.Type}[]", syntax.Arguments, [], syntax.Span, map);
+                // Counting from the end uses the int indexer, as C# does.
+                if (fromEnd is not null)
+                    indexers = [.. indexers.Where(p => p.GetIndexParameters() is [{ ParameterType: var parameter }] && parameter == typeof(int))];
+                var resolved = ResolveClrOverload(indexers.Select(p => (System.Reflection.MethodBase)p.GetMethod!), target.Type, $"{target.Type}[]", arguments, [], syntax.Span, map);
                 if (resolved is not { } chosen)
                     return new BoundErrorExpression();
                 var indexer = indexers.First(p => p.GetMethod == chosen.Candidate.Member);
                 var value = (chosen.Candidate.ReturnType, chosen.Candidate.ReturnBoundary);
-                return FromClrBoundary(new BoundIndexExpression(target, indexer, chosen.Arguments, BoundaryInnerType(value)), value);
+                return FromClrBoundary(new BoundIndexExpression(target, indexer, FromEnd(chosen.Arguments, fromEnd), BoundaryInnerType(value)), value);
             }
         }
 

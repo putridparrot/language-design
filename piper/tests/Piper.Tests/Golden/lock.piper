@@ -1,0 +1,37 @@
+// lock, as C#'s: one thread at a time runs the block. A variable can still be called lock.
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+
+class Account {
+    let gate = Lock();
+    mut balance = 0;
+
+    fn Deposit(amount: int) {
+        lock gate {
+            balance += amount;
+        }
+    }
+
+    fn Balance() => int {
+        lock (gate) {
+            return balance;
+        }
+    }
+}
+
+fn Main() {
+    let account = Account();
+    Parallel.For(0, 1000, i => account.Deposit(1));
+    Print(account.Balance());
+
+    let names: System.Collections.Generic.List<string> = [];
+    let lock = 3;
+    Print(lock + 1);
+    Parallel.ForEach(Enumerable.Range(0, 100), i => {
+        lock names {
+            names.Add($"{i}");
+        }
+    });
+    Print(names.Count);
+}

@@ -1,0 +1,24 @@
+// Type aliases: another name for a type, interchangeable with it, as C#'s 'using X = ...;'.
+using System.Collections.Generic;
+using System.Linq;
+
+type Lookup = Dictionary<string, Points>;
+type Points = List<Point>;
+type Money = decimal;
+type Handler = (int) => string;
+type Pair = (name: string, count: int);
+
+record Point(x: int, y: int);
+
+fn Total(prices: List<Money>) => Money = prices.Sum();
+
+fn Main() {
+    let lookup = Lookup();
+    lookup["a"] = [Point(1, 2)];
+    let points: Points = lookup["a"];
+    let m: Money = 2.5m;
+    let d: decimal = m;
+    let h: Handler = n => $"#{n}";
+    let p: Pair = ("x", 3);
+    Print($"{points.Count} {d} {Total([1m, m])} {h(4)} {p.name}");
+}

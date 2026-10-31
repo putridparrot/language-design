@@ -1,0 +1,52 @@
+// A class's events, implementing INotifyPropertyChanged, raised by the class and handled with += and -=.
+using System;
+using System.ComponentModel;
+
+// A view model whose property changes are announced, as WPF and Avalonia data binding expect.
+class Person(first: string): INotifyPropertyChanged {
+    mut name = first;
+
+    event PropertyChanged: PropertyChangedEventHandler;
+    event Renamed: (string, string) => unit;
+
+    prop Name => string {
+        get = name;
+        set {
+            let old = name;
+            name = value;
+            PropertyChanged(this, PropertyChangedEventArgs(nameof(Name)));
+            Renamed(old, value);
+        }
+    }
+}
+
+class Counter {
+    mut count = 0;
+    event Ticked: EventHandler<int>;
+
+    fn Tick() {
+        count += 1;
+        this.Ticked(this, count);
+    }
+}
+
+fn Main() {
+    let person = Person("Ada");
+    person.Name = "nobody listening";
+    person.PropertyChanged += (sender, e) => Print($"changed: {e.PropertyName}");
+    person.Renamed += (old, now) => Print($"renamed {old} -> {now}");
+    person.Name = "Grace";
+
+    let notifier: INotifyPropertyChanged = person;
+    notifier.PropertyChanged += (sender, e) => Print("through the interface too");
+    person.Name = "Edsger";
+
+    let counter = Counter();
+    let handler: EventHandler<int> = (sender, n) => Print($"tick {n}");
+    counter.Ticked += handler;
+    counter.Tick();
+    counter.Tick();
+    counter.Ticked -= handler;
+    counter.Tick();
+    Print("done");
+}
