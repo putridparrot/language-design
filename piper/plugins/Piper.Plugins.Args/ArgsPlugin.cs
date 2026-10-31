@@ -34,7 +34,15 @@ public sealed class ArgsPlugin : IPiperPlugin
 
     public string Name => "args";
 
-    public IReadOnlyList<PluginKeyword> Keywords { get; } = [new DeclarationKeyword("args", ArgsDeclaration)];
+    public IReadOnlyList<PluginKeyword> Keywords { get; } =
+    [
+        new DeclarationKeyword("args", ArgsDeclaration)
+        {
+            Description = "Declares the program's command-line options, as a record with a field per option. " +
+                          "`Options.FromArgs(args)` reads them from `Main`'s `args` (printing the usage on `--help`), and `Options.Parse(args)` gives a Result instead.",
+            Snippet = "args ${1:Options} \"${2:What the program does.}\" {\n\t${3:port}: ${4:int} = ${5:8080} \"${6:The port to serve on}\";\n\t$0\n}",
+        },
+    ];
 
     private sealed record Field(Token Name, TypeSyntax Type, string Kind, bool IsOptional, ExpressionSyntax? Default, ExpressionSyntax? Description);
 

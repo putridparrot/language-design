@@ -68,7 +68,7 @@ public sealed partial class Parser
         }
         catch (Exception exception)
         {
-            _diagnostics.ReportPluginFailed(parser.Span, plugin.Name, keyword.Text, exception.Message);
+            _diagnostics.ReportPluginFailed(parser.Span, plugin.Name, keyword.Text, PluginLoader.Explain(exception));
             SkipConstruct(start);
             return [];
         }

@@ -7,8 +7,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- What `piper new` makes (see ProjectTemplates), named by their paths: Templates/web/main.piper. -->
-    <EmbeddedResource Include="Templates\**" LogicalName="Templates/$([System.String]::Copy('%(RecursiveDir)').Replace('\', '/'))%(Filename)%(Extension)" />
+    <!--
+      What `piper new` and `piper plugin new` make (see ProjectTemplates), named by their paths: Templates/web/main.piper.
+      Not culture-specific, though `Plugin.cs.template` looks like a Czech (cs) resource to MSBuild.
+    -->
+    <EmbeddedResource Include="Templates\**" WithCulture="false" LogicalName="Templates/$([System.String]::Copy('%(RecursiveDir)').Replace('\', '/'))%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

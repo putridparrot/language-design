@@ -77,6 +77,11 @@ public sealed class PiperLanguageServer
             case "initialized":
                 await WatchAddedPluginsAsync();
                 return null;
+            case "piper/trust":
+                // The editor's user has trusted (or stopped trusting) the workspace, so load what piper.json lists, or not.
+                _workspace.Trusted = parameters?["trusted"]?.GetValue<bool>() != false;
+                await ReanalyzeOpenFilesAsync();
+                return null;
             case "$/cancelRequest":
             case "$/setTrace":
             case "workspace/didChangeConfiguration":
@@ -190,6 +195,8 @@ public sealed class PiperLanguageServer
         _canWatchOutsideWorkspace = watching?["dynamicRegistration"]?.GetValue<bool>() == true &&
                                     watching["relativePatternSupport"]?.GetValue<bool>() == true;
         _canRefreshTokens = workspace?["semanticTokens"]?["refreshSupport"]?.GetValue<bool>() == true;
+        // An editor with workspace trust says whether this workspace is trusted; others don't, and are trusted.
+        _workspace.Trusted = parameters?["initializationOptions"]?["trusted"]?.GetValue<bool>() != false;
     }
 
     /// <summary>
@@ -234,7 +241,11 @@ public sealed class PiperLanguageServer
     private async Task ReanalyzeOpenFilesAsync()
     {
         foreach (var path in _workspace.OpenFiles)
-            await PublishAsync(path);
+        {
+            // A piper.json may be open as a document too, but it isn't a program file.
+            if (path.EndsWith(".piper", StringComparison.OrdinalIgnoreCase))
+                await PublishAsync(path);
+        }
         if (_canRefreshTokens)
             await SendRequestAsync("workspace/semanticTokens/refresh", null);
     }
@@ -291,7 +302,7 @@ public sealed class PiperLanguageServer
         var path = Path.Combine(root, PiperProject.FileName);
         if (!File.Exists(path))
             return;
-        var errors = Workspace.ProjectOf(root).Errors;
+        var errors = _workspace.ProjectOf(root).Errors;
         if (errors.Length > 0 || _published.Contains(path))
             await SendDiagnosticsAsync(path, errors);
     }
@@ -355,6 +366,20 @@ public sealed class PiperLanguageServer
         string text;
         string? documentation = null;
         TextSpan span;
+        if (analysis.Semantic.PluginKeywords.FirstOrDefault(k => k.File == source && k.Span.Start <= position && position < k.Span.End) is { } word)
+        {
+            // A plugin's keyword, or a word special to its construct: what it means, from the plugin.
+            var what = word.Text == word.Keyword.Text ? "keyword" : $"in '{word.Keyword.Text}'";
+            return new JsonObject
+            {
+                ["contents"] = new JsonObject
+                {
+                    ["kind"] = "markdown",
+                    ["value"] = $"**{word.Text}** ({what}, from the `{word.Plugin}` plugin)" + (word.Description is { } description ? $"\n\n{description}" : ""),
+                },
+                ["range"] = Range(source, word.Span),
+            };
+        }
         if (analysis.Semantic.OccurrenceAt(source, position) is { } occurrence)
         {
             text = SymbolDisplay.Describe(occurrence.Symbol);

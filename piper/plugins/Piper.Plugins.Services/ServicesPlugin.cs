@@ -33,7 +33,21 @@ public sealed class ServicesPlugin : IPiperPlugin
     /// </summary>
     public IReadOnlyDictionary<string, string> Packages { get; } = new Dictionary<string, string> { [DependencyInjection] = "10.0.0" };
 
-    public IReadOnlyList<PluginKeyword> Keywords { get; } = [new DeclarationKeyword("services", Services)];
+    public IReadOnlyList<PluginKeyword> Keywords { get; } =
+    [
+        new DeclarationKeyword("services", Services)
+        {
+            Description = "Declares services for dependency injection, as `fn Name(services: IServiceCollection) => IServiceCollection`. " +
+                          "A console program builds a provider with `Name(ServiceCollection()).BuildServiceProvider()`; a web one passes `builder.Services`.",
+            Snippet = "services ${1:AppServices} {\n\tsingleton ${2:Clock} => ${3:SystemClock};\n\t$0\n}",
+            Words = new Dictionary<string, string>
+            {
+                ["singleton"] = "One instance, made when it's first needed and shared by everything: `AddSingleton`.",
+                ["scoped"] = "One instance per scope, such as a web request: `AddScoped`.",
+                ["transient"] = "A new instance each time it's asked for: `AddTransient`.",
+            },
+        },
+    ];
 
     /// <summary>
     /// services     = "services" IDENT "{" { registration } "}" ;

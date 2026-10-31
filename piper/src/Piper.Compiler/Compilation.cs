@@ -39,7 +39,11 @@ public sealed record AnalysisResult(
     ImmutableArray<Diagnostic> Diagnostics,
     ImmutableArray<CompilationUnitSyntax> Units,
     BoundProgram Program,
-    SemanticModel Semantic);
+    SemanticModel Semantic)
+{
+    /// <summary>The plugins the program was analyzed with, whose keywords the editor offers.</summary>
+    public ImmutableArray<IPiperPlugin> Plugins { get; init; } = [];
+}
 
 /// <param name="LineDirectives">
 /// Write `#line` directives into the C#, so C# compiler errors, stack traces and debuggers point at the `.piper`
@@ -102,9 +106,9 @@ public static class Compilation
         var semantic = new SemanticModel();
         var program = Binder.BindProgram(units, diagnostics, semantic, ClrTypeIndex.For(references?.Assemblies ?? []));
         registry.Analyze(program, diagnostics);
-        foreach (var (file, keyword) in registry.KeywordsUsed)
-            semantic.AddPluginKeyword(file, keyword.Span);
-        return new AnalysisResult(files, [.. diagnostics], units, program, semantic);
+        foreach (var use in registry.KeywordsUsed)
+            semantic.AddPluginKeyword(use);
+        return new AnalysisResult(files, [.. diagnostics], units, program, semantic) { Plugins = plugins.IsDefault ? [] : plugins };
     }
 
     public static CompilationResult Compile(SourceText source, CompilationOptions? options = null) => Compile([source], options);

@@ -25,6 +25,16 @@
   "activationEvents": [
     "onDebugResolve:piper"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In a workspace you haven't trusted, the language server doesn't load what a piper.json lists that could run code from it: plugins given by path, packages and assemblies. Plugins that come with piper, or that you added with `piper plugin add`, still work. A workspace's own piper.server settings are ignored.",
+      "restrictedConfigurations": [
+        "piper.server.path",
+        "piper.server.args"
+      ]
+    }
+  },
   "contributes": {
     "languages": [
       {

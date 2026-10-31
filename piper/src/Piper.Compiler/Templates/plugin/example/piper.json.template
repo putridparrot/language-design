@@ -1,0 +1,4 @@
+{
+  // Names the plugin as one added to piper, which building it does.
+  "plugins": ["__NAME__"]
+}

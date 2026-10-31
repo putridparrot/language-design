@@ -18,6 +18,17 @@ internal sealed record ActorDeclaration(Token Name, ImmutableArray<ParameterSynt
 /// </summary>
 internal static class ActorSyntax
 {
+    /// <summary>The editor's completion for <c>actor</c>: an actor with state, a tell and an ask.</summary>
+    public const string Snippet =
+        "actor ${1:Counter}(${2:start}: ${3:int}) {\n\tmut ${4:count} = ${2:start};\n\n\ton ${5:Increment}(by: int) {\n\t\t${4:count} += by;\n\t}\n\n\ton ${6:Get}() => ${3:int} { ${4:count} }\n}";
+
+    /// <summary>What <c>on</c> means, for the editor's hover.</summary>
+    public static readonly IReadOnlyDictionary<string, string> Words = new Dictionary<string, string>
+    {
+        ["on"] = "A handler for a message. `on Name(…) { … }` is a *tell*: the sender carries on at once. " +
+                 "`on Name(…) => T { … }` is an *ask*: the sender awaits its result. The actor handles one message at a time.",
+    };
+
     /// <summary>.NET types whose values can't change, which messages may carry.</summary>
     private static readonly HashSet<Type> ImmutableClrTypes =
     [

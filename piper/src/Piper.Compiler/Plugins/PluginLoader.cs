@@ -74,13 +74,30 @@ public static class PluginLoader
                     diagnostics.ReportPluginLoadFailed(relative, $"it has no public type implementing {nameof(IPiperPlugin)} with a parameterless constructor.");
                 plugins.AddRange(cached.Plugins);
             }
-            catch (Exception exception) when (exception is IOException or BadImageFormatException or ReflectionTypeLoadException or TargetInvocationException or MissingMethodException or TypeLoadException)
+            catch (Exception exception) when (exception is IOException or BadImageFormatException or ReflectionTypeLoadException or TargetInvocationException or MissingMethodException or TypeLoadException or MissingFieldException)
             {
-                diagnostics.ReportPluginLoadFailed(relative, (exception.InnerException ?? exception).Message);
+                diagnostics.ReportPluginLoadFailed(relative, Explain(exception.InnerException ?? exception));
+            }
+            catch (PluginVersionException exception)
+            {
+                diagnostics.ReportPluginLoadFailed(relative, exception.Message);
             }
         }
         return (plugins.ToImmutable(), [.. diagnostics]);
     }
+
+    /// <summary>
+    /// A plugin failure's message. A plugin built against another version of Piper.Compiler fails when it uses
+    /// something this version has changed: then the .NET exception (a missing method or type) is the symptom, and the
+    /// message says so, and that rebuilding the plugin is the cure.
+    /// </summary>
+    public static string Explain(Exception exception) => exception is MissingMethodException or MissingFieldException or TypeLoadException
+        ? $"{exception.Message} It was probably built against another version of piper's compiler: rebuild it against this one ({CompilerVersion})."
+        : exception.Message;
+
+    private static Version CompilerVersion => typeof(IPiperPlugin).Assembly.GetName().Version!;
+
+    private sealed class PluginVersionException(string message) : Exception(message);
 
     /// <summary>`web` rather than `../plugins/Web.dll`: a name, without a folder or extension.</summary>
     internal static bool IsBundledName(string entry) =>
@@ -111,6 +128,10 @@ public static class PluginLoader
         var context = new PluginLoadContext(path);
         using var stream = new MemoryStream(File.ReadAllBytes(path));
         var assembly = context.LoadFromStream(stream);
+        // A plugin built against a newer compiler may use what this one doesn't have; better to say so than fail later.
+        if (assembly.GetReferencedAssemblies().FirstOrDefault(name => name.Name == typeof(IPiperPlugin).Assembly.GetName().Name) is { Version: { } built } &&
+            built > CompilerVersion)
+            throw new PluginVersionException($"it was built for a newer piper (its compiler is {built}, this one's is {CompilerVersion}); update piper, or rebuild the plugin against this one.");
         ImmutableArray<IPiperPlugin> plugins = [.. assembly.GetExportedTypes()
             .Where(type => typeof(IPiperPlugin).IsAssignableFrom(type) && type is { IsAbstract: false, IsInterface: false } &&
                            type.GetConstructor(Type.EmptyTypes) is not null)

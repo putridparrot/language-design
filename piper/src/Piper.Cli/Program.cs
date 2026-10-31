@@ -24,6 +24,8 @@ const string Usage = """
       piper plugin add <folder|dll> [--name <name>]
                                            Add a plugin, so a piper.json can name it as it does those that come with
                                            piper (its folder is copied to ~/.piper/plugins, or $PIPER_PLUGINS)
+      piper plugin new <folder> [--name <name>]
+                                           Make a plugin project, which each build adds to piper, with an example program
       piper plugin remove <name>           Remove a plugin added with 'piper plugin add'
       piper plugin list                    List the plugins that come with piper and those added
       piper lsp                            Run the language server (LSP over stdin and stdout), for editors
@@ -268,6 +270,8 @@ static int Plugin(string[] arguments)
             Console.WriteLine($"  \"plugins\": [\"{added}\"]");
             return 0;
         }
+        case ["new", var folder, .. var options]:
+            return NewPlugin(folder, options);
         case ["remove", var name]:
             if (AddedPlugins.Remove(name))
             {
@@ -285,6 +289,66 @@ static int Plugin(string[] arguments)
             Console.Error.WriteLine(Usage);
             return 2;
     }
+}
+
+// `piper plugin new plugins/Piper.Plugins.Greet [--name greet]`: a plugin project, which its builds add to piper, and an
+// example program using it.
+static int NewPlugin(string folder, string[] options)
+{
+    string? name = null;
+    if (options is ["--name" or "-n", var given])
+        name = given;
+    else if (options.Length > 0)
+    {
+        Console.Error.WriteLine($"Unknown argument '{options[0]}'.");
+        Console.Error.WriteLine(Usage);
+        return 2;
+    }
+
+    var directory = Path.GetFullPath(folder);
+    if (ProjectTemplates.PluginNames(Path.GetFileName(Path.TrimEndingDirectorySeparator(directory))) is not var (pascal, derived))
+    {
+        Console.Error.WriteLine($"'{folder}' can't name a plugin: use letters and digits, with '-', '_' or '.' between words, such as 'my-plugin' or 'Piper.Plugins.MyPlugin'.");
+        return 2;
+    }
+    name ??= derived;
+    if (PluginLoader.BundledNames.Contains(name, StringComparer.OrdinalIgnoreCase))
+    {
+        Console.Error.WriteLine($"'{name}' is the name of a plugin that comes with piper; choose another with --name.");
+        return 2;
+    }
+    if (Directory.Exists(directory) && Directory.EnumerateFileSystemEntries(directory).Any())
+    {
+        Console.Error.WriteLine($"{directory} already has files in it; choose a new folder or an empty one.");
+        return 2;
+    }
+
+    Directory.CreateDirectory(directory);
+    foreach (var (path, text) in ProjectTemplates.PluginFiles(pascal, name, CompilerReference(directory)))
+    {
+        var file = Path.Combine(directory, path);
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        File.WriteAllText(file, text);
+    }
+    Console.WriteLine($"Made plugin '{name}' (Piper.Plugins.{pascal}) in {directory}. Build it, which adds it to piper, and run its example:");
+    Console.WriteLine($"  cd {folder}");
+    Console.WriteLine("  dotnet build");
+    Console.WriteLine("  piper run example");
+    return 0;
+}
+
+// How a new plugin project references Piper.Compiler: in a clone of this repository, its project; elsewhere, the
+// assembly this piper runs, which comes with it.
+static string CompilerReference(string projectDirectory)
+{
+    for (var directory = new DirectoryInfo(projectDirectory); directory is not null; directory = directory.Parent)
+    {
+        var project = Path.Combine(directory.FullName, "src", "Piper.Compiler", "Piper.Compiler.csproj");
+        if (File.Exists(project))
+            return $"""<ProjectReference Include="{Path.GetRelativePath(projectDirectory, project)}" Private="false" ExcludeAssets="runtime" />""";
+    }
+    var assembly = Path.Combine(AppContext.BaseDirectory, "Piper.Compiler.dll");
+    return $"""<Reference Include="Piper.Compiler" HintPath="{assembly}" Private="false" />""";
 }
 
 // `piper new hello [--template web]`: a folder named after the program, with a piper.json and a main.piper.

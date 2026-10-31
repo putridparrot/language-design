@@ -63,7 +63,23 @@ public sealed class StateMachinePlugin : IPiperPlugin
     public string Name => "state-machines";
 
     public IReadOnlyList<PluginKeyword> Keywords { get; } =
-        [new DeclarationKeyword("statemachine", p => Parse(p) is { } machine ? Expand(p, machine) : [])];
+    [
+        new DeclarationKeyword("statemachine", p => Parse(p) is { } machine ? Expand(p, machine) : [])
+        {
+            Description = "Declares a state machine: a class that moves between named states as events happen to it. " +
+                          "Each event is a method (`order.Pay(10m)`), with `CanPay(…)`, `State`, `IsFinal`, `Events`, and `Fire(OrderEvent)` to replay stored events.",
+            Snippet = "statemachine ${1:Order} {\n\tstate ${2:Pending} {\n\t\ton ${3:Pay}() => ${4:Paid};\n\t}\n\tstate ${4:Paid};\n}",
+            Words = new Dictionary<string, string>
+            {
+                ["state"] = "A state. The first is where a machine starts; one with no transitions (`state Done;`) is final.",
+                ["on"] = "A transition: `on Event(…) => Target [if guard] [{ action }]`. An event takes the current state's first " +
+                         "transition for it whose guard holds; with none, it throws.",
+                ["enter"] = "Runs when the machine moves into this state from another.",
+                ["exit"] = "Runs when the machine moves out of this state to another.",
+                ["public"] = "Makes the machine's data readable (and, for `mut`, settable) from outside.",
+            },
+        },
+    ];
 
     /// <summary>
     /// Warns about states no chain of transitions reaches from the first, which the machine can never be in. It's a

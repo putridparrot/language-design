@@ -9,6 +9,19 @@
     plus an enum of its states and one of its events (`Fire` replays those).
   - Its shape is checked, and states nothing reaches are warned about.
   - It comes with piper as `state-machines`. See `samples/state-machines`.
+- **Workspace trust:** in a folder the editor hasn't trusted, the language server loads only the plugins that come
+  with piper or were added. It leaves out plugins given by path, packages (whose restore runs the folder's MSBuild
+  files) and assemblies, with a PIP0404 warning on piper.json.
+  - VS Code's extension supports untrusted workspaces in a limited way, ignores a workspace's `piper.server.*`
+    settings, and loads the rest once the workspace is trusted.
+- **Plugin keywords in the editor:** `PluginKeyword.Description`, `Snippet` and `Words` give hover text for a keyword
+  and its construct's words, and completion offers a plugin's keywords where they can start, with a snippet of the
+  construct. Every bundled plugin has them.
+- **`piper plugin new <folder>`:** makes a plugin project (adding a `repeat` statement) and an example program.
+  - Each build adds the plugin to piper.
+  - In this repository it references the compiler's project; elsewhere, the installed compiler.
+- **Clearer plugin version errors:** a plugin that fails because it was built against another compiler (a missing
+  method or type) is told to rebuild. One built against a newer compiler is refused when it's loaded.
 - **`piper plugin add`:** adds a plugin under a name a piper.json can use, as it does those that come with piper,
   without a new copy of piper. The plugin's folder is copied to `~/.piper/plugins` (or `$PIPER_PLUGINS`).
   - Bundled names win, and the error for an unknown name lists the plugins that have been added.

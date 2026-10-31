@@ -119,6 +119,43 @@ public class PiperProjectTests
         }
     }
 
+    /// <summary>
+    /// In a folder that isn't trusted, only what can't run the folder's code is loaded: named plugins, not those given
+    /// by path, packages (restoring runs MSBuild there) or assemblies. What's left out is a warning, not an error, so
+    /// the named plugins still work.
+    /// </summary>
+    [Fact]
+    public void A_folder_that_isnt_trusted_loads_only_plugins_by_name()
+    {
+        var folder = Directory.CreateTempSubdirectory("piper-untrusted").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, PiperProject.FileName), """
+                {
+                  "plugins": ["parallel", "tools/Evil.Plugin.dll"],
+                  "packages": { "Humanizer": "2.14.1" },
+                  "references": ["lib/Evil.dll"]
+                }
+                """);
+            var (project, errors) = LoadedProject.Load(folder, trusted: false);
+            Assert.Empty(errors);
+            Assert.Equal("parallel", Assert.Single(project!.Plugins).Name);
+            Assert.True(project.References.Assemblies.IsEmpty);
+            var warning = Assert.Single(project.Warnings);
+            Assert.Equal(("PIP0404", Piper.Diagnostics.DiagnosticSeverity.Warning), (warning.Code, warning.Severity));
+            Assert.Contains("the plugin 'tools/Evil.Plugin.dll', the package 'Humanizer', the assembly 'lib/Evil.dll'", warning.Message);
+            Assert.False(Directory.Exists(Path.Combine(folder, "obj")));    // nothing was restored
+
+            // Trusted, the same folder's plugin path is loaded (and is missing).
+            (_, errors) = LoadedProject.Load(folder);
+            Assert.Contains("Evil.Plugin.dll", Assert.Single(errors).Message);
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
     /// <summary>What `piper new` makes compiles without warnings, and its tests pass; the console one runs.</summary>
     [Theory]
     [InlineData("console")]
@@ -165,4 +202,48 @@ public class PiperProjectTests
     [InlineData("", false)]
     public void Program_names_are_checked(string name, bool valid) =>
         Assert.Equal(valid, ProjectTemplates.IsValidName(name));
+
+    [Theory]
+    [InlineData("Piper.Plugins.StateMachines", "StateMachines", "state-machines")]
+    [InlineData("my-plugin", "MyPlugin", "my-plugin")]
+    [InlineData("greet", "Greet", "greet")]
+    [InlineData("9lives", null, null)]
+    [InlineData("---", null, null)]
+    public void Plugin_names_come_from_the_folders(string folder, string? pascal, string? name) =>
+        Assert.Equal(pascal is null ? null : (pascal, name!), ProjectTemplates.PluginNames(folder));
+
+    /// <summary>
+    /// What `piper plugin new` makes: a project whose plugin compiles against the compiler, and an example program it
+    /// runs. The plugin's C# is compiled here rather than with `dotnet build`, which would be slow.
+    /// </summary>
+    [Fact]
+    public void A_new_plugin_compiles_and_runs_its_example()
+    {
+        var files = ProjectTemplates.PluginFiles("Greet", "greet", "<Reference Include=\"Piper.Compiler\" />").ToDictionary(f => f.Path, f => f.Text);
+        Assert.Equal([".gitignore", "GreetPlugin.cs", "Piper.Plugins.Greet.csproj", "example/main.piper", "example/piper.json"], files.Keys.Order(StringComparer.Ordinal));
+        Assert.All(files.Values, text => Assert.DoesNotContain("__PASCAL__", text));
+        Assert.Contains("<PiperPluginName>greet</PiperPluginName>", files["Piper.Plugins.Greet.csproj"]);
+        Assert.Contains("<Reference Include=\"Piper.Compiler\" />", files["Piper.Plugins.Greet.csproj"]);
+        Assert.Contains("\"plugins\": [\"greet\"]", files["example/piper.json"]);
+
+        var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
+            .Append(typeof(Piper.Plugins.IPiperPlugin).Assembly.Location)
+            .Select(path => Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(path));
+        var usings = "global using System;\nglobal using System.Collections.Generic;\nglobal using System.Linq;\n";
+        var compilation = Microsoft.CodeAnalysis.CSharp.CSharpCompilation.Create("Piper.Plugins.Greet",
+            [Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(usings), Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(files["GreetPlugin.cs"])],
+            references, new Microsoft.CodeAnalysis.CSharp.CSharpCompilationOptions(Microsoft.CodeAnalysis.OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: Microsoft.CodeAnalysis.NullableContextOptions.Enable));
+        using var stream = new MemoryStream();
+        var emitted = compilation.Emit(stream);
+        Assert.True(emitted.Success, string.Join("\n", emitted.Diagnostics));
+        Assert.DoesNotContain(emitted.Diagnostics, d => d.Severity >= Microsoft.CodeAnalysis.DiagnosticSeverity.Warning);
+
+        var assembly = System.Reflection.Assembly.Load(stream.ToArray());
+        var plugin = (Piper.Plugins.IPiperPlugin)Activator.CreateInstance(assembly.GetType("Piper.Plugins.Greet.GreetPlugin")!)!;
+        Assert.Equal("greet", plugin.Name);
+        var result = Compilation.Compile([new SourceText(files["example/main.piper"], "main.piper")], new CompilationOptions { Plugins = [plugin] });
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.Run(result.Files);
+        Assert.Equal(string.Concat(Enumerable.Repeat("Hello from the greet plugin\n", 3)), run.Output.Replace("\r\n", "\n"));
+    }
 }

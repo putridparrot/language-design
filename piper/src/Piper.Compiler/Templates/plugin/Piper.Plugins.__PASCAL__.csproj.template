@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A Piper compiler plugin, made by `piper plugin new`. Each build adds it to piper (see AddToPiper below), so a
+    piper.json can name it, "plugins": ["__NAME__"], and an open editor picks up the change. `piper run example` runs
+    a program using it.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Piper.Plugins.__PASCAL__</AssemblyName>
+    <RootNamespace>Piper.Plugins.__PASCAL__</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!-- One place whatever the configuration, which `piper plugin add` looks in. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\plugin\</OutDir>
+    <!-- The name piper.json files use for it. Empty, builds don't add it to piper. -->
+    <PiperPluginName>__NAME__</PiperPluginName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The compiler loads the plugin, so it provides Piper.Compiler; don't copy it next to the plugin. -->
+    __COMPILER_REFERENCE__
+  </ItemGroup>
+
+  <!-- After each build, add the plugin to piper (~/.piper/plugins), as `piper plugin add` does. -->
+  <Target Name="AddToPiper" AfterTargets="Build" Condition="'$(PiperPluginName)' != ''">
+    <Exec Command="piper plugin add &quot;$(MSBuildProjectDirectory)&quot; --name $(PiperPluginName)" ContinueOnError="true" />
+  </Target>
+
+</Project>

@@ -18,8 +18,16 @@ public sealed class ParallelPlugin : IPiperPlugin
 
     public IReadOnlyList<PluginKeyword> Keywords { get; } =
     [
-        new StatementKeyword("parallel", ParallelFor),
-        new StatementKeyword("concurrency", Concurrency),
+        new StatementKeyword("parallel", ParallelFor)
+        {
+            Description = "`parallel for x in items { … }` runs the body for each item at once, with `Parallel.ForEach`.",
+            Snippet = "parallel for ${1:item} in ${2:items} {\n\t$0\n}",
+        },
+        new StatementKeyword("concurrency", Concurrency)
+        {
+            Description = "`concurrency { a(); b(); }` runs each statement at once, as a task, and waits for them all. In async code the statements can await.",
+            Snippet = "concurrency {\n\t$0\n}",
+        },
     ];
 
     /// <summary>parallelFor = "parallel" "for" IDENT "in" expression block ;</summary>

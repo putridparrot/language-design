@@ -51,7 +51,35 @@ public interface IPiperPlugin
 /// couldn't follow it as a name, so the word can still be an ordinary name: <c>parallel = 4;</c>, <c>parallel(items)</c>
 /// and <c>parallel.Count</c> use a name. So a construct can't continue with an operator, `(`, `[`, `.` or `=`.
 /// </summary>
-public abstract record PluginKeyword(string Text);
+public abstract record PluginKeyword(string Text)
+{
+    /// <summary>What the construct does, in Markdown, shown when the editor's pointer is over the keyword.</summary>
+    public string? Description { get; init; }
+
+    /// <summary>
+    /// The construct as the editor's completion inserts it, in LSP snippet syntax: <c>parallel for ${1:x} in ${2:items} {\n\t$0\n}</c>.
+    /// Without one, completion inserts just the keyword.
+    /// </summary>
+    public string? Snippet { get; init; }
+
+    /// <summary>
+    /// What the words special to the construct mean (<c>on</c>, <c>singleton</c>), in Markdown, shown when the pointer
+    /// is over one; a word without an entry shows <see cref="Description"/>.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Words { get; init; } = System.Collections.Immutable.ImmutableDictionary<string, string>.Empty;
+}
+
+/// <summary>
+/// Where the source uses a plugin's keyword, or a word special to its construct (<see cref="PluginParser.ReadWord"/>):
+/// for the editor to colour, and to describe on hover.
+/// </summary>
+/// <param name="Text">The word as written: the keyword, or one such as <c>on</c>.</param>
+/// <param name="Plugin">The plugin's name.</param>
+public sealed record PluginWordUse(Text.SourceText File, Text.TextSpan Span, string Text, PluginKeyword Keyword, string Plugin)
+{
+    /// <summary>What the word means: its own entry in <see cref="PluginKeyword.Words"/>, or the keyword's description.</summary>
+    public string? Description => Text != Keyword.Text && Keyword.Words.TryGetValue(Text, out var word) ? word : Keyword.Description;
+}
 
 /// <summary>
 /// A keyword that starts a statement, inside a block. When the parser reaches it, it reads the keyword and calls

@@ -36,7 +36,24 @@ public sealed class WebPlugin : IPiperPlugin
 
     private const string Responses = "Piper.Web.PiperResponses";
 
-    public IReadOnlyList<PluginKeyword> Keywords { get; } = [new DeclarationKeyword("endpoints", Endpoints)];
+    public IReadOnlyList<PluginKeyword> Keywords { get; } =
+    [
+        new DeclarationKeyword("endpoints", Endpoints)
+        {
+            Description = "Declares an ASP.NET Core minimal API, as `fn Name(app: IEndpointRouteBuilder)`; call it with the app to map the routes. " +
+                          "A string after the name prefixes every route.",
+            Snippet = "endpoints ${1:Api} \"${2:/api}\" {\n\tget \"${3:/items/{id\\}}\" (${4:id: int}) => ${5:id};\n\t$0\n}",
+            Words = new Dictionary<string, string>
+            {
+                ["get"] = "Maps a GET request to the route: `MapGet`.",
+                ["post"] = "Maps a POST request to the route: `MapPost`.",
+                ["put"] = "Maps a PUT request to the route: `MapPut`.",
+                ["delete"] = "Maps a DELETE request to the route: `MapDelete`.",
+                ["patch"] = "Maps a PATCH request to the route: `MapPatch`.",
+                ["async"] = "The handler awaits, so it runs as an async lambda.",
+            },
+        },
+    ];
 
     /// <summary>
     /// endpoints = "endpoints" IDENT [ STRING ] "{" { endpoint } "}" ;

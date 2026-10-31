@@ -1,3 +1,4 @@
+using Piper.Plugins;
 using Piper.Syntax;
 using Piper.Text;
 
@@ -30,12 +31,15 @@ public sealed class SemanticModel
 
     internal void AddIncompleteMatch(IncompleteMatch match) => _incompleteMatches.Add(match);
 
-    private readonly List<(SourceText File, TextSpan Span)> _keywords = [];
+    private readonly List<PluginWordUse> _keywords = [];
 
-    /// <summary>The plugins' keywords in the source (<c>services</c>, <c>endpoints</c>), which the grammar can't know.</summary>
-    public IReadOnlyList<(SourceText File, TextSpan Span)> PluginKeywords => _keywords;
+    /// <summary>
+    /// The plugins' keywords in the source (<c>services</c>, <c>endpoints</c>), and the words special to their
+    /// constructs (<c>singleton</c>), which the grammar can't know.
+    /// </summary>
+    public IReadOnlyList<PluginWordUse> PluginKeywords => _keywords;
 
-    internal void AddPluginKeyword(SourceText file, TextSpan span) => _keywords.Add((file, span));
+    internal void AddPluginKeyword(PluginWordUse use) => _keywords.Add(use);
 
     internal void AddOccurrence(SourceText file, TextSpan span, Symbol symbol, bool isDeclaration)
     {

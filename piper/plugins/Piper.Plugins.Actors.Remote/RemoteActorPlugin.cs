@@ -40,7 +40,16 @@ public sealed class RemoteActorPlugin : IPiperPlugin
 
     public IReadOnlyList<string> Frameworks => ["Microsoft.AspNetCore.App"];
 
-    public IReadOnlyList<PluginKeyword> Keywords { get; } = [new DeclarationKeyword("actor", Actor)];
+    public IReadOnlyList<PluginKeyword> Keywords { get; } =
+    [
+        new DeclarationKeyword("actor", Actor)
+        {
+            Description = "Declares an actor that other processes and machines can use, on Proto.Actor: an object with private state that handles one message at a time. " +
+                          "`Counter.Spawn(system, \"counter\", …)` hosts one under a name, and `Counter.Connect(system, \"host:port\", \"counter\")` reaches one elsewhere.",
+            Snippet = ActorSyntax.Snippet,
+            Words = ActorSyntax.Words,
+        },
+    ];
 
     private static IEnumerable<DeclarationSyntax> Actor(PluginParser p)
     {

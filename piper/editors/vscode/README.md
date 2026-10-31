@@ -82,10 +82,14 @@ The installed tool and extension are copies of what you built; changing this rep
   Code. (Uninstalling or rebuilding while VS Code runs the compiler may fail with the file locked: close VS Code, or
   run **Piper: Restart Language Server** after.)
 
-- **After adding or changing a plugin**, there's no need to reinstall. Build it, then run `piper plugin add <its
-  folder>` (from this repository, for a new one: `piper plugin add plugins/Piper.Plugins.MyPlugin`). The language server picks
-  it up while VS Code is open. A plugin that piper.json gives by path is picked up when it's rebuilt, without even
-  that.
+- **After adding or changing a plugin**, there's no need to reinstall. A plugin made with `piper plugin new` adds
+  itself to piper each time it's built; for another, run `piper plugin add <its folder>`. The language server picks it
+  up while VS Code is open. A plugin that piper.json gives by path is picked up when it's rebuilt, without even that.
+
+- **Workspace trust:** in a workspace VS Code doesn't trust, the extension still works, but the language server
+  doesn't load what a piper.json lists that could run code from the workspace: plugins given by path, packages and
+  assemblies (see [docs/plugins.md](../../docs/plugins.md)). VS Code also ignores the workspace's own `piper.server.*`
+  settings. Trusting the workspace loads them.
 
 - **After changing the extension**, package and install it again, then restart VS Code:
 

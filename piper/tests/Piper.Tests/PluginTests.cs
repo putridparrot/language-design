@@ -33,6 +33,8 @@ public class PluginTests
                     ("name", name), ("text", new LiteralExpressionSyntax(text.Span, text, text.Value)));
             }),
             new StatementKeyword("fails", _ => throw new InvalidOperationException("boom")),
+            // As a plugin built against another version of the compiler fails, calling what's no longer there.
+            new StatementKeyword("outdated", _ => throw new MissingMethodException("Method not found: 'Piper.Plugins.PluginParser.Gone()'.")),
             new StatementKeyword("picky", p =>
             {
                 var value = p.ParseExpression();
@@ -191,6 +193,15 @@ public class PluginTests
         Assert.Equal("PIP0504", result.Diagnostics[0].Code);
         Assert.Equal(text.LastIndexOf('1'), result.Diagnostics[1].Span.Start);
         Assert.Contains("boom", result.Diagnostics[0].Message);
+    }
+
+    [Fact]
+    public void A_plugin_built_against_another_compiler_is_told_to_rebuild()
+    {
+        var error = Compile("fn Main() { outdated { } }", new TestPlugin()).Diagnostics[0];
+        Assert.Equal("PIP0504", error.Code);
+        Assert.Contains("'Piper.Plugins.PluginParser.Gone()'", error.Message);
+        Assert.Contains("built against another version of piper's compiler: rebuild it", error.Message);
     }
 
     [Fact]

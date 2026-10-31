@@ -28,8 +28,9 @@ public sealed class PluginRegistry
     /// Each plugin keyword the source used (<c>services</c>, <c>endpoints</c>), and the words special to its construct
     /// (<c>singleton</c>, <c>get</c>), for the editor to colour.
     /// </summary>
-    public IEnumerable<(Text.SourceText File, Token Keyword)> KeywordsUsed =>
-        _expansions.SelectMany(e => e.Expansion.Words.Prepend(e.Expansion.KeywordToken).Select(word => (e.Expansion.File, word)));
+    public IEnumerable<PluginWordUse> KeywordsUsed =>
+        _expansions.SelectMany(e => e.Expansion.Words.Prepend(e.Expansion.KeywordToken)
+            .Select(word => new PluginWordUse(e.Expansion.File, word.Span, word.Text, e.Expansion.Keyword, e.Plugin.Name)));
 
     /// <summary>Remembers an expansion, for the plugin's analysis once the program is bound.</summary>
     internal void Record(IPiperPlugin plugin, PluginExpansion expansion)
@@ -54,7 +55,7 @@ public sealed class PluginRegistry
             catch (Exception exception)
             {
                 diagnostics.CurrentSource = null;
-                diagnostics.ReportPluginAnalysisFailed(plugin.Name, exception.Message);
+                diagnostics.ReportPluginAnalysisFailed(plugin.Name, PluginLoader.Explain(exception));
             }
         }
     }

@@ -292,6 +292,38 @@ public sealed class LanguageServerTests : IDisposable
         Assert.DoesNotContain(hints, h => h!["position"]!["line"]!.GetValue<int>() is var line && (line == servicesLine || line == endpointsLine));
     }
 
+    /// <summary>
+    /// A plugin's keywords are described on hover, as are the words special to its construct, and completion offers
+    /// them, with a snippet of the construct, where it can start.
+    /// </summary>
+    [Fact]
+    public async Task Plugin_keywords_are_described_and_completed()
+    {
+        var path = Path.GetFullPath(Path.Combine(SamplesDirectory(), "state-machines", "main.piper"));
+        var text = (await File.ReadAllTextAsync(path)).Replace("\r\n", "\n");
+        var uri = PiperLanguageServer.UriOf(path);
+        await _server.HandleAsync("textDocument/didOpen", new JsonObject
+        {
+            ["textDocument"] = new JsonObject { ["uri"] = uri, ["languageId"] = "piper", ["version"] = 1, ["text"] = text },
+        });
+
+        async Task<string> HoverAt(string marker) =>
+            (await _server.HandleAsync("textDocument/hover", At(uri, text, marker)))!["contents"]!["value"]!.GetValue<string>();
+        var keyword = await HoverAt("statemachine Order");
+        Assert.StartsWith("**statemachine** (keyword, from the `state-machines` plugin)", keyword);
+        Assert.Contains("moves between named states", keyword);
+        var enter = await HoverAt("enter {");
+        Assert.StartsWith("**enter** (in 'statemachine', from the `state-machines` plugin)", enter);
+        Assert.Contains("moves into this state", enter);
+
+        async Task<JsonArray> CompletionAt(string marker) =>
+            (JsonArray)(await _server.HandleAsync("textDocument/completion", At(uri, text, marker)))!;
+        var topLevel = (await CompletionAt("test \"a guard")).Single(i => i!["label"]!.GetValue<string>() == "statemachine")!;
+        Assert.Equal(2, topLevel["insertTextFormat"]!.GetValue<int>());
+        Assert.StartsWith("statemachine ${1:Order} {", topLevel["insertText"]!.GetValue<string>());
+        Assert.DoesNotContain(await CompletionAt("let order = Order("), i => i!["label"]!.GetValue<string>() == "statemachine");
+    }
+
     private static string SamplesDirectory([System.Runtime.CompilerServices.CallerFilePath] string thisFile = "") =>
         Path.Combine(Path.GetDirectoryName(thisFile)!, "..", "..", "samples");
 

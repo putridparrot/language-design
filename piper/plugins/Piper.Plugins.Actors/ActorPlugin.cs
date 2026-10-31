@@ -35,7 +35,15 @@ public sealed class ActorPlugin : IPiperPlugin
     public string Name => "actors";
 
     public IReadOnlyList<PluginKeyword> Keywords { get; } =
-        [new DeclarationKeyword("actor", p => ActorSyntax.Parse(p, GeneratedNames) is { } actor ? Expand(p, actor) : [])];
+    [
+        new DeclarationKeyword("actor", p => ActorSyntax.Parse(p, GeneratedNames) is { } actor ? Expand(p, actor) : [])
+        {
+            Description = "Declares an actor: an object with private state that handles one message at a time, so its state needs no locks. " +
+                          "`Counter.Spawn(…)` starts one, `counter.Increment(5)` sends it a message, and `await counter.Get()` asks it for an answer.",
+            Snippet = ActorSyntax.Snippet,
+            Words = ActorSyntax.Words,
+        },
+    ];
 
     /// <summary>
     /// Warns about a message field whose type is mutable, such as a <c>List&lt;T&gt;</c>: the sender and the actor

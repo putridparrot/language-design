@@ -1,0 +1,8 @@
+// A program using the __NAME__ plugin. Build the plugin (`dotnet build`), which adds it to piper, then
+// `piper run example`.
+
+fn Main() {
+    repeat 3 {
+        Print("Hello from the __NAME__ plugin");
+    }
+}

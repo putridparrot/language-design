@@ -188,6 +188,8 @@ function createClient() {
         {
             documentSelector: [{ scheme: "file", language: "piper" }],
             synchronize: { fileEvents: vscode.workspace.createFileSystemWatcher("**/{*.piper,piper.json}") },
+            // Loading a workspace's plugins and packages can run its code, so the server only does so once it's trusted.
+            initializationOptions: { trusted: vscode.workspace.isTrusted },
         });
 }
 
@@ -216,6 +218,11 @@ async function activate(context) {
             await client.stop();
         }
         await start();
+    }));
+    context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(async () => {
+        if (client) {
+            await client.sendNotification("piper/trust", { trusted: true });
+        }
     }));
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async e => {
         if (e.affectsConfiguration("piper.server")) {

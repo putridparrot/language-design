@@ -1,0 +1,30 @@
+using Piper.Plugins;
+using Piper.Syntax;
+
+namespace Piper.Plugins.__PASCAL__;
+
+/// <summary>
+/// The __NAME__ plugin. It adds one statement, <c>repeat 3 { … }</c>, which runs its block a number of times, rewritten
+/// into ordinary Piper: <c>for __i in 0..&lt;3 { … }</c>. See docs/plugins.md ("Writing a plugin") for what a plugin can do.
+/// </summary>
+public sealed class __PASCAL__Plugin : IPiperPlugin
+{
+    public string Name => "__NAME__";
+
+    public IReadOnlyList<PluginKeyword> Keywords { get; } =
+    [
+        new StatementKeyword("repeat", Repeat)
+        {
+            Description = "`repeat n { … }` runs the block `n` times.",
+            Snippet = "repeat ${1:3} {\n\t$0\n}",
+        },
+    ];
+
+    // repeat = "repeat" expression block ;
+    private static IEnumerable<StatementSyntax> Repeat(PluginParser p)
+    {
+        var count = p.ParseExpressionBeforeBlock();
+        var body = p.ParseBlock();
+        return [p.Template.Statement("for $i in 0..<$count { $body }", ("i", p.FreshName("i")), ("count", count), ("body", body))];
+    }
+}

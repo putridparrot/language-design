@@ -116,6 +116,22 @@ piper plugin remove my-plugin
 A plugin given by its path needs none of this. It's reloaded whenever its assembly is rebuilt, and it's read into
 memory, so the editor never locks it.
 
+#### Folders you haven't trusted
+
+Loading a plugin runs its code. So in a folder the editor hasn't been told to trust, the language server leaves out
+everything in its piper.json that could run code from the folder:
+
+- **Plugins given by path.**
+- **Packages:** restoring them runs MSBuild, which imports the folder's `Directory.Build` files.
+- **Assemblies:** reading them can run their code.
+
+The plugins that come with piper, and those added with `piper plugin add`, still load. What was left out is a warning
+on piper.json (PIP0404), and code using it shows errors until the folder is trusted.
+
+In VS Code, this is Workspace Trust: trusting the folder loads the rest at once. In an untrusted workspace, VS Code
+also ignores the workspace's own `piper.server.path` and `piper.server.args`. The command line always trusts the
+folder it's given.
+
 A plugin keyword is a keyword only where its construct can start, and only when the token after it couldn't follow a
 name. So the word is still an ordinary name elsewhere: `let parallel = 4;`, `parallel(items)` and `parallel.Count`
 don't involve the plugin. One consequence is that a plugin's syntax can't continue its keyword with an operator, `(`,
@@ -197,6 +213,41 @@ public sealed class ParallelPlugin : IPiperPlugin
 - **Looking into syntax:** `SyntaxWalker.DescendantsAndSelf` and `ChildrenOf` walk any syntax node.
 - **Failures:** a plugin that throws is reported (PIP0504), and its construct is skipped, so the rest of the file is
   still checked.
+- **Built against another piper:** a plugin built against an older compiler fails when it uses something that has
+  changed, as a missing method or type. That error, when loading, reading or analyzing, says to rebuild the plugin.
+  A plugin built against a newer compiler than the one loading it is refused when it's loaded.
+- **Editor help:** a keyword's `Description`, `Snippet` and `Words` (all optional, set with `init`) are what the
+  editor shows:
+
+  ```csharp
+  new StatementKeyword("parallel", ParallelFor)
+  {
+      Description = "`parallel for x in items { … }` runs the body for each item at once.",   // hover, in Markdown
+      Snippet = "parallel for ${1:item} in ${2:items} {\n\t$0\n}",                            // completion, in LSP snippet syntax
+      Words = new Dictionary<string, string> { ["for"] = "…" },                                // hover on words read with ReadWord
+  }
+  ```
+
+  Completion offers a declaration keyword at the top level, and a statement keyword inside a declaration.
+
+#### Starting a plugin with `piper plugin new`
+
+```text
+piper plugin new plugins/Piper.Plugins.Greet      # or any folder: my-plugin makes Piper.Plugins.MyPlugin, named my-plugin
+cd plugins/Piper.Plugins.Greet
+dotnet build                                      # builds it into bin/plugin, and adds it to piper
+piper run example                                 # a program using it: "plugins": ["greet"]
+```
+
+It makes:
+
+- **The project:** a plugin project with the settings above, and a plugin adding a `repeat 3 { … }` statement, to
+  change into your own.
+- **An example program:** in `example/`, which uses the plugin.
+- **Its reference to the compiler:** in a clone of this repository, the compiler's project. Elsewhere, the
+  `Piper.Compiler.dll` of the piper that made it.
+- **A build step:** each build runs `piper plugin add` on the project, so a piper.json can name the plugin and an open
+  editor picks up the change. To turn that off, set `PiperPluginName` in the project to empty.
 
 ### Analyzing the type-checked program
 

@@ -27,6 +27,12 @@ public sealed class Workspace
 
     public IReadOnlyList<string> OpenFiles => [.. _open.Keys];
 
+    /// <summary>
+    /// Whether the user trusts the workspace's code. If not, its piper.json's plugins given by path, packages and
+    /// assemblies aren't loaded, since loading them can run code (see <see cref="LoadedProject.Load"/>).
+    /// </summary>
+    public bool Trusted { get; set; } = true;
+
     public static string Normalize(string path) => Path.GetFullPath(path);
 
     /// <summary>The folder whose files form <paramref name="path"/>'s program, or null if it's a program on its own.</summary>
@@ -111,7 +117,7 @@ public sealed class Workspace
     /// keywords and types, as the CLI does), with any errors in the file, loading plugins or resolving references. None
     /// when there's no piper.json.
     /// </summary>
-    public static (ImmutableArray<IPiperPlugin> Plugins, ProgramReferences References, ImmutableArray<Diagnostic> Errors) ProjectOf(string? root)
+    public (ImmutableArray<IPiperPlugin> Plugins, ProgramReferences References, ImmutableArray<Diagnostic> Errors) ProjectOf(string? root)
     {
         if (root is null)
             return ([], ProgramReferences.None, []);
@@ -119,8 +125,8 @@ public sealed class Workspace
         {
             if (!File.Exists(Path.Combine(root, PiperProject.FileName)))
                 return ([], ProgramReferences.None, []);
-            var (project, errors) = LoadedProject.Load(root);
-            return project is null ? ([], ProgramReferences.None, errors) : (project.Plugins, project.References, []);
+            var (project, errors) = LoadedProject.Load(root, Trusted);
+            return project is null ? ([], ProgramReferences.None, errors) : (project.Plugins, project.References, project.Warnings);
         }
         catch (IOException)
         {

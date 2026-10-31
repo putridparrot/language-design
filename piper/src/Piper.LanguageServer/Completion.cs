@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json.Nodes;
 using Piper.Binding;
+using Piper.Plugins;
 using Piper.Text;
 
 namespace Piper.LanguageServer;
@@ -45,7 +46,42 @@ public static class Completion
         }
         if (start > 0 && source[start - 1] == '.')
             AddOptionalItems(analysis, source, start - 1, position, array);
+        else
+            AddPluginKeywordItems(analysis, source, position, array);
         return array;
+    }
+
+    /// <summary>
+    /// The keywords of the program's plugins that can start a construct here: a declaration's (<c>statemachine</c>) at
+    /// the top level, a statement's (<c>parallel</c>) inside a declaration. One with a snippet inserts its whole
+    /// construct, to fill in.
+    /// </summary>
+    private static void AddPluginKeywordItems(AnalysisResult analysis, SourceText source, int position, JsonArray array)
+    {
+        var unit = analysis.Units.FirstOrDefault(u => u.Source == source);
+        bool inDeclaration = unit is not null && unit.Declarations.Any(d => d.Span.Start < position && position <= d.Span.End);
+        foreach (var plugin in analysis.Plugins)
+        {
+            foreach (var keyword in plugin.Keywords)
+            {
+                if (keyword is StatementKeyword != inDeclaration)
+                    continue;
+                var item = new JsonObject
+                {
+                    ["label"] = keyword.Text,
+                    ["kind"] = keyword.Snippet is null ? KeywordKind : SnippetKind,
+                    ["detail"] = $"{(keyword is StatementKeyword ? "statement" : "declaration")} from the {plugin.Name} plugin",
+                };
+                if (keyword.Description is not null)
+                    item["documentation"] = new JsonObject { ["kind"] = "markdown", ["value"] = keyword.Description };
+                if (keyword.Snippet is not null)
+                {
+                    item["insertText"] = keyword.Snippet;
+                    item["insertTextFormat"] = SnippetFormat;
+                }
+                array.Add(item);
+            }
+        }
     }
 
     // LSP CompletionItemKind and InsertTextFormat values.

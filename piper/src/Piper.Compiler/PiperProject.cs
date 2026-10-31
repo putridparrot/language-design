@@ -160,11 +160,20 @@ public sealed record PiperProject(string? Name, PiperOutput? Output)
 /// </summary>
 public sealed record LoadedProject(PiperProject Project, ImmutableArray<IPiperPlugin> Plugins, ProgramReferences References)
 {
+    /// <summary>What wasn't loaded from a folder that isn't trusted (PIP0404), to report on its piper.json.</summary>
+    public ImmutableArray<Diagnostic> Warnings { get; init; } = [];
+
     /// <summary>
     /// Loads the folder <paramref name="directory"/>'s piper.json and what it lists; with errors (in piper.json, loading
     /// plugins or resolving references), the project is null.
     /// </summary>
-    public static (LoadedProject? Project, ImmutableArray<Diagnostic> Errors) Load(string directory)
+    /// <param name="trusted">
+    /// False for a folder the user hasn't said they trust, such as a repository the editor has just opened. Loading a
+    /// plugin, restoring packages (MSBuild runs the folder's Directory.Build files) and reading assemblies can each run
+    /// code from the folder, so only what can't is loaded: the plugins that come with piper or were added with
+    /// <c>piper plugin add</c>, and shared frameworks. The rest is left out and reported as a warning.
+    /// </param>
+    public static (LoadedProject? Project, ImmutableArray<Diagnostic> Errors) Load(string directory, bool trusted = true)
     {
         var path = Path.Combine(directory, PiperProject.FileName);
         var source = new SourceText(File.ReadAllText(path), path);
@@ -172,7 +181,8 @@ public sealed record LoadedProject(PiperProject Project, ImmutableArray<IPiperPl
         if (project is null)
             return (null, errors);
 
-        var (plugins, pluginErrors) = PluginLoader.Load(directory, project.Plugins, source);
+        var named = trusted ? project.Plugins : [.. project.Plugins.Where(PluginLoader.IsBundledName)];
+        var (plugins, pluginErrors) = PluginLoader.Load(directory, named, source);
         if (!pluginErrors.IsEmpty)
             return (null, pluginErrors);
 
@@ -181,9 +191,27 @@ public sealed record LoadedProject(PiperProject Project, ImmutableArray<IPiperPl
         foreach (var (id, version) in plugins.SelectMany(p => p.Packages))
             packages.TryAdd(id, version);
         var frameworks = project.Frameworks.Concat(plugins.SelectMany(p => p.Frameworks)).ToList();
-        var assemblies = project.References.Concat(plugins.SelectMany(PluginLoader.References)).ToList();
+        // A plugin's own assemblies come with it, so they're as trusted as it is.
+        var assemblies = (trusted ? project.References : []).Concat(plugins.SelectMany(PluginLoader.References)).ToList();
+
+        var skipped = new List<string>();
+        if (!trusted)
+        {
+            skipped.AddRange(project.Plugins.Except(named).Select(p => $"the plugin '{p}'"));
+            skipped.AddRange(packages.Keys.Order(StringComparer.OrdinalIgnoreCase).Select(p => $"the package '{p}'"));
+            skipped.AddRange(project.References.Select(r => $"the assembly '{r}'"));
+            packages.Clear();
+        }
 
         var (references, referenceErrors) = ProgramReferences.Resolve(directory, packages, frameworks, assemblies, source);
-        return referenceErrors.IsEmpty ? (new LoadedProject(project, plugins, references), []) : (null, referenceErrors);
+        if (!referenceErrors.IsEmpty)
+            return (null, referenceErrors);
+        ImmutableArray<Diagnostic> warnings = skipped.Count == 0 ? [] :
+        [
+            new Diagnostic("PIP0404", DiagnosticSeverity.Warning, default,
+                $"This folder isn't trusted, so the editor hasn't loaded what could run code from it: {string.Join(", ", skipped)}. " +
+                "Code using them shows errors until you trust the folder (in VS Code: Manage Workspace Trust).") { Source = source },
+        ];
+        return (new LoadedProject(project, plugins, references) { Warnings = warnings }, []);
     }
 }
