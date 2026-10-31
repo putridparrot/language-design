@@ -720,6 +720,7 @@ public sealed partial class CSharpEmitter
         {
             _writer.WriteLine();
             EmitDocumentation(variant, variant.Fields);
+            EmitAttributes(variant);
             var header = $"public sealed record {Escape(variant.Name)}({Fields(variant.Fields, variantNames)}) : {selfType}";
             // A fieldless variant prints like a C# enum member (`Food`), not as an empty record (`Food { }`), unless the
             // enum has its own ToString.

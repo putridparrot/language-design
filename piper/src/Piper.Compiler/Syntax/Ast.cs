@@ -283,6 +283,9 @@ public sealed record TypeParameterSyntax(TextSpan Span, Token Name, ImmutableArr
 /// <summary>A variant of an enum; <see cref="Fields"/> is empty for a fieldless variant such as <c>Empty</c>.</summary>
 public sealed record VariantSyntax(TextSpan Span, Token Name, ImmutableArray<ParameterSyntax> Fields) : SyntaxNode(Span)
 {
+    /// <summary><c>[Status(404)] NotFound</c>: attributes on the variant's class.</summary>
+    public ImmutableArray<AttributeSyntax> Attributes { get; init; } = [];
+
     /// <summary>The text of the `///` comment lines directly above it, if any.</summary>
     public string? Documentation { get; init; }
 }

@@ -13,6 +13,7 @@
     <Project Path="plugins/Piper.Plugins.Parallel/Piper.Plugins.Parallel.csproj" />
     <Project Path="plugins/Piper.Plugins.Services/Piper.Plugins.Services.csproj" />
     <Project Path="plugins/Piper.Plugins.Web/Piper.Plugins.Web.csproj" />
+    <Project Path="plugins/Piper.Web/Piper.Web.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Piper.Tests/Piper.Tests.csproj" />

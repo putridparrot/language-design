@@ -31,6 +31,11 @@ public sealed class WebPlugin : IPiperPlugin
 
     public IReadOnlyList<string> Frameworks => ["Microsoft.AspNetCore.App"];
 
+    /// <summary>Piper.Web, answering handlers' Options and Results, and holding <c>[Status]</c>.</summary>
+    public IReadOnlyList<string> References => ["Piper.Web.dll"];
+
+    private const string Responses = "Piper.Web.PiperResponses";
+
     public IReadOnlyList<PluginKeyword> Keywords { get; } = [new DeclarationKeyword("endpoints", Endpoints)];
 
     /// <summary>
@@ -80,7 +85,8 @@ public sealed class WebPlugin : IPiperPlugin
                 continue;
             CheckRoute(p, routeToken, (string)route.Value!, handler);
 
-            mappings.Add(p.Template.Statement($"{Routing}.{method}($router, $route, $handler);",
+            // A handler returning an Option or Result is answered as one: 200 or 404, or 200 or ProblemDetails.
+            mappings.Add(p.Template.Statement($"{Responses}.Answer({Routing}.{method}($router, $route, $handler));",
                 ("router", (object?)router ?? "app"), ("route", route), ("handler", handler)));
         }
         p.Expect(TokenKind.CloseBrace);

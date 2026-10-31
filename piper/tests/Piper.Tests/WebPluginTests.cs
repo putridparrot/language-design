@@ -19,7 +19,7 @@ public class WebPluginTests
             ["Piper.Plugins.Services/bin/plugin/Piper.Plugins.Services.dll", "Piper.Plugins.Web/bin/plugin/Piper.Plugins.Web.dll"]);
         Assert.Empty(errors);
         var (references, referenceErrors) = ProgramReferences.Resolve(
-            Path.GetTempPath(), ImmutableDictionary<string, string>.Empty, [.. plugins.SelectMany(p => p.Frameworks)], []);
+            Path.GetTempPath(), ImmutableDictionary<string, string>.Empty, [.. plugins.SelectMany(p => p.Frameworks)], [.. plugins.SelectMany(PluginLoader.References)]);
         Assert.Empty(referenceErrors);
         return (plugins, references);
     });
@@ -156,6 +156,106 @@ public class WebPluginTests
             post 200 [{"id":1,"status":{"kind":"Closed","reason":"done"},"note":null}]
             post open 200 [{"id":2,"status":"Open","note":null}]
             post invalid 400 []
+
+            """, run.Output.Replace("\r\n", "\n"));
+    }
+
+    /// <summary>
+    /// A handler's Option is 200 or 404, and its Result 200 or ProblemDetails, the error's [Status] choosing the status
+    /// (a variant's over its enum's, and 400 without either), awaited or not. Other handlers answer as before.
+    /// </summary>
+    [Fact]
+    public void Options_and_results_are_answered_as_HTTP()
+    {
+        var result = Compile(""""
+            using System;
+            using System.Linq;
+            using System.Net.Http;
+            using System.Threading.Tasks;
+            using Microsoft.AspNetCore.Builder;
+            using Microsoft.AspNetCore.Hosting;
+            using Microsoft.Extensions.Logging;
+            using Piper.Web;
+
+            record Book(code: string, title: string);
+
+            [Status(409)]
+            enum LoanError {
+                [Status(404)] UnknownBook(code: string),
+                OutOnLoan(code: string, until: string),
+                Closed,
+            }
+
+            record Invalid(field: string, detail: string);
+
+            fn Find(code: string) => Book? = if code == "dune" { Some(Book("dune", "Dune")) } else { None };
+
+            fn Lend(code: string) => Result<Book, LoanError> =
+                match code {
+                    "dune" => Ok(Book("dune", "Dune")),
+                    "emma" => Err(LoanError.OutOnLoan("emma", "Friday")),
+                    "shut" => Err(LoanError.Closed),
+                    _ => Err(LoanError.UnknownBook(code)),
+                };
+
+            fn Check(n: int) => Result<int, string> = if n > 0 { Ok(n) } else { Err("must be positive") };
+            fn Validate() => Result<int, Invalid> = Err(Invalid("name", "is required"));
+            fn Maybe(n: int) => Result<int?, string> = if n > 0 { Ok(Some(n)) } else { Ok(None) };
+
+            endpoints Api {
+                get "/books/{code}" (code: string) => Find(code);
+                get "/later/{code}" async (code: string) => { await Task.Yield(); Find(code) }
+                post "/loans/{code}" (code: string) => Lend(code);
+                get "/titles/{code}" (code: string) => Find(code)?.title;
+                get "/check/{n:int}" (n: int) => Check(n);
+                get "/validate" () => Validate();
+                get "/maybe/{n:int}" (n: int) => Maybe(n);
+                get "/plain" () => "unchanged";
+            }
+
+            async fn Main() {
+                let builder = WebApplication.CreateBuilder();
+                builder.Logging.ClearProviders();
+                let urls: string[] = ["http://127.0.0.1:0"];
+                builder.WebHost.UseUrls(urls);
+                let app = builder.Build();
+                Api(app);
+                await app.StartAsync();
+                using let client = HttpClient();
+                client.BaseAddress = Uri(app.Urls.First());
+
+                async fn Show(what: string, response: HttpResponseMessage) {
+                    Print($"{what} {(int)response.StatusCode} [{await response.Content.ReadAsStringAsync()}]");
+                }
+                for path in ["/books/dune", "/books/nope", "/later/dune", "/later/nope", "/titles/dune", "/check/3", "/check/0",
+                             "/validate", "/maybe/2", "/maybe/0", "/plain"] {
+                    await Show(path, await client.GetAsync(path));
+                }
+                for code in ["dune", "emma", "shut", "nope"] {
+                    await Show($"lend {code}", await client.PostAsync($"/loans/{code}", StringContent("")));
+                }
+                await app.StopAsync();
+            }
+            """");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("""
+            /books/dune 200 [{"code":"dune","title":"Dune"}]
+            /books/nope 404 []
+            /later/dune 200 [{"code":"dune","title":"Dune"}]
+            /later/nope 404 []
+            /titles/dune 200 [Dune]
+            /check/3 200 [3]
+            /check/0 400 [{"type":"https://tools.ietf.org/html/rfc9110#section-15.5.1","title":"Bad Request","status":400,"detail":"must be positive"}]
+            /validate 400 [{"type":"https://tools.ietf.org/html/rfc9110#section-15.5.1","title":"Bad Request","status":400,"detail":"is required","field":"name"}]
+            /maybe/2 200 [2]
+            /maybe/0 404 []
+            /plain 200 [unchanged]
+            lend dune 200 [{"code":"dune","title":"Dune"}]
+            lend emma 409 [{"type":"https://tools.ietf.org/html/rfc9110#section-15.5.10","title":"Conflict","status":409,"kind":"OutOnLoan","code":"emma","until":"Friday"}]
+            lend shut 409 [{"type":"https://tools.ietf.org/html/rfc9110#section-15.5.10","title":"Conflict","status":409,"kind":"Closed"}]
+            lend nope 404 [{"type":"https://tools.ietf.org/html/rfc9110#section-15.5.5","title":"Not Found","status":404,"kind":"UnknownBook","code":"nope"}]
 
             """, run.Output.Replace("\r\n", "\n"));
     }

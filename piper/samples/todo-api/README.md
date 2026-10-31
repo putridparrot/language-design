@@ -85,4 +85,4 @@ The GET requests work in a browser too.
   - `Greeter` is transient, made afresh for each request.
 - **The routes** (`endpoints TodoApi "/api" { … }`): each handler's parameters come from the route (`{id}`), the
   query string (`name`), the JSON body (`request: NewTodo`) or the services (`store: TodoStore`), and it answers with a
-  value (sent as JSON) or a `Results.…` status.
+  value (sent as JSON), an Option (`store.Find(id)`: 200 with the to-do, or 404 for None) or a `Results.…` status.

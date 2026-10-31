@@ -30,6 +30,13 @@ public interface IPiperPlugin
     IReadOnlyList<string> Frameworks => [];
 
     /// <summary>
+    /// .NET assemblies the code this plugin writes uses, which come with the plugin: paths relative to the plugin's own
+    /// assembly. A program using the plugin references them too, and a built one gets copies. This is where a plugin
+    /// puts code Piper can't express, such as an ASP.NET Core filter.
+    /// </summary>
+    IReadOnlyList<string> References => [];
+
+    /// <summary>
     /// Checks the program once it's type-checked, reporting errors or warnings, such as about the types used in the
     /// plugin's constructs. Called for every compilation (and as the editor analyzes), after the program is bound,
     /// whether or not it uses the plugin's keywords. By default it does nothing.

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
 using Piper.Diagnostics;
 using Piper.Text;
@@ -90,15 +91,31 @@ public static class PluginLoader
         return Directory.Exists(folder) && Directory.GetFiles(folder, "Piper.Plugins.*.dll") is [var assembly] ? assembly : null;
     }
 
+    /// <summary>
+    /// The full paths of the assemblies <paramref name="plugin"/>'s <see cref="IPiperPlugin.References"/> names, beside
+    /// its own. A plugin not loaded from a file (one a test constructs) has its references relative to the current folder.
+    /// </summary>
+    public static IEnumerable<string> References(IPiperPlugin plugin)
+    {
+        var folder = Folders.TryGetValue(plugin, out var loadedFrom) ? loadedFrom : Directory.GetCurrentDirectory();
+        return plugin.References.Select(reference => Path.GetFullPath(Path.Combine(folder, reference)));
+    }
+
+    /// <summary>The folder each loaded plugin's assembly is in, for its <see cref="IPiperPlugin.References"/>.</summary>
+    private static readonly ConditionalWeakTable<IPiperPlugin, string> Folders = [];
+
     private static ImmutableArray<IPiperPlugin> LoadAssembly(string path)
     {
         var context = new PluginLoadContext(path);
         using var stream = new MemoryStream(File.ReadAllBytes(path));
         var assembly = context.LoadFromStream(stream);
-        return [.. assembly.GetExportedTypes()
+        ImmutableArray<IPiperPlugin> plugins = [.. assembly.GetExportedTypes()
             .Where(type => typeof(IPiperPlugin).IsAssignableFrom(type) && type is { IsAbstract: false, IsInterface: false } &&
                            type.GetConstructor(Type.EmptyTypes) is not null)
             .Select(type => (IPiperPlugin)Activator.CreateInstance(type)!)];
+        foreach (var plugin in plugins)
+            Folders.AddOrUpdate(plugin, Path.GetDirectoryName(path)!);
+        return plugins;
     }
 
     private sealed class PluginLoadContext(string path) : AssemblyLoadContext($"Piper plugin {Path.GetFileName(path)}")

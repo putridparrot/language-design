@@ -870,7 +870,7 @@ public sealed partial class Parser
 
     /// <summary>
     /// enum    = "enum" IDENT [ typeParameters ] "{" [ variant { "," variant } [ "," ] ] "}" ;
-    /// variant = IDENT [ "(" [ parameter { "," parameter } [ "," ] ] ")" ] ;
+    /// variant = attributes IDENT [ "(" [ parameter { "," parameter } [ "," ] ] ")" ] ;
     /// </summary>
     private EnumDeclarationSyntax ParseEnum()
     {
@@ -995,6 +995,7 @@ public sealed partial class Parser
     private VariantSyntax ParseVariant()
     {
         var documentation = DocumentationBefore(Current.Span.Start);
+        var attributes = Current.Kind == TokenKind.OpenBracket ? ParseAttributes() : [];
         var name = Expect(TokenKind.Identifier);
         var fields = ImmutableArray<ParameterSyntax>.Empty;
         if (Current.Kind == TokenKind.OpenParen)
@@ -1003,7 +1004,7 @@ public sealed partial class Parser
             fields = ParseSeparatedList(ParseParameter, TokenKind.CloseParen);
             Expect(TokenKind.CloseParen);
         }
-        return new VariantSyntax(SpanFrom(name), name, fields) { Documentation = documentation };
+        return new VariantSyntax(SpanFrom(name), name, fields) { Attributes = attributes, Documentation = documentation };
     }
 
     /// <summary>parameter = attributes IDENT ":" type [ "=" expression ] ;</summary>

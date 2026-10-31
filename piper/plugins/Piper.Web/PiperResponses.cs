@@ -1,0 +1,124 @@
+using System.Collections.Concurrent;
+using System.Reflection;
+using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Piper.Runtime;
+
+namespace Piper.Web;
+
+/// <summary>
+/// <c>[Status(409)]</c> on an enum variant: the HTTP status a handler's <c>Err</c> holding it answers. On a whole enum
+/// (or a record), the status of all its errors, which a variant's own overrides. Without one, an error is a 400.
+/// </summary>
+[AttributeUsage(AttributeTargets.Class, Inherited = true)]
+public sealed class StatusAttribute(int code) : Attribute
+{
+    public int Code { get; } = code;
+}
+
+/// <summary>
+/// Answers a handler's Option or Result as HTTP: <c>Some(x)</c> and <c>Ok(x)</c> are 200 with <c>x</c>, <c>None</c> is
+/// 404, and <c>Err(e)</c> is ProblemDetails with the status <see cref="StatusAttribute"/> gives. The web plugin wraps
+/// each endpoint it maps in <see cref="Answer"/>; a handler returning anything else is left alone, at no cost.
+/// </summary>
+public static class PiperResponses
+{
+    /// <summary>The ProblemDetails members an error's field can't also be an extension of.</summary>
+    private static readonly HashSet<string> ProblemMembers = new(["type", "title", "status", "detail", "instance"], StringComparer.OrdinalIgnoreCase);
+
+    private static readonly ConcurrentDictionary<Type, Func<object, HttpContext, object?>?> Readers = new();
+
+    public static RouteHandlerBuilder Answer(RouteHandlerBuilder endpoint) => endpoint.AddEndpointFilterFactory(Filter);
+
+    /// <summary>A filter for a handler whose result (once awaited) is an Option or Result; other handlers get none.</summary>
+    private static EndpointFilterDelegate Filter(EndpointFilterFactoryContext context, EndpointFilterDelegate next) =>
+        Reader(Awaited(context.MethodInfo.ReturnType)) is { } read
+            ? async invocation => await next(invocation) is { } value ? read(value, invocation.HttpContext) : null
+            : next;
+
+    private static Type Awaited(Type type) =>
+        type.IsGenericType && (type.GetGenericTypeDefinition() == typeof(Task<>) || type.GetGenericTypeDefinition() == typeof(ValueTask<>))
+            ? type.GetGenericArguments()[0]
+            : type;
+
+    /// <summary>How to answer a value of <paramref name="type"/>, if it's an Option or Result.</summary>
+    private static Func<object, HttpContext, object?>? Reader(Type type) =>
+        Readers.GetOrAdd(type, t =>
+        {
+            if (!t.IsGenericType)
+                return null;
+            var definition = t.GetGenericTypeDefinition();
+            var method = definition == typeof(Option<>) ? nameof(FromOption) : definition == typeof(Result<,>) ? nameof(FromResult) : null;
+            return method is null
+                ? null
+                : typeof(PiperResponses).GetMethod(method, BindingFlags.NonPublic | BindingFlags.Static)!
+                    .MakeGenericMethod(t.GetGenericArguments())
+                    .CreateDelegate<Func<object, HttpContext, object?>>();
+        });
+
+    private static object? FromOption<T>(object value, HttpContext http) =>
+        (Option<T>)value is { IsSome: true } some ? Ok(some.Value, http) : TypedResults.NotFound();
+
+    private static object? FromResult<T, E>(object value, HttpContext http)
+    {
+        var result = (Result<T, E>)value;
+        return result.IsOk ? Ok(result.Value, http) : Problem(result.Error, http);
+    }
+
+    /// <summary>
+    /// A successful value: as JSON of its static type, so a Piper enum is written as one (its runtime type is a
+    /// variant's record); a string as text, as ASP.NET Core writes a handler's string; and an Option inside answered
+    /// as one (<c>Ok(None)</c> is 404).
+    /// </summary>
+    private static object? Ok<T>(T value, HttpContext http) => value switch
+    {
+        null => null,
+        string or IResult => value,
+        _ when Reader(typeof(T)) is { } read => read(value, http),
+        _ => TypedResults.Json(value),
+    };
+
+    /// <summary>
+    /// An error as ProblemDetails. A string is its <c>detail</c>. Otherwise it's written as JSON, with the app's JSON
+    /// options: an object's properties (a variant's <c>kind</c> and fields, or a record's fields) become extension
+    /// members, a fieldless variant is <c>kind</c>, and any other value is <c>error</c>. A field named as one of
+    /// ProblemDetails' own members fills it if it's a string (<c>detail</c>, <c>title</c>), or else is left out.
+    /// </summary>
+    private static IResult Problem<E>(E error, HttpContext http)
+    {
+        var status = error?.GetType().GetCustomAttribute<StatusAttribute>(inherit: true)?.Code ?? StatusCodes.Status400BadRequest;
+        if (error is string message)
+            return TypedResults.Problem(detail: message, statusCode: status);
+
+        var options = http.RequestServices.GetService<IOptions<JsonOptions>>()?.Value.SerializerOptions ?? JsonSerializerOptions.Web;
+        var json = JsonSerializer.SerializeToElement(error, options);
+        var members = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var extensions = new Dictionary<string, object?>();
+        if (json.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in json.EnumerateObject())
+            {
+                if (!ProblemMembers.Contains(property.Name))
+                    extensions[property.Name] = property.Value;
+                else if (property.Value.ValueKind == JsonValueKind.String)
+                    members[property.Name] = property.Value.GetString()!;
+            }
+        }
+        else
+        {
+            var isEnum = new PiperEnumJsonConverterFactory().CanConvert(typeof(E));
+            extensions[isEnum ? PiperEnumJsonConverterFactory.Kind : "error"] = json;
+        }
+        return TypedResults.Problem(
+            detail: members.GetValueOrDefault("detail"),
+            instance: members.GetValueOrDefault("instance"),
+            statusCode: status,
+            title: members.GetValueOrDefault("title"),
+            type: members.GetValueOrDefault("type"),
+            extensions: extensions);
+    }
+}

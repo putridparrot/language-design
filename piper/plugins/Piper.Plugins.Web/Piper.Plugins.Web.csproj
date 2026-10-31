@@ -15,6 +15,9 @@
   <ItemGroup>
     <!-- The compiler loads the plugin, so it provides Piper.Compiler; don't copy it next to the plugin. -->
     <ProjectReference Include="..\..\src\Piper.Compiler\Piper.Compiler.csproj" Private="false" ExcludeAssets="runtime" />
+    <!-- What the code the plugin writes calls (IPiperPlugin.References): built first, and copied beside the plugin. -->
+    <ProjectReference Include="..\Piper.Web\Piper.Web.csproj" ReferenceOutputAssembly="false" />
+    <None Include="..\Piper.Web\bin\runtime\Piper.Web.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 
 </Project>

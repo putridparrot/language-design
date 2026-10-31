@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    What the code the web plugin (plugins/Piper.Plugins.Web) writes calls at run time: answering a handler's Option or
+    Result as an HTTP response, and the [Status] attribute choosing an error's status. It comes with the plugin, beside
+    its assembly, and a program using the plugin references it (IPiperPlugin.References).
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Piper.Web</RootNamespace>
+    <!-- One place whatever the configuration, so the web plugin can copy it beside itself. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\runtime\</OutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <!-- A program has its own Piper.Runtime; this must use that one, not a copy. -->
+    <ProjectReference Include="..\..\src\Piper.Runtime\Piper.Runtime.csproj" Private="false" />
+  </ItemGroup>
+
+</Project>

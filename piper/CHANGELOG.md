@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Options and Results as web responses:** an `endpoints` handler returning `T?` answers 200 with the value or 404
+  for None, and one returning `Result<T, E>` answers 200 or the error as ProblemDetails, so the
+  `match … { Some(x) => Results.Ok(x), None => Results.NotFound() }` boilerplate goes away.
+  - `[Status(409)]` (from `Piper.Web`) on an enum variant, or on a whole enum or record, chooses an error's status;
+    without one it's a 400. The error's JSON (a variant's `kind` and fields) becomes ProblemDetails extension members,
+    and a string error is its `detail`.
+  - It's an endpoint filter added only to handlers returning an Option or Result, so others are unchanged.
+- **Attributes on enum variants:** `enum LoanError { [Status(404)] UnknownBook(code: string), … }`, put on the
+  variant's C# class.
+- **Plugins can ship assemblies** for the code they write to call (`IPiperPlugin.References`, relative to the plugin's
+  assembly). A program using the plugin references them, and a built one gets copies.
+
 - **Trailing closures:** a block after a call is its last argument, as a lambda: `Repeat(3) { i => … }`,
   `Guarded { … }`. In an `if`, `while`, `for`, `match` or `requires` head, a `{` is still the body. A closure that
   awaits is async.

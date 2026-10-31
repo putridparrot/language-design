@@ -155,6 +155,10 @@ public sealed class ParallelPlugin : IPiperPlugin
   - **Source positions:** the template's own syntax is given the construct's position, and the holes' syntax keeps its
     own.
   - **Plugin bugs:** a template that doesn't parse, or a hole that isn't filled, throws.
+- **Code Piper can't express:** put it in a .NET assembly shipped beside the plugin, list it in the plugin's
+  `References` (paths relative to the plugin's assembly), and call it from the rewritten code. A program using the
+  plugin references it, and a built one gets a copy. The web plugin's Piper.Web is one: an ASP.NET Core endpoint
+  filter.
 - **Fresh names:** `p.FreshName("tasks")` gives a name like `__tasks_1` for a variable the rewritten code needs. It
   won't clash with the user's names or with another expansion's.
 - **Async:** `p.AsyncContext` says whether the rewritten code can `await`:
@@ -322,6 +326,31 @@ A program calls them as `AppServices(builder.Services)` and `Api(app)`.
     is its name or an object naming it in `"kind"`.
   - A request body that a record's `requires` rejects is answered 400 before the handler runs, so a record's invariants
     validate the request.
+  - A handler returning an Option answers 200 with the value, or 404 for None, and one returning a Result answers 200
+    with the value, or the error as ProblemDetails. Awaited results count too, and `Ok(None)` is a 404:
+
+    ```piper
+    using Piper.Web;
+
+    [Status(409)]                                  // every error of this enum is a 409 Conflict…
+    enum LoanError {
+        [Status(404)] UnknownBook(code: string),   // …but this one is a 404
+        OutOnLoan(code: string, until: string),
+    }
+
+    endpoints Library {
+        get "/books/{code}" (code: string, books: Books) => books.Find(code);   // Book?: 200 or 404
+        post "/loans/{code}" (code: string, books: Books) => books.Lend(code);  // Result<Loan, LoanError>
+    }
+    ```
+
+    `Err(LoanError.OutOnLoan("emma", "Friday"))` answers 409 with
+    `{"type": "…", "title": "Conflict", "status": 409, "kind": "OutOnLoan", "code": "emma", "until": "Friday"}`: the
+    error's JSON (a variant's `kind` and fields, or a record's fields) as extension members. A field named `detail`,
+    `title`, `type` or `instance` fills that member instead, if it's a string (and one named `status` is left out). A
+    string error is the `detail`. Without `[Status]` on the variant or its enum (or record), an error is a 400.
+  - That's done at run time by Piper.Web, which comes with the plugin: each endpoint gets an ASP.NET Core endpoint
+    filter, but only if its handler returns an Option or Result, so other handlers cost nothing and answer as before.
 - **Checks** report at the clause what ASP.NET Core would only find when the program runs, or not at all:
   - a service registered twice (the later would silently replace the earlier)
   - a route mapped twice with the same verb

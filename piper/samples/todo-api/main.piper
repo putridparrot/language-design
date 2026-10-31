@@ -102,14 +102,11 @@ services AppServices {
 
 // Becomes `fn TodoApi(app: IEndpointRouteBuilder)`. Each handler's parameters come from the route ({id}), the query
 // string, the request's JSON body (a NewTodo), or the services (store, greeter, clock). An optional one (`done: bool?`)
-// is None when the request leaves it out.
+// is None when the request leaves it out. A handler returning an Option answers 200 with the value, or 404 for None.
 endpoints TodoApi "/api" {
     get "/todos" (done: bool?, store: TodoStore) => store.All(done);
 
-    get "/todos/{id:int}" (id: int, store: TodoStore) => match store.Find(id) {
-        Some(todo) => Results.Ok(todo),
-        None => Results.NotFound($"No to-do {id}"),
-    };
+    get "/todos/{id:int}" (id: int, store: TodoStore) => store.Find(id);
 
     // A blank title never gets here: NewTodo's invariant rejects it while the body is read.
     post "/todos" (request: NewTodo, store: TodoStore) => {
@@ -117,12 +114,9 @@ endpoints TodoApi "/api" {
         Results.Created($"/api/todos/{todo.id}", todo)
     }
 
-    put "/todos/{id:int}/done" (id: int, store: TodoStore) => match store.Complete(id) {
-        Some(todo) => Results.Ok(todo),
-        None => Results.NotFound($"No to-do {id}"),
-    };
+    put "/todos/{id:int}/done" (id: int, store: TodoStore) => store.Complete(id);
 
-    delete "/todos/{id:int}" (id: int, store: TodoStore) => store.Remove(id) ? Results.NoContent() : Results.NotFound($"No to-do {id}");
+    delete "/todos/{id:int}" (id: int, store: TodoStore) => store.Remove(id) ? Results.NoContent() : Results.NotFound();
 
     get "/stats" (store: TodoStore) => Stats(store.Count, store.Done, store.Count - store.Done, store.Since);
 

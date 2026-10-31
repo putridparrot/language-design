@@ -176,13 +176,14 @@ public sealed record LoadedProject(PiperProject Project, ImmutableArray<IPiperPl
         if (!pluginErrors.IsEmpty)
             return (null, pluginErrors);
 
-        // Plugins' packages and frameworks are the program's too; the program's own choice of version wins.
+        // Plugins' packages, frameworks and assemblies are the program's too; the program's own choice of version wins.
         var packages = new Dictionary<string, string>(project.Packages, StringComparer.OrdinalIgnoreCase);
         foreach (var (id, version) in plugins.SelectMany(p => p.Packages))
             packages.TryAdd(id, version);
         var frameworks = project.Frameworks.Concat(plugins.SelectMany(p => p.Frameworks)).ToList();
+        var assemblies = project.References.Concat(plugins.SelectMany(PluginLoader.References)).ToList();
 
-        var (references, referenceErrors) = ProgramReferences.Resolve(directory, packages, frameworks, project.References, source);
+        var (references, referenceErrors) = ProgramReferences.Resolve(directory, packages, frameworks, assemblies, source);
         return referenceErrors.IsEmpty ? (new LoadedProject(project, plugins, references), []) : (null, referenceErrors);
     }
 }

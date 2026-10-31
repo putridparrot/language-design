@@ -38,7 +38,7 @@ them too.
 - **`const` declarations,** usable in patterns and attribute arguments (`const` is reserved).
 - **Spans:** `Span<T>` and `ReadOnlySpan<T>` (and ref structs generally), so APIs such as `AsSpan` and span overloads can be called. They can't be captured by lambdas or live across `await`, as in C#.
 - **Namespace-qualified variants in patterns** (`Library.Loans.LoanError.UnknownBook(code)`).
-- **Attributes on enum variants,** and explicit targets (`[return: …]`).
+- **Explicit attribute targets** (`[return: …]`), and `[Obsolete]` warnings for using an obsolete enum variant.
 - **More contracts:** `requires` on trait methods (implementations must not demand more than the trait does), invariants on
   enum variants, and postconditions (`ensures result >= 0`).
 - **Obsolete warnings for setting obsolete .NET properties and subscribing to obsolete events** (reading and calling are
@@ -52,18 +52,15 @@ contracts, the dependency graph) to catch at compile time what ASP.NET Core and 
 
 ### Web, in order
 
-Piper's types on the wire are done: Options, enums and invariants in JSON, and optional handler parameters (see
-[JSON](language.md#json)). What's left:
+Piper's types on the wire are done: Options, enums and invariants in JSON, optional handler parameters, and Options and
+Results answered as 200, 404 or ProblemDetails (see [JSON](language.md#json) and [plugins](plugins.md)). What's left:
 
-1. **Option and Result as responses.** A handler returning `T?` answers 200 or 404; one returning `Result<T, E>`
-   answers 200 or an error, the error enum choosing the status (`[Status(409)]` on a variant, or a default), as
-   ProblemDetails. The usual `match … { Some(x) => Results.Ok(x), None => Results.NotFound() }` goes away.
-2. **Testing.** A test helper serving an app in memory (ASP.NET Core's `TestServer`), so `test` blocks call endpoints
+1. **Testing.** A test helper serving an app in memory (ASP.NET Core's `TestServer`), so `test` blocks call endpoints
    without a port: `let client = TestClient(App);`.
-3. **Endpoint metadata.** Authorization, CORS, rate limiting, output caching and OpenAPI tags, on a group or an endpoint
+2. **Endpoint metadata.** Authorization, CORS, rate limiting, output caching and OpenAPI tags, on a group or an endpoint
    (`endpoints Admin "/admin" authorize "admin" { … }`). OpenAPI response types (`.Produces<T>(200)`, `.Produces(404)`)
    inferred from each handler's type-checked result, which C# writes by hand and lets drift.
-4. **Hosting and operations.** A `server` declaration replacing the builder code in `Main`: services and endpoints,
+3. **Hosting and operations.** A `server` declaration replacing the builder code in `Main`: services and endpoints,
    configuration bound to records (`appsettings.json`, environment), health checks, ProblemDetails error handling,
    HTTPS and graceful shutdown. Publishing a self-contained build or a container image (`piper build --publish`).
 

@@ -30,6 +30,11 @@ public sealed partial class Binder
             type.Attributes = BindAttributeList(declaration.Attributes, type is TraitSymbol ? AttributeTargets.Interface : AttributeTargets.Class, "a type");
             if (type is ClassSymbol classType)
                 BindClassMemberAttributes(classType);
+            if (type is EnumSymbol { Declaration: { } enumSyntax } variantsOf)
+            {
+                foreach (var (syntax, variant) in enumSyntax.Variants.Zip(variantsOf.Variants).Where(pair => !pair.First.Attributes.IsEmpty))
+                    variant.Attributes = BindAttributeList(syntax.Attributes, AttributeTargets.Class, "a variant");
+            }
             foreach (var (symbols, syntax) in fields)
             {
                 if (symbols.FirstOrDefault(f => f.Name == syntax.Name.Text) is { } field)
