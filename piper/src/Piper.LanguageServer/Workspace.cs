@@ -25,6 +25,8 @@ public sealed class Workspace
 
     public bool IsOpen(string path) => _open.ContainsKey(Normalize(path));
 
+    public IReadOnlyList<string> OpenFiles => [.. _open.Keys];
+
     public static string Normalize(string path) => Path.GetFullPath(path);
 
     /// <summary>The folder whose files form <paramref name="path"/>'s program, or null if it's a program on its own.</summary>

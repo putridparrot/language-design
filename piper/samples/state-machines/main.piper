@@ -1,0 +1,99 @@
+// State machines, from the state machines plugin: an object that moves between named states as events happen to it.
+// Each event is a method; a state's transitions say where it goes, `if` guards choose between them, and blocks run as
+// it moves. An event the current state has no transition for throws. See docs/plugins.md.
+
+using System;
+using System.Collections.Generic;
+
+statemachine Order(id: string, total: decimal) {
+    mut paid = 0m;
+    public mut tracking = "";
+    public let log: List<string> = [];
+
+    // The first state is where every order starts.
+    state Pending {
+        // Transitions for the same event are tried in order: the first whose guard holds is taken.
+        on Pay(amount: decimal) => Paid if paid + amount >= total { paid += amount; }
+        on Pay(amount: decimal) => Pending { paid += amount; log.Add($"part paid: {paid} of {total}"); }
+        on Cancel(reason: string) => Cancelled { log.Add($"cancelled: {reason}"); }
+    }
+
+    state Paid {
+        // `enter` and `exit` run when the order moves into or out of this state.
+        enter { log.Add($"{id} is paid"); }
+        on Ship(code: string) => Shipped { tracking = code; }
+        on Cancel(reason: string) => Cancelled { log.Add($"cancelled after paying, so refund {paid}: {reason}"); }
+    }
+
+    // States with no transitions are final.
+    state Shipped;
+    state Cancelled;
+}
+
+// A turnstile: a coin unlocks it, a push locks it again, and pushing while locked does nothing.
+statemachine Turnstile {
+    public mut coins = 0;
+
+    state Locked {
+        on Coin() => Unlocked { coins += 1; }
+        on Push() => Locked;
+    }
+    state Unlocked {
+        on Coin() => Unlocked { coins += 1; }
+        on Push() => Locked;
+    }
+}
+
+fn Main() {
+    let order = Order("order-42", 30m);
+    Print($"{order.State}, can do: {string.Join(", ", order.Events)}");
+    order.Pay(10m);
+    Print($"{order.State} after paying 10");
+    order.Pay(20m);
+    Print($"{order.State} after paying 20, can do: {string.Join(", ", order.Events)}");
+    order.Ship("TRK-1");
+    Print($"{order.State}, tracking {order.tracking}, finished: {order.IsFinal}");
+    try {
+        order.Cancel("too late");
+    } catch (e: InvalidOperationException) {
+        Print($"refused: {e.Message}");
+    }
+    for line in order.log {
+        Print($"  {line}");
+    }
+
+    // Events are data too: stored, sent to another process, then replayed to rebuild the order.
+    let history = [OrderEvent.Pay(15m), OrderEvent.Pay(15m), OrderEvent.Cancel("changed my mind")];
+    let replayed = Order("order-43", 30m);
+    for event in history {
+        replayed.Fire(event);
+    }
+    Print($"replayed: {replayed.State}, {replayed.log[replayed.log.Count - 1]}");
+
+    let gate = Turnstile();
+    gate.Push();
+    gate.Coin();
+    Print($"{gate.State} after a coin; can push: {gate.CanPush()}");
+    gate.Push();
+    Print($"{gate.State} after a push, {gate.coins} coins taken");
+}
+
+test "a guard picks between transitions" {
+    let order = Order("o", 10m);
+    order.Pay(4m);
+    AssertEqual(OrderState.Pending, order.State);
+    order.Pay(6m);
+    AssertEqual(OrderState.Paid, order.State);
+}
+
+test "an event the state has no transition for is refused" {
+    let order = Order("o", 10m);
+    Assert(!order.CanShip("x"));
+    mut refused = false;
+    try {
+        order.Ship("x");
+    } catch (e: InvalidOperationException) {
+        refused = true;
+    }
+    Assert(refused);
+}

@@ -61,7 +61,7 @@ public sealed class WebPlugin : IPiperPlugin
                 SkipClause(p);
                 continue;
             }
-            p.NextToken();
+            p.ReadWord();
 
             if (p.Current.Kind is not (TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral))
             {
@@ -104,7 +104,7 @@ public sealed class WebPlugin : IPiperPlugin
     /// </summary>
     private static LambdaExpressionSyntax? Handler(PluginParser p)
     {
-        var async = p.AtWord("async") ? p.NextToken() : null;
+        var async = p.AtWord("async") ? p.ReadWord() : null;
         if (p.Current.Kind is not (TokenKind.OpenParen or TokenKind.Identifier))
         {
             p.Report(p.Current.Span, "Expected the endpoint's handler, such as (id: int) => …;");

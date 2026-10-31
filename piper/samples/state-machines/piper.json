@@ -1,0 +1,4 @@
+{
+  // The state machines plugin, which comes with piper, adds `statemachine` declarations: `piper run samples/state-machines`.
+  "plugins": ["state-machines"]
+}

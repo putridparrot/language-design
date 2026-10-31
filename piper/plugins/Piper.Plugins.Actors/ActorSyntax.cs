@@ -92,7 +92,7 @@ internal static class ActorSyntax
 
     private static ActorHandler? ParseHandler(PluginParser p, ref bool valid)
     {
-        p.NextToken();
+        p.ReadWord();
         var name = p.Expect(TokenKind.Identifier);
         if (p.Current.Kind != TokenKind.OpenParen)
         {

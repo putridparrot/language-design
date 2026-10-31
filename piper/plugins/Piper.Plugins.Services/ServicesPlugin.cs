@@ -55,7 +55,7 @@ public sealed class ServicesPlugin : IPiperPlugin
                 SkipClause(p);
                 continue;
             }
-            p.NextToken();
+            p.ReadWord();
 
             var service = p.ParseType();
             var key = TypeText(service);

@@ -11,6 +11,7 @@
     <BundledPlugin Include="remote-actors" Folder="Piper.Plugins.Actors.Remote" />
     <BundledPlugin Include="parallel" Folder="Piper.Plugins.Parallel" />
     <BundledPlugin Include="services" Folder="Piper.Plugins.Services" />
+    <BundledPlugin Include="state-machines" Folder="Piper.Plugins.StateMachines" />
     <BundledPlugin Include="web" Folder="Piper.Plugins.Web" />
     <ProjectReference Include="@(BundledPlugin->'$(MSBuildThisFileDirectory)..\plugins\%(Folder)\%(Folder).csproj')" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>

@@ -267,18 +267,25 @@ public sealed class LanguageServerTests : IDisposable
         });
         var lines = text.Split('\n');
         int servicesLine = Array.FindIndex(lines, l => l.StartsWith("services ")), endpointsLine = Array.FindIndex(lines, l => l.StartsWith("endpoints "));
+        // The words special to a construct (`singleton`, `get`) are keywords too.
+        int singletonLine = Array.FindIndex(lines, l => l.TrimStart().StartsWith("singleton ")), getLine = Array.FindIndex(lines, l => l.TrimStart().StartsWith("get "));
 
         var tokens = (await _server.HandleAsync("textDocument/semanticTokens/full", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = uri } }))!["data"]!
             .AsArray().Select(n => n!.GetValue<int>()).ToArray();
         var onLines = new List<string>();
+        var words = new List<string>();
         for (int i = 0, line = 0, column = 0; i < tokens.Length; i += 5)
         {
             line += tokens[i];
             column = tokens[i] == 0 ? column + tokens[i + 1] : tokens[i + 1];
+            var token = $"{lines[line].Substring(column, tokens[i + 2])}:{SemanticTokens.TokenTypes[tokens[i + 3]]}";
             if (line == servicesLine || line == endpointsLine)
-                onLines.Add($"{lines[line].Substring(column, tokens[i + 2])}:{SemanticTokens.TokenTypes[tokens[i + 3]]}");
+                onLines.Add(token);
+            else if ((line == singletonLine || line == getLine) && token.EndsWith(":keyword"))
+                words.Add(token);
         }
         Assert.Equal(["services:keyword", "AppServices:function", "endpoints:keyword", "TodoApi:function"], onLines);
+        Assert.Equal(["singleton:keyword", "get:keyword"], words);
 
         var everything = new JsonObject { ["start"] = new JsonObject { ["line"] = 0, ["character"] = 0 }, ["end"] = new JsonObject { ["line"] = lines.Length, ["character"] = 0 } };
         var hints = (JsonArray)(await _server.HandleAsync("textDocument/inlayHint", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = uri }, ["range"] = everything }))!;

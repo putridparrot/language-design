@@ -25,6 +25,8 @@ correct.
 | [todo-api/](todo-api) | A to-do REST server with DI services and endpoints: JSON in and out, route, query and body parameters, 201/204/400/404 responses. `piper run samples/todo-api --serve` serves on localhost:5080 (see its [README](todo-api/README.md)) |
 | [actors/](actors) | Actors from the actors plugin (build `plugins/Piper.Plugins.Actors` first): an account with private state, which a hundred tasks deposit into at once, with tells, asks, an async handler and a refused withdrawal |
 | [remote-actors/](remote-actors) | Actors across processes and machines, with the remote actors plugin (build `plugins/Piper.Plugins.Actors.Remote` first): run with no arguments for two nodes in one process, or `-- host 8000` and `-- client 8001 127.0.0.1:8000` in two terminals |
+| [grid/](grid) | Grid computing on the remote actors plugin: a coordinator splits a job into chunks for workers on many nodes, which take the next chunk when they're free, and a failed or unreachable node's chunks go to the others. Run with no arguments for worker nodes in one process, or `-- worker 8001` on each machine and then `-- coordinator 8000 <host:port>…` |
+| [state-machines/](state-machines) | State machines from the state machines plugin: an order whose `Pay`, `Ship` and `Cancel` events move it between states, with `if` guards choosing between transitions, `enter` actions, a refused event, and stored events replayed with `Fire`; and a turnstile |
 | [plugins/](plugins) | Extending the language without changing the compiler: `parallel for` and `concurrency { }` from a compiler plugin listed in `piper.json` (build `plugins/Piper.Plugins.Parallel` first), and a trailing closure (`Retry(3) { … }`) |
 
 ## Visibility in brief

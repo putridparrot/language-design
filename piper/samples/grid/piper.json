@@ -1,0 +1,5 @@
+{
+  // Grid computing needs nothing beyond the remote actors plugin: workers are actors, hosted on as many nodes (processes
+  // or machines) as you start, and the coordinator reaches them by address and name.
+  "plugins": ["remote-actors"]
+}

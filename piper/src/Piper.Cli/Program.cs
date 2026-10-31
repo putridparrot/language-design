@@ -21,6 +21,11 @@ const string Usage = """
       piper new   <folder> [--template <name>]
                                            Make a program folder: console (the default), or web (an API using the
                                            services and web plugins)
+      piper plugin add <folder|dll> [--name <name>]
+                                           Add a plugin, so a piper.json can name it as it does those that come with
+                                           piper (its folder is copied to ~/.piper/plugins, or $PIPER_PLUGINS)
+      piper plugin remove <name>           Remove a plugin added with 'piper plugin add'
+      piper plugin list                    List the plugins that come with piper and those added
       piper lsp                            Run the language server (LSP over stdin and stdout), for editors
       piper --version                      Show the compiler's version
 
@@ -45,6 +50,9 @@ if (args is ["lsp", ..])
 
 if (args is ["new", .. var newArguments])
     return New(newArguments);
+
+if (args is ["plugin", .. var pluginArguments])
+    return Plugin(pluginArguments);
 
 if (args.Length < 2 || args[0] is not ("build" or "emit" or "run" or "test"))
 {
@@ -232,6 +240,51 @@ switch (command)
         foreach (var error in run.Errors)
             Console.Error.WriteLine(error);
         return run.Success ? 0 : 3;
+}
+
+// `piper plugin add plugins/My.Plugin`, `piper plugin remove my-plugin`, `piper plugin list`.
+static int Plugin(string[] arguments)
+{
+    switch (arguments)
+    {
+        case ["add", var source, .. var options]:
+        {
+            string? name = null;
+            if (options is ["--name" or "-n", var given])
+                name = given;
+            else if (options.Length > 0)
+            {
+                Console.Error.WriteLine($"Unknown argument '{options[0]}'.");
+                Console.Error.WriteLine(Usage);
+                return 2;
+            }
+            var (added, error) = AddedPlugins.Add(source, name);
+            if (error is not null)
+            {
+                Console.Error.WriteLine($"Couldn't add the plugin: {error}");
+                return 1;
+            }
+            Console.WriteLine($"Added '{added}' to {AddedPlugins.Directory}. A piper.json uses it with:");
+            Console.WriteLine($"  \"plugins\": [\"{added}\"]");
+            return 0;
+        }
+        case ["remove", var name]:
+            if (AddedPlugins.Remove(name))
+            {
+                Console.WriteLine($"Removed '{name}'.");
+                return 0;
+            }
+            Console.Error.WriteLine($"There's no plugin '{name}' added with 'piper plugin add' in {AddedPlugins.Directory}.");
+            return 1;
+        case ["list"]:
+            Console.WriteLine($"Come with piper:  {string.Join(", ", PluginLoader.BundledNames)}");
+            var names = AddedPlugins.Names;
+            Console.WriteLine($"Added:            {(names.IsEmpty ? "none" : string.Join(", ", names))} (in {AddedPlugins.Directory})");
+            return 0;
+        default:
+            Console.Error.WriteLine(Usage);
+            return 2;
+    }
 }
 
 // `piper new hello [--template web]`: a folder named after the program, with a piper.json and a main.piper.

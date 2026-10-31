@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **State machines plugin:** `plugins/Piper.Plugins.StateMachines` adds `statemachine` declarations, with states,
+  events with parameters, `on Pay(amount: decimal) => Paid if … { … }` transitions with guards and actions, and
+  `enter`/`exit` blocks.
+  - Each machine becomes a class with a method and a `Can…` check for each event, `State`, `IsFinal` and `Events`,
+    plus an enum of its states and one of its events (`Fire` replays those).
+  - Its shape is checked, and states nothing reaches are warned about.
+  - It comes with piper as `state-machines`. See `samples/state-machines`.
+- **`piper plugin add`:** adds a plugin under a name a piper.json can use, as it does those that come with piper,
+  without a new copy of piper. The plugin's folder is copied to `~/.piper/plugins` (or `$PIPER_PLUGINS`).
+  - Bundled names win, and the error for an unknown name lists the plugins that have been added.
+  - `piper plugin list` and `piper plugin remove` manage them.
+  - The language server asks the editor to watch that folder, so a plugin added while the editor is open is picked up
+    straight away, highlighting included.
+- **Plugins' words are highlighted:** the editor colours the words special to a plugin's construct as keywords, as it
+  does the plugin's keyword: `on` in an actor; `state`, `on`, `enter` and `exit` in a state machine; `singleton` in
+  `services`; `get` in `endpoints`. A plugin reads them with the new `PluginParser.ReadWord()` or with `ExpectWord`.
+- **Grid computing sample:** `samples/grid` uses the remote actors plugin to spread a job over worker nodes on many
+  machines. Workers take the next chunk when they're free, and a failed or unreachable node's chunks go to the
+  others.
 - **Options and Results as web responses:** an `endpoints` handler returning `T?` answers 200 with the value or 404
   for None, and one returning `Result<T, E>` answers 200 or the error as ProblemDetails, so the
   `match … { Some(x) => Results.Ok(x), None => Results.NotFound() }` boilerplate goes away.

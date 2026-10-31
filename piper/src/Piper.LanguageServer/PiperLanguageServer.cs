@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Text.Json.Nodes;
 using Piper.Binding;
 using Piper.Diagnostics;
+using Piper.Plugins;
 using Piper.Syntax;
 using Piper.Text;
 
@@ -30,6 +31,9 @@ public sealed class PiperLanguageServer
         while (await connection.ReadAsync() is { } message)
         {
             var method = message["method"]?.GetValue<string>();
+            // A response to a request of ours (see SendRequestAsync), which needs no answer.
+            if (method is null && message["id"] is not null)
+                continue;
             if (method == "exit")
                 return server._shutdown ? 0 : 1;
 
@@ -68,8 +72,11 @@ public sealed class PiperLanguageServer
         switch (method)
         {
             case "initialize":
+                ReadClientCapabilities(parameters);
                 return Initialize();
             case "initialized":
+                await WatchAddedPluginsAsync();
+                return null;
             case "$/cancelRequest":
             case "$/setTrace":
             case "workspace/didChangeConfiguration":
@@ -110,10 +117,14 @@ public sealed class PiperLanguageServer
             }
             case "workspace/didChangeWatchedFiles":
             {
-                // piper.json isn't a document the client opens, so its changes arrive as file events.
+                // piper.json isn't a document the client opens, so its changes arrive as file events, as do those to
+                // the plugins added with `piper plugin add`.
+                bool pluginsChanged = false;
                 foreach (var change in parameters!["changes"]!.AsArray().OfType<JsonObject>())
                 {
                     var path = PathOf(change["uri"]!.GetValue<string>());
+                    if (IsInAddedPlugins(path))
+                        pluginsChanged = true;
                     if (!string.Equals(Path.GetFileName(path), PiperProject.FileName, StringComparison.OrdinalIgnoreCase))
                         continue;
                     if (change["type"]?.GetValue<int>() == 3)
@@ -121,6 +132,8 @@ public sealed class PiperLanguageServer
                     else
                         await PublishProjectAsync(Path.GetDirectoryName(path));
                 }
+                if (pluginsChanged)
+                    await ReanalyzeOpenFilesAsync();
                 return null;
             }
             case "textDocument/hover":
@@ -162,6 +175,73 @@ public sealed class PiperLanguageServer
                 throw new MethodNotFoundException(method ?? "?");
         }
     }
+
+    // Plugins added while the editor is open
+
+    /// <summary>Whether the client can watch files outside the workspace for us, and refresh its semantic tokens when asked.</summary>
+    private bool _canWatchOutsideWorkspace, _canRefreshTokens;
+
+    private int _requests;
+
+    private void ReadClientCapabilities(JsonObject? parameters)
+    {
+        var workspace = parameters?["capabilities"]?["workspace"];
+        var watching = workspace?["didChangeWatchedFiles"];
+        _canWatchOutsideWorkspace = watching?["dynamicRegistration"]?.GetValue<bool>() == true &&
+                                    watching["relativePatternSupport"]?.GetValue<bool>() == true;
+        _canRefreshTokens = workspace?["semanticTokens"]?["refreshSupport"]?.GetValue<bool>() == true;
+    }
+
+    /// <summary>
+    /// Asks the client to tell us about changes in the folder of plugins added with `piper plugin add`, which is outside
+    /// the workspace, so a plugin added while the editor is open is used at once. The folder is made if need be, since
+    /// a client may not watch one that doesn't exist.
+    /// </summary>
+    private async Task WatchAddedPluginsAsync()
+    {
+        if (!_canWatchOutsideWorkspace)
+            return;
+        try
+        {
+            Directory.CreateDirectory(AddedPlugins.Directory);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return;
+        }
+        var watcher = new JsonObject
+        {
+            ["globPattern"] = new JsonObject { ["baseUri"] = new Uri(Path.GetFullPath(AddedPlugins.Directory)).AbsoluteUri, ["pattern"] = "**/*.dll" },
+        };
+        await SendRequestAsync("client/registerCapability", new JsonObject
+        {
+            ["registrations"] = new JsonArray(new JsonObject
+            {
+                ["id"] = "piper-added-plugins",
+                ["method"] = "workspace/didChangeWatchedFiles",
+                ["registerOptions"] = new JsonObject { ["watchers"] = new JsonArray(watcher) },
+            }),
+        });
+    }
+
+    private static bool IsInAddedPlugins(string path)
+    {
+        var folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(AddedPlugins.Directory)) + Path.DirectorySeparatorChar;
+        return path.StartsWith(folder, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    }
+
+    /// <summary>Analyzes each open document again (its plugins may have changed), and has the client colour them again.</summary>
+    private async Task ReanalyzeOpenFilesAsync()
+    {
+        foreach (var path in _workspace.OpenFiles)
+            await PublishAsync(path);
+        if (_canRefreshTokens)
+            await SendRequestAsync("workspace/semanticTokens/refresh", null);
+    }
+
+    /// <summary>Sends the client a request; its response is ignored (<see cref="RunAsync"/> skips responses).</summary>
+    private Task SendRequestAsync(string method, JsonObject? parameters) =>
+        _send(new JsonObject { ["jsonrpc"] = "2.0", ["id"] = $"piper-{++_requests}", ["method"] = method, ["params"] = parameters });
 
     private static JsonObject Initialize() => new()
     {

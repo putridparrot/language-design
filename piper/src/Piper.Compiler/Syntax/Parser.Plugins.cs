@@ -63,7 +63,7 @@ public sealed partial class Parser
         try
         {
             ImmutableArray<T> result = [.. expand(parser)];
-            _plugins.Record(plugin, new PluginExpansion(_plugins.KeywordFor(keyword.Text), keyword, _source, [.. result]));
+            _plugins.Record(plugin, new PluginExpansion(_plugins.KeywordFor(keyword.Text), keyword, _source, [.. result]) { Words = [.. parser.Words] });
             return result;
         }
         catch (Exception exception)

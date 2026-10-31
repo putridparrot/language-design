@@ -24,8 +24,12 @@ public sealed class PluginRegistry
 
     internal PluginKeyword KeywordFor(string text) => _keywords[text].Keyword;
 
-    /// <summary>Each plugin keyword the source used (<c>services</c>, <c>endpoints</c>), for the editor to colour.</summary>
-    public IEnumerable<(Text.SourceText File, Token Keyword)> KeywordsUsed => _expansions.Select(e => (e.Expansion.File, e.Expansion.KeywordToken));
+    /// <summary>
+    /// Each plugin keyword the source used (<c>services</c>, <c>endpoints</c>), and the words special to its construct
+    /// (<c>singleton</c>, <c>get</c>), for the editor to colour.
+    /// </summary>
+    public IEnumerable<(Text.SourceText File, Token Keyword)> KeywordsUsed =>
+        _expansions.SelectMany(e => e.Expansion.Words.Prepend(e.Expansion.KeywordToken).Select(word => (e.Expansion.File, word)));
 
     /// <summary>Remembers an expansion, for the plugin's analysis once the program is bound.</summary>
     internal void Record(IPiperPlugin plugin, PluginExpansion expansion)

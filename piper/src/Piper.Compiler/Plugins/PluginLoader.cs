@@ -33,8 +33,8 @@ public static class PluginLoader
 
     /// <summary>
     /// Loads the plugin assemblies at <paramref name="paths"/>, relative to <paramref name="directory"/> (the program's
-    /// folder), or named, as <c>web</c>, for one that comes with piper. Errors are reported against
-    /// <paramref name="project"/>, the piper.json, when given.
+    /// folder), or named, as <c>web</c>, for one that comes with piper or was added with <c>piper plugin add</c>
+    /// (<see cref="AddedPlugins"/>). Errors are reported against <paramref name="project"/>, the piper.json, when given.
     /// </summary>
     public static (ImmutableArray<IPiperPlugin> Plugins, ImmutableArray<Diagnostic> Errors) Load(
         string directory, IEnumerable<string> paths, SourceText? project = null)
@@ -46,12 +46,14 @@ public static class PluginLoader
             string path;
             if (IsBundledName(relative))
             {
-                if (Bundled(relative) is not { } bundled)
+                if ((Bundled(relative) ?? AddedPlugins.Find(relative)) is not { } bundled)
                 {
                     var names = BundledNames;
-                    diagnostics.ReportPluginLoadFailed(relative, names.IsEmpty
-                        ? "no plugins come with this copy of piper, so give the path to the plugin's assembly."
-                        : $"it isn't one that comes with piper ({string.Join(", ", names)}); for another, give the path to its assembly.");
+                    var added = AddedPlugins.Names;
+                    var known = names.IsEmpty ? "no plugins come with this copy of piper" : $"it isn't one that comes with piper ({string.Join(", ", names)})";
+                    if (!added.IsEmpty)
+                        known += $" or one added with 'piper plugin add' ({string.Join(", ", added)})";
+                    diagnostics.ReportPluginLoadFailed(relative, $"{known}. Add it with 'piper plugin add <folder>', or give the path to its assembly.");
                     continue;
                 }
                 path = bundled;
@@ -81,7 +83,7 @@ public static class PluginLoader
     }
 
     /// <summary>`web` rather than `../plugins/Web.dll`: a name, without a folder or extension.</summary>
-    private static bool IsBundledName(string entry) =>
+    internal static bool IsBundledName(string entry) =>
         entry.Length > 0 && entry.IndexOfAny(['/', '\\', '.']) < 0;
 
     /// <summary>The assembly of the bundled plugin <paramref name="name"/>: the Piper.Plugins one in its folder.</summary>

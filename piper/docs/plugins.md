@@ -66,7 +66,7 @@ syntax**, which then goes through the binder, lowering and C# emitter like anyth
 
 List the plugin in the program folder's `piper.json`. The plugins in this repository's [plugins](../plugins) folder
 come with piper (in a `plugins` folder beside it), and are named: `actors`, `args`, `remote-actors`, `parallel`,
-`services` and `web`. Any other is given as the path of its assembly, relative to the folder:
+`services`, `state-machines` and `web`. Any other is given as the path of its assembly, relative to the folder:
 
 ```json
 {
@@ -91,6 +91,30 @@ concurrency {                            // Task.WaitAll(Task.Run(() => { … })
 ```
 
 `piper emit` shows the C# the rewritten code becomes.
+
+#### Adding a plugin by name
+
+`piper plugin add` adds a plugin that a piper.json can then name, as it does those that come with piper:
+
+```text
+piper plugin add plugins/Piper.Plugins.MyPlugin          # a plugin project's folder (its bin/plugin), a folder, or a .dll
+piper plugin add ../my-plugin --name my-plugin           # the name is the plugin's own unless --name gives another
+piper plugin list                                        # those that come with piper, and those added
+piper plugin remove my-plugin
+```
+
+- **Where it goes:** the plugin's folder is copied to `~/.piper/plugins/<name>` (`%USERPROFILE%\.piper\plugins` on
+  Windows), or to the folder that `PIPER_PLUGINS` names.
+- **Lookup:** names are looked up among the plugins that come with piper first, then those added. So an added
+  plugin can't take a bundled plugin's name.
+- **Finding the assembly:** a plugin's folder should hold one `Piper.Plugins.*.dll`, or only one .dll.
+- **No reinstall:** a new plugin doesn't need a new copy of piper.
+- **In the editor:** the language server is told when the plugins folder changes, so a plugin added while the editor
+  is open is used straight away, keywords and highlighting included. This works in any editor whose client can watch
+  files outside the workspace, as VS Code's can.
+
+A plugin given by its path needs none of this. It's reloaded whenever its assembly is rebuilt, and it's read into
+memory, so the editor never locks it.
 
 A plugin keyword is a keyword only where its construct can start, and only when the token after it couldn't follow a
 name. So the word is still an ordinary name elsewhere: `let parallel = 4;`, `parallel(items)` and `parallel.Count`
@@ -138,8 +162,11 @@ public sealed class ParallelPlugin : IPiperPlugin
 
 - **Keywords:** a `StatementKeyword` starts a statement inside a block and returns statements. A `DeclarationKeyword`
   starts a top-level declaration and returns declarations.
-- **Reading:** `PluginParser` gives the tokens after the keyword (`Current`, `Peek`, `NextToken`, `Expect`, and
-  `AtWord`/`ExpectWord` for words special to the construct, such as `singleton`). It also gives Piper's parser for the
+- **Reading:** `PluginParser` gives the tokens after the keyword (`Current`, `Peek`, `NextToken` and `Expect`).
+  - **Words special to the construct**, such as `singleton`: `AtWord` checks for one, and `ExpectWord` or `ReadWord`
+    reads it.
+  - **Highlighting:** words read with `ExpectWord` or `ReadWord` are coloured as keywords in the editor, as the
+    plugin's own keyword is. Read them with these, not `NextToken`. It also gives Piper's parser for the
   pieces: `ParseExpression`, `ParseExpressionBeforeBlock` (where a `{` follows), `ParseBlock`, `ParseAsyncBlock`
   (for a block the rewritten code runs in async code, so it can `await`), `ParseType`, `ParsePattern`,
   `ParseLambdaParameters`, `ParseVariableDeclaration` and `ParseDeclaration`. Like Piper's parser, these never throw:
@@ -495,8 +522,97 @@ What's different from in-process actors:
   run the same program. `piper run` names it as `piper build` does (after its piper.json `name`, or its folder), so a
   built node and a `piper run` one understand each other.
 
+For grid computing, which spreads one job over many machines, [samples/grid](../samples/grid/main.piper) builds on the
+same handles. Each machine runs a worker node, which hosts a `Worker` actor per core. The coordinator splits the job
+into chunks, and one loop per worker takes the next chunk from a shared queue, so faster nodes do more. A chunk whose
+ask fails (its node stopped, or the ask timed out) goes back in the queue for another worker:
+
+```piper
+async fn Drain(worker: Worker, queue: ConcurrentQueue<Chunk>, results: ConcurrentDictionary<int, ChunkResult>) => Task<bool> {
+    while queue.TryDequeue(out let chunk) {
+        try {
+            let result = await worker.Count(chunk);       // runs on the worker's machine
+            results[result.id] = result;
+        } catch (e: System.Exception) {
+            queue.Enqueue(chunk);                         // another worker will take it
+            return false;
+        }
+    }
+    true
+}
+```
+
+```text
+piper run samples/grid -- worker 8001                                    # on each machine
+piper run samples/grid -- coordinator 8000 10.0.0.6:8001 10.0.0.7:8001   # then share a job among them
+```
+
 Still to come: actors that move between nodes when one fails, and finding nodes without addresses. That's
 Proto.Actor's clustering, or Orleans's virtual actors, which need Piper to have classes.
+
+### `statemachine` (state machines)
+
+[Piper.Plugins.StateMachines](../plugins/Piper.Plugins.StateMachines/StateMachinePlugin.cs) adds `statemachine`
+declarations, for an object that moves between named states as events happen to it.
+[samples/state-machines](../samples/state-machines/main.piper) runs it:
+
+```piper
+statemachine Order(id: string, total: decimal) {
+    mut paid = 0m;                       // the machine's data: private fields…
+    public mut tracking = "";            // …or public ones
+
+    state Pending {                      // the first state is where a machine starts
+        on Pay(amount: decimal) => Paid if paid + amount >= total { paid += amount; }
+        on Pay(amount: decimal) => Pending { paid += amount; }
+        on Cancel(reason: string) => Cancelled;
+    }
+    state Paid {
+        enter { Print($"{id} is paid"); }
+        on Ship(code: string) => Shipped { tracking = code; }
+    }
+    state Shipped;                       // no transitions: a final state
+    state Cancelled;
+}
+
+let order = Order("order-42", 30m);
+order.Pay(10m);                          // still Pending
+order.Pay(20m);                          // Paid
+Print($"{order.State}: {string.Join(", ", order.Events)}");   // Paid: Ship
+```
+
+A transition is `on Event(parameters) => Target`, with an optional `if` guard and an optional block, its action. The
+guard comes after the target, as a `match` arm's does.
+
+The plugin generates:
+
+- **`OrderState`:** an enum of the states.
+- **`OrderEvent`:** an enum of the events, with a variant for each and its parameters as fields. Events are data,
+  which can be stored, sent to an actor or another process, and replayed with `order.Fire(event)`.
+- **`Order`:** a class, whose constructor takes the machine's parameters. It has:
+  - the machine's `let`s and `mut`s as fields
+  - `State`
+  - `IsFinal` (its state has no transitions)
+  - `Events`: the events the current state has transitions for, whether or not their guards hold
+  - a method for each event (`Pay`), and `CanPay`, which says whether `Pay` would be taken now
+  - `Fire`
+
+How it behaves:
+
+- **Choosing a transition:** an event takes the current state's first transition for it whose guard holds. If there's
+  none, it throws an `InvalidOperationException` (`Order can't Ship while Pending`).
+- **Order:** the old state's `exit` block runs, then the transition's action, then the machine moves, then the new
+  state's `enter` block runs. `exit` and `enter` run only when the state changes, so a transition back to its own state
+  (`on Pay(…) => Pending`) runs only its action.
+- **Synchronous:** actions, guards, and `enter` and `exit` blocks can't `await`.
+- **Not thread-safe:** like any class, a machine isn't safe to use from several threads at once. To share one, keep it
+  in an actor.
+- **Syntax checks:**
+  - a target that isn't a state, or a duplicate state
+  - an event whose transitions take different parameters
+  - a transition that's never taken, because an earlier one for the same event in that state has no guard
+  - an event named after a generated member (`Fire`, `State`, `IsFinal`, `Events`, or `CanX` when there's an `X`)
+  - untyped parameters, a second `enter` or `exit` in a state, and a machine with no states
+- **Analysis:** a warning for a state that no chain of transitions reaches from the first.
 
 ### Packages and frameworks for plugins
 

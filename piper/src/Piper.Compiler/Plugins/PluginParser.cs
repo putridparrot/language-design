@@ -15,6 +15,7 @@ public sealed class PluginParser
     private readonly Parser _parser;
     private readonly DiagnosticBag _diagnostics;
     private readonly Func<string, Token> _freshName;
+    private readonly List<Token> _words = [];
 
     internal PluginParser(Parser parser, DiagnosticBag diagnostics, IPiperPlugin plugin, Token keyword, Func<string, Token> freshName)
     {
@@ -57,11 +58,26 @@ public sealed class PluginParser
     /// <summary>Whether the current token is the word <paramref name="word"/>, a name such as `singleton` that is special only here.</summary>
     public bool AtWord(string word) => Current.Kind == TokenKind.Identifier && Current.Text == word;
 
+    /// <summary>
+    /// Reads the current token, a word special to the construct (`singleton`, `on`) that the plugin has checked for,
+    /// and records it, so the editor colours it as a keyword. Read such words with this or <see cref="ExpectWord"/>
+    /// rather than <see cref="NextToken"/>.
+    /// </summary>
+    public Token ReadWord()
+    {
+        var word = NextToken();
+        _words.Add(word);
+        return word;
+    }
+
+    /// <summary>The words read with <see cref="ReadWord"/> and <see cref="ExpectWord"/>.</summary>
+    internal IReadOnlyList<Token> Words => _words;
+
     /// <summary>Reads the word <paramref name="word"/>, or reports it missing.</summary>
     public Token ExpectWord(string word)
     {
         if (AtWord(word))
-            return NextToken();
+            return ReadWord();
         Report(Current.Span, $"Expected '{word}'.");
         return new Token(TokenKind.Identifier, new TextSpan(Current.Span.Start, 0), word) { IsMissing = true };
     }

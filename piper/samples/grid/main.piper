@@ -1,0 +1,183 @@
+// Grid computing with the remote actors plugin: a coordinator splits a job into chunks and hands them to workers on
+// many nodes, each a process on this machine or another. Workers that are free take the next chunk, so faster nodes
+// do more of the work, and a chunk whose worker fails goes back in the queue for another. Run it three ways:
+//
+//   piper run samples/grid                                                   worker nodes in this process
+//   piper run samples/grid -- worker 8001 [workers]                          host workers on port 8001 (one per core)…
+//   piper run samples/grid -- coordinator 8000 127.0.0.1:8001 10.0.0.7:8001  …and share a job among those nodes
+//
+// Start a worker node on each machine, then the coordinator. For other machines, bind to a reachable address instead
+// of localhost. Stop a worker node partway through a job and the others finish its chunks.
+
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
+using System.Threading.Tasks;
+using Proto;
+using Proto.Remote;
+using Proto.Remote.GrpcNet;
+
+/// A piece of the job: count the primes in `from..<to`.
+record Chunk(id: int, from: long, to: long);
+
+record ChunkResult(id: int, primes: long, worker: string);
+
+/// Splits `2..<limit` into `count` chunks, which between them cover every number once.
+fn Chunks(limit: long, count: int) => List<Chunk> {
+    let size = (limit - 2 + count - 1) / count;
+    [...Enumerable.Range(0, count).Select(i => Chunk(i, 2 + i * size, System.Math.Min(limit, 2 + (i + 1) * size)))]
+}
+
+fn IsPrime(n: long) => bool {
+    if n < 2 {
+        return false;
+    }
+    mut d = 2L;
+    while d * d <= n {
+        if n % d == 0 {
+            return false;
+        }
+        d += 1;
+    }
+    true
+}
+
+fn CountPrimes(from: long, to: long) => long {
+    mut count = 0L;
+    mut n = from;
+    while n < to {
+        if IsPrime(n) {
+            count += 1;
+        }
+        n += 1;
+    }
+    count
+}
+
+/// Does one chunk at a time; a node hosts one per core to work on several at once.
+actor Worker(label: string) {
+    on Count(chunk: Chunk) => ChunkResult {
+        ChunkResult(chunk.id, CountPrimes(chunk.from, chunk.to), label)
+    }
+}
+
+/// Every node hosts one, under the name "node", to say how many workers it has ("worker-0", "worker-1", …).
+actor Node(workers: int) {
+    on Workers() => int { workers }
+}
+
+/// An actor system that other processes can reach, on `port` (0 for any free one).
+async fn StartNode(port: int) => Task<ActorSystem> {
+    let system = ActorSystem().WithRemote(RemoteConfig.BindToLocalhost(port));
+    await system.Remote().StartAsync();
+    system
+}
+
+/// Makes `system` a worker node, with `count` workers.
+fn HostWorkers(system: ActorSystem, count: int) => List<Worker> {
+    Node.Spawn(system, "node", count);
+    [...Enumerable.Range(0, count).Select(i => Worker.Spawn(system, $"worker-{i}", system.Address))]
+}
+
+/// The workers on the node at `address`, or none if it can't be reached.
+async fn ConnectWorkers(system: ActorSystem, address: string) => Task<List<Worker>> {
+    let workers: List<Worker> = [];
+    try {
+        let node = Node.Connect(system, address, "node").WithTimeout(System.TimeSpan.FromSeconds(2));
+        let count = await node.Workers();
+        workers.AddRange(Enumerable.Range(0, count).Select(i => Worker.Connect(system, address, $"worker-{i}")));
+        Print($"{address}: {count} workers");
+    } catch (e: System.Exception) {
+        Print($"{address}: can't be reached, so it's left out");
+    }
+    workers
+}
+
+/// One worker's loop: take the next chunk until there are none. If the worker fails, its chunk goes back for another,
+/// and the result is false.
+async fn Drain(worker: Worker, queue: ConcurrentQueue<Chunk>, results: ConcurrentDictionary<int, ChunkResult>) => Task<bool> {
+    while queue.TryDequeue(out let chunk) {
+        try {
+            let result = await worker.Count(chunk);
+            results[result.id] = result;
+        } catch (e: System.Exception) {
+            queue.Enqueue(chunk);
+            Print($"a worker failed ({e.GetType().Name}), so chunk {chunk.id} goes back in the queue");
+            return false;
+        }
+    }
+    true
+}
+
+/// Shares the job among the workers on the nodes at `addresses`, and adds up their answers.
+async fn Run(system: ActorSystem, addresses: List<string>, limit: long, chunks: int) => Task<long> {
+    let found = await Task.WhenAll(addresses.Select(address => ConnectWorkers(system, address)));
+    mut workers = found.SelectMany(w => w).ToList();
+
+    let queue = ConcurrentQueue<Chunk>(Chunks(limit, chunks));
+    let results = ConcurrentDictionary<int, ChunkResult>();
+    let clock = Stopwatch.StartNew();
+    // A failed worker's chunk can go back after the others have emptied the queue and stopped, so run the workers
+    // that are left again, until every chunk is done.
+    while results.Count < chunks {
+        if workers.Count == 0 {
+            throw System.InvalidOperationException($"{chunks - results.Count} chunks weren't done: there are no workers left");
+        }
+        let alive = await Task.WhenAll(workers.Select(worker => Drain(worker, queue, results)));
+        workers = [...workers.Where((_, i) => alive[i])];
+    }
+
+    Print($"{chunks} chunks in {clock.ElapsedMilliseconds}ms:");
+    for group in results.Values.GroupBy(r => r.worker).OrderBy(g => g.Key) {
+        Print($"  {group.Key} did {group.Count()}");
+    }
+    results.Values.Sum(r => r.primes)
+}
+
+async fn Main(args: string[]) {
+    if args.Length >= 2 && args[0] == "worker" {
+        let node = await StartNode(int.Parse(args[1]));
+        let count = if args.Length >= 3 { int.Parse(args[2]) } else { System.Environment.ProcessorCount };
+        HostWorkers(node, count);
+        Print($"{count} workers at {node.Address}; press Enter to stop.");
+        System.Console.ReadLine();
+        await node.Remote().ShutdownAsync(true);
+    } else if args.Length >= 3 && args[0] == "coordinator" {
+        let node = await StartNode(int.Parse(args[1]));
+        let primes = await Run(node, [...args.Skip(2)], 10_000_000L, 200);
+        Print($"primes below 10,000,000: {primes}");
+        await node.Remote().ShutdownAsync(true);
+    } else {
+        // Three worker nodes in this process, each on its own port, so the work still travels over gRPC. The third
+        // node's worker has stopped, as if its machine had failed, and a fourth address has no node at all.
+        let nodes = [await StartNode(0), await StartNode(0), await StartNode(0)];
+        HostWorkers(nodes[0], 2);
+        HostWorkers(nodes[1], 2);
+        for worker in HostWorkers(nodes[2], 1) {
+            await worker.Stop();
+        }
+        let coordinator = await StartNode(0);
+        let primes = await Run(coordinator, [...nodes.Select(n => n.Address), "127.0.0.1:1"], 1_000_000L, 20);
+        Print($"primes below 1,000,000: {primes}");
+
+        await coordinator.Remote().ShutdownAsync(true);
+        for node in nodes {
+            await node.Remote().ShutdownAsync(true);
+        }
+    }
+}
+
+test "the chunks cover the range once, with no gaps" {
+    let chunks = Chunks(1000L, 7);
+    AssertEqual(2L, chunks[0].from);
+    AssertEqual(1000L, chunks[chunks.Count - 1].to);
+    for i in 1..<chunks.Count {
+        AssertEqual(chunks[i - 1].to, chunks[i].from);
+    }
+}
+
+test "counting primes" {
+    AssertEqual(25L, CountPrimes(2L, 100L));
+    AssertEqual(CountPrimes(2L, 1000L), Chunks(1000L, 7).Sum(c => CountPrimes(c.from, c.to)));
+}

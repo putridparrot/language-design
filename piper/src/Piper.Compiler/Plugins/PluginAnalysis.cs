@@ -11,7 +11,11 @@ namespace Piper.Plugins;
 /// syntax nodes, so an analyzer can find what they became: <c>program.Types.OfType&lt;EnumSymbol&gt;()</c> whose
 /// <c>Declaration</c> is one of <see cref="Result"/>.
 /// </summary>
-public sealed record PluginExpansion(PluginKeyword Keyword, Token KeywordToken, SourceText File, ImmutableArray<SyntaxNode> Result);
+public sealed record PluginExpansion(PluginKeyword Keyword, Token KeywordToken, SourceText File, ImmutableArray<SyntaxNode> Result)
+{
+    /// <summary>The words special to the construct that it read (<see cref="PluginParser.ReadWord"/>), such as `on`.</summary>
+    public ImmutableArray<Token> Words { get; init; } = [];
+}
 
 /// <summary>
 /// What a plugin's <see cref="IPiperPlugin.Analyze"/> sees once the program is type-checked: the bound program, the
