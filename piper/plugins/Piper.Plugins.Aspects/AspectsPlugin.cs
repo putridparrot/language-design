@@ -33,6 +33,21 @@ public sealed class AspectsPlugin : IPiperPlugin
             Type = Notify,
             Description = "`[Notify]` on a class implements `INotifyPropertyChanged`: setting one of its properties (or public `mut` fields) raises `PropertyChanged`, for it and for the computed properties that use it.",
         },
+        new Decorator("Command")
+        {
+            ReadBy = "Notify",
+            Description = "`[Command]` on a method of a `[Notify]` class adds an `ICommand` property running it: `Save` gets `SaveCommand`. A `CanSave` method or property, if there is one, says when it can run, and the command tells its watchers again when what `CanSave` reads changes.",
+        },
+        new Decorator("NotifyIgnore")
+        {
+            ReadBy = "Notify",
+            Description = "`[NotifyIgnore]` on a property of a `[Notify]` class leaves it alone: setting it raises nothing.",
+        },
+        new Decorator("AlsoNotify")
+        {
+            ReadBy = "Notify",
+            Description = "`[AlsoNotify(\"Total\", …)]` on a property of a `[Notify]` class raises `PropertyChanged` for the properties named too, when it changes.",
+        },
         new Decorator("Timed", Timed)
         {
             Description = "`[Timed]` writes how long each call took, to standard error (or to the `TextWriter` given: `[Timed(Console.Out)]`).",
@@ -85,8 +100,11 @@ public sealed class AspectsPlugin : IPiperPlugin
             return [d.Declaration];
         }
 
-        var notified = @class.Fields.Where(IsNotified).ToList();
-        var dependents = Dependents(@class, notified.Select(f => f.Name.Text).ToHashSet());
+        var notified = @class.Fields.Where(f => IsNotified(f) && TypeDecoratorContext.Marker(f.Attributes, "NotifyIgnore") is null).ToList();
+        var computed = Computed(@class);
+        var dependents = Dependents(computed, notified.Select(f => f.Name.Text).ToHashSet());
+        var commands = Commands(d, @class, computed);
+        var span = d.Attribute.Span;
 
         var fields = new List<ClassFieldSyntax>();
         foreach (var field in @class.Fields)
@@ -106,8 +124,11 @@ public sealed class AspectsPlugin : IPiperPlugin
             }
 
             var backing = d.FreshName(field.Name.Text.ToLowerInvariant());
-            var raises = dependents.GetValueOrDefault(field.Name.Text, []).Prepend(field.Name.Text)
-                .Select(name => d.Template.Statement("OnPropertyChanged($name);", ("name", Text(d.Attribute.Span, name))))
+            var names = dependents.GetValueOrDefault(field.Name.Text, []).Prepend(field.Name.Text).Concat(AlsoNotified(d, field)).Distinct();
+            var raises = names
+                .Select(name => d.Template.Statement("OnPropertyChanged($name);", ("name", Text(span, name))))
+                .Concat(commands.Where(c => c.CanReads.Contains(field.Name.Text))
+                    .Select(c => d.Template.Statement("if $field is Some($c) { $c.RaiseCanExecuteChanged(); }", ("field", c.Field), ("c", d.FreshName("command")))))
                 .ToList();
             var (generated, _, _) = d.ClassMembers("""
                 mut $backing: $T = $initial;
@@ -143,6 +164,44 @@ public sealed class AspectsPlugin : IPiperPlugin
                 PropertyChanged(this, System.ComponentModel.PropertyChangedEventArgs(name));
             }
             """);
+        // Each command: a field holding it, made when first asked for (a field's initializer can't use `this`), a
+        // property giving it, and a class implementing ICommand by calling the method.
+        var companions = new List<DeclarationSyntax>();
+        foreach (var command in commands)
+        {
+            var local = d.FreshName("command");
+            var (members, _, _) = d.ClassMembers("""
+                mut $field: $Command? = None;
+                prop $name => System.Windows.Input.ICommand {
+                    get {
+                        if $field is Some($c) { return $c; }
+                        let $c = $Command(this);
+                        $field = Some($c);
+                        $c
+                    }
+                }
+                """, ("field", command.Field), ("Command", command.Class), ("name", command.Property), ("c", local));
+            fields.AddRange(members);
+
+            var execute = command.Method.Async is null
+                ? d.Template.Statement("owner.$method();", ("method", command.Method.Name.Text))
+                : d.Template.Statement("let $task = owner.$method();", ("task", d.FreshName("task")), ("method", command.Method.Name.Text));
+            var canExecute = command.Can switch
+            {
+                null => d.Template.Expression("true"),
+                { } can when can.IsProperty => d.Template.Expression("owner.$can", ("can", can.Name)),
+                { } can => d.Template.Expression("owner.$can()", ("can", can.Name)),
+            };
+            companions.AddRange(d.Template.Declarations("""
+                class $Command(owner: $Owner): System.Windows.Input.ICommand {
+                    event CanExecuteChanged: System.EventHandler;
+                    fn CanExecute(parameter: object?) => bool = $canExecute;
+                    fn Execute(parameter: object?) { $execute }
+                    fn RaiseCanExecuteChanged() { CanExecuteChanged(this, System.EventArgs.Empty); }
+                }
+                """, ("Command", command.Class), ("Owner", @class.Name), ("canExecute", canExecute), ("execute", new[] { execute })));
+        }
+
         var result = @class with
         {
             Fields = [.. fields],
@@ -154,7 +213,80 @@ public sealed class AspectsPlugin : IPiperPlugin
             var @interface = d.Template.Declarations("class __Template: System.ComponentModel.INotifyPropertyChanged { }").OfType<ClassDeclarationSyntax>().Single().Bases[0];
             result = result with { Bases = result.Bases.Add(@interface) };
         }
-        return [result];
+        return [result, .. companions];
+    }
+
+    /// <summary>A <c>[Command]</c> method, and what its command is made of.</summary>
+    /// <param name="Property">The ICommand property, <c>SaveCommand</c>.</param>
+    /// <param name="Field">The field holding the command once it's made.</param>
+    /// <param name="Class">The class implementing ICommand for it.</param>
+    /// <param name="Can">The <c>CanSave</c> method or property saying when it can run, if there is one.</param>
+    /// <param name="CanReads">The properties <see cref="Can"/> reads, directly or through computed ones.</param>
+    private sealed record CommandInfo(
+        FunctionDeclarationSyntax Method, Token Property, Token Field, Token Class, (Token Name, bool IsProperty)? Can, HashSet<string> CanReads);
+
+    /// <summary>The class's <c>[Command]</c> methods, checked: an instance method, not private, taking no arguments.</summary>
+    private static List<CommandInfo> Commands(TypeDecoratorContext d, ClassDeclarationSyntax @class, Dictionary<string, HashSet<string>> computed)
+    {
+        var commands = new List<CommandInfo>();
+        foreach (var method in @class.Methods)
+        {
+            if (TypeDecoratorContext.Marker(method.Attributes, "Command") is not { } marker)
+                continue;
+            var name = method.Name.Text;
+            if (method.Static is not null || method.Private is not null || !method.Parameters.IsEmpty || !@class.TypeParameters.IsEmpty)
+            {
+                d.Report(marker.Span, @class.TypeParameters.IsEmpty
+                    ? $"A command runs '{name}' on the object, with no arguments, from outside it: make it an instance method, not private, taking no parameters."
+                    : "Commands aren't supported on a generic class.");
+                continue;
+            }
+
+            // `CanSave()` or `CanSave`, saying when it can run, and what that reads.
+            var stem = name.EndsWith("Async", StringComparison.Ordinal) && name.Length > 5 ? name[..^5] : name;
+            (Token, bool)? can = null;
+            var reads = new HashSet<string>();
+            if (@class.Methods.FirstOrDefault(m => m.Name.Text == $"Can{stem}" && m.Parameters.IsEmpty && m.Static is null) is { } canMethod)
+            {
+                can = (canMethod.Name, false);
+                reads = NamesIn(new SyntaxNode?[] { canMethod.BlockBody, canMethod.ExpressionBody });
+            }
+            else if (@class.Fields.FirstOrDefault(f => f.IsProperty && f.Name.Text == $"Can{stem}" && f.Static is null) is { } canProperty)
+            {
+                can = (canProperty.Name, true);
+                reads = computed.GetValueOrDefault(canProperty.Name.Text, []);
+            }
+            // Through computed properties too: CanSave reading IsValid, which reads Name.
+            var pending = new Queue<string>(reads);
+            while (pending.TryDequeue(out var used))
+            {
+                foreach (var further in computed.GetValueOrDefault(used, []))
+                {
+                    if (reads.Add(further))
+                        pending.Enqueue(further);
+                }
+            }
+
+            commands.Add(new CommandInfo(method, new Token(TokenKind.Identifier, method.Name.Span, $"{stem}Command"),
+                d.FreshName($"{stem.ToLowerInvariant()}Command"), d.FreshName($"{@class.Name.Text}{stem}Command"), can, reads));
+        }
+        return commands;
+    }
+
+    /// <summary>The property names <c>[AlsoNotify("Total", …)]</c> on <paramref name="field"/> lists.</summary>
+    private static IEnumerable<string> AlsoNotified(TypeDecoratorContext d, ClassFieldSyntax field)
+    {
+        if (TypeDecoratorContext.Marker(field.Attributes, "AlsoNotify") is not { } marker)
+            yield break;
+        if (marker.Arguments.IsEmpty)
+            d.Report(marker.Span, "AlsoNotify takes the names of the properties to raise too: [AlsoNotify(\"Total\")].");
+        foreach (var argument in marker.Arguments)
+        {
+            if (argument is LiteralExpressionSyntax { Value: string name })
+                yield return name;
+            else
+                d.Report(argument.Span, "AlsoNotify takes property names as strings: [AlsoNotify(\"Total\")].");
+        }
     }
 
     /// <summary>
@@ -170,17 +302,8 @@ public sealed class AspectsPlugin : IPiperPlugin
     /// For each notified property, the computed properties (getters only) that use it, directly or through another
     /// computed property, which change when it does.
     /// </summary>
-    private static Dictionary<string, List<string>> Dependents(ClassDeclarationSyntax @class, HashSet<string> notified)
+    private static Dictionary<string, List<string>> Dependents(Dictionary<string, HashSet<string>> computed, HashSet<string> notified)
     {
-        var computed = @class.Fields
-            .Where(f => f.IsProperty && f.Arrow is not null && f.Static is null && !f.IsIndexer && !f.Accessors.Any(a => a.IsSetter))
-            .ToDictionary(f => f.Name.Text, f => f.Accessors
-                .SelectMany(a => new SyntaxNode?[] { a.BlockBody, a.ExpressionBody })
-                .OfType<SyntaxNode>()
-                .SelectMany(SyntaxWalker.DescendantsAndSelf)
-                .SelectMany(NamesUsed)
-                .ToHashSet());
-
         var result = new Dictionary<string, List<string>>();
         foreach (var name in notified)
         {
@@ -202,6 +325,16 @@ public sealed class AspectsPlugin : IPiperPlugin
         }
         return result;
     }
+
+    /// <summary>The class's computed properties (getters only), with the names each one's getter uses.</summary>
+    private static Dictionary<string, HashSet<string>> Computed(ClassDeclarationSyntax @class) =>
+        @class.Fields
+            .Where(f => f.IsProperty && f.Arrow is not null && f.Static is null && !f.IsIndexer && !f.Accessors.Any(a => a.IsSetter))
+            .ToDictionary(f => f.Name.Text, f => NamesIn(f.Accessors.SelectMany(a => new SyntaxNode?[] { a.BlockBody, a.ExpressionBody })));
+
+    /// <summary>The names used in <paramref name="nodes"/>: <c>First</c>, or <c>this.First</c>.</summary>
+    private static HashSet<string> NamesIn(IEnumerable<SyntaxNode?> nodes) =>
+        nodes.OfType<SyntaxNode>().SelectMany(SyntaxWalker.DescendantsAndSelf).SelectMany(NamesUsed).ToHashSet();
 
     /// <summary>The member name <paramref name="node"/> uses: <c>First</c>, or <c>this.First</c>.</summary>
     private static IEnumerable<string> NamesUsed(SyntaxNode node) => node switch

@@ -847,7 +847,7 @@ public sealed partial class Parser
             events.Add(new ClassEventSyntax(SpanFrom(keyword), keyword, eventName, eventType)
             {
                 Private = @private,
-                Attributes = NoDecorators(attributes, "an event"),
+                Attributes = NoDecorators(attributes, "an event", allowMarkers: true),
                 Documentation = documentation,
             });
             return;
@@ -864,7 +864,7 @@ public sealed partial class Parser
                 Protected = @protected,
                 Static = staticField,
                 Modifier = propertyModifier,
-                Attributes = NoDecorators(attributes, "a property"),
+                Attributes = NoDecorators(attributes, "a property", allowMarkers: true),
                 Documentation = documentation,
             });
             return;
@@ -888,7 +888,7 @@ public sealed partial class Parser
                 Public = @public,
                 Protected = @protected,
                 Static = staticField,
-                Attributes = NoDecorators(attributes, "a field"),
+                Attributes = NoDecorators(attributes, "a field", allowMarkers: true),
                 Documentation = documentation,
             });
             return;
@@ -934,7 +934,7 @@ public sealed partial class Parser
             Modifier = modifier,
             Attributes = attributes,
             Documentation = documentation,
-        }, isMethod: true));
+        }, isMethod: true, inClass: true));
     }
 
     /// <summary>

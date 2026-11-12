@@ -63,7 +63,7 @@ public sealed partial class Parser
         try
         {
             ImmutableArray<T> result = [.. expand(parser)];
-            _plugins.Record(plugin, new PluginExpansion(_plugins.KeywordFor(keyword.Text), keyword, _source, [.. result]) { Words = [.. parser.Words] });
+            _plugins.Record(plugin, new PluginExpansion(_plugins.KeywordFor(keyword.Text), keyword, _source, [.. result]) { Words = [.. parser.Words], Data = parser.Data });
             return result;
         }
         catch (Exception exception)
@@ -81,9 +81,10 @@ public sealed partial class Parser
     /// <summary>
     /// Applies the plugin decorators among <paramref name="function"/>'s attributes, nearest the function first, so the
     /// first written wraps the rest. They're removed from its attributes, which keep the others. A decorator that throws
-    /// is reported and leaves the function as it was.
+    /// is reported and leaves the function as it was. Markers (<see cref="Decorator.ReadBy"/>) stay on a class's methods,
+    /// <paramref name="inClass"/>, for its type decorator, and are reported elsewhere.
     /// </summary>
-    private FunctionDeclarationSyntax Decorate(FunctionDeclarationSyntax function, bool isMethod)
+    private FunctionDeclarationSyntax Decorate(FunctionDeclarationSyntax function, bool isMethod, bool inClass = false)
     {
         if (_plugins.IsEmpty || function.Attributes.IsEmpty)
             return function;
@@ -91,11 +92,20 @@ public sealed partial class Parser
         if (decorators.TrueForAll(d => d.Found is null))
             return function;
 
-        var result = function with { Attributes = [.. decorators.Where(d => d.Found is null).Select(d => d.Attribute)] };
+        var result = function with
+        {
+            Attributes = [.. decorators.Where(d => d.Found is null || (inClass && d.Found.Value.Decorator.ReadBy is not null)).Select(d => d.Attribute)],
+        };
         for (int i = decorators.Count - 1; i >= 0; i--)
         {
             if (decorators[i].Found is not var (plugin, decorator))
                 continue;
+            if (decorator.ReadBy is { } readBy)
+            {
+                if (!inClass)
+                    _diagnostics.ReportMarkerUnread(decorators[i].Attribute.Span, plugin.Name, decorator.Text, readBy);
+                continue;
+            }
             var attribute = decorators[i].Attribute;
             var name = attribute.Name.Parts[0];
             if (decorator.Function is not { } decorate)
@@ -132,7 +142,10 @@ public sealed partial class Parser
     /// Applies the type decorators among a class's or record's attributes, nearest first, as for functions. Each returns
     /// the type rewritten, which the next one gets, and any declarations to add beside it.
     /// </summary>
-    private DeclarationSyntax DecorateType(DeclarationSyntax type)
+    private DeclarationSyntax DecorateType(DeclarationSyntax type) => DecorateType(type, []);
+
+    /// <param name="applied">The names of the type decorators applied, which their markers on its members then mean.</param>
+    private DeclarationSyntax DecorateType(DeclarationSyntax type, HashSet<string> applied)
     {
         var decorators = type.Attributes.Select(attribute => (Attribute: attribute, Found: DecoratorFor(attribute))).ToList();
         if (decorators.TrueForAll(d => d.Found is null))
@@ -144,6 +157,12 @@ public sealed partial class Parser
             if (decorators[i].Found is not var (plugin, decorator))
                 continue;
             var attribute = decorators[i].Attribute;
+            if (decorator.ReadBy is { } readBy)
+            {
+                _diagnostics.ReportMarkerUnread(attribute.Span, plugin.Name, decorator.Text, readBy);
+                continue;
+            }
+            applied.Add(decorator.Text);
             if (decorator.Type is not { } decorate)
             {
                 ReportMisplaced(attribute, plugin, decorator, DescribeDeclaration(result));
@@ -188,29 +207,87 @@ public sealed partial class Parser
     /// Reports the plugin decorators among <paramref name="attributes"/>, on <paramref name="what"/>, which can't be
     /// decorated, and returns the others.
     /// </summary>
-    private ImmutableArray<AttributeSyntax> NoDecorators(ImmutableArray<AttributeSyntax> attributes, string what)
+    /// <param name="allowMarkers">On a class's field, property or event: markers stay, for its type decorator.</param>
+    private ImmutableArray<AttributeSyntax> NoDecorators(ImmutableArray<AttributeSyntax> attributes, string what, bool allowMarkers = false)
     {
         if (_plugins.IsEmpty || attributes.IsEmpty)
             return attributes;
         var kept = ImmutableArray.CreateBuilder<AttributeSyntax>();
         foreach (var attribute in attributes)
         {
-            if (DecoratorFor(attribute) is var (plugin, decorator))
-                ReportMisplaced(attribute, plugin, decorator, what);
-            else
+            if (DecoratorFor(attribute) is not var (plugin, decorator))
                 kept.Add(attribute);
+            else if (decorator.ReadBy is { } readBy)
+            {
+                if (allowMarkers)
+                    kept.Add(attribute);
+                else
+                    _diagnostics.ReportMarkerUnread(attribute.Span, plugin.Name, decorator.Text, readBy);
+            }
+            else
+                ReportMisplaced(attribute, plugin, decorator, what);
         }
         return kept.ToImmutable();
     }
 
     /// <summary>A declaration's decorators applied, or reported if it can't be decorated.</summary>
-    private DeclarationSyntax Decorate(DeclarationSyntax declaration) => declaration switch
+    private DeclarationSyntax Decorate(DeclarationSyntax declaration)
     {
-        FunctionDeclarationSyntax function => Decorate(function, isMethod: false),
-        _ when _plugins.IsEmpty || declaration.Attributes.IsEmpty => declaration,
-        ClassDeclarationSyntax or RecordDeclarationSyntax => DecorateType(declaration),
-        _ => declaration with { Attributes = NoDecorators(declaration.Attributes, DescribeDeclaration(declaration)) },
-    };
+        if (_plugins.IsEmpty)
+            return declaration;
+        switch (declaration)
+        {
+            case FunctionDeclarationSyntax function:
+                return Decorate(function, isMethod: false);
+            case ClassDeclarationSyntax:
+            {
+                // Its members' markers mean something only to the type decorators applied to it.
+                var applied = new HashSet<string>();
+                var decorated = declaration.Attributes.IsEmpty ? declaration : DecorateType(declaration, applied);
+                return decorated is ClassDeclarationSyntax @class ? ResolveMarkers(@class, applied) : decorated;
+            }
+            case RecordDeclarationSyntax when !declaration.Attributes.IsEmpty:
+                return DecorateType(declaration);
+            case not RecordDeclarationSyntax when !declaration.Attributes.IsEmpty:
+                return declaration with { Attributes = NoDecorators(declaration.Attributes, DescribeDeclaration(declaration)) };
+            default:
+                return declaration;
+        }
+    }
+
+    /// <summary>
+    /// Removes the markers from <paramref name="class"/>'s members once its type decorators have run, reporting those
+    /// that none of them, <paramref name="applied"/>, reads.
+    /// </summary>
+    private ClassDeclarationSyntax ResolveMarkers(ClassDeclarationSyntax @class, HashSet<string> applied)
+    {
+        ImmutableArray<AttributeSyntax> Resolve(ImmutableArray<AttributeSyntax> attributes)
+        {
+            if (attributes.IsEmpty)
+                return attributes;
+            var kept = ImmutableArray.CreateBuilder<AttributeSyntax>();
+            foreach (var attribute in attributes)
+            {
+                if (DecoratorFor(attribute) is not ({ } plugin, { ReadBy: { } readBy } marker))
+                    kept.Add(attribute);
+                else if (!applied.Contains(readBy))
+                    _diagnostics.ReportMarkerUnread(attribute.Span, plugin.Name, marker.Text, readBy);
+            }
+            return kept.Count == attributes.Length ? attributes : kept.ToImmutable();
+        }
+
+        bool HasMarker(ImmutableArray<AttributeSyntax> attributes) =>
+            attributes.Any(a => DecoratorFor(a) is (_, { ReadBy: not null }));
+
+        if (!@class.Fields.Any(f => HasMarker(f.Attributes)) && !@class.Methods.Any(m => HasMarker(m.Attributes)) && !@class.Events.Any(e => HasMarker(e.Attributes)))
+            return @class;
+        return @class with
+        {
+            Fields = [.. @class.Fields.Select(f => HasMarker(f.Attributes) ? f with { Attributes = Resolve(f.Attributes) } : f)],
+            Methods = [.. @class.Methods.Select(m => HasMarker(m.Attributes) ? m with { Attributes = Resolve(m.Attributes) } : m)],
+            Events = [.. @class.Events.Select(e => HasMarker(e.Attributes) ? e with { Attributes = Resolve(e.Attributes) } : e)],
+        };
+    }
 
     private static string DescribeDeclaration(DeclarationSyntax declaration) => declaration switch
     {

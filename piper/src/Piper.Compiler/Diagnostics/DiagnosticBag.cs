@@ -773,6 +773,10 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportPluginAnalysisFailed(string plugin, string reason) =>
         Error("PIP0506", default, $"Plugin '{plugin}' failed while analyzing the program: {reason}");
 
+    /// <summary>A marker decorator where the type decorator that reads it isn't.</summary>
+    public void ReportMarkerUnread(TextSpan span, string plugin, string marker, string readBy) =>
+        Error("PIP0508", span, $"'{marker}' (plugin '{plugin}') only means something on a member of a class with [{readBy}].");
+
     /// <summary>A decorator on something it can't rewrite: <paramref name="accepts"/> says what it can.</summary>
     public void ReportDecoratorMisplaced(TextSpan span, string plugin, string decorator, string accepts, string what) =>
         Error("PIP0507", span, $"The decorator '{decorator}' (plugin '{plugin}') can only be used on {accepts}, not {what}.");

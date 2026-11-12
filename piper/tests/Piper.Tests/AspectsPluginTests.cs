@@ -434,4 +434,125 @@ public class AspectsPluginTests
         var error = Assert.Single(Compile("[Notify]\nfn F() { }\nfn Main() { }").Diagnostics);
         Assert.Equal("PIP0507", error.Code);
     }
+
+    [Fact]
+    public void A_command_runs_its_method_when_CanX_allows()
+    {
+        var output = Run("""
+            using System;
+            using System.Threading.Tasks;
+
+            [Notify]
+            class Editor {
+                prop Name: string { get; set; } = "";
+                prop IsValid => bool = Name.Length > 0;
+
+                [Command]
+                fn Save() { Print($"saved {Name}"); }
+                fn CanSave() => bool = IsValid;
+
+                [Command]
+                async fn LoadAsync() => Task { Print("loading"); await Task.Yield(); }
+            }
+
+            fn Main() {
+                let e = Editor();
+                e.SaveCommand.CanExecuteChanged += (sender, args) => Print("can save changed");
+                Print(e.SaveCommand.CanExecute(None));
+                e.Name = "Widget";          // CanSave reads IsValid, which reads Name
+                Print(e.SaveCommand.CanExecute(None));
+                e.SaveCommand.Execute(None);
+                Print(e.LoadCommand.CanExecute(None));
+                e.LoadCommand.Execute(None);
+            }
+            """);
+        Assert.Equal("False\ncan save changed\nTrue\nsaved Widget\nTrue\nloading\n", output);
+    }
+
+    [Fact]
+    public void A_commands_CanX_can_be_a_property()
+    {
+        var output = Run("""
+            [Notify]
+            class Counter {
+                prop Count: int { get; set; } = 0;
+                prop CanReset => bool = Count > 0;
+
+                [Command]
+                fn Reset() { Count = 0; }
+            }
+
+            fn Main() {
+                let c = Counter();
+                c.ResetCommand.CanExecuteChanged += (sender, args) => Print("changed");
+                c.Count = 3;
+                c.ResetCommand.Execute(None);
+                Print($"{c.Count} {c.ResetCommand.CanExecute(None)}");
+            }
+            """);
+        Assert.Equal("changed\nchanged\n0 False\n", output);
+    }
+
+    [Fact]
+    public void NotifyIgnore_and_AlsoNotify_adjust_what_is_raised()
+    {
+        var output = Run($$"""
+            using System;
+
+            [Notify]
+            class Order {
+                [AlsoNotify("Summary")]
+                prop Quantity: int { get; set; } = 1;
+                [NotifyIgnore]
+                prop Note: string { get; set; } = "";
+
+                fn Summary() => string = $"{Quantity} ordered";
+            }
+
+            fn Main() {
+                let p = Order();
+                {{Watch}}
+                p.Quantity = 2;
+                p.Note = "fragile";
+                Print(p.Summary());
+            }
+            """);
+        Assert.Equal("changed Quantity\nchanged Summary\n2 ordered\n", output);
+    }
+
+    [Fact]
+    public void A_marker_without_its_type_decorator_is_an_error()
+    {
+        var result = Compile("""
+            class Plain {
+                [Command]
+                fn Save() { }
+                [NotifyIgnore]
+                prop Name: string { get; set; } = "";
+            }
+
+            [Command]
+            fn Top() { }
+
+            fn Main() { }
+            """);
+        Assert.Equal(["PIP0508", "PIP0508", "PIP0508"], result.Diagnostics.Select(d => d.Code));
+        Assert.Contains("only means something on a member of a class with [Notify]", result.Diagnostics[0].Message);
+    }
+
+    [Fact]
+    public void A_command_needs_a_public_method_without_parameters()
+    {
+        var error = Assert.Single(Compile("""
+            [Notify]
+            class Editor {
+                [Command]
+                fn Open(path: string) { }
+            }
+
+            fn Main() { }
+            """).Diagnostics);
+        Assert.Equal("PIP0503", error.Code);
+        Assert.Contains("taking no parameters", error.Message);
+    }
 }

@@ -123,4 +123,12 @@ public sealed record Decorator(string Text) : PluginKeyword(Text)
     /// <c>extend</c> block with a record's new methods, say); null if it can't be on one.
     /// </summary>
     public Func<TypeDecoratorContext, IEnumerable<DeclarationSyntax>>? Type { get; init; }
+
+    /// <summary>
+    /// Makes this a marker, read by the type decorator named here: <c>[Command]</c> on a method, or <c>[NotifyIgnore]</c>
+    /// on a property, of a class with <c>[Notify]</c>. A marker does nothing itself. It can go on a class's methods,
+    /// fields, properties and events, where the type decorator finds it in their attributes, and it's removed once
+    /// the type decorator has run. One on a member of a class without that decorator, or anywhere else, is an error.
+    /// </summary>
+    public string? ReadBy { get; init; }
 }

@@ -8,6 +8,7 @@ using System.Net.Http;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 trait Clock {
@@ -51,20 +52,45 @@ endpoints Api "/api" {
     }
 }
 
+// Who may call the admin endpoints, and how often anyone may call the search. Becomes `fn Security(services)`,
+// registering the policies, and `fn UseSecurity(app)`, adding the middleware they need, in the right order.
+policies Security {
+    authorize "admin" roles "Admin";
+    ratelimit "search" fixed 2 per minute;        // a third search in a minute is answered 429
+}
+
+// Every endpoint here needs the "admin" policy, except those marked `anonymous`.
+endpoints Admin "/admin" authorize "admin" {
+    get "/stats" () => "42 todos";
+    get "/ping" anonymous () => "pong";
+    get "/search" anonymous ratelimit "search" (q: string) => $"results for {q}";
+}
+
 async fn Main() {
     let builder = WebApplication.CreateBuilder();
     builder.Logging.ClearProviders();
     builder.WebHost.UseUrls("http://127.0.0.1:0");
     AppServices(builder.Services);
+    Security(builder.Services);
+    // How users sign in is the app's choice: cookies here, or JWT bearer tokens (a NuGet package) for an API.
+    builder.Services.AddAuthentication("Cookies").AddCookie("Cookies");
 
     let app = builder.Build();
+    UseSecurity(app);
     Api(app);
+    Admin(app);
 
     await app.StartAsync();
     let address = app.Urls.First();
-    using let client = HttpClient();
+    using let client = HttpClient(HttpClientHandler() { AllowAutoRedirect: false });
     for path in ["/api/hello/Ada", "/api/time", "/api/add?a=2&b=40", "/api/todos/7"] {
         Print($"{path} → {await client.GetStringAsync(address + path)}");
+    }
+    // Not signed in, so /admin/stats is refused (the cookie scheme redirects to its sign-in page); the third search
+    // in a minute is over the limit.
+    for path in ["/admin/stats", "/admin/ping", "/admin/search?q=a", "/admin/search?q=b", "/admin/search?q=c"] {
+        let response = await client.GetAsync(address + path);
+        Print($"{path} → {(int)response.StatusCode}");
     }
     await app.StopAsync();
 }

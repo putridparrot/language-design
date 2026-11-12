@@ -73,6 +73,12 @@ public sealed class PluginParser
     /// <summary>The words read with <see cref="ReadWord"/> and <see cref="ExpectWord"/>.</summary>
     internal IReadOnlyList<Token> Words => _words;
 
+    /// <summary>
+    /// Anything the plugin wants its <see cref="IPiperPlugin.Analyze"/> to have about this construct, kept in the
+    /// expansion's <see cref="PluginExpansion.Data"/>.
+    /// </summary>
+    public object? Data { get; set; }
+
     /// <summary>Reads the word <paramref name="word"/>, or reports it missing.</summary>
     public Token ExpectWord(string word)
     {

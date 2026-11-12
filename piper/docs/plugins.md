@@ -293,6 +293,14 @@ new Decorator("Trace", Trace)                           // on functions and meth
   `extend` block, so a decorator adds methods to a record by returning one. Returning no version of the type is a bug
   in the plugin (PIP0504).
 - **Several on one type** apply nearest first, as on functions.
+- **Markers** are how a type decorator takes options per member. A `Decorator` with `ReadBy = "Notify"` has no
+  handler: it stays on the class's methods, fields, properties and events for that type decorator to find with
+  `TypeDecoratorContext.Marker(member.Attributes, "Command")`. It's removed once the class's type decorators have
+  run. A marker on a member of a class without the decorator that reads it, or anywhere else, is error PIP0508.
+
+  ```csharp
+  new Decorator("Command") { ReadBy = "Notify" }
+  ```
 
 #### Starting a plugin with `piper plugin new`
 
@@ -359,7 +367,8 @@ The actors plugin uses this to warn about messages that carry something mutable.
 | PIP0504 | A plugin threw while reading its construct. |
 | PIP0505 | A warning a plugin's analysis found. |
 | PIP0506 | A plugin threw while analyzing the program. |
-| PIP0507 | A decorator is on something other than a function or method with a body. |
+| PIP0507 | A decorator is where it has no handler: on a function without a function handler, a class or record without a type handler, or anything else. |
+| PIP0508 | A marker (such as `[Command]`) is on a member of a class without the decorator that reads it, or anywhere else. |
 
 Loading errors are reported against `piper.json`, and in the editor they appear on that file.
 
@@ -472,6 +481,29 @@ class Person(first: string, last: string) {
   have it, and a property's setter can't be written by hand while the decorator writes it, so call
   `OnPropertyChanged` from a method to raise one yourself.
 - **On a record** it's an error: a record can't change.
+- **Adjusting it:** `[NotifyIgnore]` on a property leaves it alone. `[AlsoNotify("Total", …)]` on a property raises
+  the properties named too, for dependencies the decorator can't see, such as one through a method.
+- **Commands:** `[Command]` on a method adds an `ICommand` property for buttons and menus to bind to. `Save` gets
+  `SaveCommand`, and an `Async` suffix is dropped (`LoadAsync` gets `LoadCommand`).
+  - A `CanSave` method or computed property, if there is one, is the command's `CanExecute`. Without one, the
+    command can always run.
+  - When a property that `CanSave` reads changes, directly or through computed properties, the command raises
+    `CanExecuteChanged`, so the button enables and disables itself.
+  - The method must be an instance method, not private, taking no parameters. An async one is started and not
+    awaited, as a button's click would be.
+  - Each command is a small class implementing `ICommand`, made the first time the property is read.
+
+```piper
+[Notify]
+class Editor {
+    prop Name: string { get; set; } = "";
+    [NotifyIgnore] prop Draft: string { get; set; } = "";
+    prop IsValid => bool = Name.Length > 0;
+
+    [Command] fn Save() { … }
+    fn CanSave() => bool = IsValid;      // setting Name re-raises SaveCommand's CanExecuteChanged
+}
+```
 
 `First` becomes a field and a property whose setter raises the changes:
 
@@ -582,6 +614,81 @@ A program calls them as `AppServices(builder.Services)` and `Api(app)`.
   - a handler parameter without a type (ASP.NET Core reads the types to bind the request)
 
   Errors in a handler's own code are reported in the handler, as for any lambda.
+
+#### Who may call an endpoint, and how often
+
+Words after a group's route apply to every endpoint in it. Words after an endpoint's route apply to it, replacing the
+group's word for the same concern:
+
+```piper
+endpoints Admin "/admin" authorize "admin" ratelimit "api" {
+    get "/users" (users: Users) => users.All();
+    get "/status" anonymous () => "up";                     // anyone, in a group needing "admin"
+    post "/import" authorize "owner" ratelimit "uploads" (users: Users) => …;
+    get "/export" ratelimit off (users: Users) => …;        // not limited
+    get "/report" cors "partners" cache "short" () => …;
+}
+```
+
+| Word | Means | ASP.NET Core |
+|---|---|---|
+| `authorize` | signed-in users only | `RequireAuthorization()` |
+| `authorize "a", "b"` | users the policies named allow | `RequireAuthorization("a", "b")` |
+| `anonymous` | anyone | `AllowAnonymous()` |
+| `ratelimit "p"`, `ratelimit off` | limited by the policy named, or not limited | `RequireRateLimiting("p")`, `DisableRateLimiting()` |
+| `cors "p"` | other sites' pages may call it, as the policy says | `RequireCors("p")` |
+| `cache`, `cache "p"` | responses are cached | `CacheOutput()`, `CacheOutput("p")` |
+
+`authorize` with `anonymous`, or a word given twice in one place, is an error, as is `ratelimit` or `cors` without a
+policy's name.
+
+A `policies` declaration defines the policies:
+
+```piper
+policies Security {
+    authorize "admin" roles "Admin";
+    authorize "staff" claim "department" = "IT", "Ops";
+    authorize "members";                                    // any signed-in user
+    ratelimit "api" fixed 100 per minute;
+    ratelimit "burst" sliding 20 per 10 seconds segments 5;
+    ratelimit "tokens" bucket 50 refill 10 per second;
+    ratelimit "uploads" concurrent 2;
+    cors "partners" origins "https://partner.example";
+    cache "short" expire 30 seconds;
+}
+```
+
+It becomes two functions, since policies are registered before the app is built and the middleware is added after:
+
+```piper
+let builder = WebApplication.CreateBuilder();
+Security(builder.Services);                                         // AddAuthorization, AddRateLimiter, AddCors, …
+builder.Services.AddAuthentication("Cookies").AddCookie("Cookies"); // how users sign in: the app's choice
+let app = builder.Build();
+UseSecurity(app);                                                   // the middleware, in the order ASP.NET Core needs
+Admin(app);
+```
+
+- **Rate limits:**
+  - `fixed`: at most N calls in each window.
+  - `sliding`: at most N calls in any window, counted in segments.
+  - `bucket`: a bucket of tokens, refilled each period.
+  - `concurrent`: at most N calls at once.
+
+  A call over the limit is answered **429 Too Many Requests**, not ASP.NET Core's default 503. Counts are
+  expressions, so constants and configuration work. Times are `per minute`, `per 10 seconds`, or `expire 30 seconds`,
+  in milliseconds, seconds, minutes or hours.
+- **Authorization:** `roles` requires one of the roles, `claim` a claim (with one of the values given, if any), and a
+  policy with neither any signed-in user.
+- **Signing in** (cookies, JWT bearer tokens, an identity provider) is the program's own setup, as JWT bearer needs a
+  package and its keys.
+- **Middleware:** `UseSecurity` adds only what the policies need: CORS, authentication and authorization, the rate
+  limiter, then output caching, in that order.
+- **Checks:** the plugin compares the endpoints with the `policies` blocks. These are warnings, since a program can
+  register policies in its own code:
+  - an endpoint naming a policy no `policies` block declares (a typo such as `ratelimit "apii"`)
+  - a declared policy no endpoint uses
+  - endpoints using policy words in a program with no `policies` block at all
 
 ### `args` (command-line options)
 

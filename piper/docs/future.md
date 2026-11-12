@@ -57,9 +57,11 @@ Results answered as 200, 404 or ProblemDetails (see [JSON](language.md#json) and
 
 1. **Testing.** A test helper serving an app in memory (ASP.NET Core's `TestServer`), so `test` blocks call endpoints
    without a port: `let client = TestClient(App);`.
-2. **Endpoint metadata.** Authorization, CORS, rate limiting, output caching and OpenAPI tags, on a group or an endpoint
-   (`endpoints Admin "/admin" authorize "admin" { … }`). OpenAPI response types (`.Produces<T>(200)`, `.Produces(404)`)
-   inferred from each handler's type-checked result, which C# writes by hand and lets drift.
+2. **Endpoint metadata.** Authorization, anonymous access, rate limiting, CORS and output caching are done (`authorize`,
+   `anonymous`, `ratelimit`, `cors` and `cache` on groups and endpoints, defined by a `policies` declaration). Still to
+   come: OpenAPI tags, and OpenAPI response types (`.Produces<T>(200)`, `.Produces(404)`) inferred from each handler's
+   type-checked result, which C# writes by hand and lets drift. Also per-user rate limits, partitioned by the signed-in
+   user or the client's address rather than shared by everyone.
 3. **Hosting and operations.** A `server` declaration replacing the builder code in `Main`: services and endpoints,
    configuration bound to records (`appsettings.json`, environment), health checks, ProblemDetails error handling,
    HTTPS and graceful shutdown. Publishing a self-contained build or a container image (`piper build --publish`).

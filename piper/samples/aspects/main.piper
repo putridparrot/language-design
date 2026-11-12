@@ -28,12 +28,22 @@ class Service {
 }
 
 /// A view model for data binding (WPF, Avalonia): [Notify] implements INotifyPropertyChanged, so setting a property
-/// raises PropertyChanged, for it and for the computed properties that use it.
+/// raises PropertyChanged, for it and for the computed properties that use it. [Command] gives a method an ICommand
+/// for a button, enabled while CanRename says so.
 [Notify]
 class Person(first: string, last: string) {
     prop First: string { get; set; } = first;
     prop Last: string { get; set; } = last;
     prop FullName => string = $"{First} {Last}";
+    [NotifyIgnore]
+    prop Draft: string { get; set; } = "";
+
+    [Command]
+    fn Rename() {
+        Last = Draft;
+        Draft = "";
+    }
+    fn CanRename() => bool = Draft.Length > 0 && Draft != Last;
 }
 
 [Timed]   // to standard error, so it doesn't mix with the output
@@ -59,7 +69,14 @@ async fn Main() {
 
     let person = Person("Ada", "Byron");
     person.PropertyChanged += (sender, e) => Print($"  {e.PropertyName ?? ""} changed");
-    person.Last = "King";
-    person.Last = "King";       // the same value: nothing raised
+    person.First = "Augusta";
+    person.First = "Augusta";   // the same value: nothing raised
+    Print(person.FullName);
+
+    // As a button bound to RenameCommand would: enabled once there's a new name to use.
+    Print($"can rename: {person.RenameCommand.CanExecute(None)}");
+    person.Draft = "King";      // [NotifyIgnore]: nothing raised
+    Print($"can rename: {person.RenameCommand.CanExecute(None)}");
+    person.RenameCommand.Execute(None);
     Print(person.FullName);
 }

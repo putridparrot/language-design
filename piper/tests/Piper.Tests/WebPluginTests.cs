@@ -264,7 +264,7 @@ public class WebPluginTests
     public void The_web_plugin_no_longer_adds_services()
     {
         var web = Web.Value.Plugins.Single(p => p.Name == "web");
-        Assert.Equal(["endpoints"], web.Keywords.Select(k => k.Text));
+        Assert.DoesNotContain("services", web.Keywords.Select(k => k.Text));
     }
 
     [Fact]
@@ -314,5 +314,193 @@ public class WebPluginTests
         var error = Assert.Single(Compile(text).Diagnostics);
         Assert.NotEqual("PIP0503", error.Code);
         Assert.Equal(text.IndexOf("Later", StringComparison.Ordinal), error.Span.Start);
+    }
+
+    /// <summary>
+    /// Policies on a group and its endpoints, declared by a `policies` block, against a real server signing users in
+    /// with a cookie: anonymous endpoints in an authorized group, roles, rate limits (and `off`), CORS and caching.
+    /// </summary>
+    [Fact]
+    public void Policies_authorize_and_limit_endpoints()
+    {
+        var result = Compile(""""
+            using System;
+            using System.Linq;
+            using System.Net;
+            using System.Net.Http;
+            using System.Security.Claims;
+            using Microsoft.AspNetCore.Authentication;
+            using Microsoft.AspNetCore.Builder;
+            using Microsoft.AspNetCore.Hosting;
+            using Microsoft.AspNetCore.Http;
+            using Microsoft.Extensions.DependencyInjection;
+            using Microsoft.Extensions.Logging;
+
+            policies Security {
+                authorize "admin" roles "Admin";
+                authorize "staff" claim "department" = "IT", "Ops";
+                ratelimit "one" fixed 1 per minute;
+                ratelimit "burst" sliding 20 per 10 seconds segments 5;
+                ratelimit "tokens" bucket 5 refill 1 per second;
+                ratelimit "uploads" concurrent 2;
+                cors "partners" origins "https://partner.example";
+                cache "short" expire 30 seconds;
+            }
+
+            endpoints Api "/api" authorize {
+                get "/open" anonymous () => "open";
+                post "/login/{role}" anonymous async (role: string, context: HttpContext) => {
+                    let identity = ClaimsIdentity("Cookies");
+                    identity.AddClaim(Claim(ClaimTypes.Role, role));
+                    await AuthenticationHttpContextExtensions.SignInAsync(context, "Cookies", ClaimsPrincipal(identity));
+                    "signed in"
+                }
+                get "/me" () => "member";
+                get "/admin" authorize "admin" () => "admin";
+                get "/limited" anonymous ratelimit "one" () => "limited";
+                get "/free" anonymous ratelimit off () => "free";
+                get "/report" anonymous cors "partners" cache "short" () => "report";
+                get "/staff" authorize "staff" ratelimit "burst" () => "staff";
+                get "/tokens" anonymous ratelimit "tokens" () => "tokens";
+                get "/upload" anonymous ratelimit "uploads" () => "upload";
+            }
+
+            async fn Main() {
+                let builder = WebApplication.CreateBuilder();
+                builder.Logging.ClearProviders();
+                let urls: string[] = ["http://127.0.0.1:0"];
+                builder.WebHost.UseUrls(urls);
+                Security(builder.Services);
+                builder.Services.AddAuthentication("Cookies").AddCookie("Cookies");
+                let app = builder.Build();
+                UseSecurity(app);
+                Api(app);
+                await app.StartAsync();
+
+                let handler = HttpClientHandler() { AllowAutoRedirect: false, CookieContainer: CookieContainer() };
+                using let client = HttpClient(handler);
+                client.BaseAddress = Uri(app.Urls.First());
+                fn Show(what: string, response: HttpResponseMessage) {
+                    // The cookie scheme answers "sign in first" and "not allowed" with redirects.
+                    let location = match response.Headers.Location { Some(l) => $" {l.AbsolutePath}", None => "" };
+                    Print($"{what} {(int)response.StatusCode}{location}");
+                }
+                for path in ["/api/open", "/api/me", "/api/limited", "/api/limited", "/api/free", "/api/free", "/api/report"] {
+                    Show(path, await client.GetAsync(path));
+                }
+                Show("login User", await client.PostAsync("/api/login/User", StringContent("")));
+                Show("/api/me", await client.GetAsync("/api/me"));
+                Show("/api/admin", await client.GetAsync("/api/admin"));
+                Show("login Admin", await client.PostAsync("/api/login/Admin", StringContent("")));
+                Show("/api/admin", await client.GetAsync("/api/admin"));
+                await app.StopAsync();
+            }
+            """");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Empty(result.Diagnostics);
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("""
+            /api/open 200
+            /api/me 302 /Account/Login
+            /api/limited 200
+            /api/limited 429
+            /api/free 200
+            /api/free 200
+            /api/report 200
+            login User 200
+            /api/me 200
+            /api/admin 302 /Account/AccessDenied
+            login Admin 200
+            /api/admin 200
+
+            """, run.Output.Replace("\r\n", "\n"));
+    }
+
+    /// <summary>
+    /// The one error <paramref name="text"/> has, the plugin's, at <paramref name="at"/>, ignoring the warning that
+    /// endpoints with policy words but no <c>policies</c> block get.
+    /// </summary>
+    private static void AssertPolicyError(string text, string at, string message)
+    {
+        var error = Assert.Single(Compile(text).Diagnostics, d => d.Code != "PIP0505");
+        Assert.Equal("PIP0503", error.Code);
+        Assert.Contains(message, error.Message);
+        Assert.Equal(text.IndexOf(at, StringComparison.Ordinal), error.Span.Start);
+    }
+
+    [Fact]
+    public void Contradicting_or_repeated_policy_words_are_reported()
+    {
+        AssertPolicyError(Types + """
+
+            endpoints Routes {
+                get "/a" authorize anonymous () => "a";
+            }
+            """, "anonymous", "'anonymous' contradicts 'authorize'");
+        AssertPolicyError(Types + """
+
+            endpoints Routes "/x" ratelimit "a" ratelimit "b" {
+                get "/a" () => "a";
+            }
+            """, "ratelimit \"b\"", "'ratelimit' is already given here.");
+        AssertPolicyError(Types + """
+
+            endpoints Routes {
+                get "/a" ratelimit () => "a";
+            }
+            """, "() => \"a\"", "Expected the rate limit policy's name");
+    }
+
+    [Fact]
+    public void A_policy_needs_a_unit_for_its_time()
+    {
+        AssertPluginError(Types + """
+
+            policies Security {
+                ratelimit "api" fixed 10 per fortnight;
+            }
+            endpoints Routes {
+                get "/a" ratelimit "api" () => "a";
+            }
+            """, "fortnight", "Expected the unit");
+    }
+
+    [Fact]
+    public void Endpoints_and_policies_are_checked_against_each_other()
+    {
+        var text = Types + """
+
+            policies Security {
+                ratelimit "api" fixed 10 per minute;
+                authorize "admin" roles "Admin";
+            }
+            endpoints Routes {
+                get "/a" ratelimit "apii" () => "a";
+                get "/b" ratelimit "api" () => "b";
+            }
+            """;
+        var result = Compile(text);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Equal(
+            [
+                ("PIP0505", text.IndexOf("\"admin\"", StringComparison.Ordinal), "No endpoint uses the authorization policy \"admin\". (web)"),
+                ("PIP0505", text.IndexOf("\"apii\"", StringComparison.Ordinal), "No 'policies' block declares the rate limit policy \"apii\". (web)"),
+            ],
+            result.Diagnostics.OrderBy(d => d.Span.Start).Select(d => (d.Code, d.Span.Start, d.Message)));
+    }
+
+    [Fact]
+    public void Endpoints_with_policies_but_no_policies_block_are_warned_about_once()
+    {
+        var text = Types + """
+
+            endpoints Routes "/x" authorize {
+                get "/a" ratelimit "api" () => "a";
+            }
+            """;
+        var warning = Assert.Single(Compile(text).Diagnostics);
+        Assert.Equal("PIP0505", warning.Code);
+        Assert.Contains("'authorize' needs the app to register and use its middleware", warning.Message);
     }
 }

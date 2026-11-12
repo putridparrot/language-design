@@ -56,6 +56,13 @@ public sealed class TypeDecoratorContext
     /// <summary>A name for a member the decorator adds, such as <c>__name_1</c>, which can't clash with the user's.</summary>
     public Token FreshName(string hint) => _freshName(hint);
 
+    /// <summary>
+    /// The marker <paramref name="name"/> among a member's <paramref name="attributes"/> (<c>[Command]</c> on a method),
+    /// if it's there; see <see cref="Decorator.ReadBy"/>. Markers are removed after the type decorator runs.
+    /// </summary>
+    public static AttributeSyntax? Marker(ImmutableArray<AttributeSyntax> attributes, string name) =>
+        attributes.FirstOrDefault(a => a.Name.Parts is [var part] && part.Text == name);
+
     /// <summary>Reports an error; the message is followed by the plugin's name.</summary>
     public void Report(TextSpan span, string message) => _diagnostics.ReportPluginError(span, Plugin.Name, message);
 

@@ -15,6 +15,12 @@ public sealed record PluginExpansion(PluginKeyword Keyword, Token KeywordToken, 
 {
     /// <summary>The words special to the construct that it read (<see cref="PluginParser.ReadWord"/>), such as `on`.</summary>
     public ImmutableArray<Token> Words { get; init; } = [];
+
+    /// <summary>
+    /// What the plugin noted while reading the construct (<see cref="PluginParser.Data"/>), for its analysis: the
+    /// policy names an endpoint uses, say, rather than finding them again in the syntax it wrote.
+    /// </summary>
+    public object? Data { get; init; }
 }
 
 /// <summary>

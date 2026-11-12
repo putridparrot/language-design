@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Web: who may call an endpoint, and how often.** `authorize`, `authorize "admin"`, `anonymous`,
+  `ratelimit "api"`, `ratelimit off`, `cors "partners"` and `cache "short"` after a group's or an endpoint's route
+  (an endpoint's replacing its group's for the same concern), becoming ASP.NET Core's endpoint conventions.
+  - A `policies` declaration defines them: authorization policies with `roles` and `claim`; `fixed`, `sliding`,
+    `bucket` and `concurrent` rate limits (`fixed 100 per minute`), answered 429; CORS `origins`; and output cache
+    `expire` times. It becomes `fn Name(services)`, registering them, and `fn UseName(app)`, adding the middleware
+    in the order ASP.NET Core needs.
+  - Checked: `authorize` with `anonymous`, a repeated word, and a missing policy name are errors. An endpoint naming
+    an undeclared policy, a policy no endpoint uses, and policy words without any `policies` block are warnings.
+  - Plugins can keep notes on an expansion for their analysis: `PluginParser.Data`, read back as `PluginExpansion.Data`.
+
 - **Decorators:** a plugin can add attributes that rewrite the function or method they're on,
   `[Retry(3)] fn Fetch() { … }`, for cross-cutting concerns such as tracing, timing and retrying. It's code
   generation at compile time: the result is ordinary Piper, type-checked as usual, the attribute never reaches C#, and
@@ -17,6 +28,11 @@
   - `[Notify]` (in `aspects`) makes a class implement `INotifyPropertyChanged`, for WPF and Avalonia data binding. Each
     settable property and public `mut` field raises `PropertyChanged` when it changes, and so do the computed
     properties that use it. `[Trace]` on a class traces each of its methods.
+  - **Markers:** a `Decorator` with `ReadBy` set does nothing itself. It stays on a class's members for the named
+    type decorator to read, and is error PIP0508 anywhere else.
+  - `[Notify]` reads three: `[Command]` on a method adds an `ICommand` property (`Save` gets `SaveCommand`), whose
+    `CanExecute` is a `CanSave` method or property and which raises `CanExecuteChanged` when what that reads changes;
+    `[NotifyIgnore]` leaves a property alone; and `[AlsoNotify("Total")]` raises other properties too.
 - **Fix:** a lambda or local function in a record struct's method can use `this` and its fields. The emitted C# didn't
   compile (CS1673); the method now copies `this`, which is readonly, for its closures to use.
 

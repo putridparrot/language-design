@@ -13,7 +13,7 @@ namespace Piper.Plugins.Web;
 /// parameter that no handler parameter takes, and a handler parameter without a type. Dependency injection is the
 /// services plugin's (plugins/Piper.Plugins.Services), which works without the web.
 /// </summary>
-public sealed class WebPlugin : IPiperPlugin
+public sealed partial class WebPlugin : IPiperPlugin
 {
     // The extension methods are called through their classes, so the code works whatever the user's file imports.
     private const string Routing = "Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions";
@@ -51,6 +51,36 @@ public sealed class WebPlugin : IPiperPlugin
                 ["delete"] = "Maps a DELETE request to the route: `MapDelete`.",
                 ["patch"] = "Maps a PATCH request to the route: `MapPatch`.",
                 ["async"] = "The handler awaits, so it runs as an async lambda.",
+                ["authorize"] = "Only signed-in users may call it, or with names, only those the authorization policies named allow: `RequireAuthorization`. After the group's route it applies to every endpoint.",
+                ["anonymous"] = "Anyone may call it, even in a group needing authorization: `AllowAnonymous`.",
+                ["ratelimit"] = "Calls are limited by the rate limit policy named, answering 429 when it's exceeded: `RequireRateLimiting`. `ratelimit off` turns a group's off: `DisableRateLimiting`.",
+                ["off"] = "No rate limiting here, whatever the group says: `DisableRateLimiting`.",
+                ["cors"] = "Browsers on other sites may call it as the CORS policy named allows: `RequireCors`.",
+                ["cache"] = "Responses are cached, by the output cache policy named or the default one: `CacheOutput`.",
+            },
+        },
+        new DeclarationKeyword("policies", Policies)
+        {
+            Description = "Declares the authorization, rate limit, CORS and output cache policies that endpoints name, as " +
+                          "`fn Name(services: IServiceCollection)`, registering them, and `fn UseName(app: IApplicationBuilder)`, adding the middleware they need.",
+            Snippet = "policies ${1:Security} {\n\tauthorize \"${2:admin}\" roles \"${3:Admin}\";\n\tratelimit \"${4:api}\" fixed ${5:100} per minute;\n\t$0\n}",
+            Words = new Dictionary<string, string>
+            {
+                ["authorize"] = "An authorization policy: signed-in users, with `roles` or a `claim` if given.",
+                ["roles"] = "The user must be in one of these roles: `RequireRole`.",
+                ["claim"] = "The user must have this claim, with one of these values if given: `RequireClaim`.",
+                ["ratelimit"] = "A rate limit policy; calls over the limit are answered 429.",
+                ["fixed"] = "At most this many calls in each window of time: `AddFixedWindowLimiter`.",
+                ["sliding"] = "At most this many calls in any window, counted in segments: `AddSlidingWindowLimiter`.",
+                ["segments"] = "How many segments the sliding window is counted in.",
+                ["bucket"] = "A bucket of this many tokens, one per call, refilled over time: `AddTokenBucketLimiter`.",
+                ["refill"] = "How many tokens are put back each period.",
+                ["concurrent"] = "At most this many calls at once: `AddConcurrencyLimiter`.",
+                ["per"] = "The window or period: `per minute`, `per 10 seconds`.",
+                ["cors"] = "A CORS policy: which other sites' pages may call the endpoints.",
+                ["origins"] = "The sites allowed, such as \"https://partner.example\", with any header and method.",
+                ["cache"] = "An output cache policy.",
+                ["expire"] = "How long a cached response is used: `expire 30 seconds`.",
             },
         },
     ];
@@ -64,6 +94,10 @@ public sealed class WebPlugin : IPiperPlugin
     {
         var name = p.Expect(TokenKind.Identifier);
         var prefix = p.Current.Kind is TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral ? Route(p, p.NextToken()) : null;
+        // `authorize "admin" ratelimit "api"` after the group's route: for each endpoint, unless it says otherwise.
+        var groupWords = ReadPolicyWords(p);
+        var policyUses = new List<PolicyName>(NamesUsed(groupWords.Values));
+        var policyWords = groupWords.Values.Select(w => w.Word).ToList();
         p.Expect(TokenKind.OpenBrace);
 
         var router = prefix is null ? null : p.FreshName("group");
@@ -91,6 +125,13 @@ public sealed class WebPlugin : IPiperPlugin
             if (!mapped.Add($"{verb.Text} {route.Value}"))
                 p.Report(routeToken.Span, $"'{verb.Text} {route.Value}' is already mapped.");
 
+            // The endpoint's own words replace the group's for the same concern.
+            var words = ReadPolicyWords(p);
+            policyUses.AddRange(NamesUsed(words.Values));
+            policyWords.AddRange(words.Values.Select(w => w.Word));
+            foreach (var (concern, word) in groupWords)
+                words.TryAdd(concern, word);
+
             var handler = Handler(p);
             if (handler is null)
             {
@@ -103,10 +144,12 @@ public sealed class WebPlugin : IPiperPlugin
             CheckRoute(p, routeToken, (string)route.Value!, handler);
 
             // A handler returning an Option or Result is answered as one: 200 or 404, or 200 or ProblemDetails.
-            mappings.Add(p.Template.Statement($"{Responses}.Answer({Routing}.{method}($router, $route, $handler));",
-                ("router", (object?)router ?? "app"), ("route", route), ("handler", handler)));
+            var endpoint = p.Template.Expression($"{Responses}.Answer({Routing}.{method}($router, $route, $handler))",
+                ("router", (object?)router ?? "app"), ("route", route), ("handler", handler));
+            mappings.Add(new ExpressionStatementSyntax(endpoint.Span, ApplyPolicies(p, endpoint, words.Values)));
         }
         p.Expect(TokenKind.CloseBrace);
+        p.Data = new EndpointsData([.. policyUses], [.. policyWords]);
 
         if (router is not null)
             mappings.Insert(0, p.Template.Statement($"let $group = {Routing}.MapGroup(app, $prefix);", ("group", router), ("prefix", prefix!)));
