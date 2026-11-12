@@ -25,9 +25,44 @@ internal abstract record Colour
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Red() : Colour { public override string ToString() => "Red"; }
 
     public sealed record Green() : Colour { public override string ToString() => "Green"; }
+
+    public string Name
+    {
+        get
+        {
+            if (this is Colour.Red)
+            {
+                return "Red";
+            }
+            else
+            {
+                return "Green";
+            }
+        }
+    }
+
+    public static global::System.Collections.Generic.List<Colour> Values => new global::System.Collections.Generic.List<Colour> { new Colour.Red(), new Colour.Green() };
+
+    public static Option<Colour> Parse(string name)
+    {
+        if (name is "Red")
+        {
+            return Option<Colour>.Some(new Colour.Red());
+        }
+        else if (name is "Green")
+        {
+            return Option<Colour>.Some(new Colour.Green());
+        }
+        else
+        {
+            return Option<Colour>.None;
+        }
+    }
 }
 
 internal static class Nameof_typeof

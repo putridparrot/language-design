@@ -1,0 +1,58 @@
+namespace Tracker;
+
+using System;
+
+fn Noon() => DateTime = DateTime(2026, 11, 12, 12, 0, 0);
+
+fn NewBug() => Issue = Create(1, 1, NewIssue("  Crash on save  ", "Steps…", Priority.High), Noon());
+
+test "a new issue is open, with its title trimmed" {
+    let issue = NewBug();
+    AssertEqual(WorkflowState.Open, issue.status);
+    AssertEqual("Crash on save", issue.title);
+    Assert(issue.assignee == None);
+}
+
+test "an issue follows its workflow to closed" {
+    let issue = NewBug();
+    let later = Noon().AddHours(1);
+    Assert(Apply(issue, WorkflowEvent.Start("ada"), later) is Ok(_));
+    AssertEqual(WorkflowState.InProgress, issue.status);
+    AssertEqual(Some("ada"), issue.assignee);
+    AssertEqual(later, issue.updated);
+
+    Assert(Apply(issue, WorkflowEvent.Submit, later) is Ok(_));
+    Assert(Apply(issue, WorkflowEvent.Approve, later) is Ok(_));
+    AssertEqual(WorkflowState.Closed, issue.status);
+    AssertEqual(Some("done"), issue.resolution);
+}
+
+test "an action the status doesn't allow is refused, and changes nothing" {
+    let issue = NewBug();
+    match Apply(issue, WorkflowEvent.Approve, Noon().AddHours(1)) {
+        Err(IssueError.NotAllowed(action, current)) => {
+            AssertEqual("Approve", action);
+            AssertEqual(WorkflowState.Open, current);
+        },
+        other => Assert(false, $"expected NotAllowed, got {other}"),
+    }
+    AssertEqual(WorkflowState.Open, issue.status);
+    AssertEqual(Noon(), issue.updated);
+}
+
+test "reopening clears the resolution" {
+    let issue = NewBug();
+    Assert(Apply(issue, WorkflowEvent.Close("duplicate"), Noon()) is Ok(_));
+    Assert(Apply(issue, WorkflowEvent.Reopen, Noon()) is Ok(_));
+    AssertEqual(WorkflowState.Open, issue.status);
+    Assert(issue.resolution == None);
+}
+
+test "a blank title is refused" {
+    try {
+        let request = NewIssue("   ", "", Priority.Low);
+        Assert(false, "a blank title was accepted");
+    } catch (e: ArgumentException) {
+        Assert(e.Message.Contains("title.Trim().Length > 0"));
+    }
+}

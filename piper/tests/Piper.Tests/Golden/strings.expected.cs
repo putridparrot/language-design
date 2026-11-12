@@ -26,6 +26,10 @@ internal static class Strings
         global::System.Console.WriteLine(10 / 4);
         global::System.Console.WriteLine(10.0 / 4.0);
         global::System.Console.WriteLine('\'');
+        string who = "Ada";
+        global::System.Console.WriteLine($"She said \"hi\" to {who}");
+        global::System.Console.WriteLine($"{{\"name\": \"{who}\", \"letters\": {who.Length}}}");
+        global::System.Console.WriteLine($"{{\n    \"greeting\": \"Hello, {who}\"\n}}");
     }
 }
 

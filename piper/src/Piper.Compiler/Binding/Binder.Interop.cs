@@ -307,7 +307,50 @@ public sealed partial class Binder
         {
             ArgumentNames = resolved.Names,
         };
+        // `await db.Users.FirstOrDefaultAsync(…)`: a task of a possibly-null result is a task of an Option.
+        if (chosen.ReturnBoundary == ClrBoundary.None && NullableTaskResult(chosen) is { } optionTask)
+            return new BoundNullableBoundaryExpression(call, NullableBoundaryKind.FromNullableTask, optionTask);
         return FromClrBoundary(call, (chosen.ReturnType, chosen.ReturnBoundary));
+    }
+
+    /// <summary>
+    /// For a method returning <c>Task&lt;T?&gt;</c> or <c>ValueTask&lt;T?&gt;</c> where T is a reference type, the Piper
+    /// type its call has instead: a task of <c>T?</c>, an Option. Null for any other method.
+    /// </summary>
+    private TypeSymbol? NullableTaskResult(ClrCandidate chosen)
+    {
+        if (chosen.Member is not MethodInfo method || !method.ReturnType.IsGenericType ||
+            method.ReturnType.GetGenericTypeDefinition() is var task && task != typeof(Task<>) && task != typeof(ValueTask<>) ||
+            chosen.ReturnType is not ClrTypeSymbol { TypeArguments: [var result] } returned || !ClrTypes.IsReferenceType(result) || result.IsOption)
+        {
+            return null;
+        }
+
+        var declared = method.ReturnType.GetGenericArguments()[0];
+        var state = new NullabilityInfoContext().Create(method.ReturnParameter).GenericTypeArguments[0].ReadState;
+        // An unconstrained `T` is "nullable" to NullabilityInfoContext whatever it's declared; only `T?` is.
+        if (state == NullabilityState.Nullable && declared.IsGenericParameter)
+            state = TypeArgumentFlag(method) == 2 ? NullabilityState.Nullable : NullabilityState.NotNull;
+        return state == NullabilityState.Nullable ? returned.Definition.Construct([_option.Construct([result])]) : null;
+    }
+
+    /// <summary>The nullable flag of a method's return type's first type argument (`Task&lt;T?&gt;`'s T): 2 for nullable.</summary>
+    private static byte? TypeArgumentFlag(MethodInfo method)
+    {
+        var attribute = method.ReturnParameter.CustomAttributes.FirstOrDefault(a => a.AttributeType.Name == "NullableAttribute");
+        switch (attribute?.ConstructorArguments[0].Value)
+        {
+            case byte flag:
+                return flag;
+            case IReadOnlyList<CustomAttributeTypedArgument> flags when flags.Count > 1:
+                return (byte)flags[1].Value!;
+        }
+        for (MemberInfo? scope = method; scope is not null; scope = scope.DeclaringType)
+        {
+            if (NullableFlag(scope.CustomAttributes, "NullableContextAttribute") is { } context)
+                return context;
+        }
+        return null;
     }
 
     /// <summary>Picks the best overload for the arguments and binds them against it; reports and returns null if there's none.</summary>

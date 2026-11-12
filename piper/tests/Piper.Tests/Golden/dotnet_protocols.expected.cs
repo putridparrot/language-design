@@ -18,6 +18,8 @@ internal abstract record Suit
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Hearts() : Suit;
 
     public sealed record Spades() : Suit;
@@ -41,6 +43,25 @@ internal abstract record Suit
         else
         {
             throw new global::System.Diagnostics.UnreachableException();
+        }
+    }
+
+    public string Name
+    {
+        get
+        {
+            if (this is Suit.Hearts)
+            {
+                return "Hearts";
+            }
+            else if (this is Suit.Spades)
+            {
+                return "Spades";
+            }
+            else
+            {
+                return "Joker";
+            }
         }
     }
 }

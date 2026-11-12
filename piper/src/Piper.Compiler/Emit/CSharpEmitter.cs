@@ -728,6 +728,10 @@ public sealed partial class CSharpEmitter
         _writer.WriteLine($"private {name}()");
         _writer.OpenBrace();
         _writer.CloseBrace();
+        _writer.WriteLine();
+        // A variant prints as its fields, `Rect { width = 2, height = 3 }`, not the properties every variant inherits
+        // from here (`Name`, those an extend block adds), which C# records would print too.
+        _writer.WriteLine("protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;");
         foreach (var variant in @enum.Variants)
         {
             _writer.WriteLine();

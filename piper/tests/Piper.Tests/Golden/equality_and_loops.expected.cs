@@ -46,11 +46,32 @@ internal abstract record Event
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Click(int x, int y) : Event;
 
     public sealed record Touch(int x, int y) : Event;
 
     public sealed record Key(int code) : Event;
+
+    public string Name
+    {
+        get
+        {
+            if (this is Event.Click(_, _))
+            {
+                return "Click";
+            }
+            else if (this is Event.Touch(_, _))
+            {
+                return "Touch";
+            }
+            else
+            {
+                return "Key";
+            }
+        }
+    }
 }
 
 internal static class Equality_and_loops

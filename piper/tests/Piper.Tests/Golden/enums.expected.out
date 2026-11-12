@@ -10,3 +10,7 @@ RC-
 True
 Rect { width = 2, height = 3 }
 wide
+Circle Empty
+Red, Amber, Green
+Some(Amber) None
+Rect { width = 2, height = 3 }

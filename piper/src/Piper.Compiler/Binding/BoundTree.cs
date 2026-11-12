@@ -886,6 +886,9 @@ public enum NullableBoundaryKind
     /// <summary>A .NET <c>Nullable&lt;T&gt;</c> → Option.</summary>
     FromNullableValue,
 
+    /// <summary>A .NET <c>Task&lt;T?&gt;</c> (or ValueTask) of a possibly-null reference → a task of an Option.</summary>
+    FromNullableTask,
+
     /// <summary>An Option passed where .NET accepts a null reference.</summary>
     ToNullableReference,
 

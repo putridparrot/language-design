@@ -81,10 +81,22 @@ public sealed class PiperEnumJsonConverterFactory : JsonConverterFactory
             }
             writer.WriteStartObject();
             writer.WriteString(Kind, variant.Name);
+            // The variant's fields, which its record declares; not the enum's members (`Name`, an extend block's
+            // properties), which every variant inherits from the enum's base record.
+            var fields = FieldNames(variant.Type, options);
             foreach (var field in JsonSerializer.SerializeToElement(value, variant.Type, options).EnumerateObject())
-                field.WriteTo(writer);
+            {
+                if (fields.Contains(field.Name))
+                    field.WriteTo(writer);
+            }
             writer.WriteEndObject();
         }
+
+        /// <summary>The JSON names of the properties a variant's record declares itself: its fields.</summary>
+        private static HashSet<string> FieldNames(Type variant, JsonSerializerOptions options) =>
+            [.. options.GetTypeInfo(variant).Properties
+                .Where(p => p.AttributeProvider is MemberInfo { DeclaringType: var declaring } && declaring == variant)
+                .Select(p => p.Name)];
     }
 
     /// <summary>An enum's variants, by name: its nested records deriving from it (constructed, for a generic enum).</summary>

@@ -15,4 +15,14 @@ fn Main() {
     Print(10 / 4);
     Print(10.0 / 4.0);
     Print('\'');
+
+    // Interpolated raw strings, as in C#: `$"""…{x}…"""`, and with `$$` two braces open a hole, so one is text (JSON).
+    let who = "Ada";
+    Print($"""She said "hi" to {who}""");
+    Print($$"""{"name": "{{who}}", "letters": {{who.Length}}}""");
+    Print($$"""
+        {
+            "greeting": "Hello, {{who}}"
+        }
+        """);
 }

@@ -55,7 +55,7 @@ internal sealed record StateMachineDeclaration(Token Name, ImmutableArray<Parame
 /// </summary>
 public sealed class StateMachinePlugin : IPiperPlugin
 {
-    private static readonly HashSet<string> GeneratedNames = ["State", "IsFinal", "Events", "Fire"];
+    private static readonly HashSet<string> GeneratedNames = ["State", "IsFinal", "Events", "Fire", "CanFire", "Resume"];
 
     /// <summary>The states each expansion can't reach, keyed by the class it wrote, for <see cref="Analyze"/>.</summary>
     private static readonly ConditionalWeakTable<SyntaxNode, List<Token>> Unreachable = new();
@@ -451,7 +451,14 @@ public sealed class StateMachinePlugin : IPiperPlugin
         var fires = events.Select(e => e.Parameters.IsEmpty
             ? $"{eventType}.{e.Event.Text} => this.{e.Event.Text}(),"
             : $"{eventType}.{e.Event.Text}({Arguments(e)}) => this.{e.Event.Text}({Arguments(e)}),");
+        var cans = events.Select(e => e.Parameters.IsEmpty
+            ? $"{eventType}.{e.Event.Text} => this.Can{e.Event.Text}(),"
+            : $"{eventType}.{e.Event.Text}({Arguments(e)}) => this.Can{e.Event.Text}({Arguments(e)}),");
         var parameters = declaration.Parameters.IsEmpty ? "" : $"({hole[declaration.Parameters]}: unit)";
+        // `Resume(state, …)`: the machine's parameters after the state, which mustn't clash with one of them.
+        var stateParameter = declaration.Parameters.Any(p => p.Name.Text == "state") ? "savedState" : "state";
+        var resumeParameters = declaration.Parameters.IsEmpty ? "" : $", {hole[declaration.Parameters]}: unit";
+        var resumeArguments = string.Join(", ", declaration.Parameters.Select(p => p.Name.Text));
 
         var template = $$"""
             /// The states of a {{machine}}; it starts in {{stateNames[0]}}.
@@ -482,12 +489,25 @@ public sealed class StateMachinePlugin : IPiperPlugin
                     {{string.Join("\n", permitted)}}
                 };
 
+                /// A machine in a state it reached earlier, such as one saved in a database: made as the constructor makes
+                /// one, then put in the state. No `enter` block runs, as it's already there.
+                static fn Resume({{stateParameter}}: {{stateType}}{{resumeParameters}}) => {{machine}} {
+                    let __resumed = {{machine}}({{resumeArguments}});
+                    __resumed.__state = {{stateParameter}};
+                    __resumed
+                }
+
                 /// Handles an event given as data, as calling its method does.
                 fn Fire(event: {{eventType}}) {
                     match event {
                         {{string.Join("\n", events.Count == 0 ? ["_ => {},"] : fires)}}
                     }
                 }
+
+                /// Whether `Fire(event)` would take a transition now, rather than throw: as its `CanX` method says.
+                fn CanFire(event: {{eventType}}) => bool = match event {
+                    {{string.Join("\n", events.Count == 0 ? ["_ => false,"] : cans)}}
+                };
             }
             """;
         var result = p.Template.Declarations(template, hole.All);

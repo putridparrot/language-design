@@ -1,0 +1,20 @@
+// A .NET method returning a task of a possibly-null value (Task<string?>, ValueTask<string?>) gives an Option when
+// awaited, as a method returning string? does: None for null. So the end of a reader is None, not a hidden null.
+using System.IO;
+using System.Threading.Tasks;
+
+async fn Lines(text: string) => Task<int> {
+    using let reader = StringReader(text);
+    mut count = 0;
+    while await reader.ReadLineAsync() is Some(line) {
+        count += 1;
+        Print($"{count}: {line}");
+    }
+    let after = await reader.ReadLineAsync();
+    Print($"after the end: {after}");
+    count
+}
+
+async fn Main() {
+    Print(await Lines("first\nsecond"));
+}

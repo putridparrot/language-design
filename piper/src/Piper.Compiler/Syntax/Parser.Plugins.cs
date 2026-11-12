@@ -30,7 +30,9 @@ public sealed partial class Parser
     {
         diagnostics.CurrentSource = source;
         var parser = new Parser(source, diagnostics, Lexer.Tokenize(source, diagnostics)) { _plugins = plugins };
-        return parser.ParseCompilationUnit();
+        var unit = parser.ParseCompilationUnit();
+        // What every enum has, for those written here or by plugins (not in templates, whose enums plugins return).
+        return unit with { Declarations = unit.Declarations.AddRange(EnumMembers(unit.Declarations)) };
     }
 
     /// <summary>

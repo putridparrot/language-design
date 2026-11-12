@@ -9,6 +9,16 @@ public static class PiperInterop
     public static Option<T> FromNullableValue<T>(T? value) where T : struct =>
         value.HasValue ? Option<T>.Some(value.GetValueOrDefault()) : Option<T>.None;
 
+    /// <summary>
+    /// A .NET task whose result may be null (<c>FirstOrDefaultAsync</c>, <c>ReadLineAsync</c>), as one whose result is an
+    /// Option: <c>await</c> gives None for null.
+    /// </summary>
+    public static async Task<Option<T>> FromNullableTask<T>(Task<T?> task) where T : class =>
+        FromNullableReference(await task.ConfigureAwait(false));
+
+    public static async ValueTask<Option<T>> FromNullableTask<T>(ValueTask<T?> task) where T : class =>
+        FromNullableReference(await task.ConfigureAwait(false));
+
     public static T? ToNullableReference<T>(Option<T> value) where T : class => value.IsSome ? value.Value : null;
 
     public static T? ToNullableValue<T>(Option<T> value) where T : struct => value.IsSome ? value.Value : null;

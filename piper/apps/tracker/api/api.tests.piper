@@ -1,0 +1,130 @@
+namespace Tracker;
+
+using System;
+using System.Linq;
+using System.Net.Http;
+using System.Text;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Data.Sqlite;
+
+/// A running tracker for a test: the app on a free port with its own in-memory database (kept alive by `keepAlive`,
+/// as SQLite drops a shared in-memory database when its last connection closes), and a client calling it.
+record Running(app: WebApplication, client: HttpClient, keepAlive: SqliteConnection);
+
+async fn StartTracker(searchesPerMinute: int) => Task<Running> {
+    let connection = $"Data Source=file:tracker-{Guid.NewGuid()}?mode=memory&cache=shared";
+    let keepAlive = SqliteConnection(connection);
+    await keepAlive.OpenAsync();
+    let settings = Settings(connection, searchesPerMinute);
+    await Prepare(settings);
+    let app = BuildApp(settings, FixedClock(Noon()), "http://127.0.0.1:0");
+    await app.StartAsync();
+    let client = HttpClient();
+    client.BaseAddress = Uri(app.Urls.First());
+    Running(app, client, keepAlive)
+}
+
+async fn Stop(running: Running) {
+    running.client.Dispose();
+    await running.app.StopAsync();
+    await running.keepAlive.DisposeAsync();
+}
+
+/// Calls the tracker as `user` (with `roles`, comma-separated), sending `json` if there is any; the status and body.
+async fn Call(running: Running, method: string, path: string, user: string, roles: string, json: string) => Task<(int, string)> {
+    let request = HttpRequestMessage(HttpMethod(method), path);
+    if user != "" { request.Headers.Add("X-User", user); }
+    if roles != "" { request.Headers.Add("X-Roles", roles); }
+    if json != "" { request.Content = StringContent(json, Encoding.UTF8, "application/json"); }
+    let response = await running.client.SendAsync(request);
+    ((int)response.StatusCode, await response.Content.ReadAsStringAsync())
+}
+
+async fn Get(running: Running, path: string) => Task<(int, string)> = await Call(running, "GET", path, "ada", "", "");
+
+async fn Post(running: Running, path: string, json: string) => Task<(int, string)> = await Call(running, "POST", path, "ada", "", json);
+
+async fn AddWebProject(running: Running) {
+    let (status, _) = await Call(running, "POST", "/api/projects", "root", "admin", """{"code": "WEB", "name": "Website"}""");
+    AssertEqual(200, status);
+}
+
+async test "the API needs a signed-in user, except for its health" {
+    let running = await StartTracker(60);
+    defer { let _ = Stop(running); }
+    AssertEqual(200, (await Call(running, "GET", "/api/health", "", "", "")).Item1);
+    AssertEqual(401, (await Call(running, "GET", "/api/projects", "", "", "")).Item1);
+    AssertEqual(200, (await Get(running, "/api/projects")).Item1);
+}
+
+async test "only admins make projects, and codes are checked" {
+    let running = await StartTracker(60);
+    defer { let _ = Stop(running); }
+    AssertEqual(403, (await Post(running, "/api/projects", """{"code": "WEB", "name": "Website"}""")).Item1);
+    await AddWebProject(running);
+    let (lower, _) = await Call(running, "POST", "/api/projects", "root", "admin", """{"code": "web", "name": "Website"}""");
+    AssertEqual(400, lower);
+    let (twice, body) = await Call(running, "POST", "/api/projects", "root", "admin", """{"code": "WEB", "name": "Again"}""");
+    AssertEqual(400, twice);
+    Assert(body.Contains("There's already a project WEB"), body);
+}
+
+async test "an issue moves through its workflow over HTTP" {
+    let running = await StartTracker(60);
+    defer { let _ = Stop(running); }
+    await AddWebProject(running);
+
+    let (created, issue) = await Post(running, "/api/projects/1/issues", """{"title": "Crash on save", "description": "", "priority": "High"}""");
+    AssertEqual(200, created);
+    Assert(issue.Contains("\"status\":\"Open\""), issue);
+    Assert(issue.Contains("\"next\":[\"Start\",\"Close\"]"), issue);
+
+    let (started, view) = await Post(running, "/api/issues/1/events", """{"kind": "Start", "assignee": "ada"}""");
+    AssertEqual(200, started);
+    Assert(view.Contains("\"assignee\":\"ada\""), view);
+
+    // The workflow refuses what the status doesn't allow, as a 409 naming the action.
+    let (refused, problem) = await Post(running, "/api/issues/1/events", """{"kind": "Approve"}""");
+    AssertEqual(409, refused);
+    Assert(problem.Contains("\"action\":\"Approve\"") && problem.Contains("\"current\":\"InProgress\""), problem);
+
+    AssertEqual(404, (await Get(running, "/api/issues/99")).Item1);
+    AssertEqual(404, (await Post(running, "/api/issues/99/events", """{"kind": "Submit"}""")).Item1);
+}
+
+async test "a request breaking an invariant is a 400" {
+    let running = await StartTracker(60);
+    defer { let _ = Stop(running); }
+    await AddWebProject(running);
+    AssertEqual(400, (await Post(running, "/api/projects/1/issues", """{"title": "  ", "description": "", "priority": "Low"}""")).Item1);
+    AssertEqual(404, (await Post(running, "/api/projects/7/issues", """{"title": "Lost", "description": "", "priority": "Low"}""")).Item1);
+}
+
+async test "comments record who wrote them" {
+    let running = await StartTracker(60);
+    defer { let _ = Stop(running); }
+    await AddWebProject(running);
+    let _ = await Post(running, "/api/projects/1/issues", """{"title": "Crash on save", "description": "", "priority": "High"}""");
+    AssertEqual(200, (await Call(running, "POST", "/api/issues/1/comments", "alan", "", """{"text": "Seen it too"}""")).Item1);
+    let (_, comments) = await Get(running, "/api/issues/1/comments");
+    Assert(comments.Contains("\"author\":\"alan\""), comments);
+}
+
+async test "search filters by status, and is limited per minute" {
+    let running = await StartTracker(2);
+    defer { let _ = Stop(running); }
+    await AddWebProject(running);
+    for title in ["Crash on save", "Typo"] {
+        let _ = await Post(running, "/api/projects/1/issues", $$"""{"title": "{{title}}", "description": "", "priority": "Normal"}""");
+    }
+    let _ = await Post(running, "/api/issues/2/events", """{"kind": "Close", "resolution": "fixed"}""");
+
+    let (open, found) = await Get(running, "/api/projects/1/issues?status=Open");
+    AssertEqual(200, open);
+    Assert(found.Contains("Crash on save") && !found.Contains("Typo"), found);
+    let (bad, problem) = await Get(running, "/api/projects/1/issues?status=Done");
+    AssertEqual(400, bad);
+    Assert(problem.Contains("isn't a status: Open, InProgress, InReview, Closed"), problem);
+    AssertEqual(429, (await Get(running, "/api/projects/1/issues")).Item1);
+}

@@ -130,6 +130,47 @@ public class DataPluginTests
         Assert.Equal("True\nAlan\nAda\nAda\nAda\nTrue\n", output);
     }
 
+    /// <summary>A Piper enum without fields is a column holding the variant's name; a `let` field is a column too.</summary>
+    [Fact]
+    public void Enums_and_let_fields_are_columns()
+    {
+        var output = Run("""
+            using System;
+            using System.Linq;
+            using System.Threading.Tasks;
+            using Microsoft.EntityFrameworkCore;
+
+            enum Priority { Low, High }
+
+            class Task(id: int, created: DateTime, priority: Priority) {
+                public let id = id;
+                public let created = created;
+                public mut priority = priority;
+                public mut previous: Priority? = None;
+                prop Age => TimeSpan = DateTime(2026, 1, 2) - created;     // computed: not a column
+            }
+
+            database Work {
+                table Tasks: Task key id;
+            }
+
+            async fn Main() {
+                using let work = Work(DbContextOptionsBuilder<Work>().UseSqlite("Data Source=:memory:").Options);
+                await work.Database.OpenConnectionAsync();
+                await work.Database.EnsureCreatedAsync();
+                work.Tasks.Add(Task(1, DateTime(2026, 1, 1), Priority.High));
+                work.Tasks.Add(Task(2, DateTime(2026, 1, 1), Priority.Low));
+                await work.SaveChangesAsync();
+                work.ChangeTracker.Clear();
+                let high = await work.Tasks.Where(t => t.priority == Priority.High).SingleAsync();
+                Print($"{high.id} {high.created:yyyy-MM-dd} {high.priority} {high.previous} {high.Age.Days}");
+                let script = work.Database.GenerateCreateScript();
+                Print($"{script.Contains("\"priority\" TEXT NOT NULL")} {script.Contains("\"previous\" TEXT NULL")} {script.Contains("Age")}");
+            }
+            """);
+        Assert.Equal("1 2026-01-01 High None 1\nTrue True False\n", output);
+    }
+
     [Fact]
     public void Comparing_an_option_column_with_an_option_variable_says_how_to_write_it()
     {

@@ -13,6 +13,8 @@ internal abstract record Shape
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Circle(double radius) : Shape;
 
     public sealed record Square(double side) : Shape;
@@ -20,6 +22,29 @@ internal abstract record Shape
     public sealed record Ring(double outer, double inner) : Shape;
 
     public sealed record Dot() : Shape { public override string ToString() => "Dot"; }
+
+    public string Name
+    {
+        get
+        {
+            if (this is Shape.Circle(_))
+            {
+                return "Circle";
+            }
+            else if (this is Shape.Square(_))
+            {
+                return "Square";
+            }
+            else if (this is Shape.Ring(_, _))
+            {
+                return "Ring";
+            }
+            else
+            {
+                return "Dot";
+            }
+        }
+    }
 }
 
 internal static class Or_bindings

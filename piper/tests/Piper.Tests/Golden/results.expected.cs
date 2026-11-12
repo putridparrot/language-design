@@ -13,9 +13,26 @@ internal abstract record MathError
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record DivideByZero() : MathError { public override string ToString() => "DivideByZero"; }
 
     public sealed record Negative(int @value) : MathError;
+
+    public string Name
+    {
+        get
+        {
+            if (this is MathError.DivideByZero)
+            {
+                return "DivideByZero";
+            }
+            else
+            {
+                return "Negative";
+            }
+        }
+    }
 }
 
 internal static class Results

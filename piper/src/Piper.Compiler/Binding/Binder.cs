@@ -2013,9 +2013,11 @@ public sealed partial class Binder
         if (syntax.Using is not null)
             CheckDisposable(type, syntax.Initializer.Span, syntax.Await);
 
-        // Declared after binding the initializer, so `let x = x + 1;` refers to the outer x.
+        // Declared after binding the initializer, so `let x = x + 1;` refers to the outer x. `let _ = f();` is a
+        // discard, as `_` is in patterns: the value is computed (and disposed, with `using`) but nothing can name it, so
+        // a block can have any number of them.
         var variable = Declared(new VariableSymbol(syntax.Name.Text, type, syntax.IsMutable, VariableKind.Local), syntax.Name);
-        if (!syntax.Name.IsMissing && !_scope.TryDeclare(variable))
+        if (!syntax.Name.IsMissing && syntax.Name.Text != "_" && !_scope.TryDeclare(variable))
             _diagnostics.ReportDuplicateDeclaration(syntax.Name.Span, variable.Name);
 
         return new BoundVariableDeclaration(variable, initializer, isUsing: syntax.Using is not null) { IsAwait = syntax.Await is not null };

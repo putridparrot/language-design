@@ -190,7 +190,7 @@ public class LexerTests
     [InlineData("3000000000", "PIP0007")]
     [InlineData("$\"{oops\"", "PIP0008")]
     [InlineData("$\"{}\"", "PIP0009")]
-    [InlineData("$\"\"\"raw {x}\"\"\"", "PIP0010")]
+    [InlineData("$$\"not raw {{x}}\"", "PIP0010")]
     public void Lexical_errors_are_reported(string text, string code)
     {
         Assert.Equal(code, ErrorCode(text));

@@ -13,9 +13,26 @@ internal abstract record Message
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Add(int n) : Message;
 
     public sealed record Get() : Message { public override string ToString() => "Get"; }
+
+    public string Name
+    {
+        get
+        {
+            if (this is Message.Add(_))
+            {
+                return "Add";
+            }
+            else
+            {
+                return "Get";
+            }
+        }
+    }
 }
 
 internal sealed record Point(int x, int y);

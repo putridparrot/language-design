@@ -13,6 +13,8 @@ internal abstract record Expr
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Num(int @value) : Expr;
 
     public sealed record Add(Expr left, Expr right) : Expr;
@@ -20,6 +22,29 @@ internal abstract record Expr
     public sealed record Mul(Expr left, Expr right) : Expr;
 
     public sealed record Neg(Expr operand) : Expr;
+
+    public string Name
+    {
+        get
+        {
+            if (this is Expr.Num(_))
+            {
+                return "Num";
+            }
+            else if (this is Expr.Add(_, _))
+            {
+                return "Add";
+            }
+            else if (this is Expr.Mul(_, _))
+            {
+                return "Mul";
+            }
+            else
+            {
+                return "Neg";
+            }
+        }
+    }
 }
 
 internal static class Expression_tree

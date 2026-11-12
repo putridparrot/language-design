@@ -13,11 +13,54 @@ internal abstract record Color
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Red() : Color { public override string ToString() => "Red"; }
 
     public sealed record Green() : Color { public override string ToString() => "Green"; }
 
     public sealed record Blue() : Color { public override string ToString() => "Blue"; }
+
+    public string Name
+    {
+        get
+        {
+            if (this is Color.Red)
+            {
+                return "Red";
+            }
+            else if (this is Color.Green)
+            {
+                return "Green";
+            }
+            else
+            {
+                return "Blue";
+            }
+        }
+    }
+
+    public static global::System.Collections.Generic.List<Color> Values => new global::System.Collections.Generic.List<Color> { new Color.Red(), new Color.Green(), new Color.Blue() };
+
+    public static Option<Color> Parse(string name)
+    {
+        if (name is "Red")
+        {
+            return Option<Color>.Some(new Color.Red());
+        }
+        else if (name is "Green")
+        {
+            return Option<Color>.Some(new Color.Green());
+        }
+        else if (name is "Blue")
+        {
+            return Option<Color>.Some(new Color.Blue());
+        }
+        else
+        {
+            return Option<Color>.None;
+        }
+    }
 }
 
 [global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
@@ -27,11 +70,32 @@ internal abstract record Shape
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Circle(double r) : Shape;
 
     public sealed record Square(double side) : Shape;
 
     public sealed record Dot() : Shape { public override string ToString() => "Dot"; }
+
+    public string Name
+    {
+        get
+        {
+            if (this is Shape.Circle(_))
+            {
+                return "Circle";
+            }
+            else if (this is Shape.Square(_))
+            {
+                return "Square";
+            }
+            else
+            {
+                return "Dot";
+            }
+        }
+    }
 }
 
 internal static class Not_and_patterns

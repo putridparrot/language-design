@@ -12,3 +12,8 @@ concatenation
 2
 2.5
 '
+She said "hi" to Ada
+{"name": "Ada", "letters": 3}
+{
+    "greeting": "Hello, Ada"
+}

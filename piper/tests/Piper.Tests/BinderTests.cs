@@ -1620,6 +1620,14 @@ public class BinderTests
     public void An_expression_tree_lambda_must_be_a_single_translatable_expression(string query) =>
         AssertSingleError("PIP0397", Query + query + " }");
 
+    /// <summary>`let _ = f();` discards the value, as `_` does in patterns, so a block can have several; `_` can't be read.</summary>
+    [Fact]
+    public void Let_underscore_discards()
+    {
+        AssertNoErrors("fn F() => int = 1; fn Main() { let _ = F(); let _ = F(); using let _ = System.IO.MemoryStream(); }");
+        AssertSingleError("PIP0200", "fn F() => int = 1; fn Main() { let _ = F(); Print(_); }");
+    }
+
     [Fact]
     public void A_query_on_an_IQueryable_is_an_expression_tree()
     {

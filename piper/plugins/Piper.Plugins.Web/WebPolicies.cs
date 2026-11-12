@@ -164,6 +164,19 @@ public sealed partial class WebPlugin
     private static IEnumerable<DeclarationSyntax> Policies(PluginParser p)
     {
         var name = p.Expect(TokenKind.Identifier);
+        // `policies Security(settings: Settings)`: what the policies are made from, such as limits from configuration,
+        // passed when they're registered: `Security(builder.Services, settings)`.
+        var parameters = new List<ParameterSyntax>();
+        if (p.Current.Kind == TokenKind.OpenParen)
+        {
+            foreach (var parameter in p.ParseLambdaParameters())
+            {
+                if (parameter.Type is null)
+                    p.Report(parameter.Span, $"Give '{parameter.Name.Text}' a type, such as ({parameter.Name.Text}: Settings).");
+                else
+                    parameters.Add(new ParameterSyntax(parameter.Span, parameter.Name, parameter.Type));
+            }
+        }
         p.Expect(TokenKind.OpenBrace);
 
         var authorization = new List<StatementSyntax>();
@@ -249,14 +262,15 @@ public sealed partial class WebPlugin
             middleware.Add(p.Template.Statement("Microsoft.AspNetCore.Builder.OutputCacheApplicationBuilderExtensions.UseOutputCache(app);"));
         }
 
-        return p.Template.Declarations("""
-            fn $name(services: Microsoft.Extensions.DependencyInjection.IServiceCollection) => Microsoft.Extensions.DependencyInjection.IServiceCollection {
+        return p.Template.Declarations($$"""
+            fn $name(services: Microsoft.Extensions.DependencyInjection.IServiceCollection{{(parameters.Count == 0 ? "" : ", $parameters: unit")}}) => Microsoft.Extensions.DependencyInjection.IServiceCollection {
                 $registrations;
                 services
             }
 
             fn $use(app: Microsoft.AspNetCore.Builder.IApplicationBuilder) { $middleware }
-            """, ("name", name), ("use", $"Use{name.Text}"), ("registrations", registrations), ("middleware", middleware));
+            """, [("name", name), ("use", $"Use{name.Text}"), ("registrations", registrations), ("middleware", middleware),
+                 .. parameters.Count == 0 ? Array.Empty<(string, object)>() : [("parameters", (object)parameters)]]);
     }
 
     /// <summary>An authorization policy's requirements: <c>roles "Admin", "Owner"</c>, <c>claim "dept" = "IT"</c>; none is any signed-in user.</summary>

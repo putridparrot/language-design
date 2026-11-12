@@ -1,0 +1,73 @@
+namespace Tracker;
+
+using System;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+
+/// An empty in-memory database with one project, "WEB".
+async fn TestDatabase() => Task<TrackerDb> {
+    let db = await OpenDatabase("Data Source=:memory:");
+    db.Projects.Add(Project(0, "WEB", "Website"));
+    await db.SaveChangesAsync();
+    db
+}
+
+async test "issues are numbered and stored" {
+    using let db = await TestDatabase();
+    let first = await AddIssue(db, 1, NewIssue("Crash on save", "", Priority.High), Noon());
+    let second = await AddIssue(db, 1, NewIssue("Typo", "", Priority.Low), Noon());
+    match (first, second) {
+        (Ok(a), Ok(b)) => {
+            AssertEqual(1, a.id);
+            AssertEqual(2, b.id);
+        },
+        _ => Assert(false, "both should have been added"),
+    }
+    db.ChangeTracker.Clear();
+    let found = await FindIssue(db, 2);
+    AssertEqual(Some("Typo"), found?.title);
+}
+
+async test "an issue for a missing project is refused" {
+    using let db = await TestDatabase();
+    let result = await AddIssue(db, 99, NewIssue("Lost", "", Priority.Low), Noon());
+    Assert(result is Err(IssueError.NotFound(99)));
+}
+
+async test "a transition is saved" {
+    using let db = await TestDatabase();
+    let _ = await AddIssue(db, 1, NewIssue("Crash on save", "", Priority.High), Noon());
+    let started = await Transition(db, 1, WorkflowEvent.Start("ada"), Noon().AddHours(1));
+    Assert(started is Ok(_));
+    db.ChangeTracker.Clear();
+    let stored = await FindIssue(db, 1);
+    AssertEqual(Some(WorkflowState.InProgress), stored?.status);
+    AssertEqual(Some(Some("ada")), stored?.assignee);
+}
+
+async test "search narrows by status and text, in SQL" {
+    using let db = await TestDatabase();
+    for title in ["Crash on save", "Crash on load", "Typo in footer"] {
+        let _ = await AddIssue(db, 1, NewIssue(title, "", Priority.Normal), Noon());
+    }
+    let _ = await Transition(db, 2, WorkflowEvent.Close("fixed"), Noon());
+
+    AssertEqual(3, (await Search(db, 1, None, None)).Count);
+    AssertEqual([1], (await Search(db, 1, Some(WorkflowState.Open), Some("Crash"))).Select(i => i.id).ToList());
+    AssertEqual([2], (await Search(db, 1, Some(WorkflowState.Closed), None)).Select(i => i.id).ToList());
+}
+
+async test "comments are kept in order" {
+    using let db = await TestDatabase();
+    let _ = await AddIssue(db, 1, NewIssue("Crash on save", "", Priority.High), Noon());
+    let _ = await AddComment(db, 1, "ada", "Seen it too", Noon());
+    let _ = await AddComment(db, 1, "alan", "Fixed in 1.2", Noon().AddMinutes(5));
+    AssertEqual(["ada", "alan"], (await CommentsOn(db, 1)).Select(c => c.author).ToList());
+    Assert(await AddComment(db, 9, "ada", "?", Noon()) is Err(IssueError.NotFound(9)));
+}
+
+async test "a missing issue isn't found" {
+    using let db = await TestDatabase();
+    Assert(await FindIssue(db, 99) == None);
+}

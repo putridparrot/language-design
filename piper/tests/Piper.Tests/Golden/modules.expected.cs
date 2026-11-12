@@ -63,9 +63,26 @@ namespace Geometry
         {
         }
 
+        protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
         public sealed record Circle(Point center, double radius) : Shape;
 
         public sealed record Rect(Point corner, double width, double height) : Shape;
+
+        public string Name
+        {
+            get
+            {
+                if (this is Shape.Circle(_, _))
+                {
+                    return "Circle";
+                }
+                else
+                {
+                    return "Rect";
+                }
+            }
+        }
     }
 
     internal static class Shapes

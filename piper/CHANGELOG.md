@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **apps/tracker:** an issue tracker API written in Piper, to find what a real program needs. It has a domain with a
+  workflow state machine, SQLite storage, a web API with policies, and tests at each layer.
+  [apps/tracker/NOTES.md](apps/tracker/NOTES.md) records each gap it found, and what was done. From it:
+  - **Enums:** every enum has `value.Name`, and a fieldless one has `E.Values` and `E.Parse(text) => E?`. A variant's
+    JSON and printing show only its fields.
+  - **Interpolated raw strings:** `$"""…{x}…"""`, and `$$"""…{{x}}…"""` where single braces are text, as in C#.
+  - **`let _ = f();`** is a discard, so a block can have several.
+  - **Nullable tasks:** a .NET call returning `Task<T?>` or `ValueTask<T?>` (`FirstOrDefaultAsync`, `ReadLineAsync`,
+    `GetFromJsonAsync`) gives an Option when awaited, None for null, rather than a hidden null.
+  - **State machines:** `Machine.Resume(state, …)` makes one in a saved state, and `CanFire(event)` checks an event
+    given as data.
+  - **Data:** fieldless enums are columns holding the variant's name (optional ones nullable), and `let` fields are
+    columns.
+  - **Web:** a `policies` block can take parameters, so limits can come from configuration.
+
 - **Expression trees:** a lambda passed where .NET takes an `Expression<Func<…>>` is an expression tree, as in C#. So
   a query on an `IQueryable` uses `Queryable`'s operators, which a provider such as EF Core translates to SQL, rather
   than `Enumerable`'s, which ran it in memory. `let f: Expression<Func<int, bool>> = x => x > 1;` works too.

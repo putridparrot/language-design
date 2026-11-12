@@ -1,5 +1,8 @@
 // Enums are sum types: a Shape is exactly one of its variants.
 
+// Without fields: every variant is listed by `Values`, and named by `Parse`.
+enum Light { Red, Amber, Green }
+
 enum Shape {
     Circle(radius: double),
     Rect(width: double, height: double),
@@ -50,4 +53,10 @@ fn Main() {
         Rect(w, _) if w > 1.0 => Print("wide"),
         _ => {}
     }
+
+    // Every enum names its variants; one without fields lists them and parses their names.
+    Print($"{Shape.Circle(1.0).Name} {Shape.Empty.Name}");
+    Print(string.Join(", ", Light.Values));
+    Print($"{Light.Parse("Amber")} {Light.Parse("Blue")}");
+    Print(Shape.Rect(2.0, 3.0));
 }

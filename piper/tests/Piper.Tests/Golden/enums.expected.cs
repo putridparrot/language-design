@@ -7,17 +7,95 @@ using Piper.Runtime;
 #pragma warning restore CS0612, CS0618
 
 [global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
+internal abstract record Light
+{
+    private Light()
+    {
+    }
+
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
+    public sealed record Red() : Light { public override string ToString() => "Red"; }
+
+    public sealed record Amber() : Light { public override string ToString() => "Amber"; }
+
+    public sealed record Green() : Light { public override string ToString() => "Green"; }
+
+    public string Name
+    {
+        get
+        {
+            if (this is Light.Red)
+            {
+                return "Red";
+            }
+            else if (this is Light.Amber)
+            {
+                return "Amber";
+            }
+            else
+            {
+                return "Green";
+            }
+        }
+    }
+
+    public static global::System.Collections.Generic.List<Light> Values => new global::System.Collections.Generic.List<Light> { new Light.Red(), new Light.Amber(), new Light.Green() };
+
+    public static Option<Light> Parse(string name)
+    {
+        if (name is "Red")
+        {
+            return Option<Light>.Some(new Light.Red());
+        }
+        else if (name is "Amber")
+        {
+            return Option<Light>.Some(new Light.Amber());
+        }
+        else if (name is "Green")
+        {
+            return Option<Light>.Some(new Light.Green());
+        }
+        else
+        {
+            return Option<Light>.None;
+        }
+    }
+}
+
+[global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
 internal abstract record Shape
 {
     private Shape()
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Circle(double radius) : Shape;
 
     public sealed record Rect(double width, double height) : Shape;
 
     public sealed record Empty() : Shape { public override string ToString() => "Empty"; }
+
+    public string Name
+    {
+        get
+        {
+            if (this is Shape.Circle(_))
+            {
+                return "Circle";
+            }
+            else if (this is Shape.Rect(_, _))
+            {
+                return "Rect";
+            }
+            else
+            {
+                return "Empty";
+            }
+        }
+    }
 }
 
 internal static class Enums
@@ -101,6 +179,10 @@ internal static class Enums
         else
         {
         }
+        global::System.Console.WriteLine($"{new Shape.Circle(1.0).Name} {new Shape.Empty().Name}");
+        global::System.Console.WriteLine(string.Join<Light>(", ", Light.Values));
+        global::System.Console.WriteLine($"{Light.Parse("Amber")} {Light.Parse("Blue")}");
+        global::System.Console.WriteLine(new Shape.Rect(2.0, 3.0));
     }
 }
 

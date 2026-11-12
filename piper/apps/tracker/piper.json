@@ -1,0 +1,7 @@
+{
+  // Tracker: an issue tracker API written in Piper, to use the language as a real program would.
+  // `piper test apps/tracker` runs its tests; `piper run apps/tracker` serves it (on http://localhost:5080).
+  "name": "tracker",
+  "plugins": ["state-machines", "data", "config", "services", "web"],
+  "packages": { "Microsoft.EntityFrameworkCore.Sqlite": "10.0.14" }
+}

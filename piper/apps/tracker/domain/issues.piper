@@ -1,0 +1,71 @@
+// Issues and their workflow: what the tracker is about, without storage or the web.
+namespace Tracker;
+
+using System;
+using Piper.Web;
+
+enum Priority { Low, Normal, High, Urgent }
+
+/// An issue in a project. A class, as it changes over its life (and as EF Core tracks it, once stored).
+class Issue(id: int, projectId: int, title: string, priority: Priority, created: DateTime) {
+    public let id = id;
+    public let projectId = projectId;
+    public mut title = title;
+    public mut description = "";
+    public mut priority = priority;
+    public mut status = WorkflowState.Open;
+    public mut assignee: string? = None;
+    public mut resolution: string? = None;
+    public let created = created;
+    public mut updated = created;
+}
+
+/// The workflow every issue follows. Its actions change the issue, which the machine holds.
+statemachine Workflow(issue: Issue) {
+    state Open {
+        on Start(assignee: string) => InProgress { issue.assignee = Some(assignee); }
+        on Close(resolution: string) => Closed { issue.resolution = Some(resolution); }
+    }
+    state InProgress {
+        on Submit() => InReview;
+        on Unassign() => Open { issue.assignee = None; }
+        on Close(resolution: string) => Closed { issue.resolution = Some(resolution); }
+    }
+    state InReview {
+        on Approve() => Closed { issue.resolution = Some("done"); }
+        on Reject(reason: string) => InProgress;
+    }
+    state Closed {
+        on Reopen() => Open { issue.resolution = None; }
+    }
+}
+
+/// Why something asked of the tracker can't be done, and the HTTP status the API answers it with.
+enum IssueError {
+    [Status(404)] NotFound(id: int),
+    [Status(409)] NotAllowed(action: string, current: WorkflowState),
+    [Status(400)] Invalid(detail: string),
+}
+
+/// Moves an issue through its workflow, as `event` asks, if its status allows it.
+fn Apply(issue: Issue, event: WorkflowEvent, now: DateTime) => Result<Issue, IssueError> {
+    let workflow = Workflow.Resume(issue.status, issue);
+    if !workflow.CanFire(event) {
+        return Err(IssueError.NotAllowed(event.Name, issue.status));
+    }
+    workflow.Fire(event);
+    issue.status = workflow.State;
+    issue.updated = now;
+    Ok(issue)
+}
+
+/// What a new issue is made from, checked as it's made: a request body that breaks these is answered 400.
+record NewIssue(title: string, description: string, priority: Priority)
+    requires title.Trim().Length > 0 && title.Length <= 200
+    requires description.Length <= 10000;
+
+fn Create(id: int, projectId: int, request: NewIssue, now: DateTime) => Issue {
+    let issue = Issue(id, projectId, request.title.Trim(), request.priority, now);
+    issue.description = request.description;
+    issue
+}

@@ -13,6 +13,8 @@ internal abstract record Token : Describe
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Number(double @value) : Token;
 
     public sealed record Name(string text) : Token;
@@ -55,6 +57,8 @@ internal abstract record Expr
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Num(double @value) : Expr;
 
     public sealed record Var(string name) : Expr;
@@ -64,6 +68,33 @@ internal abstract record Expr
     public sealed record Bin(char op, Expr left, Expr right) : Expr;
 
     public sealed record Call(string function, Expr argument) : Expr;
+
+    public string Name
+    {
+        get
+        {
+            if (this is Expr.Num(_))
+            {
+                return "Num";
+            }
+            else if (this is Expr.Var(_))
+            {
+                return "Var";
+            }
+            else if (this is Expr.Neg(_))
+            {
+                return "Neg";
+            }
+            else if (this is Expr.Bin(_, _, _))
+            {
+                return "Bin";
+            }
+            else
+            {
+                return "Call";
+            }
+        }
+    }
 }
 
 internal interface Describe

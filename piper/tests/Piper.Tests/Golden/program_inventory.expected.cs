@@ -88,11 +88,54 @@ namespace Shop.Model
         {
         }
 
+        protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
         public sealed record Food() : Category { public override string ToString() => "Food"; }
 
         public sealed record Tools() : Category { public override string ToString() => "Tools"; }
 
         public sealed record Books() : Category { public override string ToString() => "Books"; }
+
+        public string Name
+        {
+            get
+            {
+                if (this is Category.Food)
+                {
+                    return "Food";
+                }
+                else if (this is Category.Tools)
+                {
+                    return "Tools";
+                }
+                else
+                {
+                    return "Books";
+                }
+            }
+        }
+
+        public static global::System.Collections.Generic.List<Category> Values => new global::System.Collections.Generic.List<Category> { new Category.Food(), new Category.Tools(), new Category.Books() };
+
+        public static Option<Category> Parse(string name)
+        {
+            if (name is "Food")
+            {
+                return Option<Category>.Some(new Category.Food());
+            }
+            else if (name is "Tools")
+            {
+                return Option<Category>.Some(new Category.Tools());
+            }
+            else if (name is "Books")
+            {
+                return Option<Category>.Some(new Category.Books());
+            }
+            else
+            {
+                return Option<Category>.None;
+            }
+        }
     }
 
     internal sealed record Item(string sku, string name, Category category, Money price, int stock) : Priced
@@ -167,11 +210,32 @@ namespace Shop.Store
         {
         }
 
+        protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
         public sealed record UnknownItem(string sku) : OrderError;
 
         public sealed record OutOfStock(string sku, int wanted, int available) : OrderError;
 
         public sealed record InvalidQuantity(int quantity) : OrderError;
+
+        public string Name
+        {
+            get
+            {
+                if (this is OrderError.UnknownItem(_))
+                {
+                    return "UnknownItem";
+                }
+                else if (this is OrderError.OutOfStock(_, _, _))
+                {
+                    return "OutOfStock";
+                }
+                else
+                {
+                    return "InvalidQuantity";
+                }
+            }
+        }
     }
 
     internal sealed record Inventory(global::System.Collections.Generic.Dictionary<string, global::Shop.Model.Item> items);

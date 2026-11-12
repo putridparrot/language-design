@@ -15,11 +15,32 @@ internal abstract record Shape
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Circle(double r) : Shape;
 
     public sealed record Ring(double r, double inner) : Shape;
 
     public sealed record Empty() : Shape { public override string ToString() => "Empty"; }
+
+    public string Name
+    {
+        get
+        {
+            if (this is Shape.Circle(_))
+            {
+                return "Circle";
+            }
+            else if (this is Shape.Ring(_, _))
+            {
+                return "Ring";
+            }
+            else
+            {
+                return "Empty";
+            }
+        }
+    }
 }
 
 internal sealed record Point(int x, int y);

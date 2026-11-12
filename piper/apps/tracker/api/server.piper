@@ -1,0 +1,73 @@
+// Starting the tracker: its services, sign-in, and the web app.
+namespace Tracker;
+
+using System;
+using System.Security.Claims;
+using System.Text.Encodings.Web;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+/// Sign-in for development and tests: the `X-User` header names the user, and `X-Roles` lists their roles
+/// (`X-Roles: admin`). A real deployment would use cookies or JWT bearer tokens instead.
+class HeaderAuthentication(options: IOptionsMonitor<AuthenticationSchemeOptions>, logger: ILoggerFactory, encoder: UrlEncoder)
+    : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder) {
+
+    public static let Scheme = "Header";
+
+    override fn HandleAuthenticateAsync() => Task<AuthenticateResult> = Task.FromResult(Authenticate());
+
+    fn Authenticate() => AuthenticateResult {
+        let user = Request.Headers["X-User"].ToString();
+        if user == "" {
+            return AuthenticateResult.NoResult();
+        }
+        let identity = ClaimsIdentity(HeaderAuthentication.Scheme);
+        identity.AddClaim(Claim(ClaimTypes.Name, user));
+        for role in Request.Headers["X-Roles"].ToString().Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) {
+            identity.AddClaim(Claim(ClaimTypes.Role, role));
+        }
+        AuthenticateResult.Success(AuthenticationTicket(ClaimsPrincipal(identity), HeaderAuthentication.Scheme))
+    }
+}
+
+/// The web app, set up but not started: `Main` runs it, and the tests start it on a free port.
+fn BuildApp(settings: Settings, clock: Clock, urls: string) => WebApplication {
+    let builder = WebApplication.CreateBuilder();
+    builder.Logging.ClearProviders();
+    let addresses: string[] = [urls];
+    builder.WebHost.UseUrls(addresses);
+
+    // One database context per request, as EF Core expects.
+    builder.Services.AddScoped<TrackerDb>(provider => TrackerDb(DbContextOptionsBuilder<TrackerDb>().UseSqlite(settings.connection).Options));
+    builder.Services.AddSingleton<Clock>(clock);
+    Security(builder.Services, settings);
+    builder.Services.AddAuthentication(HeaderAuthentication.Scheme)
+        .AddScheme<AuthenticationSchemeOptions, HeaderAuthentication>(HeaderAuthentication.Scheme, options => {});
+
+    let app = builder.Build();
+    UseSecurity(app);
+    Api(app);
+    app
+}
+
+/// Makes the database's tables, if they aren't there.
+async fn Prepare(settings: Settings) {
+    using let db = TrackerDb(DbContextOptionsBuilder<TrackerDb>().UseSqlite(settings.connection).Options);
+    await db.Database.EnsureCreatedAsync();
+}
+
+async fn Main() {
+    let configuration = ConfigurationBuilder().AddJsonFile("appsettings.json", optional: true).AddEnvironmentVariables().Build();
+    let settings = SettingsFrom(configuration);
+    await Prepare(settings);
+    let app = BuildApp(settings, SystemClock(), "http://localhost:5080");
+    Print("Tracker on http://localhost:5080 (sign in with the X-User header)");
+    await app.RunAsync();
+}

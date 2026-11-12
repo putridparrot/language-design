@@ -23,12 +23,29 @@ internal abstract record Discount
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     /// <summary>
     /// A percentage off.
     /// </summary>
     public sealed record Percent(double rate) : Discount;
 
     public sealed record None() : Discount { public override string ToString() => "None"; }
+
+    public string Name
+    {
+        get
+        {
+            if (this is Discount.Percent(_))
+            {
+                return "Percent";
+            }
+            else
+            {
+                return "None";
+            }
+        }
+    }
 }
 
 internal static class Doc_comments

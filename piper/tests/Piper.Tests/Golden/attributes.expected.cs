@@ -22,7 +22,25 @@ internal abstract record OldShape
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Dot() : OldShape { public override string ToString() => "Dot"; }
+
+    public string Name => "Dot";
+
+    public static global::System.Collections.Generic.List<OldShape> Values => new global::System.Collections.Generic.List<OldShape> { new OldShape.Dot() };
+
+    public static Option<OldShape> Parse(string name)
+    {
+        if (name is "Dot")
+        {
+            return Option<OldShape>.Some(new OldShape.Dot());
+        }
+        else
+        {
+            return Option<OldShape>.None;
+        }
+    }
 }
 
 [global::System.SerializableAttribute]

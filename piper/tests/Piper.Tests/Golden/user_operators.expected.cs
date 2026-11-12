@@ -37,6 +37,8 @@ internal abstract record Interval
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Closed(int low, int high) : Interval;
 
     public sealed record Empty() : Interval { public override string ToString() => "Empty"; }
@@ -59,6 +61,21 @@ internal abstract record Interval
         else
         {
             throw new global::System.Diagnostics.UnreachableException();
+        }
+    }
+
+    public string Name
+    {
+        get
+        {
+            if (this is Interval.Closed(_, _))
+            {
+                return "Closed";
+            }
+            else
+            {
+                return "Empty";
+            }
         }
     }
 }

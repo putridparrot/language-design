@@ -964,7 +964,9 @@ The plugin generates:
   - `IsFinal` (its state has no transitions)
   - `Events`: the events the current state has transitions for, whether or not their guards hold
   - a method for each event (`Pay`), and `CanPay`, which says whether `Pay` would be taken now
-  - `Fire`
+  - `Fire(event)`, handling an event given as data, and `CanFire(event)`, which says whether it would be taken now
+  - `Order.Resume(state, …)`: a machine made in a state it reached earlier, such as one saved in a database, without
+    running that state's `enter` block
 
 How it behaves:
 
@@ -980,7 +982,8 @@ How it behaves:
   - a target that isn't a state, or a duplicate state
   - an event whose transitions take different parameters
   - a transition that's never taken, because an earlier one for the same event in that state has no guard
-  - an event named after a generated member (`Fire`, `State`, `IsFinal`, `Events`, or `CanX` when there's an `X`)
+  - an event named after a generated member (`Fire`, `CanFire`, `Resume`, `State`, `IsFinal`, `Events`, or `CanX`
+    when there's an `X`)
   - untyped parameters, a second `enter` or `exit` in a state, and a machine with no states
 - **Analysis:** a warning for a state that no chain of transitions reaches from the first.
 

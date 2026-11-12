@@ -76,7 +76,7 @@ public sealed class Lexer
         switch (c)
         {
             case '"': return ScanString();
-            case '$' when Peek(1) == '"': return ScanString();
+            case '$' when Peek(1) == '"' || (Peek(1) == '$' && DollarsThenString()): return ScanString();
             case '\'': return ScanChar();
             case '(': return Punctuation(TokenKind.OpenParen, 1);
             case ')': return Punctuation(TokenKind.CloseParen, 1);
@@ -424,17 +424,17 @@ public sealed class Lexer
     private Token ScanString()
     {
         int start = _position;
-        bool interpolated = Current == '$';
-        if (interpolated)
-            _position++;
-        if (Peek(1) == '"' && Peek(2) == '"')
+        int dollars = 0;
+        while (Current == '$')
         {
-            if (!interpolated)
-                return ScanRawString();
-            _diagnostics.ReportRawStringLayout(new TextSpan(start, 1), "A raw string can't be interpolated; use a $\"…\" string, or concatenate.");
-            _position = start + 1;
-            return ScanRawString();
+            dollars++;
+            _position++;
         }
+        bool interpolated = dollars > 0;
+        if (Current == '"' && Peek(1) == '"' && Peek(2) == '"')
+            return ScanRawString(start, dollars);
+        if (dollars > 1)
+            _diagnostics.ReportRawStringLayout(new TextSpan(start, dollars), "Only a raw string (\"\"\"…\"\"\") can start with more than one '$'.");
 
         _position++;
 
@@ -525,9 +525,8 @@ public sealed class Lexer
     /// ends on the line before the closing ones, whose indentation is removed from every line. Line breaks are
     /// always <c>\n</c>, whatever the source file uses.
     /// </summary>
-    private Token ScanRawString()
+    private Token ScanRawString(int start, int dollars)
     {
-        int start = _position;
         int quotes = 0;
         while (Current == '"')
         {
@@ -561,36 +560,133 @@ public sealed class Lexer
 
         _position = close + quotes;
         var span = TextSpan.FromBounds(start, _position);
-        var content = _source.ToString(TextSpan.FromBounds(contentStart, close));
-        var lines = content.ReplaceLineEndings("\n").Split('\n');
-        if (lines.Length == 1)
-            return new Token(TokenKind.StringLiteral, span, _source.ToString(span), content);
 
-        // Multi-line: nothing but whitespace may follow the opening quotes or precede the closing ones.
-        if (!string.IsNullOrWhiteSpace(lines[0]))
+        // The content's lines, each with where it starts in the source, so a hole keeps its own position.
+        var lines = new List<(int Start, string Text)>();
+        for (int lineStart = contentStart; ;)
         {
-            _diagnostics.ReportRawStringLayout(new TextSpan(start, quotes), "The opening quotes of a multi-line raw string must end their line.");
-            return new Token(TokenKind.StringLiteral, span, _source.ToString(span), content);
+            int lineEnd = lineStart;
+            while (lineEnd < close && _source[lineEnd] is not ('\n' or '\r'))
+                lineEnd++;
+            lines.Add((lineStart, _source.ToString(TextSpan.FromBounds(lineStart, lineEnd))));
+            if (lineEnd >= close)
+                break;
+            lineStart = lineEnd + (_source[lineEnd] == '\r' && lineEnd + 1 < close && _source[lineEnd + 1] == '\n' ? 2 : 1);
         }
-        var indentation = lines[^1];
-        if (!string.IsNullOrWhiteSpace(indentation))
+
+        // The text that's the string's: a single line as it is, or the lines between the quotes' lines, with the
+        // closing quotes' indentation removed from each.
+        var kept = new List<(int Start, string Text)>();
+        if (lines.Count == 1)
+        {
+            kept.Add(lines[0]);
+        }
+        else if (!string.IsNullOrWhiteSpace(lines[0].Text))
+        {
+            // Multi-line: nothing but whitespace may follow the opening quotes or precede the closing ones.
+            _diagnostics.ReportRawStringLayout(new TextSpan(start, quotes), "The opening quotes of a multi-line raw string must end their line.");
+            kept.AddRange(lines);
+        }
+        else if (!string.IsNullOrWhiteSpace(lines[^1].Text))
         {
             _diagnostics.ReportRawStringLayout(new TextSpan(close, quotes), "The closing quotes of a multi-line raw string must start their line.");
-            return new Token(TokenKind.StringLiteral, span, _source.ToString(span), content);
+            kept.AddRange(lines);
+        }
+        else
+        {
+            var indentation = lines[^1].Text;
+            for (int i = 1; i < lines.Count - 1; i++)
+            {
+                var (lineStart, line) = lines[i];
+                if (line.StartsWith(indentation, StringComparison.Ordinal))
+                {
+                    kept.Add((lineStart + indentation.Length, line[indentation.Length..]));
+                }
+                else
+                {
+                    if (!string.IsNullOrWhiteSpace(line))
+                        _diagnostics.ReportRawStringLayout(new TextSpan(start, quotes), "Every line of a raw string must start with the closing quotes' indentation.");
+                    kept.Add((lineStart + line.Length, ""));
+                }
+            }
         }
 
-        var value = new StringBuilder();
-        for (int i = 1; i < lines.Length - 1; i++)
+        if (dollars == 0)
+            return new Token(TokenKind.StringLiteral, span, _source.ToString(span), string.Join("\n", kept.Select(l => l.Text)));
+        return InterpolatedRawString(span, kept, dollars);
+    }
+
+    /// <summary>
+    /// The parts of an interpolated raw string, <c>$"""…{x}…"""</c>: as in C#, its number of <c>$</c> is how many braces
+    /// open a hole, <c>$$"""{"name": "{{name}}"}"""</c>, and fewer are text, so JSON's braces need no escaping.
+    /// </summary>
+    private Token InterpolatedRawString(TextSpan span, List<(int Start, string Text)> lines, int dollars)
+    {
+        var parts = ImmutableArray.CreateBuilder<InterpolationPart>();
+        var text = new StringBuilder();
+        int textStart = lines.Count > 0 ? lines[0].Start : span.Start;
+        bool hasHoles = false;
+        for (int l = 0; l < lines.Count; l++)
         {
-            if (i > 1)
-                value.Append('\n');
-            var line = lines[i];
-            if (line.StartsWith(indentation, StringComparison.Ordinal))
-                value.Append(line, indentation.Length, line.Length - indentation.Length);
-            else if (!string.IsNullOrWhiteSpace(line))
-                _diagnostics.ReportRawStringLayout(new TextSpan(start, quotes), "Every line of a raw string must start with the closing quotes' indentation.");
+            var (lineStart, line) = lines[l];
+            if (l > 0)
+                text.Append('\n');
+            for (int i = 0; i < line.Length;)
+            {
+                int run = 0;
+                while (i + run < line.Length && line[i + run] == '{')
+                    run++;
+                if (run < dollars)
+                {
+                    // Text, braces fewer than open a hole included.
+                    text.Append(run > 0 ? line.AsSpan(i, run) : line.AsSpan(i, 1));
+                    i += Math.Max(run, 1);
+                    continue;
+                }
+
+                // Braces beyond those opening the hole are text, as in C#: `{` before `{{x}}` in a $$ string.
+                text.Append('{', run - dollars);
+                int holeStart = lineStart + i + run;
+                FlushText(parts, text, textStart, holeStart - dollars);
+                int holeEnd = FindHoleEnd(holeStart);
+                if (holeEnd < 0)
+                {
+                    _diagnostics.ReportUnterminatedInterpolation(new TextSpan(holeStart - dollars, dollars));
+                    textStart = lineStart + line.Length;
+                    break;
+                }
+                for (int j = 1; j < dollars; j++)
+                {
+                    if (holeEnd + j >= _end || _source[holeEnd + j] != '}')
+                    {
+                        _diagnostics.ReportRawStringLayout(new TextSpan(holeEnd, 1), $"A hole opened with {dollars} braces closes with {dollars}.");
+                        break;
+                    }
+                }
+                var holeSpan = TextSpan.FromBounds(holeStart, holeEnd);
+                if (string.IsNullOrWhiteSpace(_source.ToString(holeSpan)))
+                    _diagnostics.ReportEmptyInterpolation(TextSpan.FromBounds(holeStart - dollars, holeEnd + dollars));
+                else
+                    parts.Add(new InterpolationHole(holeSpan));
+                hasHoles = true;
+                i = holeEnd + dollars - lineStart;
+                textStart = holeEnd + dollars;
+            }
         }
-        return new Token(TokenKind.StringLiteral, span, _source.ToString(span), value.ToString());
+        FlushText(parts, text, textStart, span.End);
+
+        if (!hasHoles)
+            return new Token(TokenKind.StringLiteral, span, _source.ToString(span), string.Concat(parts.OfType<InterpolationText>().Select(p => p.Value)));
+        return new Token(TokenKind.InterpolatedStringLiteral, span, _source.ToString(span)) { Parts = parts.ToImmutable() };
+    }
+
+    /// <summary>Whether the `$` here starts `$$"…` (or more `$`): a string, which reports more than one `$` unless it's raw.</summary>
+    private bool DollarsThenString()
+    {
+        int i = 0;
+        while (Peek(i) == '$')
+            i++;
+        return Peek(i) == '"';
     }
 
     private static void FlushText(ImmutableArray<InterpolationPart>.Builder parts, StringBuilder text, int start, int end)

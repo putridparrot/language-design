@@ -125,6 +125,34 @@ public class StateMachinePluginTests
         Assert.Equal("Done True 0\n", output);
     }
 
+    /// <summary>
+    /// A machine saved earlier (its state in a database, say) resumes in that state without running `enter`; an event
+    /// given as data can be checked before firing it, and named.
+    /// </summary>
+    [Fact]
+    public void A_machine_resumes_in_a_saved_state_and_events_can_be_checked_and_named()
+    {
+        var output = Run("""
+            statemachine Job(name: string) {
+                state Queued { on Start(worker: string) => Running; }
+                state Running {
+                    enter { Print("entered Running"); }
+                    on Finish() => Done;
+                }
+                state Done;
+            }
+            fn Main() {
+                let job = Job.Resume(JobState.Running, "build");
+                Print(job.State);
+                Print($"{job.CanFire(JobEvent.Start("a"))} {job.CanFire(JobEvent.Finish)}");
+                Print($"{JobEvent.Start("a").Name} {JobEvent.Finish.Name}");
+                job.Fire(JobEvent.Finish);
+                Print(job.IsFinal);
+            }
+            """);
+        Assert.Equal("Running\nFalse True\nStart Finish\nTrue\n", output);
+    }
+
     [Fact]
     public void An_error_in_a_guard_is_reported_at_the_users_code()
     {

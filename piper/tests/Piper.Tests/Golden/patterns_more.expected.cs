@@ -15,9 +15,26 @@ internal abstract record Shape
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Circle(double radius) : Shape;
 
     public sealed record Rect(double width, double height) : Shape;
+
+    public string Name
+    {
+        get
+        {
+            if (this is Shape.Circle(_))
+            {
+                return "Circle";
+            }
+            else
+            {
+                return "Rect";
+            }
+        }
+    }
 }
 
 internal static class Patterns_more

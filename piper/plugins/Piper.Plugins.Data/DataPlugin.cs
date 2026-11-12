@@ -110,7 +110,7 @@ public sealed class DataPlugin : IPiperPlugin
                 }
 
                 override fn ConfigureConventions(configuration: {{EF}}.ModelConfigurationBuilder) {
-                    Piper.Data.PiperModel.Conventions(configuration);
+                    Piper.Data.PiperModel.Conventions(configuration, this);
                 }
 
                 override fn OnConfiguring(builder: {{EF}}.DbContextOptionsBuilder) {

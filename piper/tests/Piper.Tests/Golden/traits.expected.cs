@@ -62,9 +62,26 @@ internal abstract record List<T>
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Cons(T head, List<T> tail) : List<T>;
 
     public sealed record Nil() : List<T> { public override string ToString() => "Nil"; }
+
+    public string Name
+    {
+        get
+        {
+            if (this is List<T>.Cons(_, _))
+            {
+                return "Cons";
+            }
+            else
+            {
+                return "Nil";
+            }
+        }
+    }
 }
 
 internal interface Speak
@@ -102,6 +119,8 @@ internal abstract record Animal : Speak
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Dog(string name) : Animal;
 
     public sealed record Cat(string name, int lives) : Animal;
@@ -131,6 +150,21 @@ internal abstract record Animal : Speak
         else
         {
             throw new global::System.Diagnostics.UnreachableException();
+        }
+    }
+
+    public string Name
+    {
+        get
+        {
+            if (this is Animal.Dog(_))
+            {
+                return "Dog";
+            }
+            else
+            {
+                return "Cat";
+            }
         }
     }
 }

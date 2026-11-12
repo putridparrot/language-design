@@ -192,7 +192,8 @@ generic call `a<b, c>(d)`, as in C#.
 - **Doubles:** `1.5`, `2e3`, `2.5E-1`. A digit is required after the `.`, so `0..10` is a range. Suffixes `F` (float), `D` (double) and `M` (decimal) work on any decimal number: `1.5f`, `19.99m`, `2m`.
 - **Chars:** `'a'`, `'\n'`.
 - **Strings:** `"..."`, with escapes `\n \t \r \0 \\ \" \' \{ \} \u{1F99C}`.
-- **Raw strings:** as in C# 11, ```"""…"""``` (three or more quotes) has no escapes and no interpolation, so quotes and braces are literal. A multi-line raw string starts on the line after the opening quotes and ends on the line before the closing ones, whose indentation is removed from every line; line breaks are always `\n`.
+- **Raw strings:** as in C# 11, ```"""…"""``` (three or more quotes) has no escapes, so quotes and braces are literal. A multi-line raw string starts on the line after the opening quotes and ends on the line before the closing ones, whose indentation is removed from every line; line breaks are always `\n`.
+- **Interpolated raw strings:** ```$"""…{x}…"""``` interpolates, as in C#. The number of `$` is how many braces open a hole, so with ```$$"""…"""``` a single brace is text and `{{x}}` is a hole, which suits JSON: ```$$"""{"name": "{{name}}"}"""```. More `$` than that work the same way. Only a raw string can start with more than one `$`.
 - **Interpolation:** as in C#, a `$"…"` string interpolates `{expression}`, for example `$"sum={a + b}"`; in a plain string, braces are just text (`"/users/{id}"`). In a `$` string, `{{` and `}}` (or `\{` and `\}`) are literal braces. As in C#, an alignment and a format can follow the expression: `$"{price:C}"`, `$"{date:yyyy-MM-dd}"`, `$"{name,-10}"`, `$"{total,8:F2}"`. A `,` or `:` inside brackets (a named tuple element, a lambda's parameter type) is part of the expression.
 
 ## Semantics
@@ -242,6 +243,22 @@ let e = Shape.Empty;         // fieldless variants are written without parenthes
 - **Enums can be recursive**, e.g. `enum Expr { Num(value: int), Add(left: Expr, right: Expr) }`.
 - **Values compare structurally** with `==`.
 - **The only way to look inside a value is `match`.** There is no field access on enum values.
+- **Names:** every value has its variant's `Name`: `Shape.Circle(2.0).Name` is `"Circle"`.
+- **Listing and parsing:** an enum whose variants have no fields lists them in order with `Values` and finds one by
+  name with `Parse`, which is None for a name that isn't one. This is for statuses read from a query string, a file or
+  the command line:
+
+  ```piper
+  enum Light { Red, Amber, Green }
+
+  Light.Values               // [Red, Amber, Green]
+  Light.Parse("Amber")       // Some(Amber)
+  Light.Parse("Blue")        // None
+  ```
+
+  They're written for each enum as an `extend` block would be, so an enum's own `extend` can define its own instead.
+  They aren't in JSON: a variant is written as its kind and its fields. A variant prints as its fields:
+  `Rect { width = 2, height = 3 }`.
 
 ### Pattern matching
 

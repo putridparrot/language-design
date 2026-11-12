@@ -179,7 +179,8 @@ async fn Main(args: string[]) {
     await Show("GET /api/todos", await client.GetAsync("/api/todos"));
     await Show("GET /api/hello?name=Ada", await client.GetAsync("/api/hello?name=Ada"));
     await Show("GET /api/hello", await client.GetAsync("/api/hello"));
-    let stats = await client.GetFromJsonAsync<Stats>("/api/stats");
+    // GetFromJsonAsync gives None for a JSON null, so a missing body is dealt with here.
+    let Some(stats) = await client.GetFromJsonAsync<Stats>("/api/stats") else { Print("GET /api/stats → nothing"); return; };
     Print($"GET /api/stats → {stats.total} total, {stats.done} done, {stats.open} open");
 
     await app.StopAsync();

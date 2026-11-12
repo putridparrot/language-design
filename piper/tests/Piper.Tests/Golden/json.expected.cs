@@ -15,9 +15,26 @@ internal abstract record Status
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Open() : Status { public override string ToString() => "Open"; }
 
     public sealed record Closed(string reason) : Status;
+
+    public string Name
+    {
+        get
+        {
+            if (this is Status.Open)
+            {
+                return "Open";
+            }
+            else
+            {
+                return "Closed";
+            }
+        }
+    }
 }
 
 [global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
@@ -27,9 +44,26 @@ internal abstract record Tree<T>
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Leaf() : Tree<T> { public override string ToString() => "Leaf"; }
 
     public sealed record Node(T @value, Tree<T> left, Tree<T> right) : Tree<T>;
+
+    public string Name
+    {
+        get
+        {
+            if (this is Tree<T>.Leaf)
+            {
+                return "Leaf";
+            }
+            else
+            {
+                return "Node";
+            }
+        }
+    }
 }
 
 internal sealed record Order(int id, Status status, Option<global::System.Collections.Generic.List<string>> tags);
@@ -99,9 +133,26 @@ internal abstract record Shape
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Plain() : Shape { public override string ToString() => "Plain"; }
 
     public sealed record Tagged(string kind) : Shape;
+
+    public string Name
+    {
+        get
+        {
+            if (this is Shape.Plain)
+            {
+                return "Plain";
+            }
+            else
+            {
+                return "Tagged";
+            }
+        }
+    }
 }
 
 [global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperEnumJsonConverterFactory))]
@@ -111,9 +162,26 @@ internal abstract record Label
     {
     }
 
+    protected virtual bool PrintMembers(global::System.Text.StringBuilder builder) => false;
+
     public sealed record Plain() : Label { public override string ToString() => "Plain"; }
 
     public sealed record Tagged([property: global::System.Text.Json.Serialization.JsonPropertyNameAttribute("type")] string kind) : Label;
+
+    public string Name
+    {
+        get
+        {
+            if (this is Label.Plain)
+            {
+                return "Plain";
+            }
+            else
+            {
+                return "Tagged";
+            }
+        }
+    }
 }
 
 [global::System.Text.Json.Serialization.JsonConverter(typeof(global::Piper.Runtime.PiperRecordJsonConverterFactory))]
