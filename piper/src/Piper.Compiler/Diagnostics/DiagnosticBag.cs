@@ -111,6 +111,33 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportDataRace(TextSpan span, string message) =>
         Warning("PIP0387", span, message);
 
+    public void ReportNullCoalescingAssignmentNotOptional(TextSpan span, TypeSymbol type) =>
+        Error("PIP0388", span, $"'??=' sets an optional that has no value, but '{type}' isn't optional.");
+
+    public void ReportBindingInNotPattern(TextSpan span) =>
+        Error("PIP0390", span, "A 'not' pattern matches only when its pattern doesn't, so it can't bind variables; use '_' for parts you don't need.");
+
+    public void ReportDuplicateDictionaryKey(TextSpan span, string key) =>
+        Error("PIP0395", span, $"The key {key} is already in this dictionary literal.");
+
+    public void ReportDictionaryElement(TextSpan span, string message) =>
+        Error("PIP0396", span, message);
+
+    public void ReportRecursiveRecordStruct(TextSpan span, string record, string field) =>
+        Error("PIP0394", span, $"'{record}' is a record struct, which holds its fields inline, so it can't hold itself (through '{field}'); make it a 'record', which holds a reference.");
+
+    public void ReportPatternNeverMatches(TextSpan span) =>
+        Error("PIP0393", span, "No value matches this pattern.");
+
+    public void ReportDuplicateLoopLabel(TextSpan span, string label) =>
+        Error("PIP0391", span, $"A loop around this one is already labelled '{label}'; give this one another name.");
+
+    public void ReportUndefinedLoopLabel(TextSpan span, string keyword, string label) =>
+        Error("PIP0392", span, $"No loop around this '{keyword}' is labelled '{label}'.");
+
+    public void ReportNullCoalescingAssignmentTarget(TextSpan span) =>
+        Error("PIP0389", span, "'??=' reads its target and may set it again, so the target must be a name, a member of one ('a.b') or an index of one ('a[i]'); put anything longer in a 'let' first.");
+
     public void ReportLockOnValue(TextSpan span, TypeSymbol type) =>
         Error("PIP0383", span, $"'{type}' values can't be locked: a value is copied, so each lock would hold a different one. Lock an object, such as a 'System.Threading.Lock'.");
 
@@ -119,6 +146,9 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportParamsParameter(TextSpan span, string message) =>
         Error("PIP0382", span, message);
+
+    public void ReportLabelNotOnLoop(TextSpan span, string label) =>
+        Error("PIP0112", span, $"Only a loop can be labelled, as in '{label}: for x in xs {{ … }}', for 'break {label};' and 'continue {label};' to name.");
 
     public void ReportGenericTypeAlias(TextSpan span) =>
         Error("PIP0110", span, "A type alias can't have type parameters, as in C#; name a constructed type instead: 'type Names = List<string>;'.");
@@ -529,8 +559,8 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportCannotInferCollection(TextSpan span) =>
         Error("PIP0286", span, "Can't infer the element type of an empty collection; add a type annotation, e.g. 'let xs: List<int> = [];'.");
 
-    public void ReportArrayOfNullDefaults(TextSpan span, TypeSymbol element) =>
-        Error("PIP0288", span, $"An array of '{element}' can't be created empty, as its elements would be null; use a collection literal ([…]), Enumerable.Repeat(value, n).ToArray(), or an array of '{element}?'.");
+    public void ReportArrayOfNullDefaults(TextSpan span, TypeSymbol element, bool skipsInvariants = false) =>
+        Error("PIP0288", span, $"An array of '{element}' can't be created empty, as its elements would be {(skipsInvariants ? $"all-zero values that skip '{element}''s invariants" : "null")}; use a collection literal ([…]), Enumerable.Repeat(value, n).ToArray(), or an array of '{element}?'.");
 
     public void ReportCannotDeconstruct(TextSpan span, TypeSymbol type, int count) =>
         Error("PIP0289", span, $"A '{type}' can't be deconstructed into {count} parts; tuples, records and .NET types with a matching Deconstruct method can.");
@@ -742,4 +772,8 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportPluginAnalysisFailed(string plugin, string reason) =>
         Error("PIP0506", default, $"Plugin '{plugin}' failed while analyzing the program: {reason}");
+
+    /// <summary>A decorator on something it can't rewrite: <paramref name="accepts"/> says what it can.</summary>
+    public void ReportDecoratorMisplaced(TextSpan span, string plugin, string decorator, string accepts, string what) =>
+        Error("PIP0507", span, $"The decorator '{decorator}' (plugin '{plugin}') can only be used on {accepts}, not {what}.");
 }

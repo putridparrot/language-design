@@ -22,7 +22,7 @@ public static class SymbolDisplay
             $"{(c.IsPrivate ? "private " : c.IsProtected ? "protected " : "")}{c.ContainingType}({string.Join(", ", c.Parameters.Select(p => $"{p.Name}: {p.Type}"))})",
         MethodSymbol m => Function(m, $"{m.ContainingType}."),
         FunctionSymbol f => Function(f, ""),
-        RecordSymbol r => $"record {r.Name}{TypeParameters(r.TypeParameters)}({Fields(r.Fields)}){Requires(r.Invariants)}",
+        RecordSymbol r => $"record {(r.IsStruct ? "struct " : "")}{r.Name}{TypeParameters(r.TypeParameters)}({Fields(r.Fields)}){Requires(r.Invariants)}",
         EnumSymbol e => $"enum {e.Name}{TypeParameters(e.TypeParameters)} {{ {string.Join(", ", e.Variants.Select(Variant))} }}",
         TraitSymbol t => Trait(t),
         VariantSymbol v => $"{v.Enum.Name}.{Variant(v)}",

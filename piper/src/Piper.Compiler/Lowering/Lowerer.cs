@@ -581,6 +581,26 @@ public sealed class Lowerer
                     collection.Type);
             }
 
+            case BoundDictionaryExpression dictionary:
+            {
+                // Each entry's key, then its value, and each spread's source, in the order written.
+                var parts = dictionary.Elements.SelectMany(e => e switch
+                {
+                    BoundDictionaryEntry entry => new[] { entry.Key, entry.Value },
+                    BoundSpreadElement spread => [spread.Source],
+                    _ => [e],
+                }).ToImmutableArray();
+                var operands = LowerOperands(parts, prelude);
+                int next = 0;
+                var elements = dictionary.Elements.Select(e => e switch
+                {
+                    BoundDictionaryEntry => new BoundDictionaryEntry(operands[next++], operands[next++]),
+                    BoundSpreadElement => new BoundSpreadElement(operands[next++]),
+                    _ => operands[next++],
+                }).ToImmutableArray();
+                return new BoundDictionaryExpression(elements, dictionary.KeyType, dictionary.ValueType, dictionary.Type);
+            }
+
             case BoundObjectInitializerExpression initializer:
             {
                 // The constructor's arguments, then the values, in order. If a value needs statements first, the
@@ -953,6 +973,8 @@ public sealed class Lowerer
     private static IEnumerable<BoundPattern> Alternatives(BoundPattern pattern) => pattern switch
     {
         BoundOrPattern { HasBindings: true } or => or.Alternatives.SelectMany(Alternatives),
+        BoundAndPattern { HasBindings: true } both =>
+            Combinations(both.Patterns).Select(patterns => new BoundAndPattern(patterns, both.Type)),
         BoundConstructorPattern { HasBindings: true } constructor =>
             Combinations(constructor.Arguments).Select(arguments => new BoundConstructorPattern(constructor.Constructor, arguments, constructor.Type)),
         BoundTuplePattern { HasBindings: true } tuple =>

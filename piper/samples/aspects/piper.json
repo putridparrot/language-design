@@ -1,0 +1,4 @@
+{
+  // The aspects plugin, which comes with piper, adds the decorators [Trace], [Timed] and [Retry]: `piper run samples/aspects`.
+  "plugins": ["aspects"]
+}

@@ -17,13 +17,16 @@ namespace Piper.Binding;
 ///
 /// A list pattern's constructors are lengths: with L the most elements any list pattern in the column names, each length
 /// from 0 to L, and "more than L" (checked as L + 1, which every pattern with a `...` matches and none without does).
+///
+/// `not` and `and` patterns are first rewritten without them where that's possible (see <see cref="Simplify"/>); any
+/// left are opaque tests.
 /// </summary>
 public static class Exhaustiveness
 {
     /// <summary>Returns a description of a value no pattern matches, or null if the patterns are exhaustive.</summary>
     public static string? FindMissingPattern(TypeSymbol type, IEnumerable<BoundPattern> patterns)
     {
-        var rows = patterns.Select(p => new[] { p }).ToList();
+        var rows = patterns.Select(p => new[] { Simplify(p) }).ToList();
         return FindWitness(rows, [type])?[0];
     }
 
@@ -33,7 +36,7 @@ public static class Exhaustiveness
     /// </summary>
     public static IReadOnlyList<string> MissingArms(TypeSymbol type, IEnumerable<BoundPattern> patterns)
     {
-        var covering = patterns.ToList();
+        var covering = patterns.Select(Simplify).ToList();
         var arms = new List<string>();
         foreach (var constructor in AllConstructors(type) ?? [])
         {
@@ -64,8 +67,169 @@ public static class Exhaustiveness
     /// <summary>True if some value matches <paramref name="pattern"/> but none of <paramref name="previous"/>.</summary>
     public static bool IsUseful(IEnumerable<BoundPattern> previous, BoundPattern pattern)
     {
-        var rows = previous.Select(p => new[] { p }).ToList();
-        return IsUseful(rows, [pattern]);
+        var rows = previous.Select(p => new[] { Simplify(p) }).ToList();
+        return IsUseful(rows, [Simplify(pattern)]);
+    }
+
+    /// <summary>
+    /// The pattern with its `not` and `and` patterns rewritten as the other kinds, where that's possible: `not null` is
+    /// `Some(_)`, `not Red` the enum's other variants, `not 1..5` the integers below 1 and above 5, and `>= 0 and <= 9`
+    /// is `0..9`. A part that can't be rewritten (`not "a"`, `[x, ...] and [_, y]`) stays as it is, an opaque test.
+    /// </summary>
+    private static BoundPattern Simplify(BoundPattern pattern)
+    {
+        if (!HasNotOrAnd(pattern))
+            return pattern;
+        return pattern switch
+        {
+            BoundNotPattern not => Complement(Simplify(not.Pattern)) ?? not,
+            BoundAndPattern both => Intersect([.. both.Patterns.Select(Simplify)], both.Type) ?? both,
+            BoundOrPattern or => new BoundOrPattern([.. or.Alternatives.Select(Simplify)], or.Type),
+            BoundConstructorPattern constructor =>
+                new BoundConstructorPattern(constructor.Constructor, [.. constructor.Arguments.Select(Simplify)], constructor.Type),
+            BoundTuplePattern tuple => new BoundTuplePattern([.. tuple.Elements.Select(Simplify)], (TupleTypeSymbol)tuple.Type),
+            BoundListPattern list => new BoundListPattern([.. list.Elements.Select(Simplify)], list.SliceIndex, list.Slice, list.ElementType, list.Type),
+            BoundPropertyPattern properties =>
+                new BoundPropertyPattern([.. properties.Properties.Select(p => p with { Pattern = Simplify(p.Pattern) })], properties.Type),
+            _ => pattern,
+        };
+    }
+
+    private static bool HasNotOrAnd(BoundPattern pattern) => pattern switch
+    {
+        BoundNotPattern or BoundAndPattern => true,
+        BoundOrPattern or => or.Alternatives.Any(HasNotOrAnd),
+        BoundConstructorPattern constructor => constructor.Arguments.Any(HasNotOrAnd),
+        BoundTuplePattern tuple => tuple.Elements.Any(HasNotOrAnd),
+        BoundListPattern list => list.Elements.Any(HasNotOrAnd),
+        BoundPropertyPattern properties => properties.Properties.Any(p => HasNotOrAnd(p.Pattern)),
+        _ => false,
+    };
+
+    /// <summary>A pattern matching exactly the values <paramref name="pattern"/> (already simplified) doesn't, or null if there's no such pattern.</summary>
+    private static BoundPattern? Complement(BoundPattern pattern)
+    {
+        var type = pattern.Type;
+        if (IsWildcard(pattern))
+            return Nothing(type);
+        switch (pattern)
+        {
+            // not (A | B) is (not A) and (not B), and not (A and B) is (not A) | (not B).
+            case BoundOrPattern or:
+            {
+                var complements = or.Alternatives.Select(Complement).ToList();
+                return complements.Any(c => c is null) ? null : Intersect([.. complements.OfType<BoundPattern>()], type);
+            }
+            case BoundAndPattern both:
+            {
+                var complements = both.Patterns.Select(p => Complement(Simplify(p))).ToList();
+                return complements.Any(c => c is null) ? null : Either([.. complements.OfType<BoundPattern>()], type);
+            }
+            case BoundNotPattern not:
+                return Simplify(not.Pattern);
+            case BoundLiteralPattern { Value: bool value }:
+                return new BoundLiteralPattern(!value, type);
+            case var _ when IntervalOf(pattern) is { } interval && Domain(type) is { } domain:
+            {
+                var pieces = new List<BoundPattern>();
+                if (interval.Low > domain.Low)
+                    pieces.Add(new IntervalPattern(new(domain.Low, interval.Low - 1), type));
+                if (interval.High < domain.High)
+                    pieces.Add(new IntervalPattern(new(interval.High + 1, domain.High), type));
+                return Either(pieces, type);
+            }
+            // not C(p, q) is any other constructor, or C(not p, _), or C(_, not q).
+            case BoundConstructorPattern or BoundTuplePattern when AllConstructors(type) is { } all:
+            {
+                var key = KeyOf(pattern)!;
+                var arguments = Arguments(pattern).ToList();
+                var fieldTypes = FieldTypes(key, type).ToList();
+                var alternatives = all.Where(c => !Equals(c, key))
+                    .Select(c => Construct(c, [.. FieldTypes(c, type).Select(Wildcard)], type))
+                    .ToList();
+                for (int i = 0; i < arguments.Count; i++)
+                {
+                    if (IsWildcard(arguments[i]))
+                        continue;
+                    if (Complement(arguments[i]) is not { } complement)
+                        return null;
+                    alternatives.Add(Construct(key, [.. fieldTypes.Select((t, j) => j == i ? complement : Wildcard(t))], type));
+                }
+                return Either(alternatives, type);
+            }
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>A pattern matching exactly the values all of <paramref name="patterns"/> (already simplified) match, or null if there's no such pattern.</summary>
+    private static BoundPattern? Intersect(List<BoundPattern> patterns, TypeSymbol type)
+    {
+        var parts = patterns.Where(p => !IsWildcard(p)).ToList();
+        if (parts.Count == 0)
+            return Wildcard(type);
+        if (parts.Count == 1)
+            return parts[0];
+
+        // (A | B) and C is (A and C) | (B and C).
+        if (parts.OfType<BoundOrPattern>().FirstOrDefault() is { } or)
+        {
+            var others = parts.Where(p => p != or).ToList();
+            var alternatives = new List<BoundPattern>();
+            foreach (var alternative in or.Alternatives)
+            {
+                if (Intersect([alternative, .. others], type) is not { } intersection)
+                    return null;
+                alternatives.Add(intersection);
+            }
+            return Either(alternatives, type);
+        }
+
+        if (parts.All(p => IntervalOf(p) is not null))
+        {
+            var intervals = parts.Select(p => IntervalOf(p)!.Value).ToList();
+            var low = intervals.Max(i => i.Low);
+            var high = intervals.Min(i => i.High);
+            return low > high ? Nothing(type) : new IntervalPattern(new(low, high), type);
+        }
+
+        // C(p1, q1) and C(p2, q2) is C(p1 and p2, q1 and q2); different constructors match nothing in common.
+        if (parts.All(p => p is BoundConstructorPattern or BoundTuplePattern or BoundLiteralPattern { Value: bool }))
+        {
+            var key = KeyOf(parts[0])!;
+            if (parts.Any(p => !Equals(KeyOf(p), key)))
+                return Nothing(type);
+            var columns = parts.Select(p => Arguments(p).ToList()).ToList();
+            var arguments = new List<BoundPattern>();
+            for (int i = 0; i < columns[0].Count; i++)
+            {
+                if (Intersect([.. columns.Select(c => c[i])], columns[0][i].Type) is not { } argument)
+                    return null;
+                arguments.Add(argument);
+            }
+            return Construct(key, arguments, type);
+        }
+        return null;
+    }
+
+    /// <summary>A pattern no value matches: an `|` with no alternatives.</summary>
+    private static BoundPattern Nothing(TypeSymbol type) => new BoundOrPattern([], type);
+
+    private static BoundPattern Either(List<BoundPattern> alternatives, TypeSymbol type) =>
+        alternatives.Count == 1 ? alternatives[0] : new BoundOrPattern([.. alternatives], type);
+
+    /// <summary>A pattern for constructor <paramref name="key"/> of <paramref name="type"/> (see <see cref="KeyOf"/>) with these arguments.</summary>
+    private static BoundPattern Construct(object key, List<BoundPattern> arguments, TypeSymbol type) => key switch
+    {
+        TupleTypeSymbol tuple => new BoundTuplePattern([.. arguments], tuple),
+        VariantSymbol or RecordSymbol => new BoundConstructorPattern((Symbol)key, [.. arguments], type),
+        _ => new BoundLiteralPattern(key, type),
+    };
+
+    /// <summary>The integers or chars in an interval: made by <see cref="Simplify"/>, which may need intervals no pattern names.</summary>
+    private sealed class IntervalPattern(Interval interval, TypeSymbol type) : BoundPattern(type)
+    {
+        public Interval Interval { get; } = interval;
     }
 
     private static bool IsUseful(List<BoundPattern[]> rows, BoundPattern[] vector)
@@ -260,6 +424,7 @@ public static class Exhaustiveness
 
     private static Interval? IntervalOf(BoundPattern pattern) => pattern switch
     {
+        IntervalPattern interval => interval.Interval,
         BoundLiteralPattern literal when Domain(literal.Type) is not null => new(ToInt128(literal.Value), ToInt128(literal.Value)),
         BoundRangePattern range => new(ToInt128(range.Lower), ToInt128(range.Upper) - (range.IsInclusive ? 0 : 1)),
         BoundRelationalPattern relational when Domain(relational.Type) is { } domain => relational.Operator switch
@@ -343,7 +508,7 @@ public static class Exhaustiveness
     private static object? KeyOf(BoundPattern pattern) => pattern switch
     {
         _ when IsWildcard(pattern) => null,
-        BoundRelationalPattern or BoundPropertyPattern or BoundTypePattern => pattern,
+        BoundRelationalPattern or BoundPropertyPattern or BoundTypePattern or BoundNotPattern or BoundAndPattern or IntervalPattern => pattern,
         BoundConstructorPattern constructor => constructor.Constructor,
         BoundTuplePattern tuple => tuple.Type,
         BoundLiteralPattern literal => literal.Value,

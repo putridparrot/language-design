@@ -1,0 +1,49 @@
+// `not`, `and` and parentheses in patterns, which count towards exhaustiveness.
+using System.Collections.Generic;
+
+enum Color { Red, Green, Blue }
+enum Shape { Circle(r: double), Square(side: double), Dot }
+
+fn Describe(n: int) => string = match n {
+    < 0 => "negative",
+    0 => "zero",
+    >= 1 and <= 9 => "digit",
+    not (10..99) => "big",
+    10..99 => "two digits",
+};
+
+fn IsIdentifierStart(c: char) => bool = c is >= 'a' and <= 'z' | >= 'A' and <= 'Z' | '_';
+
+fn Warm(c: Color) => bool = match c { not Blue => true, Blue => false };
+
+fn Presence(o: string?) => string = match o { not null => "has a value", null => "none" };
+
+fn Size(s: Shape) => string = match s {
+    not (Dot | Circle(_)) => "square",
+    Circle(r) and Circle(> 1.0) => $"big circle {r}",
+    Circle(_) => "small circle",
+    Dot => "dot",
+};
+
+fn FirstTwo(xs: List<int>) => string = match xs {
+    [first, ...] and [_, second, ...] => $"{first}, {second}",
+    _ => "too short",
+};
+
+fn Main() {
+    for n in [-5, 0, 7, 42, 1000] { Print(Describe(n)); }
+    Print($"{IsIdentifierStart('q')} {IsIdentifierStart('_')} {IsIdentifierStart('5')}");
+    Print($"{Warm(Color.Red)} {Warm(Color.Blue)}");
+    let name: string? = "Piper";
+    Print($"{Presence(name)}, {Presence(null)}");
+    if name is not null and not Some("") {
+        Print("a name");
+    }
+    Print(Size(Shape.Square(2.0)));
+    Print(Size(Shape.Circle(3.0)));
+    Print(Size(Shape.Circle(0.5)));
+    Print(Size(Shape.Dot));
+    Print(FirstTwo([1, 2, 3]));
+    Print(FirstTwo([1]));
+    Print(5 is not (1 | 2 | 3));
+}

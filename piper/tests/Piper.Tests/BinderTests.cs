@@ -1398,6 +1398,202 @@ public class BinderTests
         Assert.Equal("a|--b", Runner.Run(result.Files, args: ["a", "--b"]).Output.Trim());
     }
 
+    [Theory]
+    [InlineData("PIP0203", "fn f() { let x = 1.5 & 2; }")]
+    [InlineData("PIP0203", "fn f() { let x = 1 << 2L; }")]
+    [InlineData("PIP0203", "fn f() { let x = 1.5 >> 1; }")]
+    [InlineData("PIP0204", "fn f() { let x = ~true; }")]
+    [InlineData("PIP0203", "fn f() { let x = true | 1; }")]
+    [InlineData("PIP0203", "fn f() { let x = 1 ^ 1UL; }")]
+    [InlineData("PIP0203", "enum Flag { A, B } fn f() { let x = Flag.A | Flag.B; }")]
+    [InlineData("PIP0203", "fn f() { let x = System.IO.FileAttributes.Hidden | System.DayOfWeek.Monday; }")]
+    [InlineData("PIP0203", "fn f() { mut x = 1.5; x |= 1; }")]
+    [InlineData("PIP0202", "fn f(n: int) { mut b: byte = 0; b |= n; }")]
+    [InlineData("PIP0388", "fn f() { mut x = 1; x ??= 2; }")]
+    [InlineData("PIP0389", "fn f(xs: int?[]) { xs[0 + 1] ??= 1; }")]
+    [InlineData("PIP0389", "record R(x: int?); fn g() => R = R(null); fn f() { g().x ??= 1; }")]
+    [InlineData("PIP0390", "fn f(o: int?) => bool = o is not Some(x);")]
+    [InlineData("PIP0390", "fn f(o: int?) => int = match o { not Some(x) => 0, _ => 1 };")]
+    [InlineData("PIP0393", "fn f(n: int) => bool = n is >= 0 and < 0;")]
+    [InlineData("PIP0393", "fn f(n: int) => bool = n is not _;")]
+    [InlineData("PIP0393", "fn f(o: int?) => bool = o is null and not null;")]
+    [InlineData("PIP0391", "fn f() { a: for x in [1] { a: for y in [2] { } } }")]
+    [InlineData("PIP0392", "fn f() { for x in [1] { break b; } }")]
+    [InlineData("PIP0392", "fn f() { a: for x in [1] { } for y in [2] { continue a; } }")]
+    [InlineData("PIP0213", "fn f() { break a; }")]
+    [InlineData("PIP0213", "fn f() { a: for x in [1] { let g = () => { break a; }; } }")]
+    [InlineData("PIP0284", "fn f() { a: while true { for x in [1] { defer { break a; } } } }")]
+    public void Bitwise_pattern_and_label_errors_are_reported(string code, string program)
+    {
+        AssertSingleError(code, program);
+    }
+
+    [Theory]
+    [InlineData("fn f(b: byte, n: int) => int = b & 0x0F | n << 2 ^ ~b;")]
+    [InlineData("fn f(c: char) => int = c & 0x1F;")]
+    [InlineData("fn f(x: ulong, n: byte) => ulong = x >> n;")]
+    [InlineData("fn f() { let b: byte = 0x0F | 0x30; let m: byte = 1 << 7; }")]
+    [InlineData("fn f(n: int) { mut b: byte = 0; b |= 0x04; b <<= n; b ^= b; mut l = 1L; l <<= 40; }")]
+    [InlineData("fn f(a: bool, b: bool) => bool { mut ok = a & b ^ a | b; ok &= a; ok }")]
+    [InlineData("using System.IO; fn f(a: FileAttributes) => FileAttributes { mut b = a | FileAttributes.Hidden; b &= ~FileAttributes.ReadOnly; b ^ a }")]
+    [InlineData("using System.Numerics; fn f(a: BigInteger) => BigInteger = (a << 3 | a) & ~a;")]
+    [InlineData("fn f() { mut s: string? = null; s ??= \"x\"; mut n: int? = null; n ??= 1; n ??= null; }")]
+    [InlineData("record R(x: int?); class C { mut r: R? = null; fn Get() => R { this.r ??= R(1); this.r ?? R(2) } }")]
+    [InlineData("fn f(xs: int?[], i: int) { xs[i] ??= 1; }")]
+    [InlineData("fn f(o: string?) => bool = o is not null && o is not Some(\"\");")]
+    [InlineData("fn f(s: string) => int = match s { not \"\" and not \"-\" => 1, _ => 0 };")]
+    [InlineData("fn f(c: char) => bool = c is >= 'a' and <= 'z' | >= 'A' and <= 'Z' | '_';")]
+    [InlineData("fn f(xs: int[]) => int = match xs { [a, ...] and [_, b, ...] => a + b, _ => 0 };")]
+    [InlineData("enum S { A(x: int), B(x: int), C } fn f(s: S) => int = match s { A(x) | B(x) and not B(0) => x, _ => 0 };")]
+    [InlineData("fn f(n: int) => int { mut t = 0; outer: for i in 0..n { inner: for j in 0..n { if j > i { continue outer; } if i * j > 10 { break outer; } t += j; } } t }")]
+    [InlineData("fn f() => int { loop: while true { for x in [1] { break loop; } } 1 }")]
+    [InlineData("fn f() => int { mut n = 0; again: while true { n += 1; match n { 3 => break again, _ => continue again, } } n }")]
+    public void Bitwise_patterns_and_labels_compile(string program)
+    {
+        var result = Compilation.Compile(program);
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        Assert.Empty(result.Diagnostics);
+    }
+
+    [Theory]
+    [InlineData("match s { not A => 1, A => 2 }")]
+    [InlineData("match o { not null => 1, null => 2 }")]
+    [InlineData("match o { Some(not 0) => 1, Some(0) | null => 2 }")]
+    [InlineData("match n { < 0 => 1, not < 0 => 2 }")]
+    [InlineData("match n { >= 0 and <= 9 => 1, < 0 | > 9 => 2 }")]
+    [InlineData("match n { not (0..9) => 1, 0..4 => 2, 5..9 => 3 }")]
+    [InlineData("match flag { not true => 1, true => 2 }")]
+    [InlineData("match s { B(not 0) => 1, B(0) => 2, A => 3 }")]
+    [InlineData("match p { not P(0, _) => 1, P(0, _) => 2 }")]
+    [InlineData("match s { not (A | B(> 5)) => 1, A => 2, B(_) => 3 }")]
+    [InlineData("match s { A | B(_) and not B(1) => 1, B(1) => 2 }")]
+    public void Not_and_and_patterns_count_towards_exhaustiveness(string match)
+    {
+        var result = Compilation.Compile(Shapes + $"fn f(s: S, flag: bool, n: int, p: P, o: int?) => int = {match};");
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        Assert.Empty(result.Diagnostics);
+    }
+
+    [Theory]
+    [InlineData("match s { not A => 1 }", "S.A")]
+    [InlineData("match n { not (0..9) => 1 }", "0..9")]
+    [InlineData("match n { >= 0 and <= 9 => 1, < 0 => 2 }", "_")]
+    [InlineData("match flag { not false => 1 }", "false")]
+    [InlineData("match s { A => 1, B(not 0 and not 1) => 2 }", "S.B(0..1)")]
+    public void Not_and_and_patterns_leave_cases_uncovered(string match, string missing)
+    {
+        var diagnostics = Compilation.Compile(Shapes + $"fn f(s: S, flag: bool, n: int) => int = {match};").Diagnostics;
+        var diagnostic = Assert.Single(diagnostics);
+        Assert.Equal("PIP0230", diagnostic.Code);
+        Assert.Contains($"'{missing}' is not covered", diagnostic.Message);
+    }
+
+    [Theory]
+    [InlineData("match n { not 5 => 1, 6 => 2, _ => 3 }")]
+    [InlineData("match s { not A => 1, B(3) => 2, _ => 3 }")]
+    [InlineData("match n { 0..9 => 1, >= 2 and <= 7 => 2, _ => 3 }")]
+    [InlineData("match s { A => 1, B(_) => 2, not A => 3 }")]
+    public void Arms_after_not_and_and_patterns_can_be_unreachable(string match)
+    {
+        var result = Compilation.Compile(Shapes + $"fn f(s: S, n: int) => int = {match};");
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        var warning = Assert.Single(result.Diagnostics);
+        Assert.Equal(("PIP0231", DiagnosticSeverity.Warning), (warning.Code, warning.Severity));
+    }
+
+    [Theory]
+    [InlineData("PIP0394", "record struct Node(value: int, next: Node?);")]
+    [InlineData("PIP0394", "record struct Box<T>(item: T); record struct Node(children: (int, Box<Node>));")]
+    [InlineData("PIP0383", "record struct P(x: int); fn f(p: P) { lock p { } }")]
+    [InlineData("PIP0288", "record struct Name(text: string); fn f() { let names = Name[3]; }")]
+    [InlineData("PIP0288", "record struct Size(w: int) requires w >= 0; fn f() { let sizes = Size[3]; }")]
+    public void Record_struct_errors_are_reported(string code, string program)
+    {
+        AssertSingleError(code, program);
+    }
+
+    [Theory]
+    [InlineData("PIP0395", "fn f() { let d = [\"a\": 1, \"b\": 2, \"a\": 3]; }")]
+    [InlineData("PIP0395", "fn f() { let d = [1: \"x\", 1L: \"y\"]; }")]
+    [InlineData("PIP0396", "fn f() { let d = [\"a\": 1, 2]; }")]
+    [InlineData("PIP0396", "fn f(xs: int[]) { let d = [\"a\": 1, ...xs]; }")]
+    [InlineData("PIP0396", "fn f() { let d: System.Collections.Generic.Dictionary<string, int> = [1]; }")]
+    [InlineData("PIP0310", "fn f(d: System.Collections.Generic.Dictionary<string, long>) { let e: System.Collections.Generic.Dictionary<string, int> = [...d]; }")]
+    [InlineData("PIP0221", "fn f() { let d = [\"a\": 1, \"b\": \"two\"]; }")]
+    [InlineData("PIP0202", "fn f() { let d: System.Collections.Generic.Dictionary<string, int> = [\"a\": \"one\"]; }")]
+    [InlineData("PIP0202", "fn f() { let xs: System.Collections.Generic.List<int> = [\"a\": 1]; }")]
+    public void Dictionary_literal_errors_are_reported(string code, string program)
+    {
+        AssertSingleError(code, program);
+    }
+
+    [Theory]
+    [InlineData("using System.Collections.Generic; fn f() => Dictionary<string, int> = [\"a\": 1, \"b\": 2];")]
+    [InlineData("using System.Collections.Generic; fn f() => IReadOnlyDictionary<string, int> = [];")]
+    [InlineData("using System.Collections.Generic; fn f() => IDictionary<int, string?> = [1: \"one\", 2: null];")]
+    [InlineData("using System.Collections.Generic; fn f(a: Dictionary<string, int>, b: Dictionary<string, int>) => Dictionary<string, int> = [...a, ...b, \"c\": 3];")]
+    [InlineData("fn f(k: string, flag: bool) => int { let d = [k: flag ? 1 : 2, $\"{k}!\": 3]; d[k] }")]
+    [InlineData("fn f() => long = [1: 1, 2: 2L][2];")]
+    public void Dictionary_literals_compile(string program)
+    {
+        var result = Compilation.Compile(program);
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        Assert.Empty(result.Diagnostics);
+    }
+
+    [Fact]
+    public void Dictionary_literals_evaluate_in_order_and_later_keys_win()
+    {
+        var result = Compilation.Compile("""
+            fn Log(log: System.Collections.Generic.List<string>, text: string) => string { log.Add(text); text }
+            fn Main() {
+                let log = System.Collections.Generic.List<string>();
+                let defaults = ["port": "80", "host": "localhost"];
+                let config = [Log(log, "k1"): Log(log, "v1"), ...defaults, "port": Log(log, "v2")];
+                Print($"{string.Join(",", log)} {config.Count} {config["port"]}");
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Equal("k1,v1,v2 3 v2", Runner.Run(result.Files).Output.Trim());
+    }
+
+    [Fact]
+    public void Each_record_struct_in_a_cycle_is_reported()
+    {
+        var diagnostics = Compilation.Compile("record struct A(b: B); record struct B(a: Result<A, string>);").Diagnostics;
+        Assert.Equal(["PIP0394", "PIP0394"], diagnostics.Select(d => d.Code));
+    }
+
+    [Theory]
+    // A record or enum holds a reference, so it may hold a record struct holding it.
+    [InlineData("record struct Leaf(parent: Tree?); enum Tree { Node(leaves: Leaf[]), Empty }")]
+    [InlineData("record struct Link(next: Chain?); record Chain(link: Link);")]
+    [InlineData("record struct Point(x: int, y: int); fn f() => Point[] = Point[4];")]
+    [InlineData("record struct Pair<A, B>(a: A, b: B); fn f() => (int, string) { let (n, s) = Pair(1, \"x\"); (n, s) }")]
+    public void Record_structs_compile(string program)
+    {
+        var result = Compilation.Compile(program);
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        Assert.Empty(result.Diagnostics);
+    }
+
+    [Fact]
+    public void Null_coalescing_assignment_evaluates_its_value_only_when_needed()
+    {
+        var result = Compilation.Compile("""
+            fn Next(log: System.Collections.Generic.List<string>, value: string) => string { log.Add(value); value }
+            fn Main() {
+                let log = System.Collections.Generic.List<string>();
+                mut name: string? = null;
+                name ??= Next(log, "first");
+                name ??= Next(log, "second");
+                Print($"{name ?? ""} {string.Join(",", log)}");
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Equal("first first", Runner.Run(result.Files).Output.Trim());
+    }
+
     [Fact]
     public void Diagnostics_are_formatted_with_file_line_and_column()
     {

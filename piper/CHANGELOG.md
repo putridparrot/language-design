@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+- **Decorators:** a plugin can add attributes that rewrite the function or method they're on,
+  `[Retry(3)] fn Fetch() { … }`, for cross-cutting concerns such as tracing, timing and retrying. It's code
+  generation at compile time: the result is ordinary Piper, type-checked as usual, the attribute never reaches C#, and
+  nothing happens at run time beyond the code written.
+  - Plugin API: `Decorator`, given a `DecoratorContext` with the function, the attribute's arguments, a template,
+    fresh names, and `WithPrologue` and `WithBody` to rewrite it.
+  - Several on one function apply nearest first. `requires` clauses are still checked before a decorator's code.
+  - A decorator on anything but a function or method with a body is error PIP0507.
+  - A new bundled plugin, `aspects`, has `[Trace]`, `[Timed]` and `[Retry(times, delayMs)]`.
+  - **On classes and records** too, as a C# source generator: a `Decorator`'s `Type` handler gets a
+    `TypeDecoratorContext` and returns the type rewritten, plus any declarations to add beside it (a record's new
+    methods, in an `extend` block). `ClassMembers`, `WithMembers`, `WithBase` and `DecorateMethods` help write it.
+  - `[Notify]` (in `aspects`) makes a class implement `INotifyPropertyChanged`, for WPF and Avalonia data binding. Each
+    settable property and public `mut` field raises `PropertyChanged` when it changes, and so do the computed
+    properties that use it. `[Trace]` on a class traces each of its methods.
+- **Fix:** a lambda or local function in a record struct's method can use `this` and its fields. The emitted C# didn't
+  compile (CS1673); the method now copies `this`, which is readonly, for its closures to use.
+
+- **Dictionary literals:** `["Ada": 36, "Alan": 41]` is a `Dictionary<string, int>`, and `[]` one where a dictionary
+  is expected. Spreads add another dictionary's entries, with later keys replacing earlier ones:
+  `[...defaults, "port": "8080"]`.
+  - A constant key written twice is error PIP0395, and an element that isn't an entry or a spread PIP0396.
+  - `Piper.Runtime` gains `PiperDictionary.Of`, which literals with spreads compile to.
+
+- **Record structs:** `record struct Vec(x: double, y: double);` is C#'s `readonly record struct`: a record that's a
+  value type, copied rather than shared and allocating nothing, with everything a record has.
+  - A record struct that holds itself inline is error PIP0394.
+  - `Vec[3]` works when its default (all zeros) is a valid value: every field's default is, and it has no invariants.
+
+- **Bitwise operators:** `&`, `|`, `^`, `~`, `<<` and `>>`, with C#'s precedence, typing and results.
+  - On integers and chars, on bools (`&`, `|` and `^`, which always evaluate both sides), on .NET enums as flags
+    (`FileAttributes.ReadOnly | FileAttributes.Hidden`, `~FileAttributes.ReadOnly`), and through .NET types' own
+    operators (`BigInteger`).
+  - `>>` is two `>` tokens joined by the parser, so `List<List<int>>` still closes.
+  - Constants fold, so `let mask: byte = 0x0F | 0x30;` fits a byte.
+  - The precedence levels in SyntaxFacts are renumbered to fit them in; the order of the existing operators is unchanged.
+- **More compound assignments:** `&=`, `|=`, `^=`, `<<=`, `>>=`, and `??=`, which sets an optional only when it has no
+  value, evaluating the right side only then. Its target must be a name, a member of one or an index of one (PIP0389),
+  and optional (PIP0388).
+- **`not`, `and` and grouping in patterns:** `x is not null`, `c is >= 'a' and <= 'z'`, `not (Red | Green)`, as C#'s
+  `not`, `and` and parentheses.
+  - They count towards exhaustiveness as what they mean, so `match o { not null => …, null => … }` needs no `_`.
+  - `not` can't bind variables (PIP0390); a `not` or `and` pattern nothing matches is an error (PIP0393), as in C#.
+  - `not` and `and` are keywords only in patterns, so they can still be names.
+- **Labelled loops:** `outer: for … { for … { break outer; } }`, and `continue outer;`, on `while`, `for` and
+  `await for`, also in match arms. They become `goto`s to labels after the loop or at the end of its body.
+  - New errors PIP0112 (a label on something other than a loop), PIP0391 (a label already used by a loop around it)
+    and PIP0392 (no loop around the jump has that label).
+
 - **Events in classes:** `event Changed: EventHandler;` is a C# field-like event, of a delegate type returning nothing
   (a .NET one or a function type).
   - The class raises it by calling it (`Changed(this, args)`), and anyone adds and removes handlers with `+=` and `-=`.

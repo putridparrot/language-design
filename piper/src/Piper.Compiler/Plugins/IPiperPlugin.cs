@@ -102,3 +102,25 @@ public enum AsyncContext
 
 /// <summary>A keyword that starts a top-level declaration, such as <c>endpoints "/api" { … }</c>.</summary>
 public sealed record DeclarationKeyword(string Text, Func<PluginParser, IEnumerable<DeclarationSyntax>> Expand) : PluginKeyword(Text);
+
+/// <summary>
+/// A decorator: an attribute that the plugin handles by rewriting what it's on as it's parsed, a function or method
+/// (<c>[Retry(3)] fn Fetch() { … }</c>, with <see cref="Function"/>) or a class or record (<c>[Notify] class Person</c>,
+/// with <see cref="Type"/>). The result is ordinary Piper. The attribute itself is removed, so it never reaches C#:
+/// decorators are code generation at compile time, not reflection at run time. Several on one declaration apply nearest
+/// first, so the outermost wraps the others. <paramref name="Text"/> is the attribute's name, used unqualified.
+/// </summary>
+public sealed record Decorator(string Text) : PluginKeyword(Text)
+{
+    /// <summary>A decorator of functions and methods.</summary>
+    public Decorator(string text, Func<DecoratorContext, FunctionDeclarationSyntax> decorate) : this(text) => Function = decorate;
+
+    /// <summary>Rewrites a function or method it's on, returning it rewritten; null if it can't be on one.</summary>
+    public Func<DecoratorContext, FunctionDeclarationSyntax>? Function { get; init; }
+
+    /// <summary>
+    /// Rewrites a class or record it's on, returning it rewritten and any declarations to add beside it (an
+    /// <c>extend</c> block with a record's new methods, say); null if it can't be on one.
+    /// </summary>
+    public Func<TypeDecoratorContext, IEnumerable<DeclarationSyntax>>? Type { get; init; }
+}

@@ -1,0 +1,66 @@
+// `break label;` and `continue label;` leave or go round a loop around the innermost one.
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
+fn FindPair(xs: int[], target: int) => (int, int)? {
+    mut found: (int, int)? = null;
+    outer: for i in 0..<xs.Length {
+        for j in i + 1..<xs.Length {
+            if xs[i] + xs[j] == target {
+                found = (xs[i], xs[j]);
+                break outer;
+            }
+        }
+    }
+    found
+}
+
+fn FirstOver(limit: int) => int {
+    mut n = 0;
+    // Broken out of from inside, so this `while true` ends, and the code after it runs.
+    search: while true {
+        n += 1;
+        for k in [1, 2, 3] {
+            match n * k {
+                > 20 => break search,
+                _ => {},
+            }
+            if k == 2 { continue search; }
+        }
+    }
+    n
+}
+
+async fn Numbers() => IAsyncEnumerable<int> {
+    for i in 1..3 {
+        await Task.Yield();
+        yield return i;
+    }
+}
+
+async fn Main() {
+    Print(FindPair([3, 8, 1, 5], 9));
+    Print(FirstOver(20));
+    rows: for row in 1..4 {
+        for col in 1..4 {
+            if col > row { continue rows; }
+            if row == 4 { break rows; }
+            Print($"{row}:{col}");
+        }
+    }
+    stream: await for n in Numbers() {
+        for m in [10, 20] {
+            if n == 2 { break stream; }
+            Print(n * m);
+        }
+    }
+    mut tries = 0;
+    again: while tries < 10 {
+        tries += 1;
+        defer { Print($"finished try {tries}"); }
+        for x in [1, 2] {
+            if tries == 2 { break again; }
+            if x == 1 { continue again; }
+        }
+    }
+}

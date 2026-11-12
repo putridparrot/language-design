@@ -169,6 +169,13 @@ public sealed partial class Binder
                     [.. alternatives.Alternatives.Select(a => BindPattern(a, expected, allowBindings: false))],
                     expected);
 
+            case AndPatternSyntax both:
+                return ReportIfNeverMatches(
+                    new BoundAndPattern([.. both.Patterns.Select(p => BindPattern(p, expected, allowBindings))], expected), syntax);
+
+            case NotPatternSyntax not:
+                return ReportIfNeverMatches(BindNotPattern(not, expected), syntax);
+
             default:
                 throw new InvalidOperationException($"Unexpected pattern {syntax.GetType().Name}");
         }
@@ -206,8 +213,34 @@ public sealed partial class Binder
         return new BoundOrPattern([.. alternatives], expected);
     }
 
+    /// <summary>
+    /// `not P` matches only when P doesn't, so P's variables would never have values: they're an error, as in C#. P is
+    /// bound in a scope of its own, so they don't clash with anything either.
+    /// </summary>
+    private BoundPattern BindNotPattern(NotPatternSyntax syntax, TypeSymbol expected)
+    {
+        var (outerScope, outerShared) = (_scope, _orBindings);
+        (_scope, _orBindings) = (new Scope(outerScope), null);
+        var pattern = BindPattern(syntax.Pattern, expected, allowBindings: true);
+        (_scope, _orBindings) = (outerScope, outerShared);
+        if (!pattern.HasBindings)
+            return new BoundNotPattern(pattern, expected);
+        _diagnostics.ReportBindingInNotPattern(syntax.Pattern.Span);
+        return new BoundWildcardPattern(expected);
+    }
+
+    /// <summary>A `not` or `and` pattern no value matches (`>= 0 and < 0`, `not _`) is an error, as it is in C#.</summary>
+    private BoundPattern ReportIfNeverMatches(BoundPattern pattern, PatternSyntax syntax)
+    {
+        if (pattern is not (BoundAndPattern or BoundNotPattern) || pattern.Type == TypeSymbol.Error || Exhaustiveness.IsUseful([], pattern))
+            return pattern;
+        _diagnostics.ReportPatternNeverMatches(syntax.Span);
+        return new BoundWildcardPattern(pattern.Type);
+    }
+
     private static IEnumerable<VariableSymbol> Bindings(BoundPattern pattern) => pattern switch
     {
+        BoundAndPattern both => both.Patterns.SelectMany(Bindings),
         BoundBindingPattern binding => [binding.Variable],
         BoundTypePattern { Variable: { } variable } => [variable],
         BoundConstructorPattern constructor => constructor.Arguments.SelectMany(Bindings),

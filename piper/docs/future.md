@@ -96,8 +96,9 @@ Piper programs can be consoles and servers; a UI should come from .NET's UI fram
   XAML is out of scope: it relies on generated `InitializeComponent` partials the binder can't see.
 - **An MVU plugin:** Model-View-Update (as Elm and F#'s Fabulous) suits Piper: a record for the model, updated by
   spreading; an enum of messages, handled by an exhaustive `match`; and a view function returning a control tree. The
-  plugin would supply the runtime (diffing the view, dispatching messages) over Avalonia, avoiding
-  `INotifyPropertyChanged`, which C# usually gets from source generators Piper can't run.
+  plugin would supply the runtime (diffing the view, dispatching messages) over Avalonia. For the classic MVVM style
+  instead, the `aspects` plugin's `[Notify]` gives a class `INotifyPropertyChanged`, as C# gets it from a source
+  generator.
 - **Web UI:** server-rendered HTML through the web plugin, with htmx for interactivity, and perhaps an HTML templating
   plugin. Blazor is a poor fit, as Razor components need the Razor compiler.
 - **Terminal UI:** Spectre.Console or Terminal.Gui as packages should already work; a sample would show it.

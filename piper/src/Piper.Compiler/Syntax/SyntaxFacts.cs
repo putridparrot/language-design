@@ -65,11 +65,15 @@ public static class SyntaxFacts
     /// </summary>
     public static int GetBinaryPrecedence(TokenKind kind) => kind switch
     {
-        TokenKind.Star or TokenKind.Slash or TokenKind.Percent => 9,
-        TokenKind.Plus or TokenKind.Minus => 8,
-        TokenKind.PipeGreater => 7,
+        TokenKind.Star or TokenKind.Slash or TokenKind.Percent => 13,
+        TokenKind.Plus or TokenKind.Minus => 12,
+        TokenKind.LessLess or TokenKind.GreaterGreater => 11,
+        TokenKind.PipeGreater => 10,
         TokenKind.Less or TokenKind.LessEquals or TokenKind.Greater or TokenKind.GreaterEquals => IsPrecedence,
-        TokenKind.EqualsEquals or TokenKind.BangEquals => 5,
+        TokenKind.EqualsEquals or TokenKind.BangEquals => 8,
+        TokenKind.Ampersand => 7,
+        TokenKind.Caret => 6,
+        TokenKind.Pipe => 5,
         TokenKind.AmpersandAmpersand => 4,
         TokenKind.PipePipe => 3,
         TokenKind.QuestionQuestion => 2,
@@ -78,20 +82,20 @@ public static class SyntaxFacts
     };
 
     /// <summary><c>x is Pattern</c> binds like the relational operators, as in C#.</summary>
-    public const int IsPrecedence = 6;
+    public const int IsPrecedence = 9;
 
     public static bool IsRightAssociative(TokenKind kind) => kind == TokenKind.QuestionQuestion;
 
     /// <summary>Prefix operators bind tighter than any binary operator.</summary>
     public static int GetUnaryPrecedence(TokenKind kind) => kind switch
     {
-        TokenKind.Minus or TokenKind.Bang or TokenKind.Caret => 10,
+        TokenKind.Minus or TokenKind.Bang or TokenKind.Tilde or TokenKind.Caret => 14,
         _ => 0,
     };
 
+    /// <summary><c>??=</c> is an assignment too, but isn't a compound one: it assigns only when the target is None.</summary>
     public static bool IsAssignmentOperator(TokenKind kind) => kind is
-        TokenKind.Equals or TokenKind.PlusEquals or TokenKind.MinusEquals or
-        TokenKind.StarEquals or TokenKind.SlashEquals or TokenKind.PercentEquals;
+        TokenKind.Equals or TokenKind.QuestionQuestionEquals || GetCompoundAssignmentOperator(kind) is not null;
 
     /// <summary>Maps a compound assignment such as <c>+=</c> to its binary operator <c>+</c>.</summary>
     public static TokenKind? GetCompoundAssignmentOperator(TokenKind kind) => kind switch
@@ -101,6 +105,11 @@ public static class SyntaxFacts
         TokenKind.StarEquals => TokenKind.Star,
         TokenKind.SlashEquals => TokenKind.Slash,
         TokenKind.PercentEquals => TokenKind.Percent,
+        TokenKind.AmpersandEquals => TokenKind.Ampersand,
+        TokenKind.PipeEquals => TokenKind.Pipe,
+        TokenKind.CaretEquals => TokenKind.Caret,
+        TokenKind.LessLessEquals => TokenKind.LessLess,
+        TokenKind.GreaterGreaterEquals => TokenKind.GreaterGreater,
         _ => null,
     };
 
@@ -170,6 +179,10 @@ public static class SyntaxFacts
         TokenKind.Slash => "/",
         TokenKind.Percent => "%",
         TokenKind.AmpersandAmpersand => "&&",
+        TokenKind.Ampersand => "&",
+        TokenKind.Tilde => "~",
+        TokenKind.LessLess => "<<",
+        TokenKind.GreaterGreater => ">>",
         TokenKind.PipePipe => "||",
         TokenKind.PipeGreater => "|>",
         TokenKind.Pipe => "|",
@@ -178,6 +191,12 @@ public static class SyntaxFacts
         TokenKind.StarEquals => "*=",
         TokenKind.SlashEquals => "/=",
         TokenKind.PercentEquals => "%=",
+        TokenKind.AmpersandEquals => "&=",
+        TokenKind.PipeEquals => "|=",
+        TokenKind.CaretEquals => "^=",
+        TokenKind.LessLessEquals => "<<=",
+        TokenKind.GreaterGreaterEquals => ">>=",
+        TokenKind.QuestionQuestionEquals => "??=",
         _ => null,
     };
 

@@ -35,8 +35,8 @@ count += 1;
 fn Square(x: int) => int = x * x;            // one-expression function
 
 fn Greet(name: string, times: int) => string {
-    let greeting = "Hello, {name}";           // every string interpolates: `{…}` is C#'s `$"{…}"`
-    if times > 1 { "{greeting} x{times}" } else { greeting }
+    let greeting = $"Hello, {name}";          // as in C#, a $"…" string interpolates; in a plain one, braces are text
+    if times > 1 { $"{greeting} x{times}" } else { greeting }
 }
 ```
 
@@ -44,7 +44,10 @@ fn Greet(name: string, times: int) => string {
 - **Blocks and `if` are expressions.** A block's value is its last expression, written without `;`. That's why
   `Greet` has no `return`, and why `if … { a } else { b }` replaces C#'s `?:`.
 - The types are C#'s, with C#'s names: `int`, `long`, `double`, `decimal`, `byte`, `bool`, `string`,
-  `char`, …. Conversions, overflow and casts (`(int)x`) follow C#'s rules exactly.
+  `char`, …. Conversions, overflow and casts (`(int)x`) follow C#'s rules exactly, as do the operators, including
+  the bitwise ones (`&`, `|`, `^`, `~`, `<<`, `>>`, which also combine .NET flags enums).
+- `break` and `continue` leave or go round the innermost loop; label an outer one to name it instead:
+  `outer: for row in grid { for cell in row { if cell == 0 { break outer; } } }`.
 - `Print` writes a value and a newline, using its C# `ToString`.
 
 ## Records and enums
@@ -67,9 +70,10 @@ fn Area(shape: Shape) => double = match shape {
 
 Construct values by calling the type: `Point(1.0, 2.0)`, `Shape.Circle(origin, 2.0)` (C#'s `new` isn't needed).
 Records are immutable; to change a field, copy with a spread, as in TypeScript: `{ ...p, y: 5.0 }`.
+`record struct Vec(x: double, y: double);` makes one a value type (C#'s `readonly record struct`), which allocates nothing.
 `match` is exhaustive: leave out the `Empty` arm and the program doesn't compile, with an error naming the missing
 case. Patterns nest, take guards (`Circle(_, r) if r > 10.0 => …`), match literals, ranges (`1..9` includes 9, as in Swift; `1..<9` stops at 8) and comparisons
-(`< 0`), and combine with `|`. As in C#, there are list patterns, `[first, ...rest]` (Piper writes C#'s `..` as `...`,
+(`< 0`), and combine with `|`, `and` and `not` (`>= 1 and <= 9`, `not (Red | Green)`). As in C#, there are list patterns, `[first, ...rest]` (Piper writes C#'s `..` as `...`,
 as in its spreads), and property patterns, `Point { x: 0 }` or `{ Length: > 5 }`.
 
 Records print as C# records do (`Point { x = 1, y = 2 }`) unless you replace `ToString`, and they join in .NET's
@@ -78,7 +82,7 @@ protocols through `extend`: implementing `IComparable<Version>` gives `<` and `>
 
 ```piper
 extend Point {
-    override fn ToString() => string = "({this.x}, {this.y})";
+    override fn ToString() => string = $"({this.x}, {this.y})";
 }
 ```
 
@@ -100,7 +104,11 @@ fn Find(names: List<string>, prefix: string) => string? {
 let found = Find(names, "Gr");
 Print(found ?? "nobody");                      // ?? and ?. work as in C#
 Print(found?.Length ?? 0);
-if found is Some(name) { Print("found {name}"); }
+if found is Some(name) { Print($"found {name}"); }
+if found is not null { Print("found one"); }
+
+mut cache: string? = null;
+cache ??= Load();                              // only calls Load when cache has no value
 ```
 
 Where .NET returns something that may be null (it's annotated), Piper gives you a `T?`, so you can't forget to
@@ -110,14 +118,14 @@ passes an `Err` (or `None`) straight back to the caller:
 ```piper
 fn ParsePort(text: string) => Result<int, string> {
     if !int.TryParse(text, out let port) {     // out parameters work as in C#
-        return Err("'{text}' is not a number");
+        return Err($"'{text}' is not a number");
     }
-    if port < 1 || port > 65535 { Err("{port} is out of range") } else { Ok(port) }
+    if port < 1 || port > 65535 { Err($"{port} is out of range") } else { Ok(port) }
 }
 
 fn Connect(host: string, portText: string) => Result<string, string> {
     let port = ParsePort(portText)?;           // returns the Err early, or unwraps the Ok
-    Ok("{host}:{port}")
+    Ok($"{host}:{port}")
 }
 ```
 
@@ -144,7 +152,7 @@ trait Describe {
 }
 
 extend Point: Describe {
-    fn Describe() => string = "({this.x}, {this.y})";
+    fn Describe() => string = $"({this.x}, {this.y})";
 }
 
 extend int {
@@ -183,14 +191,14 @@ class Account(owner: string) {
 
 abstract class Shape {
     abstract fn Area() => double;
-    virtual fn Describe() => string = "area {Area()}";
+    virtual fn Describe() => string = $"area {Area()}";
 }
 
 class Square(side: double): Shape {
     override fn Area() => double = side * side;
 }
 
-class NotFound(id: int): Exception("No item {id}") { }
+class NotFound(id: int): Exception($"No item {id}") { }
 ```
 
 Fields and parameters are named bare in methods (`this.` works too). A class derives from one class, Piper or .NET,
@@ -226,7 +234,7 @@ To get the derived class back, test for it in a pattern with `name: Type` (C#'s 
 
 ```piper
 let label = match shape {
-    s: Square => "square of area {s.Area()}",
+    s: Square => $"square of area {s.Area()}",
     _ => "something else",
 };
 let square = (Square)shape;     // throws InvalidCastException if it isn't one
@@ -245,9 +253,9 @@ let total = numbers |> Enumerable.Sum();      // x |> F(a) is F(x, a)
 let grid = double[3, 3];                       // C#'s new double[3, 3]
 
 let add = (a: int, b: int) => a + b;           // a Func<int, int, int>
-let ages: Dictionary<string, int> = Dictionary();
-ages["Ada"] = 36;
-for (name, age) in ages { Print("{name} is {age}"); }
+let ages = ["Ada": 36];                        // a Dictionary<string, int>, as Swift writes one
+ages["Alan"] = 41;
+for (name, age) in ages { Print($"{name} is {age}"); }
 ```
 
 Function types are written `(int, int) => int` and are .NET delegates, so lambdas go straight into LINQ and any
@@ -345,18 +353,18 @@ Parameters can have defaults and calls can name arguments, as in C#. `let … el
 "look it up or give up" code flat:
 
 ```piper
-fn Connect(host: string, port: int = 443, retries: int = 3) => string = "{host}:{port} ({retries} tries)";
+fn Connect(host: string, port: int = 443, retries: int = 3) => string = $"{host}:{port} ({retries} tries)";
 
 Connect("example.com", retries: 5);
 
 fn ManagerName(id: int) => string {
     let Some(user) = FindUser(id) else { return "nobody"; };
-    let Some(manager) = FindUser(user.managerId ?? -1) else { return "{user.name} has no manager"; };
+    let Some(manager) = FindUser(user.managerId ?? -1) else { return $"{user.name} has no manager"; };
     manager.name
 }
 ```
 
-Interpolation takes C#'s format specifiers, `"{price:C}"` and `"{name,-10}"`, and `///` comments are documentation the
+Interpolation takes C#'s format specifiers, `$"{price:C}"` and `$"{name,-10}"`, and `///` comments are documentation the
 editor shows on hover.
 
 ## Preconditions

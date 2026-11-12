@@ -28,6 +28,14 @@ public static class ConstantFolding
         BoundCastExpression cast when Value(cast.Operand) is { } value => Cast(value, cast.Type, out var result) == Failure.None ? result : null,
         BoundUnaryExpression { Operator: BoundUnaryOperatorKind.Negate } unary when Value(unary.Operand) is { } operand =>
             Negate(operand, out var result) == Failure.None ? result : null,
+        BoundUnaryExpression { Operator: BoundUnaryOperatorKind.BitwiseComplement } unary => Value(unary.Operand) switch
+        {
+            int i => ~i,
+            long l => ~l,
+            uint u => ~u,
+            ulong u => ~u,
+            _ => null,
+        },
         BoundBinaryExpression binary when Value(binary.Left) is { } left && Value(binary.Right) is { } right =>
             Binary(binary.Operator, left, right, out var result) == Failure.None ? result : null,
         _ => null,
@@ -142,6 +150,19 @@ public static class ConstantFolding
     public static Failure Binary(BoundBinaryOperatorKind kind, object left, object right, out object? result)
     {
         result = null;
+        if (kind is BoundBinaryOperatorKind.BitwiseAnd or BoundBinaryOperatorKind.BitwiseOr or BoundBinaryOperatorKind.ExclusiveOr
+            or BoundBinaryOperatorKind.LeftShift or BoundBinaryOperatorKind.RightShift)
+        {
+            result = left switch
+            {
+                int a => Bitwise(kind, a, right),
+                long a => Bitwise(kind, a, right),
+                uint a => Bitwise(kind, a, right),
+                ulong a => Bitwise(kind, a, right),
+                _ => null,
+            };
+            return Failure.None;
+        }
         if (kind is not (BoundBinaryOperatorKind.Add or BoundBinaryOperatorKind.Subtract or BoundBinaryOperatorKind.Multiply
             or BoundBinaryOperatorKind.Divide or BoundBinaryOperatorKind.Remainder))
         {
@@ -172,6 +193,18 @@ public static class ConstantFolding
             return Failure.DivideByZero;
         }
     }
+
+    /// <summary><c>&amp;</c>, <c>|</c>, <c>^</c> and the shifts, which never overflow: as in C#, a shift's Int count is masked to the value's size.</summary>
+    private static object? Bitwise<T>(BoundBinaryOperatorKind kind, T a, object right) where T : System.Numerics.IBinaryInteger<T> =>
+        (kind, right) switch
+        {
+            (BoundBinaryOperatorKind.LeftShift, int count) => a << count,
+            (BoundBinaryOperatorKind.RightShift, int count) => a >> count,
+            (BoundBinaryOperatorKind.BitwiseAnd, T b) => a & b,
+            (BoundBinaryOperatorKind.BitwiseOr, T b) => a | b,
+            (BoundBinaryOperatorKind.ExclusiveOr, T b) => a ^ b,
+            _ => null,
+        };
 
     private static object Arithmetic<T>(
         BoundBinaryOperatorKind kind,

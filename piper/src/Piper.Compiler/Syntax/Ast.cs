@@ -270,6 +270,9 @@ public sealed record RecordDeclarationSyntax(
 {
     /// <summary>The conditions of its `requires` clauses: invariants its fields must meet, checked on construction.</summary>
     public ImmutableArray<ExpressionSyntax> Requires { get; init; } = [];
+
+    /// <summary>`record struct Point(…)`: a value type, C#'s <c>readonly record struct</c>, rather than a class.</summary>
+    public Token? Struct { get; init; }
 }
 
 public sealed record EnumDeclarationSyntax(
@@ -424,7 +427,11 @@ public sealed record ExpressionStatementSyntax(TextSpan Span, ExpressionSyntax E
 public sealed record LocalFunctionStatementSyntax(TextSpan Span, FunctionDeclarationSyntax Function) : StatementSyntax(Span);
 
 public sealed record WhileStatementSyntax(TextSpan Span, ExpressionSyntax Condition, BlockExpressionSyntax Body)
-    : StatementSyntax(Span);
+    : StatementSyntax(Span)
+{
+    /// <summary>`outer: while …`: the name `break outer;` and `continue outer;` use from a loop inside it.</summary>
+    public Token? Label { get; init; }
+}
 
 /// <summary>
 /// <c>lock gate { … }</c> (or <c>lock (gate) { … }</c>): runs the block holding <see cref="Target"/>'s lock, so one
@@ -441,6 +448,9 @@ public sealed record ForStatementSyntax(TextSpan Span, Token Variable, Expressio
 
     /// <summary>`await for x in stream`: iterates an IAsyncEnumerable (C#'s `await foreach`).</summary>
     public Token? Await { get; init; }
+
+    /// <summary>`outer: for …`: the name `break outer;` and `continue outer;` use from a loop inside it.</summary>
+    public Token? Label { get; init; }
 }
 
 public sealed record ReturnStatementSyntax(TextSpan Span, Token Keyword, ExpressionSyntax? Value) : StatementSyntax(Span);
@@ -461,12 +471,20 @@ public sealed record CatchClauseSyntax(TextSpan Span, Token Keyword, Token? Name
 /// <summary><c>defer close(f);</c> or <c>defer { … }</c>: runs <see cref="Body"/> when the enclosing block ends, however it ends.</summary>
 public sealed record DeferStatementSyntax(TextSpan Span, Token Keyword, ExpressionSyntax Body) : StatementSyntax(Span);
 
-public sealed record BreakStatementSyntax(TextSpan Span, Token Keyword) : StatementSyntax(Span);
+/// <summary>`break;`, or `break outer;` to leave the enclosing loop labelled `outer`.</summary>
+public sealed record BreakStatementSyntax(TextSpan Span, Token Keyword) : StatementSyntax(Span)
+{
+    public Token? Label { get; init; }
+}
 
 /// <summary>`yield return value;` or (with no <see cref="Value"/>) `yield break;`, in an iterator.</summary>
 public sealed record YieldStatementSyntax(TextSpan Span, Token Keyword, ExpressionSyntax? Value) : StatementSyntax(Span);
 
-public sealed record ContinueStatementSyntax(TextSpan Span, Token Keyword) : StatementSyntax(Span);
+/// <summary>`continue;`, or `continue outer;` to go round the enclosing loop labelled `outer` again.</summary>
+public sealed record ContinueStatementSyntax(TextSpan Span, Token Keyword) : StatementSyntax(Span)
+{
+    public Token? Label { get; init; }
+}
 
 // Expressions
 
@@ -635,6 +653,9 @@ public sealed record CollectionExpressionSyntax(TextSpan Span, ImmutableArray<Ex
 /// <summary><c>...items</c> as an element of a collection literal: every item of a sequence, in order. Only allowed there.</summary>
 public sealed record SpreadElementSyntax(TextSpan Span, ExpressionSyntax Source) : ExpressionSyntax(Span);
 
+/// <summary><c>"port": 8080</c> in a collection literal, which makes it a dictionary literal.</summary>
+public sealed record DictionaryEntrySyntax(TextSpan Span, ExpressionSyntax Key, ExpressionSyntax Value) : ExpressionSyntax(Span);
+
 /// <summary><c>throw ArgumentException("…")</c>; has type Never, so it also works as an expression (<c>x ?? throw …</c>).</summary>
 public sealed record ThrowExpressionSyntax(TextSpan Span, Token Keyword, ExpressionSyntax Exception) : ExpressionSyntax(Span);
 
@@ -709,6 +730,12 @@ public sealed record RangePatternSyntax(TextSpan Span, LiteralPatternSyntax Star
 }
 
 public sealed record OrPatternSyntax(TextSpan Span, ImmutableArray<PatternSyntax> Alternatives) : PatternSyntax(Span);
+
+/// <summary><c>&gt;= 0 and &lt;= 9</c>: matches what every one of <see cref="Patterns"/> matches (C#'s <c>and</c>).</summary>
+public sealed record AndPatternSyntax(TextSpan Span, ImmutableArray<PatternSyntax> Patterns) : PatternSyntax(Span);
+
+/// <summary><c>not null</c>: matches what <see cref="Pattern"/> doesn't (C#'s <c>not</c>). It can't bind variables.</summary>
+public sealed record NotPatternSyntax(TextSpan Span, Token Keyword, PatternSyntax Pattern) : PatternSyntax(Span);
 
 /// <summary><c>(0, _)</c>: matches a tuple element by element (C#'s positional pattern).</summary>
 public sealed record TuplePatternSyntax(TextSpan Span, ImmutableArray<PatternSyntax> Elements) : PatternSyntax(Span);

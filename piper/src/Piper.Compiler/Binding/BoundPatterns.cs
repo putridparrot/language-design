@@ -14,6 +14,7 @@ public abstract class BoundPattern(TypeSymbol type)
         BoundConstructorPattern constructor => constructor.Arguments.Any(a => a.HasBindings),
         BoundTuplePattern tuple => tuple.Elements.Any(e => e.HasBindings),
         BoundOrPattern either => either.Alternatives.Any(a => a.HasBindings),
+        BoundAndPattern both => both.Patterns.Any(p => p.HasBindings),
         BoundListPattern list => list.Elements.Any(e => e.HasBindings) || list.Slice is { HasBindings: true },
         BoundPropertyPattern properties => properties.Properties.Any(p => p.Pattern.HasBindings),
         _ => false,
@@ -71,9 +72,22 @@ public sealed class BoundTuplePattern(ImmutableArray<BoundPattern> elements, Tup
     public ImmutableArray<BoundPattern> Elements { get; } = elements;
 }
 
+/// <summary>Matches what any alternative does; with none, it matches nothing (only the exhaustiveness analysis makes one).</summary>
 public sealed class BoundOrPattern(ImmutableArray<BoundPattern> alternatives, TypeSymbol type) : BoundPattern(type)
 {
     public ImmutableArray<BoundPattern> Alternatives { get; } = alternatives;
+}
+
+/// <summary><c>&gt;= 0 and &lt;= 9</c>: matches what every one of <see cref="Patterns"/> matches.</summary>
+public sealed class BoundAndPattern(ImmutableArray<BoundPattern> patterns, TypeSymbol type) : BoundPattern(type)
+{
+    public ImmutableArray<BoundPattern> Patterns { get; } = patterns;
+}
+
+/// <summary><c>not null</c>: matches what <see cref="Pattern"/> doesn't; it never binds variables.</summary>
+public sealed class BoundNotPattern(BoundPattern pattern, TypeSymbol type) : BoundPattern(type)
+{
+    public BoundPattern Pattern { get; } = pattern;
 }
 
 /// <summary>

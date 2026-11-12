@@ -1,0 +1,25 @@
+// Lambdas and local functions in a record struct's methods can use `this` and its fields. C# forbids that (CS1673),
+// so the method copies `this` (a readonly struct, so the copy is the same value) and the closures use the copy.
+using System;
+
+record struct Vector(x: int, y: int);
+
+extend Vector {
+    fn Scaler() => Func<int, Vector> = k => Vector(this.x * k, this.y * k);
+
+    fn Length2() => int {
+        fn Square(n: int) => int = n * n;
+        fn Sum() => int = Square(this.x) + Square(this.y);
+        Sum()
+    }
+
+    // No closure uses `this`, so nothing is copied.
+    fn Plain() => int = this.x + this.y;
+}
+
+fn Main() {
+    let v = Vector(3, 4);
+    Print(v.Scaler()(2));
+    Print(v.Length2());
+    Print(v.Plain());
+}

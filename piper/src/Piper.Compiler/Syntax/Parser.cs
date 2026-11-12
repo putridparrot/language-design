@@ -170,11 +170,14 @@ public sealed partial class Parser
                 default:
                 {
                     var documentation = DocumentationBefore(Current.Span.Start);
-                    if (ParseDeclaration() is { } parsed)
-                        declarations.Add(parsed with { Documentation = documentation });
+                    if (ParseDeclaration(documentation) is { } parsed)
+                        declarations.Add(parsed);
                     break;
                 }
             }
+            // What type decorators added beside the types they're on.
+            declarations.AddRange(_pendingDeclarations);
+            _pendingDeclarations.Clear();
             if (_position == start)
                 NextToken();
         }
@@ -182,26 +185,40 @@ public sealed partial class Parser
             new TextSpan(0, _source.Length), _source, @namespace, usings.ToImmutable(), declarations.ToImmutable());
     }
 
+    /// <summary>
+    /// A declaration (see <see cref="ParseUndecoratedDeclaration"/>), with <paramref name="documentation"/>, and then its
+    /// plugin decorators applied. They come last, so the syntax a decorator returns is the very syntax that's bound,
+    /// which a plugin's analysis finds by reference.
+    /// </summary>
+    internal DeclarationSyntax? ParseDeclaration(string? documentation = null)
+    {
+        if (ParseUndecoratedDeclaration() is not { } declaration)
+            return null;
+        if (documentation is not null)
+            declaration = declaration with { Documentation = documentation };
+        return Decorate(declaration);
+    }
+
     /// <summary>declaration = function | record | enum | trait | extend ;  optionally preceded by attributes and "private".</summary>
-    internal DeclarationSyntax? ParseDeclaration()
+    private DeclarationSyntax? ParseUndecoratedDeclaration()
     {
         if (Current.Kind == TokenKind.OpenBracket)
         {
             var attributes = ParseAttributes();
-            return ParseDeclaration() is { } declaration ? declaration with { Attributes = attributes } : null;
+            return ParseUndecoratedDeclaration() is { } declaration ? declaration with { Attributes = attributes } : null;
         }
 
         if (Current.Kind == TokenKind.PrivateKeyword)
         {
             var @private = NextToken();
-            return ParseDeclaration() is { } declaration ? declaration with { Private = @private } : null;
+            return ParseUndecoratedDeclaration() is { } declaration ? declaration with { Private = @private } : null;
         }
 
         // `public fn Area(…)`: exported from a library. `public` is reserved, so it can't be a name here.
         if (Current is { Kind: TokenKind.Identifier, Text: "public" })
         {
             var @public = NextToken();
-            return ParseDeclaration() is { } declaration ? declaration with { Public = @public } : null;
+            return ParseUndecoratedDeclaration() is { } declaration ? declaration with { Public = @public } : null;
         }
 
         switch (Current.Kind)
@@ -477,10 +494,14 @@ public sealed partial class Parser
         return parameters;
     }
 
-    /// <summary>record = "record" IDENT [ typeParameters ] "(" [ parameter { "," parameter } [ "," ] ] ")" ";" ;</summary>
+    /// <summary>
+    /// record = "record" [ "struct" ] IDENT [ typeParameters ] "(" [ parameter { "," parameter } [ "," ] ] ")" ";" ;
+    /// "struct" is a reserved word, so here it can't be the record's name.
+    /// </summary>
     private RecordDeclarationSyntax ParseRecord()
     {
         var keyword = Expect(TokenKind.RecordKeyword);
+        var @struct = Current is { Kind: TokenKind.Identifier, Text: "struct" } ? NextToken() : null;
         var name = Expect(TokenKind.Identifier);
         var typeParameters = ParseTypeParameters();
         Expect(TokenKind.OpenParen);
@@ -488,7 +509,7 @@ public sealed partial class Parser
         Expect(TokenKind.CloseParen);
         var requires = ParseRequires();
         Expect(TokenKind.Semicolon);
-        return new RecordDeclarationSyntax(SpanFrom(keyword), name, typeParameters, fields) { Requires = requires };
+        return new RecordDeclarationSyntax(SpanFrom(keyword), name, typeParameters, fields) { Requires = requires, Struct = @struct };
     }
 
     /// <summary>`type` is a keyword only here, at the start of a declaration; the word is reserved, so it can't be a name.</summary>
@@ -826,7 +847,7 @@ public sealed partial class Parser
             events.Add(new ClassEventSyntax(SpanFrom(keyword), keyword, eventName, eventType)
             {
                 Private = @private,
-                Attributes = attributes,
+                Attributes = NoDecorators(attributes, "an event"),
                 Documentation = documentation,
             });
             return;
@@ -843,7 +864,7 @@ public sealed partial class Parser
                 Protected = @protected,
                 Static = staticField,
                 Modifier = propertyModifier,
-                Attributes = attributes,
+                Attributes = NoDecorators(attributes, "a property"),
                 Documentation = documentation,
             });
             return;
@@ -867,7 +888,7 @@ public sealed partial class Parser
                 Public = @public,
                 Protected = @protected,
                 Static = staticField,
-                Attributes = attributes,
+                Attributes = NoDecorators(attributes, "a field"),
                 Documentation = documentation,
             });
             return;
@@ -881,7 +902,7 @@ public sealed partial class Parser
                 Private = @private,
                 Protected = @protected,
                 Public = @public,
-                Attributes = attributes,
+                Attributes = NoDecorators(attributes, "a constructor"),
                 Documentation = documentation,
             });
             return;
@@ -904,7 +925,7 @@ public sealed partial class Parser
             return;
         }
         var function = ParseFunction();
-        methods.Add(function with
+        methods.Add(Decorate(function with
         {
             Static = @static ?? function.Static,
             Private = @private,
@@ -913,7 +934,7 @@ public sealed partial class Parser
             Modifier = modifier,
             Attributes = attributes,
             Documentation = documentation,
-        });
+        }, isMethod: true));
     }
 
     /// <summary>
@@ -984,7 +1005,7 @@ public sealed partial class Parser
                 var attributes = ParseAttributes();
                 var @private = Current.Kind == TokenKind.PrivateKeyword && AtFunctionStart(1) ? NextToken() : (Token?)null;
                 if (AtFunctionStart())
-                    methods.Add(ParseFunction() with { Attributes = attributes, Private = @private, Documentation = documentation });
+                    methods.Add(Decorate(ParseFunction() with { Attributes = attributes, Private = @private, Documentation = documentation }, isMethod: true));
                 else
                     ReportOnce(Current.Span, () => _diagnostics.ReportExpectedToken(Current.Span, TokenKind.FnKeyword, Current));
                 continue;
@@ -1052,7 +1073,7 @@ public sealed partial class Parser
             fields = NoParams(ParseSeparatedList(ParseParameter, TokenKind.CloseParen));
             Expect(TokenKind.CloseParen);
         }
-        return new VariantSyntax(SpanFrom(name), name, fields) { Attributes = attributes, Documentation = documentation };
+        return new VariantSyntax(SpanFrom(name), name, fields) { Attributes = NoDecorators(attributes, "an enum variant"), Documentation = documentation };
     }
 
     /// <summary>Reports `params` where only a function's or method's parameters can have it: fields, constructors and indexers.</summary>
@@ -1082,7 +1103,7 @@ public sealed partial class Parser
             NextToken();
             @default = ParseBinary(0);
         }
-        return new ParameterSyntax(Span(@params ?? name, type), name, type) { Attributes = attributes, Documentation = documentation, Default = @default, Params = @params };
+        return new ParameterSyntax(Span(@params ?? name, type), name, type) { Attributes = NoDecorators(attributes, "a parameter"), Documentation = documentation, Default = @default, Params = @params };
     }
 
     /// <summary>
@@ -1290,6 +1311,10 @@ public sealed partial class Parser
                 case TokenKind.WhileKeyword:
                     statements.Add(ParseWhile());
                     break;
+                // `outer: for x in xs { … }`: a loop's label, which `break outer;` and `continue outer;` name.
+                case TokenKind.Identifier when Peek(1).Kind == TokenKind.Colon && IsLoopStart(2):
+                    statements.Add(ParseLabeledLoop());
+                    break;
                 case TokenKind.Identifier when IsLockStart():
                     statements.Add(ParseLock());
                     break;
@@ -1334,24 +1359,25 @@ public sealed partial class Parser
                         });
                     break;
                 }
-                case TokenKind.BreakKeyword:
+                case TokenKind.BreakKeyword or TokenKind.ContinueKeyword:
                 {
-                    var keyword = NextToken();
+                    var jump = ParseLoopJump();
                     Expect(TokenKind.Semicolon);
-                    statements.Add(new BreakStatementSyntax(SpanFrom(keyword), keyword));
-                    break;
-                }
-                case TokenKind.ContinueKeyword:
-                {
-                    var keyword = NextToken();
-                    Expect(TokenKind.Semicolon);
-                    statements.Add(new ContinueStatementSyntax(SpanFrom(keyword), keyword));
+                    statements.Add(jump with { Span = TextSpan.FromBounds(jump.Span.Start, Previous.Span.End) });
                     break;
                 }
                 // `parallel for x in items { … }`: a plugin's statement.
                 case TokenKind.Identifier when PluginKeywordAt<StatementKeyword>() is var (plugin, keyword):
                     statements.AddRange(ExpandPlugin(plugin, keyword.Expand));
                     break;
+                // `done: x += 1;`: only a loop can be labelled.
+                case TokenKind.Identifier when Peek(1).Kind == TokenKind.Colon:
+                {
+                    var label = NextToken();
+                    NextToken();
+                    ReportOnce(label.Span, () => _diagnostics.ReportLabelNotOnLoop(label.Span, label.Text));
+                    break;
+                }
                 default:
                     trailing = ParseExpressionStatementOrTrailing(statements);
                     break;
@@ -1508,6 +1534,45 @@ public sealed partial class Parser
         return new LockStatementSyntax(Span(keyword, body), keyword, target, body);
     }
 
+    /// <summary>Whether a loop starts at <paramref name="offset"/>: `while`, `for` or `await for`.</summary>
+    private bool IsLoopStart(int offset) =>
+        Peek(offset).Kind is TokenKind.WhileKeyword or TokenKind.ForKeyword ||
+        (Peek(offset) is { Kind: TokenKind.Identifier, Text: "await" } && Peek(offset + 1).Kind == TokenKind.ForKeyword);
+
+    /// <summary>labeledLoop = IDENT ":" ( while | [ "await" ] for ) ;</summary>
+    private StatementSyntax ParseLabeledLoop()
+    {
+        var label = NextToken();
+        NextToken();
+        StatementSyntax loop;
+        if (Current.Kind == TokenKind.WhileKeyword)
+        {
+            loop = ParseWhile() with { Label = label };
+        }
+        else
+        {
+            var awaitKeyword = Current.Kind == TokenKind.ForKeyword ? null : NextToken();
+            loop = ParseFor() with { Await = awaitKeyword, Label = label };
+        }
+        return loop with { Span = TextSpan.FromBounds(label.Span.Start, loop.Span.End) };
+    }
+
+    /// <summary>
+    /// ( "break" | "continue" ) [ IDENT ] : the label names the loop to leave or go round again, and is taken to be one
+    /// only where the statement or match arm ends after it, so a missing ';' isn't mistaken for one.
+    /// </summary>
+    private StatementSyntax ParseLoopJump()
+    {
+        var keyword = NextToken();
+        var label = Current.Kind == TokenKind.Identifier && Peek(1).Kind is TokenKind.Semicolon or TokenKind.Comma or TokenKind.CloseBrace
+            ? NextToken()
+            : null;
+        var span = SpanFrom(keyword);
+        return keyword.Kind == TokenKind.BreakKeyword
+            ? new BreakStatementSyntax(span, keyword) { Label = label }
+            : new ContinueStatementSyntax(span, keyword) { Label = label };
+    }
+
     /// <summary>while = "while" expression block ;</summary>
     private WhileStatementSyntax ParseWhile()
     {
@@ -1584,10 +1649,14 @@ public sealed partial class Parser
     private ExpressionSyntax ParseAssignment()
     {
         var target = ParseConditional();
-        if (!SyntaxFacts.IsAssignmentOperator(Current.Kind))
+        Token op;
+        if (AtShiftRightAssignment())
+            op = JoinGreaters(TokenKind.GreaterGreaterEquals);
+        else if (SyntaxFacts.IsAssignmentOperator(Current.Kind))
+            op = NextToken();
+        else
             return target;
 
-        var op = NextToken();
         var value = ParseAssignment();
         return new AssignmentExpressionSyntax(Span(target, value), target, op, value);
     }
@@ -1645,9 +1714,25 @@ public sealed partial class Parser
     private bool AtOptionalPipe() =>
         Current.Kind == TokenKind.Question && Peek(1).Kind == TokenKind.Greater && Peek(1).Span.Start == Current.Span.End;
 
+    /// <summary><c>&gt;&gt;</c>, written without a space: two tokens, so <c>List&lt;List&lt;int&gt;&gt;</c> still closes both lists.</summary>
+    private bool AtShiftRight() =>
+        Current.Kind == TokenKind.Greater && Peek(1).Kind == TokenKind.Greater && Peek(1).Span.Start == Current.Span.End;
+
+    /// <summary><c>&gt;&gt;=</c>, written without a space: a <c>&gt;</c> and a <c>&gt;=</c>.</summary>
+    private bool AtShiftRightAssignment() =>
+        Current.Kind == TokenKind.Greater && Peek(1).Kind == TokenKind.GreaterEquals && Peek(1).Span.Start == Current.Span.End;
+
+    /// <summary>Reads the two tokens of <c>&gt;&gt;</c> or <c>&gt;&gt;=</c> as one.</summary>
+    private Token JoinGreaters(TokenKind kind)
+    {
+        var first = NextToken();
+        var second = NextToken();
+        return new Token(kind, TextSpan.FromBounds(first.Span.Start, second.Span.End), first.Text + second.Text);
+    }
+
     /// <summary>
     /// binary = unary { binaryOp binary } ;   precedence climbing, see <see cref="SyntaxFacts.GetBinaryPrecedence"/>
-    /// unary  = ( "-" | "!" | "^" ) unary | ( ".." | "..<" ) [ binary ] | postfix ;   (* "^" and an open range only mean something in "[…]" *)
+    /// unary  = ( "-" | "!" | "~" | "^" ) unary | ( ".." | "..<" ) [ binary ] | postfix ;   (* "^" and an open range only mean something in "[…]" *)
     /// </summary>
     private ExpressionSyntax ParseBinary(int parentPrecedence)
     {
@@ -1718,11 +1803,15 @@ public sealed partial class Parser
                 continue;
             }
 
-            int precedence = SyntaxFacts.GetBinaryPrecedence(Current.Kind);
+            // `x >>= 1` is an assignment, not `x > (>= 1)`.
+            if (AtShiftRightAssignment())
+                return left;
+            bool shift = AtShiftRight();
+            int precedence = SyntaxFacts.GetBinaryPrecedence(shift ? TokenKind.GreaterGreater : Current.Kind);
             if (precedence == 0 || precedence <= parentPrecedence)
                 return left;
 
-            var op = NextToken();
+            var op = shift ? JoinGreaters(TokenKind.GreaterGreater) : NextToken();
             if (op.Kind is TokenKind.DotDot or TokenKind.DotDotLess && AtOpenRangeEnd())
             {
                 // `xs[2..]`: a slice's range without an end.
@@ -2196,11 +2285,18 @@ public sealed partial class Parser
         return new TupleElementSyntax(TextSpan.FromBounds(start.Span.Start, expression.Span.End), name, expression);
     }
 
-    /// <summary>collectionElement = [ "..." ] expression ;</summary>
+    /// <summary>collectionElement = "..." expression | expression [ ":" expression ] ;   (* key: value makes a dictionary *)</summary>
     private ExpressionSyntax ParseCollectionElement()
     {
         if (Current.Kind != TokenKind.Ellipsis)
-            return ParseExpression();
+        {
+            var element = ParseExpression();
+            if (Current.Kind != TokenKind.Colon)
+                return element;
+            NextToken();
+            var value = ParseExpression();
+            return new DictionaryEntrySyntax(Span(element, value), element, value);
+        }
         var ellipsis = NextToken();
         var source = ParseExpression();
         return new SpreadElementSyntax(TextSpan.FromBounds(ellipsis.Span.Start, source.Span.End), source);
@@ -2218,7 +2314,7 @@ public sealed partial class Parser
         TokenKind.Identifier or TokenKind.PredefinedTypeKeyword or TokenKind.IntegerLiteral or TokenKind.DoubleLiteral or
         TokenKind.CharLiteral or TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral or TokenKind.OpenParen or
         TokenKind.OpenBracket or TokenKind.ThisKeyword or TokenKind.TrueKeyword or TokenKind.FalseKeyword or
-        TokenKind.NullKeyword or TokenKind.Bang or TokenKind.IfKeyword or TokenKind.MatchKeyword;
+        TokenKind.NullKeyword or TokenKind.Bang or TokenKind.Tilde or TokenKind.IfKeyword or TokenKind.MatchKeyword;
 
     /// <summary>
     /// C#'s rule for <c>(T)x</c> versus a parenthesized expression: the tokens inside the parentheses must be able to
@@ -2244,7 +2340,7 @@ public sealed partial class Parser
                 case TokenKind.CloseParen when --depth == 0:
                     return Peek(offset + 1).Kind is TokenKind.Identifier or TokenKind.PredefinedTypeKeyword or TokenKind.IntegerLiteral or TokenKind.DoubleLiteral
                         or TokenKind.CharLiteral or TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral or TokenKind.OpenParen
-                        or TokenKind.Bang or TokenKind.ThisKeyword or TokenKind.TrueKeyword or TokenKind.FalseKeyword or TokenKind.NullKeyword;
+                        or TokenKind.Bang or TokenKind.Tilde or TokenKind.ThisKeyword or TokenKind.TrueKeyword or TokenKind.FalseKeyword or TokenKind.NullKeyword;
                 case TokenKind.CloseParen or TokenKind.Identifier or TokenKind.PredefinedTypeKeyword or TokenKind.Dot or TokenKind.Less or TokenKind.Greater
                     or TokenKind.Comma or TokenKind.Question or TokenKind.QuestionQuestion or TokenKind.OpenBracket
                     or TokenKind.CloseBracket or TokenKind.Colon:
@@ -2454,17 +2550,16 @@ public sealed partial class Parser
         StatementSyntax? jump = Current.Kind switch
         {
             TokenKind.ReturnKeyword => ParseReturn(requireSemicolon: false),
-            TokenKind.BreakKeyword => new BreakStatementSyntax(Current.Span, NextToken()),
-            TokenKind.ContinueKeyword => new ContinueStatementSyntax(Current.Span, NextToken()),
+            TokenKind.BreakKeyword or TokenKind.ContinueKeyword => ParseLoopJump(),
             _ => null,
         };
         return jump is null ? ParseExpression() : new BlockExpressionSyntax(jump.Span, [jump], null);
     }
 
-    /// <summary>pattern = primaryPattern { "|" primaryPattern } ;</summary>
+    /// <summary>pattern = andPattern { "|" andPattern } ;</summary>
     internal PatternSyntax ParsePattern()
     {
-        var first = ParsePrimaryPattern();
+        var first = ParseAndPattern();
         if (Current.Kind != TokenKind.Pipe)
             return first;
 
@@ -2473,10 +2568,55 @@ public sealed partial class Parser
         while (Current.Kind == TokenKind.Pipe)
         {
             NextToken();
-            alternatives.Add(ParsePrimaryPattern());
+            alternatives.Add(ParseAndPattern());
         }
         return new OrPatternSyntax(TextSpan.FromBounds(first.Span.Start, Previous.Span.End), alternatives.ToImmutable());
     }
+
+    /// <summary>
+    /// andPattern = notPattern { "and" notPattern } ;   (* binds tighter than "|", as C#'s "and" does than "or" *)
+    /// "and" is a keyword only after a pattern, where a name can't otherwise appear.
+    /// </summary>
+    private PatternSyntax ParseAndPattern()
+    {
+        var first = ParseNotPattern();
+        if (Current is not { Kind: TokenKind.Identifier, Text: "and" })
+            return first;
+
+        var patterns = ImmutableArray.CreateBuilder<PatternSyntax>();
+        patterns.Add(first);
+        while (Current is { Kind: TokenKind.Identifier, Text: "and" })
+        {
+            NextToken();
+            patterns.Add(ParseNotPattern());
+        }
+        return new AndPatternSyntax(TextSpan.FromBounds(first.Span.Start, Previous.Span.End), patterns.ToImmutable());
+    }
+
+    /// <summary>
+    /// notPattern = "not" notPattern | primaryPattern ;
+    /// "not" is a keyword only when a pattern follows it, so it can still be bound as a name: `not => …`.
+    /// </summary>
+    private PatternSyntax ParseNotPattern()
+    {
+        if (Current is not { Kind: TokenKind.Identifier, Text: "not" } || !StartsPattern(1))
+            return ParsePrimaryPattern();
+        var keyword = NextToken();
+        var pattern = ParseNotPattern();
+        return new NotPatternSyntax(SpanFrom(keyword), keyword, pattern);
+    }
+
+    /// <summary>Whether the token at <paramref name="offset"/> can start a pattern (other than with the name `and`).</summary>
+    private bool StartsPattern(int offset) => Peek(offset) switch
+    {
+        { Kind: TokenKind.Identifier, Text: "and" } => false,
+        { Kind: TokenKind.OpenBrace } => IsPropertyPatternStart(offset),
+        { Kind: TokenKind.Minus } => Peek(offset + 1).Kind is TokenKind.IntegerLiteral or TokenKind.DoubleLiteral,
+        var token => token.Kind is TokenKind.Identifier or TokenKind.NullKeyword or TokenKind.OpenParen or TokenKind.OpenBracket
+            or TokenKind.Less or TokenKind.LessEquals or TokenKind.Greater or TokenKind.GreaterEquals
+            or TokenKind.IntegerLiteral or TokenKind.DoubleLiteral or TokenKind.CharLiteral or TokenKind.StringLiteral
+            or TokenKind.TrueKeyword or TokenKind.FalseKeyword,
+    };
 
     /// <summary>
     /// primaryPattern = "_" | IDENT | IDENT ":" type | [ IDENT "." ] IDENT [ "(" [ pattern { "," pattern } [ "," ] ] ")" | properties ]
@@ -2514,9 +2654,14 @@ public sealed partial class Parser
 
         if (Current.Kind == TokenKind.OpenParen)
         {
-            // `(0, _)`: a tuple pattern.
+            // `(0, _)`: a tuple pattern; `(A | B)`, with no comma, groups a pattern, as in `not (A | B)`.
             var open = NextToken();
             var elements = ParseSeparatedList(ParsePattern, TokenKind.CloseParen);
+            if (elements.Length == 1 && Current.Kind == TokenKind.CloseParen && Previous.Kind != TokenKind.Comma)
+            {
+                NextToken();
+                return elements[0];
+            }
             Expect(TokenKind.CloseParen);
             var tuple = new TuplePatternSyntax(SpanFrom(open), elements);
             if (elements.Length < 2)
@@ -2583,10 +2728,10 @@ public sealed partial class Parser
     /// A `{` that starts a property pattern rather than a block (`if p is Point { … }` has both): one followed by
     /// `name:`, or an empty `{}` that isn't followed by a block.
     /// </summary>
-    private bool IsPropertyPatternStart() =>
-        Current.Kind == TokenKind.OpenBrace &&
-        ((Peek(1).Kind == TokenKind.Identifier && Peek(2).Kind == TokenKind.Colon) ||
-         (Peek(1).Kind == TokenKind.CloseBrace && Peek(2).Kind != TokenKind.OpenBrace));
+    private bool IsPropertyPatternStart(int offset = 0) =>
+        Peek(offset).Kind == TokenKind.OpenBrace &&
+        ((Peek(offset + 1).Kind == TokenKind.Identifier && Peek(offset + 2).Kind == TokenKind.Colon) ||
+         (Peek(offset + 1).Kind == TokenKind.CloseBrace && Peek(offset + 2).Kind != TokenKind.OpenBrace));
 
     private PropertyPatternSyntax ParsePropertyPattern(Token first, Token? qualifier, Token? name)
     {

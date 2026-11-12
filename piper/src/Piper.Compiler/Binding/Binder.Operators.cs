@@ -102,6 +102,12 @@ public sealed partial class Binder
     private static string? ClrOperatorName(string symbol, int operands) => (symbol, operands) switch
     {
         ("-", 1) => "op_UnaryNegation",
+        ("~", 1) => "op_OnesComplement",
+        ("&", 2) => "op_BitwiseAnd",
+        ("|", 2) => "op_BitwiseOr",
+        ("^", 2) => "op_ExclusiveOr",
+        ("<<", 2) => "op_LeftShift",
+        (">>", 2) => "op_RightShift",
         ("+", 2) => "op_Addition",
         ("-", 2) => "op_Subtraction",
         ("*", 2) => "op_Multiply",

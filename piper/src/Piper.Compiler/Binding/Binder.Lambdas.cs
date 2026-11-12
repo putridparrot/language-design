@@ -342,6 +342,8 @@ public sealed partial class Binder
         // The annotation was already reported: `let xs: Bad<int> = [];` shouldn't also complain about the literal.
         if (expected == TypeSymbol.Error && syntax.Elements.IsEmpty)
             return new BoundErrorExpression();
+        if (syntax.Elements.Any(e => e is DictionaryEntrySyntax) || DictionaryTypes(expected) is not null)
+            return BindDictionary(syntax, expected);
 
         TypeSymbol? elementType = null;
         TypeSymbol? arrayType = null;
@@ -375,6 +377,117 @@ public sealed partial class Binder
         var converted = elements.Select((e, i) => ConvertCollectionElement(e, elementType, syntax.Elements[i].Span)).ToImmutableArray();
         return new BoundCollectionExpression(converted, arrayType ?? ListOf(elementType));
     }
+
+    private static readonly HashSet<Type> DictionaryTypeDefinitions = [typeof(Dictionary<,>), typeof(IDictionary<,>), typeof(IReadOnlyDictionary<,>)];
+
+    /// <summary>The key and value types of an expected <c>Dictionary</c>, <c>IDictionary</c> or <c>IReadOnlyDictionary</c>.</summary>
+    private static (TypeSymbol Key, TypeSymbol Value)? DictionaryTypes(TypeSymbol? expected) =>
+        expected is ClrTypeSymbol { TypeArguments: [var key, var value] } dictionary && DictionaryTypeDefinitions.Contains(dictionary.Definition.Type)
+            ? (key, value)
+            : null;
+
+    /// <summary>The key and value types of a sequence's items, if they're <c>KeyValuePair</c>s.</summary>
+    private (TypeSymbol Key, TypeSymbol Value)? PairTypes(TypeSymbol sequence) =>
+        ElementTypeOf(sequence) is ClrTypeSymbol { TypeArguments: [var key, var value] } pair && pair.Definition.Type == typeof(KeyValuePair<,>)
+            ? (key!, value!)
+            : null;
+
+    /// <summary>
+    /// <c>["a": 1, "b": 2]</c>: a <c>Dictionary&lt;K, V&gt;</c>, when there's a <c>key: value</c> entry or a dictionary is
+    /// expected, so <c>[]</c> and <c>[...defaults, ...overrides]</c> can be one too. A spread adds another dictionary's
+    /// pairs (or any sequence of <c>KeyValuePair</c>s), and a later key replaces an earlier one. K and V come from the
+    /// context, or else from the entries and spreads.
+    /// </summary>
+    private BoundExpression BindDictionary(CollectionExpressionSyntax syntax, TypeSymbol? expected)
+    {
+        var (keyType, valueType) = DictionaryTypes(expected) is var (k, v) ? (k, v) : ((TypeSymbol?)null, (TypeSymbol?)null);
+        var elements = new List<BoundExpression>();
+        bool failed = false;
+        foreach (var element in syntax.Elements)
+        {
+            switch (element)
+            {
+                case DictionaryEntrySyntax entry:
+                    elements.Add(new BoundDictionaryEntry(
+                        RequireValue(BindExpression(entry.Key, keyType), entry.Key.Span),
+                        RequireValue(BindExpression(entry.Value, valueType), entry.Value.Span)));
+                    break;
+                case SpreadElementSyntax spread:
+                {
+                    var bound = BindCollectionElement(spread, null);
+                    if (bound is BoundSpreadElement && PairTypes(bound.Type) is null)
+                    {
+                        _diagnostics.ReportDictionaryElement(spread.Source.Span, $"'...' adds another dictionary's entries, so it needs key-value pairs, not '{SpreadItemType(bound)}' items.");
+                        bound = new BoundErrorExpression();
+                    }
+                    elements.Add(bound);
+                    break;
+                }
+                default:
+                    BindExpression(element);
+                    _diagnostics.ReportDictionaryElement(element.Span, "Every element of a dictionary literal is a 'key: value' entry or a '...' spread.");
+                    elements.Add(new BoundErrorExpression());
+                    break;
+            }
+            failed |= elements[^1].Type == TypeSymbol.Error;
+        }
+        if (failed)
+            return new BoundErrorExpression();
+
+        var entries = elements.OfType<BoundDictionaryEntry>().ToList();
+        var pairs = elements.OfType<BoundSpreadElement>().Select(s => PairTypes(s.Type)!.Value).ToList();
+        if (keyType is null || valueType is null)
+        {
+            if (elements.Count == 0)
+            {
+                _diagnostics.ReportCannotInferCollection(syntax.Span);
+                return new BoundErrorExpression();
+            }
+            keyType = CommonDictionaryType([.. entries.Select(e => e.Key.Type), .. pairs.Select(p => p.Key)], syntax);
+            valueType = CommonDictionaryType([.. entries.Select(e => e.Value.Type), .. pairs.Select(p => p.Value)], syntax);
+            if (keyType is null || valueType is null)
+                return new BoundErrorExpression();
+        }
+
+        var pairType = ClrTypeSymbol.For(typeof(KeyValuePair<,>)).Construct([keyType, valueType]);
+        var keys = new HashSet<object>();
+        var converted = new List<BoundExpression>();
+        for (int i = 0; i < elements.Count; i++)
+        {
+            if (elements[i] is BoundDictionaryEntry entry)
+            {
+                var entrySyntax = (DictionaryEntrySyntax)syntax.Elements[i];
+                var key = Convert(entry.Key, keyType, entrySyntax.Key.Span);
+                if (ConstantKey(key) is { } constant && !keys.Add(constant))
+                    _diagnostics.ReportDuplicateDictionaryKey(entrySyntax.Key.Span, _file.Source.ToString(entrySyntax.Key.Span));
+                converted.Add(new BoundDictionaryEntry(key, Convert(entry.Value, valueType, entrySyntax.Value.Span)));
+            }
+            else if (SpreadItemType(elements[i]) == pairType)
+            {
+                converted.Add(elements[i]);
+            }
+            else
+            {
+                _diagnostics.ReportSpreadElementConversion(syntax.Elements[i].Span, SpreadItemType(elements[i]), pairType);
+                converted.Add(new BoundErrorExpression());
+            }
+        }
+        var type = ClrTypeSymbol.For(typeof(Dictionary<,>)).Construct([keyType, valueType]);
+        return new BoundDictionaryExpression([.. converted], keyType, valueType, type);
+    }
+
+    /// <summary>The common type of a dictionary literal's keys (or values), reporting the first that doesn't fit.</summary>
+    private TypeSymbol? CommonDictionaryType(List<TypeSymbol> types, CollectionExpressionSyntax syntax)
+    {
+        var common = CommonType(types, null, out int failed);
+        if (common is null)
+            _diagnostics.ReportIncompatibleElements(syntax.Span, types[0], types[failed]);
+        return common;
+    }
+
+    /// <summary>A key whose value is known when compiling (a literal or constant), to find one written twice.</summary>
+    private static object? ConstantKey(BoundExpression key) =>
+        ConstantFolding.Value(key) ?? (key is BoundLiteralExpression { Value: string or char or bool } literal ? literal.Value : null);
 
     /// <summary>An element of a collection literal; <c>...items</c> must be a sequence.</summary>
     private BoundExpression BindCollectionElement(ExpressionSyntax syntax, TypeSymbol? elementType)
@@ -450,7 +563,7 @@ public sealed partial class Binder
             _scope.TryDeclare(variable);
         }
 
-        var body = BindLoopBody(syntax.Body, out bool breaks);
+        var body = BindLoopBody(syntax.Body, syntax.Label, out bool breaks);
         _scope = outer;
 
         return new BoundForEachStatement(variable, collection, new BoundExpressionStatement(body), deconstruction) { IsAwait = syntax.Await is not null };
@@ -556,17 +669,22 @@ public sealed partial class Binder
         }
         if (!HasNonNullDefault(element))
         {
-            _diagnostics.ReportArrayOfNullDefaults(syntax.Span, element);
+            _diagnostics.ReportArrayOfNullDefaults(syntax.Span, element, element.OriginalDefinition is RecordSymbol { IsStruct: true, Invariants.IsEmpty: false });
             return new BoundErrorExpression();
         }
         return new BoundArrayCreationExpression(sizes, ClrTypeSymbol.ArrayOf(element, sizes.Length));
     }
 
-    /// <summary>True if C#'s <c>default</c> of the type is a valid Piper value (not a null reference).</summary>
+    /// <summary>
+    /// True if C#'s <c>default</c> of the type is a valid Piper value (not a null reference). A record struct's is when
+    /// its fields' are and it has no invariants, which its default (all fields zero) would skip.
+    /// </summary>
     private static bool HasNonNullDefault(TypeSymbol type) =>
         type.IsNumeric || type == TypeSymbol.Bool || type == TypeSymbol.Char || type.IsOption ||
         type is ClrTypeSymbol { IsReferenceType: false } ||
-        (type is TupleTypeSymbol tuple && tuple.ElementTypes.All(HasNonNullDefault));
+        (type is TupleTypeSymbol tuple && tuple.ElementTypes.All(HasNonNullDefault)) ||
+        (type.OriginalDefinition is RecordSymbol { IsStruct: true, Invariants.IsEmpty: true } record &&
+         record.Fields.All(f => HasNonNullDefault(TypeSubstitution.FieldType(f, type))));
 
     /// <summary>Assigning a .NET property or indexer: <c>sb.Length = 0</c>, <c>scores["Ada"] += 1</c>.</summary>
     private BoundExpression? BindClrAssignment(AssignmentExpressionSyntax syntax)
@@ -660,13 +778,13 @@ public sealed partial class Binder
 
         var kind = Operators.GetBinaryKind(compound)!.Value;
         var resolution = value.Type == TypeSymbol.Error ? null : Operators.ResolveBinary(kind, target.Type, value.Type);
-        if (resolution is null || !CompoundResultFits(resolution.ResultType, target.Type, value))
+        if (resolution is null || !CompoundResultFits(resolution, target.Type, value))
         {
             if (value.Type != TypeSymbol.Error)
                 _diagnostics.ReportUndefinedBinaryOperator(syntax.Operator.Span, syntax.Operator.Text, target.Type, value.Type);
             return new BoundErrorExpression();
         }
-        return new BoundClrAssignmentExpression(target, kind, Widen(value, resolution.OperandType));
+        return new BoundClrAssignmentExpression(target, kind, Widen(value, resolution.RightOperandType));
     }
 
     /// <summary>Whether a .NET setter is an <c>init</c> (C# marks it with a required <c>IsExternalInit</c> modifier).</summary>

@@ -46,6 +46,24 @@ public class LexerTests
     }
 
     [Fact]
+    public void Bitwise_operators_and_their_assignments_are_tokens()
+    {
+        Assert.Equal(
+            [
+                TokenKind.Ampersand, TokenKind.AmpersandEquals, TokenKind.Pipe, TokenKind.PipeEquals, TokenKind.Caret,
+                TokenKind.CaretEquals, TokenKind.Tilde, TokenKind.LessLess, TokenKind.LessLessEquals,
+                TokenKind.QuestionQuestionEquals, TokenKind.EndOfFile,
+            ],
+            Kinds("& &= | |= ^ ^= ~ << <<= ??="));
+    }
+
+    [Fact]
+    public void Right_shifts_are_left_to_the_parser_so_nested_type_arguments_close()
+    {
+        Assert.Equal([TokenKind.Greater, TokenKind.Greater, TokenKind.Greater, TokenKind.GreaterEquals, TokenKind.EndOfFile], Kinds(">> >>="));
+    }
+
+    [Fact]
     public void Keywords_and_identifiers()
     {
         Assert.Equal(

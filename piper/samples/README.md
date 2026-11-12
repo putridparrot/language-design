@@ -27,6 +27,7 @@ correct.
 | [remote-actors/](remote-actors) | Actors across processes and machines, with the remote actors plugin (build `plugins/Piper.Plugins.Actors.Remote` first): run with no arguments for two nodes in one process, or `-- host 8000` and `-- client 8001 127.0.0.1:8000` in two terminals |
 | [grid/](grid) | Grid computing on the remote actors plugin: a coordinator splits a job into chunks for workers on many nodes, which take the next chunk when they're free, and a failed or unreachable node's chunks go to the others. Run with no arguments for worker nodes in one process, or `-- worker 8001` on each machine and then `-- coordinator 8000 <host:port>…` |
 | [state-machines/](state-machines) | State machines from the state machines plugin: an order whose `Pay`, `Ship` and `Cancel` events move it between states, with `if` guards choosing between transitions, `enter` actions, a refused event, and stored events replayed with `Fire`; and a turnstile |
+| [aspects/](aspects) | Decorators from the aspects plugin: `[Trace]`, `[Timed]` and `[Retry(3, 10)]` on a flaky service's methods, sync and async, rewritten at compile time (a broken precondition isn't retried); and `[Notify]` giving a view model `INotifyPropertyChanged` |
 | [plugins/](plugins) | Extending the language without changing the compiler: `parallel for` and `concurrency { }` from a compiler plugin listed in `piper.json` (build `plugins/Piper.Plugins.Parallel` first), and a trailing closure (`Retry(3) { … }`) |
 
 ## Visibility in brief

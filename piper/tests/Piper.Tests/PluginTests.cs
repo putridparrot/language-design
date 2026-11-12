@@ -348,6 +348,218 @@ public class PluginTests
         Assert.Contains("analysis broke", error.Message);
     }
 
+    /// <summary>
+    /// <c>[Say("text")]</c> prints its text before the function's body; <c>[Broken]</c> throws; analysis warns about
+    /// each decorated function, found through the expansion's syntax.
+    /// </summary>
+    private sealed class DecoratorPlugin : IPiperPlugin
+    {
+        public string Name => "decorators";
+
+        public IReadOnlyList<PluginKeyword> Keywords { get; } =
+        [
+            new Decorator("Say", d => d.WithPrologue([d.Template.Statement("Print($text);", ("text", d.Arguments[0]))])),
+            new Decorator("Broken", _ => throw new InvalidOperationException("boom")),
+        ];
+
+        public void Analyze(PluginAnalysis analysis)
+        {
+            foreach (var expansion in analysis.Expansions)
+            {
+                var declaration = expansion.Result.OfType<FunctionDeclarationSyntax>().Single();
+                if (analysis.Program.Functions.Any(f => ReferenceEquals(f.Symbol.Declaration, declaration)))
+                    analysis.ReportWarning(expansion.File, expansion.KeywordToken.Span, $"'{declaration.Name.Text}' says something.");
+            }
+        }
+    }
+
+    [Fact]
+    public void A_decorator_rewrites_the_function_its_on()
+    {
+        var output = Run("""
+            [Say("first")]
+            [Say("second")]
+            fn Greet(name: string) => string = $"hello {name}";
+
+            fn Main() { Print(Greet("you")); }
+            """, new DecoratorPlugin());
+        // Nearest first, so the first written is outermost and runs first.
+        Assert.Equal("first\nsecond\nhello you\n", output);
+    }
+
+    [Fact]
+    public void A_decorators_expansion_is_analyzed()
+    {
+        var text = "[Say(\"hi\")]\nfn Greet() { }\nfn Main() { Greet(); }";
+        var warning = Assert.Single(Compile(text, new DecoratorPlugin()).Diagnostics);
+        Assert.Equal("PIP0505", warning.Code);
+        Assert.Equal("'Greet' says something. (decorators)", warning.Message);
+        Assert.Equal(text.IndexOf("Say", StringComparison.Ordinal), warning.Span.Start);
+    }
+
+    [Fact]
+    public void A_decorator_that_throws_is_reported_and_the_function_left_alone()
+    {
+        var result = Compile("[Broken]\nfn F() { }\nfn Main() { F(); }", new DecoratorPlugin());
+        var error = Assert.Single(result.Diagnostics);
+        Assert.Equal("PIP0504", error.Code);
+        Assert.Contains("boom", error.Message);
+    }
+
+    [Fact]
+    public void A_decorator_needs_a_function_with_a_body()
+    {
+        var result = Compile("""
+            trait Named {
+                [Say("x")]
+                fn Name() => string;
+            }
+
+            record P(
+                [Say("x")] x: int);
+
+            fn Main() { }
+            """, new DecoratorPlugin());
+        Assert.Equal(["PIP0507", "PIP0507"], result.Diagnostics.Select(d => d.Code));
+        Assert.Contains("one without a body", result.Diagnostics[0].Message);
+        Assert.Contains("a parameter", result.Diagnostics[1].Message);
+    }
+
+    [Fact]
+    public void Without_its_plugin_a_decorator_is_an_ordinary_attribute()
+    {
+        var result = Compile("[Say(\"hi\")]\nfn F() { }\nfn Main() { }");
+        Assert.Equal("PIP0329", Assert.Single(result.Diagnostics).Code);
+    }
+
+    [Fact]
+    public void A_decorator_and_a_keyword_cant_share_a_name()
+    {
+        var result = Compile("fn Main() { }", new DecoratorPlugin(), new Named("other", "Say"));
+        Assert.Equal("PIP0502", Assert.Single(result.Diagnostics).Code);
+    }
+
+    /// <summary>
+    /// Type decorators. <c>[Order("a")]</c> gives a class a method <c>Order()</c> returning its text, appended to what
+    /// a nearer one gave; on a record, it adds the method in an <c>extend</c> block beside it. <c>[Broken]</c> throws.
+    /// Analysis warns about each class it decorated, found through the expansion's syntax.
+    /// </summary>
+    private sealed class TypeDecoratorPlugin : IPiperPlugin
+    {
+        public string Name => "types";
+
+        public IReadOnlyList<PluginKeyword> Keywords { get; } =
+        [
+            new Decorator("Order") { Type = Order },
+            new Decorator("Shatter") { Type = _ => throw new InvalidOperationException("shattered") },
+        ];
+
+        private static IEnumerable<DeclarationSyntax> Order(TypeDecoratorContext d)
+        {
+            if (d.Record is not null)
+            {
+                return [d.Declaration, .. d.Template.Declarations("extend $T { fn Order() => string = $text; }",
+                    ("T", d.Declaration.Name), ("text", d.Arguments[0]))];
+            }
+            var existing = d.Class!.Methods.FirstOrDefault(m => m.Name.Text == "Order");
+            if (existing is null)
+            {
+                var (_, methods, _) = d.ClassMembers("fn Order() => string = $text;", ("text", d.Arguments[0]));
+                return [d.WithMembers(methods: methods)];
+            }
+            var appended = existing with { ExpressionBody = d.Template.Expression("$old + $text", ("old", existing.ExpressionBody!), ("text", d.Arguments[0])) };
+            return [d.Class with { Methods = d.Class.Methods.Replace(existing, appended) }];
+        }
+
+        public void Analyze(PluginAnalysis analysis)
+        {
+            foreach (var expansion in analysis.Expansions)
+            {
+                foreach (var declaration in expansion.Result.OfType<ClassDeclarationSyntax>())
+                {
+                    if (analysis.Program.Types.OfType<Binding.ClassSymbol>().Any(c => ReferenceEquals(c.Declaration, declaration)))
+                        analysis.ReportWarning(expansion.File, expansion.KeywordToken.Span, $"'{declaration.Name.Text}' is ordered.");
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void A_type_decorator_adds_members_to_a_class()
+    {
+        var output = Run("""
+            [Order("x")]
+            class Plain { }
+
+            fn Main() { Print(Plain().Order()); }
+            """, new TypeDecoratorPlugin());
+        Assert.Equal("x\n", output);
+    }
+
+    [Fact]
+    public void Type_decorators_apply_nearest_first()
+    {
+        var output = Run("""
+            [Order("a")]
+            [Order("b")]
+            class Plain { }
+
+            fn Main() { Print(Plain().Order()); }
+            """, new TypeDecoratorPlugin());
+        Assert.Equal("ba\n", output);
+    }
+
+    [Fact]
+    public void A_type_decorator_adds_declarations_beside_a_record()
+    {
+        var output = Run("""
+            [Order("r")]
+            record Point(x: int);
+
+            fn Main() { Print(Point(1).Order()); }
+            """, new TypeDecoratorPlugin());
+        Assert.Equal("r\n", output);
+    }
+
+    [Fact]
+    public void A_type_decorators_class_is_analyzed()
+    {
+        var text = "[Order(\"x\")]\nclass Plain { }\nfn Main() { }";
+        var result = Compile(text, new TypeDecoratorPlugin());
+        var warning = Assert.Single(result.Diagnostics);
+        Assert.Equal("'Plain' is ordered. (types)", warning.Message);
+        Assert.Equal(text.IndexOf("Order", StringComparison.Ordinal), warning.Span.Start);
+    }
+
+    [Fact]
+    public void A_type_decorator_that_throws_is_reported()
+    {
+        var error = Assert.Single(Compile("[Shatter]\nclass C { }\nfn Main() { }", new TypeDecoratorPlugin()).Diagnostics);
+        Assert.Equal("PIP0504", error.Code);
+        Assert.Contains("shattered", error.Message);
+    }
+
+    [Fact]
+    public void A_decorator_is_only_used_where_it_has_a_handler()
+    {
+        var result = Compile("""
+            [Say("x")]
+            class C { }
+
+            [Order("y")]
+            fn F() { }
+
+            [Order("z")]
+            enum E { A }
+
+            fn Main() { }
+            """, new DecoratorPlugin(), new TypeDecoratorPlugin());
+        Assert.Equal(["PIP0507", "PIP0507", "PIP0507"], result.Diagnostics.Select(d => d.Code));
+        Assert.Contains("only be used on a function or method with a body, not a class", result.Diagnostics[0].Message);
+        Assert.Contains("only be used on a class or a record, not a function", result.Diagnostics[1].Message);
+        Assert.Contains("not an enum", result.Diagnostics[2].Message);
+    }
+
     [Fact]
     public void Loading_a_missing_plugin_is_reported()
     {

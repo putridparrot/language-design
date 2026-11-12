@@ -18,6 +18,10 @@ public sealed class __PASCAL__Plugin : IPiperPlugin
             Description = "`repeat n { … }` runs the block `n` times.",
             Snippet = "repeat ${1:3} {\n\t$0\n}",
         },
+        // A plugin can also add decorators: attributes that rewrite the function they're on, at compile time. This one
+        // would make `[Hello] fn F() { … }` print "hello" before F's body (see "Decorators" in docs/plugins.md):
+        //
+        // new Decorator("Hello", d => d.WithPrologue([d.Template.Statement("Print(\"hello\");")])),
     ];
 
     // repeat = "repeat" expression block ;

@@ -74,6 +74,154 @@ public sealed partial class Parser
         }
     }
 
+    /// <summary>The plugin decorator <paramref name="attribute"/> names, if it names one: an unqualified name.</summary>
+    private (IPiperPlugin Plugin, Decorator Decorator)? DecoratorFor(AttributeSyntax attribute) =>
+        !_plugins.IsEmpty && attribute.Name.Parts is [var name] ? _plugins.Find<Decorator>(name.Text) : null;
+
+    /// <summary>
+    /// Applies the plugin decorators among <paramref name="function"/>'s attributes, nearest the function first, so the
+    /// first written wraps the rest. They're removed from its attributes, which keep the others. A decorator that throws
+    /// is reported and leaves the function as it was.
+    /// </summary>
+    private FunctionDeclarationSyntax Decorate(FunctionDeclarationSyntax function, bool isMethod)
+    {
+        if (_plugins.IsEmpty || function.Attributes.IsEmpty)
+            return function;
+        var decorators = function.Attributes.Select(attribute => (Attribute: attribute, Found: DecoratorFor(attribute))).ToList();
+        if (decorators.TrueForAll(d => d.Found is null))
+            return function;
+
+        var result = function with { Attributes = [.. decorators.Where(d => d.Found is null).Select(d => d.Attribute)] };
+        for (int i = decorators.Count - 1; i >= 0; i--)
+        {
+            if (decorators[i].Found is not var (plugin, decorator))
+                continue;
+            var attribute = decorators[i].Attribute;
+            var name = attribute.Name.Parts[0];
+            if (decorator.Function is not { } decorate)
+            {
+                ReportMisplaced(attribute, plugin, decorator, isMethod ? "a method" : "a function");
+                continue;
+            }
+            if (!result.HasBody)
+            {
+                ReportMisplaced(attribute, plugin, decorator, "one without a body");
+                continue;
+            }
+            var context = new DecoratorContext(plugin, attribute, result, isMethod, _diagnostics, FreshNameAt(attribute));
+            try
+            {
+                result = decorate(context);
+                _plugins.Record(plugin, new PluginExpansion(decorator, name, _source, [result]));
+            }
+            catch (Exception exception)
+            {
+                _diagnostics.ReportPluginFailed(attribute.Span, plugin.Name, decorator.Text, PluginLoader.Explain(exception));
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Declarations type decorators added beside the type they're on, such as an <c>extend</c> block with a record's new
+    /// methods, which <see cref="ParseCompilationUnit"/> adds after it.
+    /// </summary>
+    private readonly List<DeclarationSyntax> _pendingDeclarations = [];
+
+    /// <summary>
+    /// Applies the type decorators among a class's or record's attributes, nearest first, as for functions. Each returns
+    /// the type rewritten, which the next one gets, and any declarations to add beside it.
+    /// </summary>
+    private DeclarationSyntax DecorateType(DeclarationSyntax type)
+    {
+        var decorators = type.Attributes.Select(attribute => (Attribute: attribute, Found: DecoratorFor(attribute))).ToList();
+        if (decorators.TrueForAll(d => d.Found is null))
+            return type;
+
+        var result = type with { Attributes = [.. decorators.Where(d => d.Found is null).Select(d => d.Attribute)] };
+        for (int i = decorators.Count - 1; i >= 0; i--)
+        {
+            if (decorators[i].Found is not var (plugin, decorator))
+                continue;
+            var attribute = decorators[i].Attribute;
+            if (decorator.Type is not { } decorate)
+            {
+                ReportMisplaced(attribute, plugin, decorator, DescribeDeclaration(result));
+                continue;
+            }
+            var context = new TypeDecoratorContext(plugin, attribute, result, _diagnostics, FreshNameAt(attribute));
+            try
+            {
+                ImmutableArray<DeclarationSyntax> declarations = [.. decorate(context)];
+                var rewritten = declarations.FirstOrDefault(d => d.GetType() == type.GetType() && d.Name.Text == type.Name.Text)
+                    ?? throw new InvalidOperationException($"The decorator returned no {DescribeDeclaration(type)} '{type.Name.Text}'; it must return the type it's on, rewritten or not.");
+                _plugins.Record(plugin, new PluginExpansion(decorator, attribute.Name.Parts[0], _source, [.. declarations]));
+                result = rewritten;
+                _pendingDeclarations.AddRange(declarations.Where(d => !ReferenceEquals(d, rewritten)));
+            }
+            catch (Exception exception)
+            {
+                _diagnostics.ReportPluginFailed(attribute.Span, plugin.Name, decorator.Text, PluginLoader.Explain(exception));
+            }
+        }
+        return result;
+    }
+
+    /// <summary>Fresh names for code a decorator writes, placed at its attribute.</summary>
+    private Func<string, Token> FreshNameAt(AttributeSyntax attribute) =>
+        hint => new Token(TokenKind.Identifier, attribute.Span, $"__{hint}_{++_freshNames}") { IsGenerated = true };
+
+    /// <summary>Reports a decorator on <paramref name="what"/>, which it can't rewrite, saying what it can.</summary>
+    private void ReportMisplaced(AttributeSyntax attribute, IPiperPlugin plugin, Decorator decorator, string what)
+    {
+        var accepts = (decorator.Function, decorator.Type) switch
+        {
+            (not null, not null) => "a function or method with a body, a class or a record",
+            (not null, null) => "a function or method with a body",
+            (null, not null) => "a class or a record",
+            _ => "nothing: it has no handler",
+        };
+        _diagnostics.ReportDecoratorMisplaced(attribute.Span, plugin.Name, decorator.Text, accepts, what);
+    }
+
+    /// <summary>
+    /// Reports the plugin decorators among <paramref name="attributes"/>, on <paramref name="what"/>, which can't be
+    /// decorated, and returns the others.
+    /// </summary>
+    private ImmutableArray<AttributeSyntax> NoDecorators(ImmutableArray<AttributeSyntax> attributes, string what)
+    {
+        if (_plugins.IsEmpty || attributes.IsEmpty)
+            return attributes;
+        var kept = ImmutableArray.CreateBuilder<AttributeSyntax>();
+        foreach (var attribute in attributes)
+        {
+            if (DecoratorFor(attribute) is var (plugin, decorator))
+                ReportMisplaced(attribute, plugin, decorator, what);
+            else
+                kept.Add(attribute);
+        }
+        return kept.ToImmutable();
+    }
+
+    /// <summary>A declaration's decorators applied, or reported if it can't be decorated.</summary>
+    private DeclarationSyntax Decorate(DeclarationSyntax declaration) => declaration switch
+    {
+        FunctionDeclarationSyntax function => Decorate(function, isMethod: false),
+        _ when _plugins.IsEmpty || declaration.Attributes.IsEmpty => declaration,
+        ClassDeclarationSyntax or RecordDeclarationSyntax => DecorateType(declaration),
+        _ => declaration with { Attributes = NoDecorators(declaration.Attributes, DescribeDeclaration(declaration)) },
+    };
+
+    private static string DescribeDeclaration(DeclarationSyntax declaration) => declaration switch
+    {
+        RecordDeclarationSyntax => "a record",
+        ClassDeclarationSyntax => "a class",
+        EnumDeclarationSyntax => "an enum",
+        TraitDeclarationSyntax => "a trait",
+        TestDeclarationSyntax => "a test",
+        _ => "this declaration",
+    };
+
     /// <summary>
     /// Skips the rest of the construct that started at token <paramref name="start"/>: up to a `;` or the `}` closing
     /// its braces, counting any braces already read.

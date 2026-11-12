@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Highlighting for `not` and `and` in patterns, and for loop labels (`outer: for …`, `break outer;`).
+
 ## 1.0.0
 
 The first release, for Piper 1.0:

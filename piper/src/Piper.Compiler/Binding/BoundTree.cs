@@ -676,6 +676,35 @@ public sealed class BoundCollectionExpression(ImmutableArray<BoundExpression> el
     public bool HasSpread => Elements.Any(e => e is BoundSpreadElement);
 }
 
+/// <summary>
+/// <c>["a": 1, ...more]</c>: a <c>Dictionary&lt;K, V&gt;</c> (<see cref="Type"/>) made from <see cref="Elements"/>, each a
+/// <see cref="BoundDictionaryEntry"/> or a <see cref="BoundSpreadElement"/> of key-value pairs, in order; a later key
+/// replaces an earlier one.
+/// </summary>
+public sealed class BoundDictionaryExpression(ImmutableArray<BoundExpression> elements, TypeSymbol keyType, TypeSymbol valueType, TypeSymbol type)
+    : BoundExpression
+{
+    public ImmutableArray<BoundExpression> Elements { get; } = elements;
+
+    public TypeSymbol KeyType { get; } = keyType;
+
+    public TypeSymbol ValueType { get; } = valueType;
+
+    public override TypeSymbol Type { get; } = type;
+
+    public bool HasSpread => Elements.Any(e => e is BoundSpreadElement);
+}
+
+/// <summary><c>"a": 1</c> in a dictionary literal; only ever one of its <see cref="BoundDictionaryExpression.Elements"/>.</summary>
+public sealed class BoundDictionaryEntry(BoundExpression key, BoundExpression value) : BoundExpression
+{
+    public BoundExpression Key { get; } = key;
+
+    public BoundExpression Value { get; } = value;
+
+    public override TypeSymbol Type => TypeSymbol.Unit;
+}
+
 /// <summary><c>...items</c> in a collection literal (C#'s <c>..items</c>); <see cref="Type"/> is the sequence's.</summary>
 public sealed class BoundSpreadElement(BoundExpression source) : BoundExpression
 {

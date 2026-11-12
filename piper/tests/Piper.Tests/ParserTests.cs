@@ -99,6 +99,17 @@ public class ParserTests
     [InlineData("run { 1 }", "run(LambdaExpressionSyntax)")]
     [InlineData("xs.each { x => x }.count", "xs.each(LambdaExpressionSyntax).count")]
     [InlineData("a + f { 1 }", "(a + f(LambdaExpressionSyntax))")]
+    // Bitwise operators, at C#'s precedence: shifts below + and -, then & above ^ above | between == and &&.
+    [InlineData("1 + 2 << 3", "((1 + 2) << 3)")]
+    [InlineData("a >> b >> c", "((a >> b) >> c)")]
+    [InlineData("a << 1 < b", "((a << 1) < b)")]
+    [InlineData("a | b ^ c & d", "(a | (b ^ (c & d)))")]
+    [InlineData("a & b == c", "(a & (b == c))")]
+    [InlineData("a | b && c | d", "((a | b) && (c | d))")]
+    [InlineData("~a & -b", "((~a) & (-b))")]
+    [InlineData("(int)~x", "(cast (~x))")]
+    [InlineData("x ^ y[^1]", "(x ^ IndexExpressionSyntax)")]
+    [InlineData("x >> 2 |> f", "((x >> 2) |> f)")]
     public void Expressions_respect_precedence_and_associativity(string text, string expected)
     {
         var diagnostics = new DiagnosticBag();
@@ -502,6 +513,112 @@ public class ParserTests
             foreach (var descendant in children.SelectMany(Descendants))
                 yield return descendant;
         }
+    }
+
+    [Fact]
+    public void Right_shift_needs_no_space_and_nested_type_arguments_still_close()
+    {
+        var shift = Assert.IsType<BinaryExpressionSyntax>(Body(ParseClean("fn f() { x >> 2 }")).Trailing);
+        Assert.Equal(TokenKind.GreaterGreater, shift.Operator.Kind);
+        Assert.Equal(">>", shift.Operator.Text);
+
+        var assignment = Assert.IsType<AssignmentExpressionSyntax>(
+            Assert.IsType<ExpressionStatementSyntax>(Assert.Single(Body(ParseClean("fn f() { x >>= 2; }")).Statements)).Expression);
+        Assert.Equal(TokenKind.GreaterGreaterEquals, assignment.Operator.Kind);
+
+        ParseClean("fn f() { let xs = List<List<int>>(); let d: Dictionary<string, List<int>> = Dictionary<string, List<int>>(); }");
+        Assert.NotEmpty(Parse("fn f() { x > > 2 }", out var diagnostics).Declarations);
+        Assert.NotEmpty(diagnostics);
+    }
+
+    [Theory]
+    [InlineData("x is not null", "Not")]
+    [InlineData("x is >= 1 and <= 9", "And")]
+    [InlineData("x is not 1 and not 2 | 3", "Or")]
+    [InlineData("x is (1 | 2)", "Or")]
+    [InlineData("x is not (1 | 2)", "Not")]
+    [InlineData("x is (_, not null)", "Tuple")]
+    [InlineData("x is not { Length: 0 }", "Not")]
+    [InlineData("x is not", "Identifier")]
+    public void Not_and_and_patterns_bind_as_in_csharp(string text, string pattern)
+    {
+        var diagnostics = new DiagnosticBag();
+        var expression = Assert.IsType<IsExpressionSyntax>(Parser.ParseExpression(new SourceText(text), diagnostics));
+        Assert.Empty(diagnostics);
+        Assert.Equal(pattern, expression.Pattern.GetType().Name.Replace("PatternSyntax", ""));
+    }
+
+    [Fact]
+    public void And_binds_tighter_than_bar_and_not_tighter_than_and()
+    {
+        var diagnostics = new DiagnosticBag();
+        var pattern = Assert.IsType<IsExpressionSyntax>(Parser.ParseExpression(new SourceText("x is not 1 and 2 | 3"), diagnostics)).Pattern;
+        Assert.Empty(diagnostics);
+        var or = Assert.IsType<OrPatternSyntax>(pattern);
+        var and = Assert.IsType<AndPatternSyntax>(or.Alternatives[0]);
+        Assert.IsType<NotPatternSyntax>(and.Patterns[0]);
+        Assert.IsType<LiteralPatternSyntax>(and.Patterns[1]);
+    }
+
+    [Fact]
+    public void Not_is_still_a_name_where_no_pattern_follows()
+    {
+        var match = Assert.IsType<MatchExpressionSyntax>(Body(ParseClean("fn f() { match x { not => 1 } }")).Trailing);
+        Assert.IsType<IdentifierPatternSyntax>(Assert.Single(match.Arms).Pattern);
+    }
+
+    [Fact]
+    public void Loops_can_be_labelled_for_break_and_continue()
+    {
+        var body = Body(ParseClean("""
+            fn f() {
+                outer: for x in xs {
+                    inner: while true {
+                        if x { continue outer; }
+                        match x { 1 => break inner, _ => break, }
+                    }
+                }
+                items: await for y in ys { break items; }
+            }
+            """));
+        var outer = Assert.IsType<ForStatementSyntax>(body.Statements[0]);
+        Assert.Equal("outer", outer.Label?.Text);
+        var inner = Assert.IsType<WhileStatementSyntax>(Assert.Single(outer.Body.Statements));
+        Assert.Equal("inner", inner.Label?.Text);
+        var jumps = Descendants(inner).OfType<StatementSyntax>().ToList();
+        Assert.Equal("outer", jumps.OfType<ContinueStatementSyntax>().Single().Label?.Text);
+        Assert.Equal(["inner", null], jumps.OfType<BreakStatementSyntax>().Select(b => b.Label?.Text));
+        var items = Assert.IsType<ForStatementSyntax>(body.Statements[1]);
+        Assert.Equal(("items", "await"), (items.Label?.Text, items.Await?.Text));
+    }
+
+    [Fact]
+    public void Only_loops_can_be_labelled()
+    {
+        Parse("fn f() { done: x += 1; }", out var diagnostics);
+        Assert.Equal("PIP0112", Assert.Single(diagnostics).Code);
+    }
+
+    [Fact]
+    public void Collection_literals_can_have_key_value_entries()
+    {
+        var diagnostics = new DiagnosticBag();
+        var literal = Assert.IsType<CollectionExpressionSyntax>(
+            Parser.ParseExpression(new SourceText("[\"a\": 1, ...more, k: c ? x : y, f(z): [1]]"), diagnostics));
+        Assert.Empty(diagnostics);
+        Assert.Equal(["DictionaryEntry", "SpreadElement", "DictionaryEntry", "DictionaryEntry"],
+            literal.Elements.Select(e => e.GetType().Name.Replace("Syntax", "")));
+        var ternary = Assert.IsType<DictionaryEntrySyntax>(literal.Elements[2]);
+        Assert.Equal(("k", "if"), (Show(ternary.Key), Show(ternary.Value)));
+    }
+
+    [Fact]
+    public void Records_can_be_structs()
+    {
+        var unit = ParseClean("record struct Point(x: int, y: int); record Line(a: Point, b: Point);");
+        var point = Assert.IsType<RecordDeclarationSyntax>(unit.Declarations[0]);
+        Assert.Equal(("Point", "struct"), (point.Name.Text, point.Struct?.Text));
+        Assert.Null(Assert.IsType<RecordDeclarationSyntax>(unit.Declarations[1]).Struct);
     }
 
     [Fact]

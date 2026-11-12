@@ -6,6 +6,7 @@ public enum BoundUnaryOperatorKind
 {
     Negate,
     LogicalNot,
+    BitwiseComplement,
 }
 
 public enum BoundBinaryOperatorKind
@@ -23,10 +24,21 @@ public enum BoundBinaryOperatorKind
     GreaterOrEqual,
     LogicalAnd,
     LogicalOr,
+    BitwiseAnd,
+    BitwiseOr,
+    ExclusiveOr,
+    LeftShift,
+    RightShift,
 }
 
-/// <summary>The result of resolving an operator: operands are converted to <see cref="OperandType"/> first.</summary>
-public sealed record BinaryOperatorResolution(BoundBinaryOperatorKind Kind, TypeSymbol OperandType, TypeSymbol ResultType);
+/// <summary>
+/// The result of resolving an operator: operands are converted to <see cref="OperandType"/> first, except a shift's
+/// count, which is converted to <see cref="RightOperandType"/>.
+/// </summary>
+public sealed record BinaryOperatorResolution(BoundBinaryOperatorKind Kind, TypeSymbol OperandType, TypeSymbol ResultType)
+{
+    public TypeSymbol RightOperandType { get; init; } = OperandType;
+}
 
 public static class Operators
 {
@@ -34,6 +46,7 @@ public static class Operators
     {
         TokenKind.Minus => BoundUnaryOperatorKind.Negate,
         TokenKind.Bang => BoundUnaryOperatorKind.LogicalNot,
+        TokenKind.Tilde => BoundUnaryOperatorKind.BitwiseComplement,
         _ => null,
     };
 
@@ -52,6 +65,11 @@ public static class Operators
         TokenKind.GreaterEquals => BoundBinaryOperatorKind.GreaterOrEqual,
         TokenKind.AmpersandAmpersand => BoundBinaryOperatorKind.LogicalAnd,
         TokenKind.PipePipe => BoundBinaryOperatorKind.LogicalOr,
+        TokenKind.Ampersand => BoundBinaryOperatorKind.BitwiseAnd,
+        TokenKind.Pipe => BoundBinaryOperatorKind.BitwiseOr,
+        TokenKind.Caret => BoundBinaryOperatorKind.ExclusiveOr,
+        TokenKind.LessLess => BoundBinaryOperatorKind.LeftShift,
+        TokenKind.GreaterGreater => BoundBinaryOperatorKind.RightShift,
         _ => null,
     };
 
@@ -63,8 +81,17 @@ public static class Operators
         BoundUnaryOperatorKind.Negate when operand == TypeSymbol.ULong => null,
         BoundUnaryOperatorKind.Negate when IsArithmetic(operand) => Promote(operand, operand),
         BoundUnaryOperatorKind.LogicalNot when operand == TypeSymbol.Bool => TypeSymbol.Bool,
+        // `~b` on a Byte is an Int, as in C#; a .NET enum stays itself.
+        BoundUnaryOperatorKind.BitwiseComplement when IsBitwise(operand) => Promote(operand, operand),
+        BoundUnaryOperatorKind.BitwiseComplement when IsClrEnum(operand) => operand,
         _ => null,
     };
+
+    /// <summary>The integer types and Char: what <c>&amp;</c>, <c>|</c>, <c>^</c>, <c>~</c> and the shifts work on (a Char as its code).</summary>
+    private static bool IsBitwise(TypeSymbol type) => type.IsIntegral || type == TypeSymbol.Char;
+
+    /// <summary>A .NET enum, whose values combine with <c>&amp;</c>, <c>|</c>, <c>^</c> and <c>~</c> as flags, as in C#.</summary>
+    private static bool IsClrEnum(TypeSymbol type) => ClrTypes.ToClr(type) is { IsEnum: true };
 
     public static BinaryOperatorResolution? ResolveBinary(BoundBinaryOperatorKind kind, TypeSymbol left, TypeSymbol right)
     {
@@ -106,6 +133,21 @@ public static class Operators
             case BoundBinaryOperatorKind.LogicalAnd or BoundBinaryOperatorKind.LogicalOr
                 when left == TypeSymbol.Bool && right == TypeSymbol.Bool:
                 return new(kind, TypeSymbol.Bool, TypeSymbol.Bool);
+
+            // As in C#: on Bools, both sides are always evaluated; on integers, the operands are promoted as for `+`.
+            case BoundBinaryOperatorKind.BitwiseAnd or BoundBinaryOperatorKind.BitwiseOr or BoundBinaryOperatorKind.ExclusiveOr:
+                if (left == TypeSymbol.Bool && right == TypeSymbol.Bool)
+                    return new(kind, TypeSymbol.Bool, TypeSymbol.Bool);
+                if (IsBitwise(left) && IsBitwise(right) && numeric is not null)
+                    return new(kind, numeric, numeric);
+                if (left == right && IsClrEnum(left))
+                    return new(kind, left, left);
+                return null;
+
+            // The count is an Int (or converts to one), and the value is promoted on its own: `b << 2` on a Byte is an Int.
+            case BoundBinaryOperatorKind.LeftShift or BoundBinaryOperatorKind.RightShift
+                when IsBitwise(left) && IsImplicitlyConvertible(right, TypeSymbol.Int) && Promote(left, left) is { } shifted:
+                return new(kind, shifted, shifted) { RightOperandType = TypeSymbol.Int };
 
             default:
                 return null;
@@ -199,6 +241,11 @@ public static class Operators
         BoundBinaryOperatorKind.GreaterOrEqual => ">=",
         BoundBinaryOperatorKind.LogicalAnd => "&&",
         BoundBinaryOperatorKind.LogicalOr => "||",
+        BoundBinaryOperatorKind.BitwiseAnd => "&",
+        BoundBinaryOperatorKind.BitwiseOr => "|",
+        BoundBinaryOperatorKind.ExclusiveOr => "^",
+        BoundBinaryOperatorKind.LeftShift => "<<",
+        BoundBinaryOperatorKind.RightShift => ">>",
         _ => throw new ArgumentOutOfRangeException(nameof(kind)),
     };
 }

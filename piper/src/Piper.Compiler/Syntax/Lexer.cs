@@ -90,6 +90,7 @@ public sealed class Lexer
             case '?':
                 return Peek(1) switch
                 {
+                    '?' when Peek(2) == '=' => Punctuation(TokenKind.QuestionQuestionEquals, 3),
                     '?' => Punctuation(TokenKind.QuestionQuestion, 2),
                     '.' => Punctuation(TokenKind.QuestionDot, 2),
                     _ => Punctuation(TokenKind.Question, 1),
@@ -118,18 +119,33 @@ public sealed class Lexer
                     _ => Punctuation(TokenKind.Equals, 1),
                 };
             case '!': return Peek(1) == '=' ? Punctuation(TokenKind.BangEquals, 2) : Punctuation(TokenKind.Bang, 1);
-            case '^': return Punctuation(TokenKind.Caret, 1);
-            case '<': return Peek(1) == '=' ? Punctuation(TokenKind.LessEquals, 2) : Punctuation(TokenKind.Less, 1);
+            case '^': return Peek(1) == '=' ? Punctuation(TokenKind.CaretEquals, 2) : Punctuation(TokenKind.Caret, 1);
+            case '~': return Punctuation(TokenKind.Tilde, 1);
+            case '<':
+                return Peek(1) switch
+                {
+                    '<' when Peek(2) == '=' => Punctuation(TokenKind.LessLessEquals, 3),
+                    '<' => Punctuation(TokenKind.LessLess, 2),
+                    '=' => Punctuation(TokenKind.LessEquals, 2),
+                    _ => Punctuation(TokenKind.Less, 1),
+                };
+            // `>>` and `>>=` are left to the parser, so `List<List<int>>` still closes both lists.
             case '>': return Peek(1) == '=' ? Punctuation(TokenKind.GreaterEquals, 2) : Punctuation(TokenKind.Greater, 1);
             case '+': return Peek(1) == '=' ? Punctuation(TokenKind.PlusEquals, 2) : Punctuation(TokenKind.Plus, 1);
             case '*': return Peek(1) == '=' ? Punctuation(TokenKind.StarEquals, 2) : Punctuation(TokenKind.Star, 1);
             case '/': return Peek(1) == '=' ? Punctuation(TokenKind.SlashEquals, 2) : Punctuation(TokenKind.Slash, 1);
             case '%': return Peek(1) == '=' ? Punctuation(TokenKind.PercentEquals, 2) : Punctuation(TokenKind.Percent, 1);
-            case '&' when Peek(1) == '&': return Punctuation(TokenKind.AmpersandAmpersand, 2);
+            case '&': return Peek(1) switch
+            {
+                '&' => Punctuation(TokenKind.AmpersandAmpersand, 2),
+                '=' => Punctuation(TokenKind.AmpersandEquals, 2),
+                _ => Punctuation(TokenKind.Ampersand, 1),
+            };
             case '|': return Peek(1) switch
             {
                 '|' => Punctuation(TokenKind.PipePipe, 2),
                 '>' => Punctuation(TokenKind.PipeGreater, 2),
+                '=' => Punctuation(TokenKind.PipeEquals, 2),
                 _ => Punctuation(TokenKind.Pipe, 1),
             };
         }

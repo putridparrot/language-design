@@ -84,8 +84,40 @@ public sealed partial class Binder
     /// <summary>True while binding a bound, a trait's parents or an extend's traits, where a trait with static methods may appear.</summary>
     private bool _bindingBound;
 
-    /// <summary>For each loop being bound, innermost last: whether a `break` leaves it.</summary>
-    private readonly Stack<bool> _loopBreaks = new();
+    /// <summary>
+    /// The loops being bound, innermost last. Only the last <see cref="_loopDepth"/> are in reach: a lambda's or local
+    /// function's body can't leave a loop around it.
+    /// </summary>
+    private readonly List<LoopFrame> _loops = [];
+
+    /// <summary>The label after each labelled loop that `break label;` leaves from a loop inside it.</summary>
+    private readonly Dictionary<Token, BoundLabel> _loopEnds = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>Whether a value of <paramref name="type"/> holds a <paramref name="record"/> inline, as .NET lays structs out.</summary>
+    private static bool HoldsInline(TypeSymbol type, RecordSymbol record, HashSet<RecordSymbol> seen) => type switch
+    {
+        _ when type.OriginalDefinition == record => true,
+        TupleTypeSymbol tuple => tuple.ElementTypes.Any(e => HoldsInline(e, record, seen)),
+        _ when type.IsOption || type.IsResult => type.TypeArguments.Any(a => HoldsInline(a, record, seen)),
+        _ when type.OriginalDefinition is RecordSymbol { IsStruct: true } other && seen.Add(other) =>
+            other.Fields.Any(f => HoldsInline(TypeSubstitution.FieldType(f, type), record, seen)),
+        _ => false,
+    };
+
+    /// <summary>
+    /// A loop being bound: its label, whether a `break` leaves it, and the labels that `break label;` and
+    /// `continue label;` from a loop inside it jump to (C# has no labelled break or continue).
+    /// </summary>
+    private sealed class LoopFrame(Token? label)
+    {
+        public Token? Label { get; } = label;
+
+        public bool Breaks { get; set; }
+
+        public BoundLabel? BreakLabel { get; set; }
+
+        public BoundLabel? ContinueLabel { get; set; }
+    }
 
     /// <summary>
     /// <paramref name="Inferred"/> is set while binding a lambda whose return type isn't known yet: returned values
@@ -273,6 +305,15 @@ public sealed partial class Binder
                 else
                     BindVariants((EnumSymbol)definition);
             });
+        }
+
+        // A record struct holds its fields inline, so it can't hold itself, directly or through an optional, a tuple or another record struct.
+        foreach (var record in types.OfType<RecordSymbol>().Where(r => r.IsStruct))
+        {
+            if (record.Fields.FirstOrDefault(f => HoldsInline(f.Type, record, [])) is not { } field)
+                continue;
+            InFile(FileOf(record));
+            _diagnostics.ReportRecursiveRecordStruct(record.Declaration.Name.Span, record.Name, field.Name);
         }
 
         var methods = new List<FunctionInfo>();
@@ -1878,16 +1919,16 @@ public sealed partial class Binder
         LetElseStatementSyntax s => BindLetElse(s),
         DeconstructionDeclarationSyntax s => BindDeconstructionDeclaration(s),
         ExpressionStatementSyntax s => new BoundExpressionStatement(BindExpression(s.Expression)),
-        WhileStatementSyntax s => BindWhile(s),
-        ForStatementSyntax s => BindFor(s),
+        WhileStatementSyntax s => AfterLoop(s.Label, BindWhile(s)),
+        ForStatementSyntax s => AfterLoop(s.Label, BindFor(s)),
         ReturnStatementSyntax s => BindReturn(s),
         TryStatementSyntax s => BindTryCatch(s),
         YieldStatementSyntax s => BindYield(s),
         UsingStatementSyntax s => BindUsing(s),
         LockStatementSyntax s => BindLock(s),
         DeferStatementSyntax s => BindDefer(s),
-        BreakStatementSyntax s => BindLoopJump(s.Keyword, new BoundBreakStatement()),
-        ContinueStatementSyntax s => BindLoopJump(s.Keyword, new BoundContinueStatement()),
+        BreakStatementSyntax s => BindLoopJump(s.Keyword, s.Label),
+        ContinueStatementSyntax s => BindLoopJump(s.Keyword, s.Label),
         LocalFunctionStatementSyntax s => BindLocalFunction(s),
         _ => throw new InvalidOperationException($"Unexpected statement {syntax.GetType().Name}"),
     };
@@ -2042,23 +2083,44 @@ public sealed partial class Binder
         var outer = _scope;
         _scope = new Scope(outer);
         var condition = BindCondition(syntax.Condition, allowPatternBindings: true);
-        var body = BindLoopBody(syntax.Body, out bool breaks);
+        var body = BindLoopBody(syntax.Body, syntax.Label, out bool breaks);
         _scope = outer;
         // `while true` with no `break` never finishes, so code after it is unreachable, as in C#.
         bool infinite = condition is BoundLiteralExpression { Value: true } && !breaks;
         return new BoundWhileStatement(condition, new BoundExpressionStatement(body)) { IsInfinite = infinite };
     }
 
-    /// <summary>Binds a loop's body, noting whether a `break` leaves this loop (rather than an inner one).</summary>
-    private BoundBlockExpression BindLoopBody(BlockExpressionSyntax body, out bool breaks)
+    /// <summary>
+    /// Binds a loop's body, noting whether a `break` leaves this loop (rather than an inner one). When a loop inside it
+    /// says `continue label;`, the body ends with the label that jumps to, so the loop goes round again.
+    /// </summary>
+    private BoundBlockExpression BindLoopBody(BlockExpressionSyntax body, Token? label, out bool breaks)
     {
+        if (label is not null && ReachableLoops().Any(l => l.Label?.Text == label.Text))
+            _diagnostics.ReportDuplicateLoopLabel(label.Span, label.Text);
+
+        var frame = new LoopFrame(label);
         _loopDepth++;
-        _loopBreaks.Push(false);
+        _loops.Add(frame);
         var bound = BindBlock(body);
-        breaks = _loopBreaks.Pop();
+        _loops.RemoveAt(_loops.Count - 1);
         _loopDepth--;
-        return bound;
+
+        breaks = frame.Breaks;
+        if (frame.BreakLabel is { } end)
+            _loopEnds[label!] = end;
+        if (frame.ContinueLabel is not { } next)
+            return bound;
+        var statements = bound.Trailing is null ? bound.Statements : bound.Statements.Add(new BoundExpressionStatement(bound.Trailing));
+        return new BoundBlockExpression(statements.Add(new BoundLabelStatement(next)), null, TypeSymbol.Unit);
     }
+
+    /// <summary>The loops a `break` or `continue` here can name, innermost last.</summary>
+    private IEnumerable<LoopFrame> ReachableLoops() => _loops.Skip(_loops.Count - _loopDepth);
+
+    /// <summary>A labelled loop that `break label;` leaves from a loop inside it is followed by the label that jumps to.</summary>
+    private BoundStatement AfterLoop(Token? label, BoundStatement loop) =>
+        label is not null && _loopEnds.Remove(label, out var end) ? new BoundBlockStatement([loop, new BoundLabelStatement(end)]) : loop;
 
     private BoundStatement BindFor(ForStatementSyntax syntax)
     {
@@ -2074,7 +2136,7 @@ public sealed partial class Binder
             if (open.End is not null)
                 BindExpression(open.End);
             _diagnostics.ReportForRangeNeedsBothEnds(open.Span);
-            BindLoopBody(syntax.Body, out _);
+            BindLoopBody(syntax.Body, syntax.Label, out _);
             return new BoundExpressionStatement(new BoundErrorExpression());
         }
         if (syntax.Range is RangeExpressionSyntax { Start: { } start, End: { } end } range && syntax.Deconstruction is null && syntax.Await is null)
@@ -2097,7 +2159,7 @@ public sealed partial class Binder
         if (!syntax.Variable.IsMissing)
             _scope.TryDeclare(variable);
 
-        var body = BindLoopBody(syntax.Body, out bool breaks);
+        var body = BindLoopBody(syntax.Body, syntax.Label, out bool breaks);
         _scope = outer;
 
         return new BoundForStatement(variable, lower, upper, inclusive, new BoundExpressionStatement(body));
@@ -2149,17 +2211,37 @@ public sealed partial class Binder
         return new BoundReturnStatement(value);
     }
 
-    private BoundStatement BindLoopJump(Token keyword, BoundStatement statement)
+    /// <summary>
+    /// `break` or `continue`, of the innermost loop or (with a label) of the loop around it so labelled. Leaving an outer
+    /// loop is a `goto` to a label after it, and going round one again a `goto` to a label at the end of its body.
+    /// </summary>
+    private BoundStatement BindLoopJump(Token keyword, Token? label)
     {
-        if (statement is BoundBreakStatement && _loopDepth > 0 && _loopBreaks.Count > 0)
-        {
-            _loopBreaks.Pop();
-            _loopBreaks.Push(true);
-        }
+        bool isBreak = keyword.Kind == TokenKind.BreakKeyword;
+        BoundStatement plain = isBreak ? new BoundBreakStatement() : new BoundContinueStatement();
         if (_loopDepth == 0)
+        {
             _diagnostics.ReportOutsideLoop(keyword.Span, keyword.Text);
-        else if (_finallyLoopDepth >= 0 && _loopDepth <= _finallyLoopDepth)
+            return plain;
+        }
+
+        var loops = ReachableLoops().ToList();
+        int depth = label is null ? loops.Count : loops.FindLastIndex(l => l.Label?.Text == label.Text) + 1;
+        if (depth == 0)
+        {
+            _diagnostics.ReportUndefinedLoopLabel(label!.Span, keyword.Text, label.Text);
+            return plain;
+        }
+        if (_finallyLoopDepth >= 0 && depth <= _finallyLoopDepth)
             _diagnostics.ReportJumpOutOfFinally(keyword.Span, keyword.Text);
-        return statement;
+
+        var target = loops[depth - 1];
+        if (isBreak)
+            target.Breaks = true;
+        if (depth == loops.Count)
+            return plain;
+        return new BoundGotoStatement(isBreak
+            ? target.BreakLabel ??= new BoundLabel($"{label!.Text}_break")
+            : target.ContinueLabel ??= new BoundLabel($"{label!.Text}_continue"));
     }
 }

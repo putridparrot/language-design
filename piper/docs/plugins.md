@@ -20,7 +20,7 @@ A block after a call is the call's last argument, as a lambda. This is the same 
 
 ```piper
 Repeat(3) { i =>              // Repeat(3, i => { … })
-    Print("tick {i}");
+    Print($"tick {i}");
 }
 
 Guarded {                     // Guarded(() => { … }): no parentheses when the closure is the only argument
@@ -65,7 +65,7 @@ syntax**, which then goes through the binder, lowering and C# emitter like anyth
 ### Using a plugin
 
 List the plugin in the program folder's `piper.json`. The plugins in this repository's [plugins](../plugins) folder
-come with piper (in a `plugins` folder beside it), and are named: `actors`, `args`, `remote-actors`, `parallel`,
+come with piper (in a `plugins` folder beside it), and are named: `actors`, `args`, `aspects`, `remote-actors`, `parallel`,
 `services`, `state-machines` and `web`. Any other is given as the path of its assembly, relative to the folder:
 
 ```json
@@ -230,6 +230,70 @@ public sealed class ParallelPlugin : IPiperPlugin
 
   Completion offers a declaration keyword at the top level, and a statement keyword inside a declaration.
 
+#### Decorators
+
+A `Decorator` is an attribute that a plugin handles: `[Retry(3)] fn Fetch() { … }`. The parser hands the function or
+method it's on to the plugin, which returns the function rewritten. This is how a plugin adds a cross-cutting concern,
+such as tracing, timing, retrying or authorization, to code that's already written.
+
+```csharp
+new Decorator("Timed", d =>
+{
+    var stopwatch = d.FreshName("stopwatch");
+    return d.WithPrologue(d.Template.Statements("""
+        let $stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        defer System.Console.Error.WriteLine($stopwatch.Elapsed);
+        """, ("stopwatch", stopwatch)));
+})
+```
+
+- **Compile time only:** a decorator is code generation, not reflection. The rewritten function is ordinary Piper that's
+  type-checked as usual, and the attribute itself is removed, so it never reaches C#. At run time there are no
+  proxies, no weaving and no attribute lookups, only the code the decorator wrote, which `piper emit` shows.
+- **What a decorator gets:** a `DecoratorContext`:
+  - The function (`Function`, `Name`, `Body`, `ReturnType`, `ReturnsUnit`, `IsAsync`, `IsIterator`, `IsMethod`).
+  - The attribute and its `Arguments`, as expressions to put in the code it writes.
+  - `Template` (whose syntax is placed at the attribute), `FreshName` and `Report`.
+- **Rewriting:** `d.WithPrologue(statements)` runs statements before the body. With a `defer` among them, it wraps
+  the body as `finally` would, so it also works in async functions and iterators. `d.WithBody(block)` replaces the
+  body. Either way the function keeps its name, parameters, other attributes and `requires` clauses. Preconditions
+  are still checked first, before anything a decorator adds.
+- **Several on one function** apply nearest first, so the first one written is outermost:
+  `[Trace] [Retry(3)] fn F()` traces one call, with its retries inside.
+- **Where they go:** a decorator given a function handler goes on functions and methods with a body (of records, enums,
+  classes and `extend` blocks). One given a `Type` handler goes on classes and records (see below). Anywhere else, such
+  as a field, a parameter, an enum or a trait's required method, is error PIP0507, which says where it can go.
+- **Names:** a decorator's name is unqualified, and is shared with keywords: a decorator and a keyword can't have the
+  same name (PIP0502). An attribute that isn't a loaded plugin's decorator is an ordinary .NET attribute.
+- **Analysis:** each use is an expansion, whose `KeywordToken` is the attribute's name and whose `Result` is what it
+  returned. That's the very syntax that gets bound, so an analysis finds the symbols by reference.
+- **Failures:** a decorator that throws is reported (PIP0504), and what it was on is left as it was.
+
+##### Decorating classes and records
+
+A decorator with a `Type` handler rewrites a class or record, as a C# source generator would. It can add members,
+bases and declarations beside the type. One name can have both handlers: `[Trace]` on a function traces it, and on a
+class traces each of its methods.
+
+```csharp
+new Decorator("Trace", Trace)                           // on functions and methods
+{
+    Type = d => [d.DecorateMethods(Trace)],             // on a class: each method, as if each had the attribute
+}
+```
+
+- **What it gets:** a `TypeDecoratorContext`:
+  - `Declaration`, and `Class` or `Record`: the type as nearer decorators left it, its methods' own decorators already
+    applied.
+  - `Attribute`, `Arguments`, `Template`, `FreshName` and `Report`, as for functions.
+- **Writing members:** `d.ClassMembers("…", holes)` reads members written as in a class's body, returning its fields
+  (properties included), methods and events. `d.WithMembers(fields, methods, events)` adds them, and `d.WithBase(type)`
+  adds a trait or interface. To replace or remove members, rewrite the class with `with`.
+- **What it returns:** the type, rewritten or not, and any declarations to add beside it. A record's methods go in an
+  `extend` block, so a decorator adds methods to a record by returning one. Returning no version of the type is a bug
+  in the plugin (PIP0504).
+- **Several on one type** apply nearest first, as on functions.
+
 #### Starting a plugin with `piper plugin new`
 
 ```text
@@ -295,6 +359,7 @@ The actors plugin uses this to warn about messages that carry something mutable.
 | PIP0504 | A plugin threw while reading its construct. |
 | PIP0505 | A warning a plugin's analysis found. |
 | PIP0506 | A plugin threw while analyzing the program. |
+| PIP0507 | A decorator is on something other than a function or method with a body. |
 
 Loading errors are reported against `piper.json`, and in the editor they appear on that file.
 
@@ -342,6 +407,87 @@ Only the statements that await become async tasks, so Piper doesn't warn about a
 
 The same could be a library function with a trailing closure taking a list of actions. The plugin's benefit is that
 each statement is a task, with no lambdas to write.
+
+### `aspects` (decorators: `[Trace]`, `[Timed]`, `[Retry]` and `[Notify]`)
+
+[Piper.Plugins.Aspects](../plugins/Piper.Plugins.Aspects/AspectsPlugin.cs) adds four [decorators](#decorators).
+`[Trace]`, `[Timed]` and `[Retry]` go on functions and methods; `[Trace]` also goes on a class, tracing each of its
+methods. `[Notify]` goes on classes:
+
+```piper
+[Trace]                       // writes "→ Fetch(url = …)" and "← Fetch" to standard error
+[Retry(3, 100)]               // up to 3 attempts, 100 ms apart
+fn Fetch(url: string) => string requires url != "" { … }
+
+[Timed(Console.Out)]          // writes "Report took 12.3 ms", here to standard output
+fn Report() { … }
+```
+
+- **`[Trace]`** writes each call, with its arguments, and each return. **`[Timed]`** writes how long each call took.
+  Both write to standard error, or to the `TextWriter` given as an argument. Each is a statement or two and a `defer`
+  before the body, so they work on async functions and iterators too.
+- **`[Retry(times)]`** and **`[Retry(times, delayMs)]`** run the body again when it throws, up to `times` attempts in
+  all. The last attempt's exception escapes. In an async function the delay is awaited. Preconditions are checked
+  once, before the first attempt, so a broken one isn't retried. An iterator can't be retried, as it runs only when
+  it's read.
+
+`[Retry(3)]` on `fn Load() => string { … }` becomes:
+
+```piper
+fn Load() => string {
+    fn __attempt_1() => string { … }          // the body, whose `return`s still return its value
+    mut __tries_2 = 1;
+    while __tries_2 < 3 {
+        try { return __attempt_1(); } catch (_) { __tries_2 += 1; }
+    }
+    return __attempt_1();                     // the last attempt, whose exception escapes
+}
+```
+
+**`[Notify]`** makes a class implement `INotifyPropertyChanged`, which WPF and Avalonia data binding use. This is
+what C# gets from a source generator:
+
+```piper
+[Notify]
+class Person(first: string, last: string) {
+    prop First: string { get; set; } = first;
+    prop Last: string { get; private set; } = last;
+    public mut age: int = 0;
+    prop FullName => string = $"{First} {Last}";
+}
+```
+
+- **What's notified:** each settable instance property written as a field is (`prop P: T { get; set; } = …`, with a
+  `private` or `protected set` too), and each `public mut` field. Setting one to a different value raises
+  `PropertyChanged` with its name. Setting it to the same value raises nothing.
+- **Computed properties:** a getter-only property that uses a notified property, directly (`First`, `this.First`) or
+  through another computed property, is raised too when that property changes. Here, setting `First` raises `First`
+  and `FullName`.
+- **Left alone:** `init` properties (set only while the object is made), statics, and `virtual`, `override` and
+  `abstract` properties.
+- **What it needs:** each notified property needs a type and an initial value, so its setter can be written and its
+  value kept in a field. A missing one is an error saying what to add.
+- **What it adds:** the `INotifyPropertyChanged` base, the `PropertyChanged` event, and
+  `protected fn OnPropertyChanged(name: string)`, which raises it. Each is added only if the class doesn't already
+  have it, and a property's setter can't be written by hand while the decorator writes it, so call
+  `OnPropertyChanged` from a method to raise one yourself.
+- **On a record** it's an error: a record can't change.
+
+`First` becomes a field and a property whose setter raises the changes:
+
+```piper
+mut __first_1: string = first;
+prop First => string {
+    get = __first_1;
+    set {
+        if __first_1 != value {
+            __first_1 = value;
+            OnPropertyChanged("First");
+            OnPropertyChanged("FullName");
+        }
+    }
+}
+```
 
 ### `services` and `endpoints` (dependency injection and web APIs)
 
@@ -395,8 +541,8 @@ A program calls them as `AppServices(builder.Services)` and `Api(app)`.
 - **Packages and frameworks:** the services plugin lists the `Microsoft.Extensions.DependencyInjection` package, and
   the web plugin the `Microsoft.AspNetCore.App` framework, so a program needs only `"plugins"` in its piper.json. A web
   program gets dependency injection from ASP.NET Core, whose newer version wins over the package's.
-- **Routes** are written as ASP.NET Core documents them. In plain Piper `{id}` in a string is interpolation, so a
-  handwritten call needs `"/users/\{id}"`. The plugin rebuilds the route from the token as written.
+- **Routes** are written as ASP.NET Core documents them, `"/users/{id}"`: as in C#, only a `$"…"` string
+  interpolates, so a plain string's braces are the route's own.
 - **Piper's types in requests and responses:**
   - An optional handler parameter, `(name: string?, page: int?)`, is None when the request leaves it out, rather than a
     400. (C# gets it as `Option<string>?`, which ASP.NET Core treats as optional, and parses with `Option`'s `TryParse`.)

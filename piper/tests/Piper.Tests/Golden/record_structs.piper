@@ -1,0 +1,58 @@
+using System.Collections.Generic;
+using System.Text.Json;
+
+// Record structs: value types, copied rather than shared, with what records have.
+
+trait Shape { fn Area() => double; prop Label => string = "shape"; }
+
+record struct Vec(x: double, y: double);
+extend Vec {
+    operator +(other: Vec) => Vec = Vec(this.x + other.x, this.y + other.y);
+    fn Length() => double = System.Math.Sqrt(this.x * this.x + this.y * this.y);
+}
+
+record struct Size(w: double, h: double) requires w >= 0.0, h >= 0.0;
+extend Size: Shape { fn Area() => double = this.w * this.h; }
+
+record struct Pair<A, B>(first: A, second: B);
+
+record struct Version(major: int, minor: int);
+extend Version: System.IComparable<Version> {
+    fn CompareTo(other: Version) => int = if this.major != other.major { this.major - other.major } else { this.minor - other.minor };
+}
+
+fn Total<T: Shape>(items: List<T>) => double {
+    mut sum = 0.0;
+    for item in items { sum += item.Area(); }
+    sum
+}
+
+fn Main() {
+    let a = Vec(1.0, 2.0);
+    let b = { ...a, y: 6.0 };
+    Print(a + b);
+    Print((a + b).Length());
+    Print(a == Vec(1.0, 2.0));
+    let points = Vec[3];
+    Print(points[0]);
+    let s: Shape = Size(2.0, 3.0);
+    Print($"{s.Area()} {s.Label}");
+    Print(Total([Size(1.0, 1.0), Size(2.0, 2.0)]));
+    match b { Vec(1.0, y) => Print($"y is {y}"), _ => Print("other") }
+    let maybe: Vec? = null;
+    Print(maybe ?? Vec(0.0, 0.0));
+    let p = Pair("one", 1);
+    let (name, n) = p;
+    Print($"{name} {n}");
+    Print(Version(1, 2) < Version(1, 10));
+    let seen = HashSet<Vec>();
+    seen.Add(a); seen.Add(Vec(1.0, 2.0));
+    Print(seen.Count);
+    let json = JsonSerializer.Serialize(Size(1.5, 2.0));
+    Print(json);
+    Print(JsonSerializer.Deserialize<Size>(json));
+    try { let bad = JsonSerializer.Deserialize<Size>("""{"w":-1,"h":1}"""); } catch (e: JsonException) { Print("rejected"); }
+    try { let w = -a.x; let bad = Size(w, 1.0); } catch (e: System.ArgumentException) { Print("invariant"); }
+    let o: object = a;
+    if o is Vec(x, _) { Print($"boxed {x}"); }
+}

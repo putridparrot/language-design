@@ -1,0 +1,65 @@
+// Decorators from the aspects plugin: cross-cutting concerns added to a function without changing its body. Each is
+// rewritten into ordinary Piper at compile time (`piper emit samples/aspects` shows the C#), with no reflection or
+// proxies at run time.
+using System;
+using System.Threading.Tasks;
+
+/// A flaky service: the first two calls fail.
+class Service {
+    mut calls = 0;
+
+    // Trace is written first, so it's outermost: one traced call, with its retries inside.
+    [Trace(Console.Out)]
+    [Retry(3, 10)]
+    fn Fetch(id: int) => string requires id > 0 {
+        calls += 1;
+        if calls < 3 {
+            Print($"  attempt {calls} failed");
+            throw InvalidOperationException("service unavailable");
+        }
+        $"item {id} (after {calls} attempts)"
+    }
+
+    [Retry(2)]
+    async fn FetchAsync(id: int) => Task<string> {
+        await Task.Yield();
+        $"async item {id}"
+    }
+}
+
+/// A view model for data binding (WPF, Avalonia): [Notify] implements INotifyPropertyChanged, so setting a property
+/// raises PropertyChanged, for it and for the computed properties that use it.
+[Notify]
+class Person(first: string, last: string) {
+    prop First: string { get; set; } = first;
+    prop Last: string { get; set; } = last;
+    prop FullName => string = $"{First} {Last}";
+}
+
+[Timed]   // to standard error, so it doesn't mix with the output
+fn Sum(n: int) => long {
+    mut total = 0L;
+    for i in 1..n { total += i; }
+    total
+}
+
+async fn Main() {
+    let service = Service();
+    Print(service.Fetch(7));
+    Print(await service.FetchAsync(8));
+
+    // The precondition is checked once, before any attempt, so a bad argument isn't retried.
+    try {
+        service.Fetch(int.Parse("0"));
+    } catch (e: ArgumentException) {
+        Print("bad id, not retried");
+    }
+
+    Print(Sum(1000));
+
+    let person = Person("Ada", "Byron");
+    person.PropertyChanged += (sender, e) => Print($"  {e.PropertyName ?? ""} changed");
+    person.Last = "King";
+    person.Last = "King";       // the same value: nothing raised
+    Print(person.FullName);
+}

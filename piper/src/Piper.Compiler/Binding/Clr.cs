@@ -349,8 +349,8 @@ public static class ClrTypes
     }
 
     /// <summary>True for the Piper types whose values are .NET reference types (String and CLR classes/interfaces).</summary>
-    /// <summary>A type whose values .NET can make null: strings, .NET classes and interfaces, and Piper's records, enums and traits (C# classes and interfaces; Option and Result are structs).</summary>
+    /// <summary>A type whose values .NET can make null: strings, .NET classes and interfaces, and Piper's records, enums and traits (C# classes and interfaces; Option, Result and record structs are structs).</summary>
     public static bool IsReferenceType(TypeSymbol type) =>
         type == TypeSymbol.String || type is ClrTypeSymbol { IsReferenceType: true } || type.IsTrait ||
-        type.OriginalDefinition is NamedTypeDefinition { IsRuntimeType: false };
+        type.OriginalDefinition is NamedTypeDefinition { IsRuntimeType: false } and not RecordSymbol { IsStruct: true };
 }

@@ -61,7 +61,7 @@ public enum TokenKind
     Dot,
     DotDot,
     DotDotLess,
-    /// <summary>`^`: an index from the end, as in `xs[^1]`.</summary>
+    /// <summary>`^`: an index from the end, as in `xs[^1]`, or exclusive or, as in `a ^ b`.</summary>
     Caret,
     /// <summary>`...`: a spread, as in `{ ...p, y: 5 }`.</summary>
     Ellipsis,
@@ -86,6 +86,11 @@ public enum TokenKind
     Slash,
     Percent,
     AmpersandAmpersand,
+    Ampersand,
+    Tilde,
+    LessLess,
+    /// <summary>`>>`: never lexed, since `List<List<int>>` ends in two `>`s; the parser joins two adjacent ones.</summary>
+    GreaterGreater,
     PipePipe,
     PipeGreater,
     Pipe,
@@ -94,4 +99,11 @@ public enum TokenKind
     StarEquals,
     SlashEquals,
     PercentEquals,
+    AmpersandEquals,
+    PipeEquals,
+    CaretEquals,
+    LessLessEquals,
+    /// <summary>`>>=`: never lexed, but joined by the parser from `>` and `>=`, as <see cref="GreaterGreater"/> is.</summary>
+    GreaterGreaterEquals,
+    QuestionQuestionEquals,
 }

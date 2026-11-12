@@ -22,12 +22,16 @@ public sealed partial class CSharpEmitter
     private const int ConditionalPrecedence = 2;
     private const int LogicalOrPrecedence = 3;
     private const int LogicalAndPrecedence = 4;
-    private const int EqualityPrecedence = 5;
-    private const int RelationalPrecedence = 6;
-    private const int AdditivePrecedence = 7;
-    private const int MultiplicativePrecedence = 8;
-    private const int UnaryPrecedence = 9;
-    private const int PrimaryPrecedence = 10;
+    private const int BitwiseOrPrecedence = 5;
+    private const int ExclusiveOrPrecedence = 6;
+    private const int BitwiseAndPrecedence = 7;
+    private const int EqualityPrecedence = 8;
+    private const int RelationalPrecedence = 9;
+    private const int ShiftPrecedence = 10;
+    private const int AdditivePrecedence = 11;
+    private const int MultiplicativePrecedence = 12;
+    private const int UnaryPrecedence = 13;
+    private const int PrimaryPrecedence = 14;
 
     private static readonly HashSet<string> CSharpKeywords =
     [
@@ -319,7 +323,8 @@ public sealed partial class CSharpEmitter
     private void EmitRecord(RecordSymbol record, SourceText file)
     {
         var partial = IsPartial(record) ? "partial " : "";
-        var header = $"{Visibility(record)} sealed {partial}record {Escape(record.Name)}{TypeParameterList(record.TypeParameters)}" +
+        var kind = record.IsStruct ? $"readonly {partial}record struct" : $"sealed {partial}record";
+        var header = $"{Visibility(record)} {kind} {Escape(record.Name)}{TypeParameterList(record.TypeParameters)}" +
                      $"({RecordFields(record)}){BaseList(TraitsFrom(record, file))}{Constraints(record.TypeParameters)}";
         var methods = MethodsFrom(record, file).ToList();
         bool json = !record.Invariants.IsEmpty && !HasJsonConverter(record);
@@ -378,10 +383,11 @@ public sealed partial class CSharpEmitter
         _writer.WriteLine();
         _writer.WriteLine($"public sealed class {JsonConverterName} : {json}.Serialization.JsonConverter<{type}>");
         _writer.OpenBrace();
-        _writer.WriteLine($"public override {type}? Read(ref {json}.Utf8JsonReader reader, global::System.Type type, {json}.JsonSerializerOptions options)");
+        // A struct's `T?` would be Nullable<T>, not what JsonConverter<T> reads, and JSON's null isn't one of its values.
+        _writer.WriteLine($"public override {type}{(record.IsStruct ? "" : "?")} Read(ref {json}.Utf8JsonReader reader, global::System.Type type, {json}.JsonSerializerOptions options)");
         _writer.OpenBrace();
         _writer.WriteLine($"if ({json}.JsonSerializer.Deserialize<PiperJsonShape>(ref reader, options) is not {{ }} shape)");
-        _writer.WriteLine("    return null;");
+        _writer.WriteLine(record.IsStruct ? $"    throw new {json}.JsonException(\"Expected {record.Name}, not null.\");" : "    return null;");
         _writer.WriteLine("try");
         _writer.OpenBrace();
         _writer.WriteLine($"return new {type}({string.Join(", ", fields.Select(f => $"shape.{f}"))});");
@@ -1147,6 +1153,29 @@ public sealed partial class CSharpEmitter
         EmitDocumentation(symbol, symbol.Parameters);
         EmitAttributes(symbol);
 
+        // In a struct's instance method, C# lambdas and local functions can't use `this` (CS1673). Piper's structs are
+        // readonly and `this` can't change, so a copy is the same value: the method copies `this` and uses the copy.
+        if (_thisName == "this" && symbol is MethodSymbol { IsStatic: false, ContainingType.IsValueType: true } && ClosureUsesThis(body))
+        {
+            _writer.WriteLine(signature);
+            _lastLine = -1;
+            var self = _names.Fresh("self");
+            _writer.OpenBrace();
+            _writer.WriteLine($"var {self} = this;");
+            _thisName = self;
+            try
+            {
+                foreach (var statement in body.Statements)
+                    EmitStatement(statement);
+            }
+            finally
+            {
+                _thisName = "this";
+            }
+            _writer.CloseBrace();
+            return;
+        }
+
         if (function.IsExpressionBodied && ExpressionBody(body) is { } expression)
         {
             _writer.WriteLine($"{signature} => {Expr(expression, AssignmentPrecedence)};");
@@ -1159,6 +1188,14 @@ public sealed partial class CSharpEmitter
         _lastLine = -1;
         EmitBlock(body);
     }
+
+    /// <summary>Whether a lambda or local function in <paramref name="body"/> uses `this` or one of its fields.</summary>
+    private static bool ClosureUsesThis(BoundNode body) =>
+        BoundTreeWalker.DescendantsAndSelf(body)
+            .Select(n => n switch { BoundLambdaExpression lambda => lambda.Body, BoundLocalFunctionStatement local => local.Function.Body, _ => null })
+            .OfType<BoundNode>()
+            .Any(closure => BoundTreeWalker.DescendantsAndSelf(closure)
+                .Any(n => n is BoundVariableExpression { Variable.Kind: VariableKind.This or VariableKind.Field }));
 
     /// <summary>The expression a lowered body consists of, if it can be written as <c>=&gt; expression</c>.</summary>
     private static BoundExpression? ExpressionBody(BoundBlockStatement body) => body.Statements switch
@@ -1478,6 +1515,7 @@ public sealed partial class CSharpEmitter
                 ($"{(slice.Start is null ? "" : Expr(slice.Start, UnaryPrecedence))}..{(slice.End is null ? "" : Expr(slice.End, UnaryPrecedence))}", UnaryPrecedence),
             BoundCollectionExpression { HasSpread: true } collection => (SpreadCollection(collection), UnaryPrecedence),
             BoundCollectionExpression collection => (Collection(collection), PrimaryPrecedence),
+            BoundDictionaryExpression dictionary => (Dictionary(dictionary), PrimaryPrecedence),
             // The operand is parenthesized unless primary: C# reads `(Point)-x` as a subtraction.
             // C#'s `with` binds tighter than `*` but looser than unary operators.
             BoundRecordSpreadExpression spread => (
@@ -1525,7 +1563,12 @@ public sealed partial class CSharpEmitter
 
     private string Unary(BoundUnaryExpression unary)
     {
-        var op = unary.Operator == BoundUnaryOperatorKind.Negate ? "-" : "!";
+        var op = unary.Operator switch
+        {
+            BoundUnaryOperatorKind.Negate => "-",
+            BoundUnaryOperatorKind.BitwiseComplement => "~",
+            _ => "!",
+        };
         var operand = Expr(unary.Operand, UnaryPrecedence);
         // Avoid `--x` (decrement) for a double negation.
         if (op == "-" && operand.StartsWith('-'))
@@ -1539,6 +1582,10 @@ public sealed partial class CSharpEmitter
         {
             BoundBinaryOperatorKind.Multiply or BoundBinaryOperatorKind.Divide or BoundBinaryOperatorKind.Remainder => MultiplicativePrecedence,
             BoundBinaryOperatorKind.Add or BoundBinaryOperatorKind.Subtract => AdditivePrecedence,
+            BoundBinaryOperatorKind.LeftShift or BoundBinaryOperatorKind.RightShift => ShiftPrecedence,
+            BoundBinaryOperatorKind.BitwiseAnd => BitwiseAndPrecedence,
+            BoundBinaryOperatorKind.ExclusiveOr => ExclusiveOrPrecedence,
+            BoundBinaryOperatorKind.BitwiseOr => BitwiseOrPrecedence,
             BoundBinaryOperatorKind.Less or BoundBinaryOperatorKind.LessOrEqual
                 or BoundBinaryOperatorKind.Greater or BoundBinaryOperatorKind.GreaterOrEqual => RelationalPrecedence,
             BoundBinaryOperatorKind.Equals or BoundBinaryOperatorKind.NotEquals => EqualityPrecedence,
@@ -1602,6 +1649,29 @@ public sealed partial class CSharpEmitter
         if (collection.Elements.IsEmpty)
             return collection.Type is ClrTypeSymbol { Type.IsArray: true } ? $"new {type} {{ }}" : $"new {type}()";
         return $"new {type} {{ {Arguments(collection.Elements)} }}";
+    }
+
+    /// <summary>
+    /// <c>new Dictionary&lt;string, int&gt; { ["a"] = 1 }</c>: the indexer, so a later key replaces an earlier one. An
+    /// initializer can't spread, so with a spread it's <c>PiperDictionary.Of&lt;K, V&gt;([.. d, new(k, v)])</c>, which does the same.
+    /// </summary>
+    private string Dictionary(BoundDictionaryExpression dictionary)
+    {
+        var type = TypeName(dictionary.Type);
+        string Entry(BoundDictionaryEntry entry) => $"{Expr(entry.Key, AssignmentPrecedence)}, {Expr(entry.Value, AssignmentPrecedence)}";
+        if (dictionary.HasSpread)
+        {
+            var pair = $"global::System.Collections.Generic.KeyValuePair<{TypeName(dictionary.KeyType)}, {TypeName(dictionary.ValueType)}>";
+            var elements = dictionary.Elements.Select(e => e is BoundSpreadElement spread
+                ? $".. {Expr(spread.Source, AssignmentPrecedence)}"
+                : $"new {pair}({Entry((BoundDictionaryEntry)e)})");
+            return $"global::Piper.Runtime.PiperDictionary.Of<{TypeName(dictionary.KeyType)}, {TypeName(dictionary.ValueType)}>([{string.Join(", ", elements)}])";
+        }
+        if (dictionary.Elements.IsEmpty)
+            return $"new {type}()";
+        var entries = dictionary.Elements.Cast<BoundDictionaryEntry>()
+            .Select(e => $"[{Expr(e.Key, AssignmentPrecedence)}] = {Expr(e.Value, AssignmentPrecedence)}");
+        return $"new {type} {{ {string.Join(", ", entries)} }}";
     }
 
     /// <summary><c>(List&lt;int&gt;)[1, .. xs]</c>: a collection initializer can't spread, so use a collection expression and cast it to give it a type.</summary>
@@ -1933,6 +2003,11 @@ public sealed partial class CSharpEmitter
         BoundRelationalPattern relational => $"{relational.Operator} {Literal(relational.Value)}",
         BoundOrPattern alternatives => string.Join(" or ", alternatives.Alternatives.Select(a =>
             a is BoundRangePattern ? $"({Pattern(a)})" : Pattern(a))),
+        // C#'s `not` binds tighter than `and`, and `and` than `or`; a range is written with `and`.
+        BoundAndPattern both => string.Join(" and ", both.Patterns.Select(p => p is BoundOrPattern ? $"({Pattern(p)})" : Pattern(p))),
+        BoundNotPattern not => not.Pattern is BoundOrPattern or BoundAndPattern or BoundRangePattern
+            ? $"not ({Pattern(not.Pattern)})"
+            : $"not {Pattern(not.Pattern)}",
         _ => throw new InvalidOperationException($"Unexpected pattern {pattern.GetType().Name}"),
     };
 
@@ -2139,5 +2214,14 @@ public sealed partial class CSharpEmitter
         public string? NameOf(Symbol variable) => _names.GetValueOrDefault(variable);
 
         public string Get(Symbol variable) => _names.TryGetValue(variable, out var name) ? name : Declare(variable);
+
+        /// <summary>A name for a local the emitter itself declares, unused by anything else in the method.</summary>
+        public string Fresh(string hint)
+        {
+            var name = hint;
+            for (int n = 1; !_used.Add(name); n++)
+                name = $"{hint}_{n}";
+            return name;
+        }
     }
 }

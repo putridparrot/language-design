@@ -1,0 +1,27 @@
+// Dictionary literals: `key: value` entries, spreads of other dictionaries, and `[]` where a dictionary is expected.
+using System.Collections.Generic;
+
+fn Describe(settings: IReadOnlyDictionary<string, string>) => string =
+    string.Join(", ", settings.Keys) + $" ({settings.Count})";
+
+fn Main() {
+    let ages = ["Ada": 36, "Alan": 41, "Grace": 85];
+    Print(ages["Grace"]);
+
+    let none: Dictionary<string, int> = [];
+    Print(none.Count);
+
+    // A later key replaces an earlier one, so overrides go after the defaults they change.
+    let defaults = ["host": "localhost", "port": "80"];
+    let config = [...defaults, "port": "8080", "user": "piper"];
+    Print(Describe(config));
+    Print(config["port"]);
+
+    // Keys and values take their common types: these keys are longs and the values doubles.
+    let scaled = [1: 0.5, 2L: 2];
+    Print(scaled[2L] * 2.0);
+
+    let counts: Dictionary<char, int> = [];
+    for c in "hello" { counts[c] = (counts.GetValueOrDefault(c)) + 1; }
+    Print(counts['l']);
+}

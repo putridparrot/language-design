@@ -466,7 +466,7 @@ public sealed partial class Binder
 
         var kind = Operators.GetUnaryKind(syntax.Operator.Kind)!.Value;
         var type = Operators.ResolveUnary(kind, operand.Type);
-        if (type is null && kind == BoundUnaryOperatorKind.Negate && FindUserOperator("-", [operand]) is var (operandTypes, resultType))
+        if (type is null && kind != BoundUnaryOperatorKind.LogicalNot && FindUserOperator(syntax.Operator.Text, [operand]) is var (operandTypes, resultType))
             return new BoundUnaryExpression(kind, Convert(operand, operandTypes[0], syntax.Operand.Span), resultType);
         if (type is null)
         {
@@ -544,7 +544,7 @@ public sealed partial class Binder
         }
 
         var binary = new BoundBinaryExpression(
-            Widen(left, resolution.OperandType), kind, Widen(right, resolution.OperandType), resolution.ResultType);
+            Widen(left, resolution.OperandType), kind, Widen(right, resolution.RightOperandType), resolution.ResultType);
         CheckConstantArithmetic(binary, syntax.Span);
         return binary;
     }
@@ -577,6 +577,9 @@ public sealed partial class Binder
 
     private BoundExpression BindAssignment(AssignmentExpressionSyntax syntax)
     {
+        if (syntax.Operator.Kind == TokenKind.QuestionQuestionEquals)
+            return BindNullCoalescingAssignment(syntax);
+
         // `account.Changed += handler`: a Piper class's event.
         if (BindEventSubscription(syntax) is { } subscription)
             return subscription;
@@ -697,12 +700,48 @@ public sealed partial class Binder
         }
         if (resolution is null)
             _diagnostics.ReportUndefinedBinaryOperator(syntax.Operator.Span, syntax.Operator.Text, variable.Type, value.Type);
-        else if (!CompoundResultFits(resolution.ResultType, variable.Type, value))
+        else if (!CompoundResultFits(resolution, variable.Type, value))
             _diagnostics.ReportCannotConvert(syntax.Value.Span, resolution.ResultType, variable.Type);
         else
-            value = Widen(value, resolution.OperandType);
+            value = Widen(value, resolution.RightOperandType);
 
         return new BoundAssignmentExpression(variable, kind, value);
+    }
+
+    /// <summary>
+    /// <c>x ??= value</c> is <c>if x == null { x = value; }</c>: as in C#, the value is evaluated, and x set, only when x
+    /// has no value. x is read and then set, so it must be simple enough to evaluate twice.
+    /// </summary>
+    private BoundExpression BindNullCoalescingAssignment(AssignmentExpressionSyntax syntax)
+    {
+        static bool IsSimple(ExpressionSyntax target) => target switch
+        {
+            NameExpressionSyntax => true,
+            MemberAccessExpressionSyntax member => member.Target is NameExpressionSyntax,
+            IndexExpressionSyntax index => IsSimple(index.Target) && index.Arguments.All(a => a is NameExpressionSyntax or LiteralExpressionSyntax),
+            _ => false,
+        };
+
+        var op = syntax.Operator;
+        if (!IsSimple(syntax.Target))
+        {
+            BindExpression(syntax.Value);
+            _diagnostics.ReportNullCoalescingAssignmentTarget(syntax.Target.Span);
+            return new BoundErrorExpression();
+        }
+        var current = Trial(() => BindExpression(syntax.Target), out bool failed);
+        if (!failed && current.Type != TypeSymbol.Error && !current.Type.IsOption)
+        {
+            BindExpression(syntax.Value);
+            _diagnostics.ReportNullCoalescingAssignmentNotOptional(op.Span, current.Type);
+            return new BoundErrorExpression();
+        }
+
+        var isNone = new BinaryExpressionSyntax(syntax.Target.Span, syntax.Target, new Token(TokenKind.EqualsEquals, op.Span, "=="),
+            new NullLiteralExpressionSyntax(op.Span, new Token(TokenKind.NullKeyword, op.Span, "null")));
+        var assignment = syntax with { Operator = new Token(TokenKind.Equals, op.Span, "=") };
+        var then = new BlockExpressionSyntax(syntax.Span, [new ExpressionStatementSyntax(syntax.Span, assignment)], null);
+        return BindExpression(new IfExpressionSyntax(syntax.Span, isNone, then, null));
     }
 
     /// <summary>Whether <paramref name="receiver"/> is the new object an initializer is setting up.</summary>
@@ -2187,11 +2226,14 @@ public sealed partial class Binder
 
     /// <summary>
     /// Whether `x op= y` can store its result in x (of type <paramref name="target"/>), as in C#: when the result converts
-    /// implicitly, or when it's numeric and y itself converts implicitly to x's type, so `b += 1` works on a Byte.
+    /// implicitly, or when it's numeric and y itself converts implicitly to x's type (or is a shift's count), so `b += 1`
+    /// and `b <<= n` work on a Byte.
     /// </summary>
-    private bool CompoundResultFits(TypeSymbol result, TypeSymbol target, BoundExpression value) =>
-        result == target || IsConvertible(result, target) ||
-        (target.IsNumeric && result.IsNumeric && (IsConvertible(value.Type, target) || ConstantFolding.FitsImplicitly(value, target)));
+    private bool CompoundResultFits(BinaryOperatorResolution resolution, TypeSymbol target, BoundExpression value) =>
+        resolution.ResultType == target || IsConvertible(resolution.ResultType, target) ||
+        (target.IsNumeric && resolution.ResultType.IsNumeric &&
+         (IsConvertible(value.Type, target) || ConstantFolding.FitsImplicitly(value, target) ||
+          resolution.Kind is BoundBinaryOperatorKind.LeftShift or BoundBinaryOperatorKind.RightShift));
 
     /// <summary>
     /// <c>(T)x</c>, as in C#: any implicit conversion; between numeric types (and Char), truncating or wrapping as C#'s
