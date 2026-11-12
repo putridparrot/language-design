@@ -55,6 +55,9 @@ public static class AssemblyWriter
         // Package and referenced assemblies go next to the program, where .NET looks for them.
         foreach (var assembly in references.CopiedAssemblies)
             Write(Path.GetFileName(assembly), File.ReadAllBytes(assembly));
+        // And their native libraries, for this platform: .NET's DllImport looks beside the program too.
+        foreach (var native in references.NativeLibraries)
+            Write(Path.GetFileName(native), File.ReadAllBytes(native));
 
         if (!executable)
             return new AssemblyOutput([.. written], null, []);

@@ -1,0 +1,9 @@
+System.Collections.Generic.List`1[Person].Where(p => ((p.age > 40) AndAlso p.name.StartsWith("A"))).OrderBy(p => p.age).Select(p => p.name)
+Alan
+System.Collections.Generic.List`1[Person].Select(p => IIF((p.age > 50), Format("{0} (senior)", p.name), p.name))
+System.Collections.Generic.List`1[Person].Where(p => (p.email == Option`1.None)).Select(p => p.name)
+Alan, Grace
+System.Collections.Generic.List`1[System.Collections.Generic.List`1[System.Int32]].Where(g => g.Any(n => (n > 4)))
+age => (age >= 18)
+True
+2, 3

@@ -26,6 +26,12 @@ public sealed record ProgramReferences(ImmutableArray<string> Assemblies, Immuta
 {
     public static ProgramReferences None { get; } = new([], []);
 
+    /// <summary>
+    /// Native libraries the packages bring for this platform (SQLite's <c>e_sqlite3.dll</c>): loaded for a run, and
+    /// copied next to a built program.
+    /// </summary>
+    public ImmutableArray<string> NativeLibraries { get; init; } = [];
+
     public bool IsEmpty => Assemblies.IsEmpty && Frameworks.IsEmpty;
 
     /// <summary>
@@ -126,12 +132,14 @@ public sealed record ProgramReferences(ImmutableArray<string> Assemblies, Immuta
         }
 
         var others = new List<string>();
+        var natives = new List<string>();
         if (packages.Count > 0)
         {
-            var (restored, error) = RestorePackages(directory, packages, resolvedFrameworks);
+            var (restored, restoredNatives, error) = RestorePackages(directory, packages, resolvedFrameworks);
             if (error is not null)
                 Error("PIP0401", error);
             others.AddRange(restored);
+            natives.AddRange(restoredNatives);
         }
 
         foreach (var reference in references)
@@ -148,6 +156,7 @@ public sealed record ProgramReferences(ImmutableArray<string> Assemblies, Immuta
         var resolved = new ProgramReferences([.. assemblies.Concat(others).Distinct(StringComparer.OrdinalIgnoreCase)], [.. resolvedFrameworks])
         {
             CompileAssemblies = [.. compile.Concat(others).Distinct(StringComparer.OrdinalIgnoreCase)],
+            NativeLibraries = [.. natives.Distinct(StringComparer.OrdinalIgnoreCase)],
         };
         return (resolved, errors.ToImmutable());
     }
@@ -219,7 +228,7 @@ public sealed record ProgramReferences(ImmutableArray<string> Assemblies, Immuta
     /// Restores <paramref name="packages"/> with the .NET SDK and returns their runtime assemblies (with their
     /// dependencies'), or an error. The result is cached in <c>obj/piper/references.json</c> under a hash of the inputs.
     /// </summary>
-    private static (IReadOnlyList<string> Assemblies, string? Error) RestorePackages(
+    private static (IReadOnlyList<string> Assemblies, IReadOnlyList<string> Natives, string? Error) RestorePackages(
         string directory, IReadOnlyDictionary<string, string> packages, IReadOnlyList<FrameworkReference> frameworks)
     {
         var tfm = $"net{Environment.Version.Major}.{Environment.Version.Minor}";
@@ -236,9 +245,11 @@ public sealed record ProgramReferences(ImmutableArray<string> Assemblies, Immuta
 
         var work = Path.Combine(Path.GetFullPath(directory), "obj", "piper");
         var cachePath = Path.Combine(work, "references.json");
-        var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
+        // Native libraries are per platform, so the platform is part of what's cached.
+        var rid = NativeRuntimeIdentifier();
+        var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text + "\n" + rid)));
         if (ReadCache(cachePath, key) is { } cached)
-            return (cached, null);
+            return (cached.Assemblies, cached.Natives ?? [], null);
 
         try
         {
@@ -254,7 +265,10 @@ public sealed record ProgramReferences(ImmutableArray<string> Assemblies, Immuta
                 UseShellExecute = false,
                 WorkingDirectory = restoreDirectory,
             };
-            foreach (var argument in new[] { "msbuild", projectPath, "-restore", "-nologo", "-t:ResolvePackageAssets", "-getItem:RuntimeCopyLocalItems" })
+            // Managed assemblies, and native libraries: those for every platform (NativeCopyLocalItems), and those under
+            // runtimes/<rid>/native for this one (RuntimeTargetsCopyLocalItems), such as SQLite's.
+            foreach (var argument in new[] { "msbuild", projectPath, "-restore", "-nologo", "-t:ResolvePackageAssets",
+                         "-getItem:RuntimeCopyLocalItems", "-getItem:NativeCopyLocalItems", "-getItem:RuntimeTargetsCopyLocalItems" })
                 start.ArgumentList.Add(argument);
 
             using var process = Process.Start(start)!;
@@ -263,7 +277,7 @@ public sealed record ProgramReferences(ImmutableArray<string> Assemblies, Immuta
             if (!process.WaitForExit(TimeSpan.FromMinutes(5)))
             {
                 process.Kill(entireProcessTree: true);
-                return ([], "Restoring packages took more than 5 minutes.");
+                return ([], [], "Restoring packages took more than 5 minutes.");
             }
 
             if (process.ExitCode != 0)
@@ -272,35 +286,57 @@ public sealed record ProgramReferences(ImmutableArray<string> Assemblies, Immuta
                     .Where(line => line.Contains("error", StringComparison.OrdinalIgnoreCase))
                     .Select(line => line.Trim())
                     .Distinct();
-                return ([], $"Can't restore the packages: {string.Join(" ", lines)}");
+                return ([], [], $"Can't restore the packages: {string.Join(" ", lines)}");
             }
 
             // The output is MSBuild's JSON, maybe after warnings.
             var json = output.Result[output.Result.IndexOf('{')..];
             using var document = JsonDocument.Parse(json);
-            var assemblies = document.RootElement.GetProperty("Items").GetProperty("RuntimeCopyLocalItems").EnumerateArray()
+            var items = document.RootElement.GetProperty("Items");
+            IEnumerable<JsonElement> Items(string name) =>
+                items.TryGetProperty(name, out var list) ? list.EnumerateArray() : [];
+            string? Metadata(JsonElement item, string name) =>
+                item.TryGetProperty(name, out var value) ? value.GetString() : null;
+
+            var assemblies = Items("RuntimeCopyLocalItems")
                 .Select(item => item.GetProperty("FullPath").GetString()!)
                 .Where(path => path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            File.WriteAllText(cachePath, JsonSerializer.Serialize(new Cache(key, assemblies)));
-            return (assemblies, null);
+            var natives = Items("NativeCopyLocalItems")
+                .Concat(Items("RuntimeTargetsCopyLocalItems").Where(item =>
+                    Metadata(item, "AssetType") == "native" && string.Equals(Metadata(item, "RuntimeIdentifier"), rid, StringComparison.OrdinalIgnoreCase)))
+                .Select(item => item.GetProperty("FullPath").GetString()!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            File.WriteAllText(cachePath, JsonSerializer.Serialize(new Cache(key, assemblies, natives)));
+            return (assemblies, natives, null);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or JsonException or KeyNotFoundException or ArgumentOutOfRangeException)
         {
-            return ([], $"Can't restore the packages: {ex.Message} (Restoring packages needs the .NET SDK.)");
+            return ([], [], $"Can't restore the packages: {ex.Message} (Restoring packages needs the .NET SDK.)");
         }
     }
 
-    private sealed record Cache(string Key, List<string> Assemblies);
+    /// <summary>
+    /// This platform as NuGet's portable runtime identifiers name it (<c>win-x64</c>, <c>linux-arm64</c>, <c>osx-arm64</c>),
+    /// which packages' native libraries are filed under (<c>runtimes/win-x64/native/e_sqlite3.dll</c>).
+    /// </summary>
+    private static string NativeRuntimeIdentifier()
+    {
+        var os = OperatingSystem.IsWindows() ? "win" : OperatingSystem.IsMacOS() ? "osx" : "linux";
+        return $"{os}-{RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant()}";
+    }
 
-    private static List<string>? ReadCache(string path, string key)
+    private sealed record Cache(string Key, List<string> Assemblies, List<string>? Natives = null);
+
+    private static Cache? ReadCache(string path, string key)
     {
         try
         {
             return File.Exists(path) && JsonSerializer.Deserialize<Cache>(File.ReadAllText(path)) is { } cache &&
-                   cache.Key == key && cache.Assemblies.All(File.Exists)
-                ? cache.Assemblies
+                   cache.Key == key && cache.Assemblies.All(File.Exists) && (cache.Natives ?? []).All(File.Exists)
+                ? cache
                 : null;
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)

@@ -1,0 +1,6 @@
+{
+  // The config and data plugins come with piper. The data plugin brings EF Core; the program picks its database's
+  // provider, SQLite here: `piper run samples/data`.
+  "plugins": ["config", "data"],
+  "packages": { "Microsoft.EntityFrameworkCore.Sqlite": "10.0.14" }
+}

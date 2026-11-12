@@ -65,7 +65,7 @@ syntax**, which then goes through the binder, lowering and C# emitter like anyth
 ### Using a plugin
 
 List the plugin in the program folder's `piper.json`. The plugins in this repository's [plugins](../plugins) folder
-come with piper (in a `plugins` folder beside it), and are named: `actors`, `args`, `aspects`, `remote-actors`, `parallel`,
+come with piper (in a `plugins` folder beside it), and are named: `actors`, `args`, `aspects`, `config`, `data`, `remote-actors`, `parallel`,
 `services`, `state-machines` and `web`. Any other is given as the path of its assembly, relative to the folder:
 
 ```json
@@ -690,6 +690,72 @@ Admin(app);
   - a declared policy no endpoint uses
   - endpoints using policy words in a program with no `policies` block at all
 
+### `config` (typed configuration)
+
+[Piper.Plugins.Config](../plugins/Piper.Plugins.Config/ConfigPlugin.cs) reads configuration (appsettings.json,
+environment variables, anything an `IConfiguration` holds) into a record, checked when it's read:
+
+```piper
+config Smtp from "Smtp" {
+    host: string;                                   // required: missing is reported
+    port: int = 587 requires port > 0 && port < 65536;
+    user: string?;                                  // optional: None when absent
+    timeout: TimeSpan = TimeSpan.FromSeconds(30);
+    recipients: List<string>;                       // Smtp:Recipients:0, :1, …; empty when absent
+    tls: Tls;                                       // another config, read from Smtp:Tls
+}
+
+let smtp = SmtpFrom(builder.Configuration);         // throws, listing every problem
+match LoadSmtp(configuration) { Ok(s) => …, Err(problems) => … }
+```
+
+- **What it becomes:** ordinary Piper, with no reflection:
+  - `record Smtp(…)`, with the fields' `requires` clauses as its invariants
+  - `fn LoadSmtp(configuration) => Result<Smtp, List<string>>`
+  - `fn SmtpFrom(configuration) => Smtp`
+- **The section** is the string after `from`, or the config's name. Keys are matched as .NET matches them, without
+  regard to case, so `Smtp__Port` in the environment works.
+- **Field types:**
+  - `string`, `int`, `long`, `double`, `decimal`, `bool`, `Guid`, `TimeSpan` and `DateTime`, each parsed as its
+    `TryParse` does, in the invariant culture
+  - any of those optional (`T?`) or in a `List<T>`
+  - another config, for a nested section
+- **Problems** are all reported at once, each with its key: `Smtp:port: "abc" isn't a valid int`,
+  `Smtp:host is missing`, and, once every value is there, a broken invariant (`Smtp: Invariant failed: port > 0 …`).
+- **Packages:** it brings `Microsoft.Extensions.Configuration.Json` and `.EnvironmentVariables` for console programs. A
+  web program has them in ASP.NET Core.
+
+### `data` (EF Core databases)
+
+[Piper.Plugins.Data](../plugins/Piper.Plugins.Data/DataPlugin.cs) declares an EF Core database, and
+[samples/data](../samples/data/main.piper) uses it with SQLite:
+
+```piper
+database Shop {
+    table Customers: Customer key id;
+    table Orders: Order key id index customerId index (customerId, placed);
+}
+
+let shop = Shop(DbContextOptionsBuilder<Shop>().UseSqlite("Data Source=shop.db").Options);
+let big = await shop.Orders.Where(o => o.total > 100m).OrderBy(o => o.placed).ToListAsync();
+```
+
+- **What it becomes:** `class Shop(options: DbContextOptions<Shop>): DbContext(options)`, with a `DbSet` property per
+  table, and the keys and indexes in `OnModelCreating`. Without `key`, EF Core looks for a field named `id` or
+  `<type>Id`.
+- **Queries** are LINQ over the tables. Their lambdas are [expression trees](language.md#queries-and-expression-trees),
+  so EF Core translates them to SQL. `ToQueryString()` shows the SQL.
+- **Rows:**
+  - A class with `public mut` fields is tracked: change one and `SaveChangesAsync()` updates its row.
+  - A record is read, added and removed whole. To change one, `Update` a copy.
+- **Optional fields** are nullable columns, None being NULL, and a query compares one with `== None` (SQL's
+  `IS NULL`), `!= None` or `== Some(value)`. It can't compare one with an optional variable, as EF Core reads only
+  the variable's container. That's an error when the query runs, saying to choose the query by the variable instead.
+- **Packages:** the plugin brings EF Core. The program's piper.json adds its database's provider, such as
+  `"packages": { "Microsoft.EntityFrameworkCore.Sqlite": "10.0.14" }`.
+- **Checked:** a `key` or `index` naming a field its type doesn't have (a class's must be public, as EF Core maps
+  properties), and a table declared twice.
+
 ### `args` (command-line options)
 
 [plugins/Piper.Plugins.Args](../plugins/Piper.Plugins.Args) declares what a program accepts on its command line, as a
@@ -930,6 +996,9 @@ public IReadOnlyDictionary<string, string> Packages => new Dictionary<string, st
 ```
 
 A version in the program's own `piper.json` wins over a plugin's.
+
+A package's **native libraries** (SQLite's `e_sqlite3`, say) come with it too: those for the platform piper runs on
+are loaded for `piper run` and `piper test`, and copied next to the program by `piper build`.
 
 ## Not yet
 

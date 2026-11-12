@@ -10,6 +10,9 @@
     <Project Path="plugins/Piper.Plugins.Actors/Piper.Plugins.Actors.csproj" />
     <Project Path="plugins/Piper.Plugins.Args/Piper.Plugins.Args.csproj" />
     <Project Path="plugins/Piper.Plugins.Aspects/Piper.Plugins.Aspects.csproj" />
+    <Project Path="plugins/Piper.Plugins.Config/Piper.Plugins.Config.csproj" />
+    <Project Path="plugins/Piper.Plugins.Data/Piper.Plugins.Data.csproj" />
+    <Project Path="plugins/Piper.Data/Piper.Data.csproj" />
     <Project Path="plugins/Piper.Plugins.Actors.Remote/Piper.Plugins.Actors.Remote.csproj" />
     <Project Path="plugins/Piper.Plugins.Parallel/Piper.Plugins.Parallel.csproj" />
     <Project Path="plugins/Piper.Plugins.Services/Piper.Plugins.Services.csproj" />

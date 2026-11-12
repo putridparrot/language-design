@@ -9,6 +9,8 @@
     <BundledPlugin Include="actors" Folder="Piper.Plugins.Actors" />
     <BundledPlugin Include="aspects" Folder="Piper.Plugins.Aspects" />
     <BundledPlugin Include="args" Folder="Piper.Plugins.Args" />
+    <BundledPlugin Include="config" Folder="Piper.Plugins.Config" />
+    <BundledPlugin Include="data" Folder="Piper.Plugins.Data" />
     <BundledPlugin Include="remote-actors" Folder="Piper.Plugins.Actors.Remote" />
     <BundledPlugin Include="parallel" Folder="Piper.Plugins.Parallel" />
     <BundledPlugin Include="services" Folder="Piper.Plugins.Services" />

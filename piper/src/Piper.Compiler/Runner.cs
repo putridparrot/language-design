@@ -69,7 +69,17 @@ public static class Runner
     private sealed class ProgramLoadContext(string name, ProgramReferences? references)
         : AssemblyLoadContext(name, isCollectible: references is null || references.Assemblies.IsEmpty)
     {
-        private readonly ReferenceLoadContext? _references = references is { Assemblies.IsEmpty: false } ? ReferenceLoadContext.For(references.Assemblies) : null;
+        private readonly ReferenceLoadContext? _references = References(references);
+
+        /// <summary>The references' context, given the packages' native libraries, which their assemblies load there.</summary>
+        private static ReferenceLoadContext? References(ProgramReferences? references)
+        {
+            if (references is not { Assemblies.IsEmpty: false })
+                return null;
+            var context = ReferenceLoadContext.For(references.Assemblies);
+            context.UseNativeLibraries(references.NativeLibraries);
+            return context;
+        }
 
         protected override Assembly? Load(AssemblyName assemblyName) =>
             _references is not null && _references.Has(assemblyName) ? _references.LoadFromAssemblyName(assemblyName) : null;

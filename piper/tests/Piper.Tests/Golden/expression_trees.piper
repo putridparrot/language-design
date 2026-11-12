@@ -1,0 +1,35 @@
+// A lambda passed where .NET takes an Expression<Func<…>> is an expression tree, as in C#: Queryable's operators get
+// a description of the lambda, which a provider such as EF Core translates (to SQL, say), rather than code to run.
+// So a query on an IQueryable uses Queryable.Where, not Enumerable.Where, which would run it in memory.
+using System;
+using System.Linq;
+using System.Linq.Expressions;
+
+record Person(name: string, age: int, email: string?);
+
+fn Main() {
+    let people = [Person("Ada", 36, Some("ada@example.com")), Person("Alan", 41, None), Person("Grace", 85, None)].AsQueryable();
+
+    let older = people.Where(p => p.age > 40 && p.name.StartsWith("A")).OrderBy(p => p.age).Select(p => p.name);
+    Print(older.Expression);
+    Print(string.Join(", ", older));
+
+    // `if … else …` is C#'s ?:, interpolation is string.Format, and an optional compares with None.
+    let labels = people.Select(p => if p.age > 50 { $"{p.name} (senior)" } else { p.name });
+    Print(labels.Expression);
+    let noEmail = people.Where(p => p.email == None).Select(p => p.name);
+    Print(noEmail.Expression);
+    Print(string.Join(", ", noEmail));
+
+    // Nested lambdas are part of the tree.
+    let groups = [[1, 2], [3, 4, 5]].AsQueryable().Where(g => g.Any(n => n > 4));
+    Print(groups.Expression);
+
+    // An expression tree can be declared, compiled and run.
+    let isAdult: Expression<Func<int, bool>> = age => age >= 18;
+    Print(isAdult);
+    Print(isAdult.Compile()(21));
+
+    // A list's LINQ is still Enumerable's: plain delegates.
+    Print(string.Join(", ", [1, 2, 3].Where(n => n > 1)));
+}

@@ -1602,4 +1602,29 @@ public class BinderTests
             "test.piper(2,11): error PIP0200: The name 'y' does not exist in the current scope.",
             Assert.Single(result.FormattedDiagnostics));
     }
+
+    private const string Query = "using System.Linq; record P(name: string, age: int, email: string?); fn f(q: IQueryable<P>) { let r = ";
+
+    /// <summary>
+    /// What an expression-tree lambda can't contain is reported (PIP0397), and the query still binds to Queryable's
+    /// operator rather than quietly falling back to Enumerable's, which would run it in memory.
+    /// </summary>
+    [Theory]
+    [InlineData("q.Where(p => { let a = p.age; a > 1 });")]
+    [InlineData("q.Select(p => p.email ?? \"\");")]
+    [InlineData("q.Select(p => p.email?.Length);")]
+    [InlineData("q.Select(p => (p.name, p.age));")]
+    [InlineData("q.Where(p => p.email is Some(_));")]
+    [InlineData("q.Select(p => match p.age { 1 => \"one\", _ => \"many\" });")]
+    [InlineData("q.Select(p => if p.age > 0 { p.age } else { throw System.Exception() });")]
+    public void An_expression_tree_lambda_must_be_a_single_translatable_expression(string query) =>
+        AssertSingleError("PIP0397", Query + query + " }");
+
+    [Fact]
+    public void A_query_on_an_IQueryable_is_an_expression_tree()
+    {
+        AssertNoErrors(Query + "q.Where(p => p.age > 1 && p.email != None).Select(p => p.name); let e: IQueryable<string> = r; }");
+        // A list's LINQ stays Enumerable's, where anything goes.
+        AssertNoErrors("using System.Linq; fn f() { let r = [1, 2].Select(n => { let m = n * 2; m }); }");
+    }
 }

@@ -77,8 +77,11 @@ Server-side HTML belongs with [UI](#ui) (htmx over plain endpoints), not Razor.
   explicit form (`many Handler => AuditHandler;`) keeps that check for mistakes.
 - **Keyed services** (`singleton Cache["fast"] => MemoryCache;`, injected with `[FromKeyedServices("fast")]`) and
   **open generics** (`scoped Repository<> => SqlRepository<>;`).
-- **Configuration and options:** `options Smtp from "Smtp";` binding a configuration section to a Piper record
-  (`IOptions<Smtp>`), with Options for missing values and the record's `requires` validated at startup.
+- **Configuration and options:** typed configuration is done (the `config` plugin). Still to come: registering a config
+  with DI (`config Smtp;` in `services`, as `IOptions<Smtp>` too), and reloading it when appsettings.json changes.
+- **Databases:** the `data` plugin covers EF Core models and queries. Still to come: registering a database with DI
+  (`AddDbContext`, its connection string from a `config`), migrations from `piper` (`piper db migrate`), relationships
+  between tables (navigation properties), and comparing an optional column with an optional variable in a query.
 - **Background work:** `hosted Worker;` (`AddHostedService`), and a Piper-friendly worker: a class with an
   `async fn Run(stopping: CancellationToken)`.
 - **Composition and testing:** a `services` block including another (a library's), and replacing a registration in a

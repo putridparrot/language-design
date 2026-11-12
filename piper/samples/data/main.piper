@@ -1,0 +1,69 @@
+// A small shop: typed configuration from the config plugin, and an EF Core database from the data plugin.
+// Queries are LINQ over the tables, whose lambdas are expression trees, so EF Core translates them to SQL;
+// `ToQueryString()` shows it. Optional fields are nullable columns, None being NULL.
+using System;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+
+// Becomes a record, `fn LoadStore(configuration) => Result<Store, List<string>>`, and `fn StoreFrom(configuration)`.
+config Store from "Store" {
+    connection: string = "Data Source=:memory:";
+    bigOrder: decimal = 100m requires bigOrder > 0m;
+}
+
+/// A class: its rows are tracked, so changing one and saving updates the database.
+class Customer(id: int, name: string) {
+    public let id = id;
+    public mut name = name;
+    public mut email: string? = None;
+}
+
+/// A record: read, added and removed as a whole.
+record Order(id: int, customerId: int, total: decimal, note: string?);
+
+// Becomes `class Shop(options: DbContextOptions<Shop>): DbContext(options)`, with a DbSet per table.
+database Shop {
+    table Customers: Customer key id;
+    table Orders: Order key id index customerId;
+}
+
+async fn Main() {
+    // Configuration would come from appsettings.json and the environment; here it's set in code.
+    let configuration = ConfigurationManager();
+    configuration["Store:BigOrder"] = "120";
+    let settings = StoreFrom(configuration);
+
+    using let shop = Shop(DbContextOptionsBuilder<Shop>().UseSqlite(settings.connection).Options);
+    await shop.Database.OpenConnectionAsync();      // an in-memory database lives as long as its connection
+    await shop.Database.EnsureCreatedAsync();
+
+    let ada = Customer(1, "Ada");
+    ada.email = Some("ada@example.com");
+    shop.Customers.Add(ada);
+    shop.Customers.Add(Customer(2, "Alan"));
+    shop.Orders.Add(Order(1, 1, 150m, Some("gift wrap")));
+    shop.Orders.Add(Order(2, 2, 40m, None));
+    shop.Orders.Add(Order(3, 1, 125m, None));
+    await shop.SaveChangesAsync();
+
+    // Translated to SQL: a WHERE and an ORDER BY, run by the database.
+    let threshold = settings.bigOrder;
+    let big = shop.Orders.Where(o => o.total > threshold).OrderByDescending(o => o.total);
+    Print(big.ToQueryString());
+    for order in await big.ToListAsync() {
+        Print($"  order {order.id}: {order.total} {order.note}");
+    }
+
+    // An optional column compares with None as SQL's IS NULL.
+    let noEmail = await shop.Customers.Where(c => c.email == None).Select(c => c.name).ToListAsync();
+    Print($"No email: {string.Join(", ", noEmail)}");
+
+    // Change a tracked row, and remove one.
+    let alan = await shop.Customers.SingleAsync(c => c.name == "Alan");
+    alan.email = Some("alan@example.com");
+    shop.Orders.Remove(await shop.Orders.SingleAsync(o => o.id == 2));
+    await shop.SaveChangesAsync();
+    Print($"Customers with email: {await shop.Customers.CountAsync(c => c.email != None)}, orders: {await shop.Orders.CountAsync()}");
+}

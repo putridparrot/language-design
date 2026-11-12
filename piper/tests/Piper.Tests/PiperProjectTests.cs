@@ -111,7 +111,7 @@ public class PiperProjectTests
             File.WriteAllText(Path.Combine(folder, PiperProject.FileName), """{ "plugins": ["webb"] }""");
             (_, errors) = LoadedProject.Load(folder);
             var error = Assert.Single(errors);
-            Assert.Contains("isn't one that comes with piper (actors, args, aspects, parallel, remote-actors, services, state-machines, web)", error.Message);
+            Assert.Contains("isn't one that comes with piper (actors, args, aspects, config, data, parallel, remote-actors, services, state-machines, web)", error.Message);
         }
         finally
         {

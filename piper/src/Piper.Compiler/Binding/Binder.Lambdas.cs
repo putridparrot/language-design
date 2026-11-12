@@ -59,6 +59,7 @@ public sealed partial class Binder
     {
         var real = _diagnostics;
         _diagnostics = new DiagnosticBag { CurrentSource = real.CurrentSource };
+        _trials++;
         try
         {
             var result = bind();
@@ -68,21 +69,98 @@ public sealed partial class Binder
         finally
         {
             _diagnostics = real;
+            _trials--;
         }
     }
 
+    /// <summary>
+    /// How many <see cref="Trial"/>s are under way. Expression-tree restrictions are checked only outside them, so a
+    /// lambda breaking one still chooses <c>Queryable.Where</c> and is reported, rather than quietly choosing
+    /// <c>Enumerable.Where</c>, which would run the query in memory.
+    /// </summary>
+    private int _trials;
+
     // Lambdas
+
+    /// <summary>
+    /// The delegate type a lambda is bound as for <paramref name="type"/>: <c>D</c> for <c>Expression&lt;D&gt;</c>, as C#
+    /// converts a lambda to an expression tree of D (<c>Queryable.Where</c>'s predicate), otherwise the type itself.
+    /// Only lambdas convert so: a function value can't become an expression tree, and one can't be called.
+    /// </summary>
+    private static TypeSymbol LambdaTarget(TypeSymbol type) =>
+        IsExpressionTree(type) ? type.TypeArguments[0] : type;
+
+    /// <summary>Whether <paramref name="type"/> is <c>System.Linq.Expressions.Expression&lt;D&gt;</c>.</summary>
+    private static bool IsExpressionTree(TypeSymbol type) =>
+        type is ClrTypeSymbol { TypeArguments: [_] } clr && clr.Type == typeof(System.Linq.Expressions.Expression<>);
+
+    /// <summary>
+    /// Reports what an expression-tree lambda can't contain: it must be a single expression, as C# requires, since a
+    /// provider (EF Core's SQL translation, say) reads it as data rather than running it. Nested lambdas are part of
+    /// the tree, so they're checked too.
+    /// </summary>
+    private void CheckExpressionTree(LambdaExpressionSyntax lambda)
+    {
+        if (lambda.Async is { } async)
+            _diagnostics.ReportNotInExpressionTree(async.Span, "'async'");
+        var reported = new HashSet<string>();
+        void Report(TextSpan span, string what)
+        {
+            if (reported.Add(what))
+                _diagnostics.ReportNotInExpressionTree(span, what);
+        }
+
+        foreach (var node in SyntaxWalker.DescendantsAndSelf(lambda.Body))
+        {
+            switch (node)
+            {
+                case BlockExpressionSyntax { Statements.IsEmpty: false } block:
+                    Report(block.Statements[0].Span, "statements; write a single expression");
+                    break;
+                case AssignmentExpressionSyntax assignment:
+                    Report(assignment.Span, "an assignment");
+                    break;
+                case AwaitExpressionSyntax await:
+                    Report(await.Span, "'await'");
+                    break;
+                case ThrowExpressionSyntax @throw:
+                    Report(@throw.Span, "'throw'");
+                    break;
+                case MatchExpressionSyntax match:
+                    Report(match.Span, "'match'; use 'if … else …'");
+                    break;
+                case IsExpressionSyntax @is:
+                    Report(@is.Span, "'is' patterns; compare an optional with '== None' or '!= None'");
+                    break;
+                case BinaryExpressionSyntax { Operator.Kind: TokenKind.QuestionQuestion } coalesce:
+                    Report(coalesce.Span, "'??'; a provider can't read an optional's value: compare it with '== None' or '!= None'");
+                    break;
+                case ConditionalAccessExpressionSyntax conditional:
+                    Report(conditional.Span, "'?.'; a provider can't read an optional's value: compare it with '== None' or '!= None'");
+                    break;
+                case TupleExpressionSyntax tuple:
+                    Report(tuple.Span, "a tuple; make a record instead");
+                    break;
+            }
+        }
+    }
+
+    /// <summary>A .NET parameter type's delegate type, looking through <c>Expression&lt;D&gt;</c> as a lambda does.</summary>
+    private static Type LambdaTarget(Type type) =>
+        type.IsGenericType && type.GetGenericTypeDefinition() == typeof(System.Linq.Expressions.Expression<>) ? type.GetGenericArguments()[0] : type;
 
     /// <summary>A lambda takes its types from the delegate type the context expects, or else from its annotations.</summary>
     private BoundExpression BindLambda(LambdaExpressionSyntax syntax, TypeSymbol? expected)
     {
-        if (expected is not null && DelegateSignature(expected) is { } signature)
+        if (expected is not null && DelegateSignature(LambdaTarget(expected)) is { } signature)
         {
             if (signature.Parameters.Length != syntax.Parameters.Length)
             {
                 _diagnostics.ReportLambdaParameterCount(syntax.Span, expected, signature.Parameters.Length, syntax.Parameters.Length);
                 return new BoundErrorExpression();
             }
+            if (IsExpressionTree(expected) && _trials == 0)
+                CheckExpressionTree(syntax);
             return BindLambdaWith(syntax, signature.Parameters, signature.Return, expected);
         }
 

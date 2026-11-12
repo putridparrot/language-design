@@ -580,7 +580,7 @@ public sealed partial class CSharpEmitter
     private static string AccessorModifiers(MethodSymbol accessor)
     {
         var access = accessor.IsPrivate ? "private "
-            : accessor.Overridden is MethodInfo { IsFamilyOrAssembly: true } ? "protected internal "
+            : accessor.Overridden is MethodInfo { IsFamilyOrAssembly: true } ? "protected "
             : accessor.IsProtected ? "protected "
             : "public ";
         return access + (accessor.IsOverride ? "override " : accessor.IsAbstract ? "abstract " : accessor.IsVirtual ? "virtual " : "");
@@ -831,9 +831,10 @@ public sealed partial class CSharpEmitter
                 _writer.WriteLine();
             var method = methods[i];
             // A class's private method is private to it; an extend block's is visible to the program (it's private to
-            // its file in Piper). An override of a protected .NET method must be protected too.
+            // its file in Piper). An override of a protected .NET method must be protected too, and so must one of a
+            // `protected internal` one, as C# requires when the base is in another assembly, as a .NET one always is.
             var access = method.IsPrivate ? method.ContainingType is ClassSymbol ? "private " : "internal "
-                : method.Overridden is MethodInfo { IsFamilyOrAssembly: true } ? "protected internal "
+                : method.Overridden is MethodInfo { IsFamilyOrAssembly: true } ? "protected "
                 : method.IsProtected ? "protected "
                 : "public ";
             // An enum's ToString is sealed, so its variants (C# records deriving from it) don't generate their own.

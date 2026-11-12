@@ -37,4 +37,30 @@ public sealed class ReferenceLoadContext : AssemblyLoadContext
 
     protected override Assembly? Load(AssemblyName name) =>
         Has(name) ? LoadFromAssemblyPath(_paths[name.Name!]) : null;
+
+    /// <summary>Native libraries the references' packages bring (SQLite's <c>e_sqlite3</c>), by name without extension or <c>lib</c>.</summary>
+    private readonly ConcurrentDictionary<string, string> _natives = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Makes <paramref name="paths"/>, native libraries for this platform, available to the references'
+    /// <c>DllImport</c>s, which look them up by name: <c>e_sqlite3</c> for <c>e_sqlite3.dll</c> or <c>libe_sqlite3.so</c>.
+    /// </summary>
+    public void UseNativeLibraries(IEnumerable<string> paths)
+    {
+        foreach (var path in paths)
+        {
+            var name = Path.GetFileNameWithoutExtension(path);
+            _natives.TryAdd(name, path);
+            if (name.StartsWith("lib", StringComparison.Ordinal))
+                _natives.TryAdd(name[3..], path);
+        }
+    }
+
+    protected override IntPtr LoadUnmanagedDll(string unmanagedDllName)
+    {
+        var name = Path.GetFileNameWithoutExtension(unmanagedDllName);
+        return _natives.TryGetValue(name, out var path) || (name.StartsWith("lib", StringComparison.Ordinal) && _natives.TryGetValue(name[3..], out path))
+            ? LoadUnmanagedDllFromPath(path)
+            : IntPtr.Zero;
+    }
 }

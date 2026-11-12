@@ -751,13 +751,37 @@ public sealed partial class Binder
     private static int TargetComparison(
         (ClrCandidate Candidate, int[] Scores, bool Expanded, int[]? Positions) a, (ClrCandidate Candidate, int[] Scores, bool Expanded, int[]? Positions) b, int index)
     {
-        if (ClrTypes.ToClr(ParameterFor(a.Candidate, a.Positions?[index] ?? index, a.Expanded).Type) is not { } first ||
-            ClrTypes.ToClr(ParameterFor(b.Candidate, b.Positions?[index] ?? index, b.Expanded).Type) is not { } second || first == second)
+        if (ApproximateClr(ParameterFor(a.Candidate, a.Positions?[index] ?? index, a.Expanded).Type) is not { } first ||
+            ApproximateClr(ParameterFor(b.Candidate, b.Positions?[index] ?? index, b.Expanded).Type) is not { } second || first == second)
         {
             return 0;
         }
         bool firstToSecond = second.IsAssignableFrom(first), secondToFirst = first.IsAssignableFrom(second);
         return firstToSecond && !secondToFirst ? -1 : secondToFirst && !firstToSecond ? 1 : 0;
+    }
+
+    /// <summary>
+    /// The .NET type of <paramref name="type"/>, or for a .NET generic over Piper types, which have no .NET type here,
+    /// the generic over <c>object</c> in their place: enough to see that <c>IEnumerable&lt;Person&gt;</c> is more specific
+    /// than <c>IEnumerable</c>, so <c>people.AsQueryable()</c> picks <c>AsQueryable&lt;Person&gt;</c> as C# would.
+    /// </summary>
+    private static Type? ApproximateClr(TypeSymbol type)
+    {
+        if (ClrTypes.ToClr(type) is { } exact)
+            return exact;
+        if (type is not ClrTypeSymbol { Type.IsGenericTypeDefinition: true, TypeArguments.IsEmpty: false } generic ||
+            generic.Type.GetGenericArguments().Length != generic.TypeArguments.Length)
+        {
+            return null;
+        }
+        try
+        {
+            return generic.Type.MakeGenericType([.. generic.TypeArguments.Select(t => ApproximateClr(t) ?? typeof(object))]);
+        }
+        catch (ArgumentException)
+        {
+            return null;   // a constraint `object` doesn't meet
+        }
     }
 
     /// <summary>
@@ -877,7 +901,7 @@ public sealed partial class Binder
         // or Action), so it can be any Delegate. A specific delegate type matches better.
         if (TakesAnyDelegate(delegateType, lambda))
             return Trial(() => BindLambda(lambda, null), out bool natural) is BoundLambdaExpression && !natural ? 15 : null;
-        if (DelegateSignature(delegateType) is not { } signature || signature.Parameters.Length != lambda.Parameters.Length)
+        if (DelegateSignature(LambdaTarget(delegateType)) is not { } signature || signature.Parameters.Length != lambda.Parameters.Length)
             return null;
         var bound = Trial(() => BindLambda(lambda, delegateType), out bool failed);
         if (failed || bound is not BoundLambdaExpression { BodyType: var body, ReturnType: var returns })
@@ -899,7 +923,7 @@ public sealed partial class Binder
     {
         if (TakesAnyDelegate(delegateType, lambda))
             return true;
-        if (DelegateSignature(delegateType) is not { } signature || signature.Parameters.Length != lambda.Parameters.Length)
+        if (DelegateSignature(LambdaTarget(delegateType)) is not { } signature || signature.Parameters.Length != lambda.Parameters.Length)
             return false;
         return lambda.Parameters.Zip(signature.Parameters).All(pair =>
             pair.First.Type is not { } annotation || Trial(() => BindType(annotation), out _) is var type && (type == pair.Second || type == TypeSymbol.Error));
@@ -1044,9 +1068,11 @@ public sealed partial class Binder
             progress = false;
             for (int i = 0; i < count; i++)
             {
-                if (arguments[i].Lambda is not { } lambda || !parameters[i].ParameterType.IsSubclassOf(typeof(MulticastDelegate)))
+                // `Expression<Func<T, R>>` (Queryable's) infers as its Func does.
+                var delegateType = LambdaTarget(parameters[i].ParameterType);
+                if (arguments[i].Lambda is not { } lambda || !delegateType.IsSubclassOf(typeof(MulticastDelegate)))
                     continue;
-                var invoke = parameters[i].ParameterType.GetMethod("Invoke")!;
+                var invoke = delegateType.GetMethod("Invoke")!;
                 if (!Unresolved(invoke.ReturnType, generics, result))
                     continue;
 

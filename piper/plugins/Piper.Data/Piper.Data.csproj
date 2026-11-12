@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    What the code the data plugin (plugins/Piper.Plugins.Data) writes calls at run time: storing Piper's Options as
+    nullable columns with EF Core. It comes with the plugin, beside its assembly, and a program using the plugin
+    references it (IPiperPlugin.References).
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Piper.Data</RootNamespace>
+    <!-- One place whatever the configuration, so the data plugin can copy it beside itself. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\runtime\</OutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The program restores EF Core itself (the plugin's Packages), so it isn't copied here. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.14" PrivateAssets="all" ExcludeAssets="runtime" />
+    <!-- A program has its own Piper.Runtime; this must use that one, not a copy. -->
+    <ProjectReference Include="..\..\src\Piper.Runtime\Piper.Runtime.csproj" Private="false" />
+  </ItemGroup>
+
+</Project>

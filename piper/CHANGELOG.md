@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **Expression trees:** a lambda passed where .NET takes an `Expression<Func<…>>` is an expression tree, as in C#. So
+  a query on an `IQueryable` uses `Queryable`'s operators, which a provider such as EF Core translates to SQL, rather
+  than `Enumerable`'s, which ran it in memory. `let f: Expression<Func<int, bool>> = x => x > 1;` works too.
+  - What a tree can't contain is error PIP0397: statements, assignment, `await`, `throw`, `match`, `is` patterns,
+    tuples, and `??` or `?.` on optionals (compare with `None` instead).
+- **Fix:** where a .NET method has a generic and a non-generic overload, `IEnumerable<T>` over a Piper type now counts
+  as more specific than `IEnumerable`, as C# does, so `people.AsQueryable()` is an `IQueryable<Person>`.
+- **Fix:** overriding a .NET `protected internal` method (`DbContext.OnModelCreating`) emits `protected`, as C#
+  requires across assemblies, rather than C# that didn't compile.
+- **Native libraries in packages** (SQLite's `e_sqlite3`) are loaded for `piper run` and `piper test`, and copied next
+  to a program by `piper build`.
+- **`config` plugin:** `config Smtp from "Smtp" { port: int = 587 requires port > 0; … }` becomes a record, and
+  `LoadSmtp(configuration)` / `SmtpFrom(configuration)` reading it from an `IConfiguration`. Every missing, unparsable
+  or invalid value is reported at once, with its key. Fields can be optional, lists, or nested configs.
+- **`data` plugin:** `database Shop { table Orders: Order key id index customerId; }` becomes an EF Core `DbContext`.
+  Options are nullable columns, compared with `None` as SQL's `IS NULL`, through Piper.Data, which comes with the
+  plugin. A `key` or `index` naming a missing field is an error.
+  samples/data uses it with SQLite, and with `config` for its settings.
+
 - **Web: who may call an endpoint, and how often.** `authorize`, `authorize "admin"`, `anonymous`,
   `ratelimit "api"`, `ratelimit off`, `cors "partners"` and `cache "short"` after a group's or an endpoint's route
   (an endpoint's replacing its group's for the same concern), becoming ASP.NET Core's endpoint conventions.

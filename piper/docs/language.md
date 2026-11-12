@@ -1007,6 +1007,26 @@ names.Sort((a, b) => a.Length - b.Length);    // a .NET delegate type
   `ThreadStart`). A generic .NET method infers its type arguments from the function's: `Array.ConvertAll(array, Describe)`.
   A variable holding a function is a delegate already, and, as in C#, doesn't convert to another delegate type.
 
+### Queries and expression trees
+
+A lambda passed where .NET takes an `Expression<Func<…>>` is an **expression tree**, as in C#: the method gets a
+description of the lambda, which it can read, rather than code to run. That's how `IQueryable` works: a query
+provider such as EF Core translates the description to SQL.
+
+```piper
+let adults = db.People.Where(p => p.age >= 18).OrderBy(p => p.name);   // Queryable's operators: becomes SQL
+let isAdult: Expression<Func<int, bool>> = age => age >= 18;            // a tree, which can be compiled and run
+Print(isAdult);                                                         // age => (age >= 18)
+```
+
+- **Which operators:** a query on an `IQueryable` uses `Queryable`'s operators (`Where`, `Select`, `OrderBy`…), as in
+  C#, not `Enumerable`'s, which would run it in memory. A query on a list is still `Enumerable`'s, with plain delegates.
+- **What it can contain:** a single expression, as C# requires, since a provider reads it rather than running it.
+  Comparisons, arithmetic, `&&`/`||`, member access, method calls, string interpolation, `if … else …` (C#'s `?:`),
+  nested lambdas (`g => g.Any(n => n > 4)`) and comparing an optional with `== None` or `!= None` are fine.
+- **What it can't** (PIP0397): statements or a block body, assignment, `await`, `throw`, `match`, `is` patterns,
+  tuples, and `??` or `?.` on an optional, whose value a provider can't read. Compare it with `None` instead.
+
 ### Local functions
 
 A function can be declared inside a block, as in C#:

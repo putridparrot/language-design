@@ -529,6 +529,10 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     // Lambdas, collections and exceptions
 
+    /// <summary>Something an expression-tree lambda (a query's, which a provider such as EF Core reads) can't contain.</summary>
+    public void ReportNotInExpressionTree(TextSpan span, string what) =>
+        Error("PIP0397", span, $"This lambda is an expression tree (a query a provider such as EF Core translates, to SQL say), which can't contain {what}.");
+
     public void ReportCannotInferLambda(TextSpan span) =>
         Error("PIP0280", span, "Can't infer this lambda's parameter types; annotate them, e.g. '(x: int) => …', or use it where a function type is expected.");
 
