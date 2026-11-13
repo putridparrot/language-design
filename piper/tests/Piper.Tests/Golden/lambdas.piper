@@ -65,4 +65,9 @@ fn Main() {
         captured.Add(() => n);
     }
     Print(string.Join(" ", captured.Select(f => f())));
+
+    // `_` parameters bind nothing, so there can be several.
+    let neither: (int, int) => string = (_, _) => "ignored";
+    Print(neither(1, 2));
+    Print(string.Join(" ", names.Select((_, i) => i)));
 }

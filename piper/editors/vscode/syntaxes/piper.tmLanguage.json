@@ -33,7 +33,7 @@
           "captures": { "1": { "name": "keyword.declaration.function.piper" }, "2": { "name": "entity.name.function.piper" } }
         },
         {
-          "match": "\\b(record|enum|trait|class)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "match": "\\b(record|enum|trait|class|newtype)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": { "1": { "name": "keyword.declaration.type.piper" }, "2": { "name": "entity.name.type.piper" } }
         },
         {
@@ -107,7 +107,7 @@
         { "name": "keyword.control.piper", "match": "\\b(if|else|while|for|in|return|break|continue|match|try|catch|finally|throw|defer|yield|await)\\b" },
         { "name": "keyword.operator.expression.piper", "match": "\\b(typeof|nameof)(?=\\s*\\()" },
         { "name": "keyword.control.piper", "match": "^\\s*\\block\\b(?=\\s*[\\w(])" },
-        { "name": "keyword.declaration.piper", "match": "^\\s*\\b(type|event)\\b(?=\\s+\\w)" },
+        { "name": "keyword.declaration.piper", "match": "^\\s*\\b(type|newtype|event)\\b(?=\\s+\\w)" },
         { "name": "storage.modifier.piper", "match": "\\bparams\\b(?=\\s+\\w+\\s*:)" },
         { "name": "keyword.declaration.piper", "match": "\\b(fn|record|struct|class|enum|trait|extend|namespace|using|let|mut|test|operator|requires)\\b" },
         { "name": "storage.modifier.piper", "match": "\\b(static|private|public|protected|async|out|ref|abstract|sealed|virtual|override)\\b" },

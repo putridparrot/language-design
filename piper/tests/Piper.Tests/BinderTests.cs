@@ -133,6 +133,13 @@ public class BinderTests
     [InlineData("PIP0379", "fn Main() { for i in ..3 { } }")]
     [InlineData("PIP0380", "fn Main() { let n = nameof(1 + 2); }")]
     [InlineData("PIP0110", "type Pair<T> = (T, T); fn Main() { }")]
+    [InlineData("PIP0113", "newtype Id<T> = int; fn Main() { }")]
+    [InlineData("PIP0202", "newtype IssueId = int; newtype ProjectId = int; fn F(id: IssueId) { } fn Main() { F(ProjectId(1)); }")]
+    [InlineData("PIP0202", "newtype IssueId = int; fn F(id: IssueId) { } fn Main() { F(1); }")]
+    [InlineData("PIP0202", "newtype IssueId = int; fn Main() { let n: int = IssueId(1); }")]
+    [InlineData("PIP0203", "newtype IssueId = int; fn Main() { let n = IssueId(1) + IssueId(2); }")]
+    [InlineData("PIP0288", "newtype Name = string; fn Main() { let names = Name[3]; }")]
+    [InlineData("PIP0335", "fn Main() { let newtype = 1; }")]
     [InlineData("PIP0381", "type A = B; type B = A; fn Main() { }")]
     [InlineData("PIP0201", "record R(x: int); type R = int; fn Main() { }")]
     [InlineData("PIP0111", "record R(params xs: int[]); fn Main() { }")]
@@ -1626,6 +1633,22 @@ public class BinderTests
     {
         AssertNoErrors("fn F() => int = 1; fn Main() { let _ = F(); let _ = F(); using let _ = System.IO.MemoryStream(); }");
         AssertSingleError("PIP0200", "fn F() => int = 1; fn Main() { let _ = F(); Print(_); }");
+    }
+
+    /// <summary>A .NET type's static property is assigned as C# assigns it; one without a public setter is reported.</summary>
+    [Fact]
+    public void A_static_dotnet_property_can_be_assigned()
+    {
+        AssertNoErrors("using System; fn Main() { Environment.ExitCode = 3; Environment.ExitCode = 0; }");
+        AssertSingleError("PIP0285", "using System; fn Main() { Math.PI = 3.0; }");
+    }
+
+    /// <summary>A type position looks past a function or variable of the name to a type, as C# does.</summary>
+    [Fact]
+    public void A_function_doesnt_hide_a_type_of_its_name()
+    {
+        AssertNoErrors("using System.Collections.Generic; fn List(n: int) => int = n; fn Make() => List<int> = [List(1)];");
+        AssertNoErrors("record Point(x: int); fn F(p: Point) => Point { let Point = 1; let q: Point = p; q }");
     }
 
     [Fact]

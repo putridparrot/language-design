@@ -1,0 +1,94 @@
+// The coordinator's actor, and the workers' side: each worker asks the coordinator for a chunk, works it out, and
+// sends back what it found, until it's stopped.
+namespace GridApp;
+
+using System;
+using System.Diagnostics;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Proto;
+using Proto.Remote;
+using Proto.Remote.GrpcNet;
+
+/// The coordinator's jobs, hosted under the name "jobs". It holds the board and applies the rules in board.piper one
+/// message at a time, so workers asking at once on many nodes are given different chunks.
+actor Jobs {
+    mut board = NewBoard(DateTime.UtcNow);
+
+    on Start(spec: JobSpec) => bool {
+        let (next, started) = StartJob(board, spec, DateTime.UtcNow);
+        board = next;
+        started
+    }
+
+    on Take(worker: string) => Assignment {
+        let (next, assignment) = TakeWork(board, worker, DateTime.UtcNow);
+        board = next;
+        assignment
+    }
+
+    on Done(tally: Tally) => bool {
+        let (next, kept) = Complete(board, tally, DateTime.UtcNow);
+        board = next;
+        kept
+    }
+
+    on Cancel() => bool {
+        let (next, cancelled) = CancelJob(board, DateTime.UtcNow);
+        board = next;
+        cancelled
+    }
+
+    on Status() => View { Describe(board, DateTime.UtcNow) }
+}
+
+/// Starts a node: an actor system the others reach at `host:port` (port 0 for any free one). A loopback host binds to
+/// it alone; any other (a service's name, or a pod's IP address) binds to every interface and tells the others that.
+async fn StartNode(host: string, port: int) => Task<ActorSystem> {
+    let config = if host == "127.0.0.1" || host == "localhost" {
+        RemoteConfig.BindToLocalhost(port)
+    } else {
+        RemoteConfig.BindToAllInterfaces(host, port)
+    };
+    let system = ActorSystem().WithRemote(config);
+    await system.Remote().StartAsync();
+    system
+}
+
+/// Runs `count` workers on this node, called `name` (with a number after it, for more than one), each taking chunks
+/// from the coordinator at `coordinator` until `stop` is cancelled.
+async fn RunWorkers(system: ActorSystem, coordinator: string, name: string, count: int, stop: CancellationToken) {
+    let names = if count == 1 { [name] } else { [...Enumerable.Range(1, count).Select(i => $"{name}/{i}")] };
+    await Task.WhenAll(names.Select(worker => Work(system, coordinator, worker, stop)));
+}
+
+/// One worker: asks for a chunk, simulates it (on the thread pool, as it's all computation), and sends back the
+/// sample. With nothing to do it asks again in half a second; if the coordinator can't be reached (it's restarting)
+/// it tries again in a second, so workers can start before it, and carry on after it restarts.
+async fn Work(system: ActorSystem, coordinator: string, worker: string, stop: CancellationToken) {
+    let jobs = Jobs.Connect(system, coordinator, "jobs");
+    while !stop.IsCancellationRequested {
+        mut pause = 0;
+        try {
+            match await jobs.Take(worker) {
+                Work(chunk) => {
+                    let clock = Stopwatch.StartNew();
+                    let sample = await Task.Run(() => Simulate(chunk.scenarios, chunk.seed));
+                    await jobs.Done(Tally(chunk.job, chunk.id, worker, sample, clock.ElapsedMilliseconds));
+                },
+                Wait => {
+                    pause = 500;
+                },
+            }
+        } catch (_: Exception) {
+            pause = 1_000;
+        }
+        if pause > 0 {
+            try {
+                await Task.Delay(pause, stop);
+            } catch (_: OperationCanceledException) {
+            }
+        }
+    }
+}

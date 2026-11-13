@@ -16,9 +16,9 @@ async fn StartTracker(searchesPerMinute: int) => Task<Running> {
     let connection = $"Data Source=file:tracker-{Guid.NewGuid()}?mode=memory&cache=shared";
     let keepAlive = SqliteConnection(connection);
     await keepAlive.OpenAsync();
-    let settings = Settings(connection, searchesPerMinute);
+    let settings = Settings(connection, searchesPerMinute, None);
     await Prepare(settings);
-    let app = BuildApp(settings, FixedClock(Noon()), "http://127.0.0.1:0");
+    let app = BuildApp(settings, FixedClock(Noon()), NoNotifier(), "http://127.0.0.1:0");
     await app.StartAsync();
     let client = HttpClient();
     client.BaseAddress = Uri(app.Urls.First());

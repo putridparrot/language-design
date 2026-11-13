@@ -7,9 +7,9 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 
-record Project(id: int, code: string, name: string);
+record Project(id: ProjectId, code: string, name: string);
 
-record Comment(id: int, issueId: int, author: string, text: string, created: DateTime)
+record Comment(id: CommentId, issueId: IssueId, author: string, text: string, created: DateTime)
     requires text.Trim().Length > 0;
 
 database TrackerDb {
@@ -26,22 +26,22 @@ async fn OpenDatabase(connection: string) => Task<TrackerDb> {
     db
 }
 
-async fn FindIssue(db: TrackerDb, id: int) => Task<Issue?> =
+async fn FindIssue(db: TrackerDb, id: IssueId) => Task<Issue?> =
     await db.Issues.FirstOrDefaultAsync(i => i.id == id);
 
-async fn AddIssue(db: TrackerDb, projectId: int, request: NewIssue, now: DateTime) => Task<Result<Issue, IssueError>> {
+async fn AddIssue(db: TrackerDb, projectId: ProjectId, request: NewIssue, now: DateTime) => Task<Result<Issue, IssueError>> {
     if !await db.Projects.AnyAsync(p => p.id == projectId) {
-        return Err(IssueError.NotFound(projectId));
+        return Err(IssueError.NoProject(projectId));
     }
-    let issue = Create(0, projectId, request, now);      // 0: the database numbers it
+    let issue = Create(IssueId(0), projectId, request, now);      // 0: the database numbers it
     db.Issues.Add(issue);
     await db.SaveChangesAsync();
     Ok(issue)
 }
 
 /// Moves an issue through its workflow, and saves it.
-async fn Transition(db: TrackerDb, id: int, event: WorkflowEvent, now: DateTime) => Task<Result<Issue, IssueError>> {
-    let Some(issue) = await FindIssue(db, id) else { return Err(IssueError.NotFound(id)); };
+async fn Transition(db: TrackerDb, id: IssueId, event: WorkflowEvent, now: DateTime) => Task<Result<Issue, IssueError>> {
+    let Some(issue) = await FindIssue(db, id) else { return Err(IssueError.NoIssue(id)); };
     let result = Apply(issue, event, now);
     if result is Ok(_) {
         await db.SaveChangesAsync();
@@ -50,7 +50,7 @@ async fn Transition(db: TrackerDb, id: int, event: WorkflowEvent, now: DateTime)
 }
 
 /// A project's issues, newest first, narrowed by status and by words in the title when given.
-async fn Search(db: TrackerDb, projectId: int, status: WorkflowState?, text: string?) => Task<List<Issue>> {
+async fn Search(db: TrackerDb, projectId: ProjectId, status: WorkflowState?, text: string?) => Task<List<Issue>> {
     mut query = db.Issues.Where(i => i.projectId == projectId);
     if status is Some(wanted) {
         query = query.Where(i => i.status == wanted);
@@ -61,15 +61,15 @@ async fn Search(db: TrackerDb, projectId: int, status: WorkflowState?, text: str
     await query.OrderByDescending(i => i.created).ThenByDescending(i => i.id).ToListAsync()
 }
 
-async fn AddComment(db: TrackerDb, issueId: int, author: string, text: string, now: DateTime) => Task<Result<Comment, IssueError>> {
+async fn AddComment(db: TrackerDb, issueId: IssueId, author: string, text: string, now: DateTime) => Task<Result<Comment, IssueError>> {
     if !await db.Issues.AnyAsync(i => i.id == issueId) {
-        return Err(IssueError.NotFound(issueId));
+        return Err(IssueError.NoIssue(issueId));
     }
-    let comment = Comment(0, issueId, author, text, now);
+    let comment = Comment(CommentId(0), issueId, author, text, now);
     db.Comments.Add(comment);
     await db.SaveChangesAsync();
     Ok(comment)
 }
 
-async fn CommentsOn(db: TrackerDb, issueId: int) => Task<List<Comment>> =
+async fn CommentsOn(db: TrackerDb, issueId: IssueId) => Task<List<Comment>> =
     await db.Comments.Where(c => c.issueId == issueId).OrderBy(c => c.created).ToListAsync();

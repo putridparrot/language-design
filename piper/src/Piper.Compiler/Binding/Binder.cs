@@ -335,6 +335,7 @@ public sealed partial class Binder
         }
         foreach (var extend in extends.Where(e => e.Target is not TraitSymbol))
             methods.AddRange(BindExtendMethods(extend));
+        methods.AddRange(BindNewtypeParsers(types));
         CheckConformances(extends);
 
         var functions = new List<FunctionInfo>();
@@ -1748,8 +1749,9 @@ public sealed partial class Binder
 
     private Symbol? ResolveTypeNameCore(NamedTypeSyntax syntax)
     {
+        // A type position looks past functions and variables of the name, to a type further out.
         if (syntax.Qualifier.IsEmpty)
-            return _scope.Lookup(syntax.Name.Text);
+            return _scope.Lookup(syntax.Name.Text, symbol => symbol is not (FunctionSymbol or VariableSymbol));
 
         if (_scope.Lookup(syntax.Qualifier[0].Text) is not NamespaceSymbol @namespace)
         {

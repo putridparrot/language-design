@@ -43,6 +43,48 @@ them too.
   enum variants, and postconditions (`ensures result >= 0`).
 - **Obsolete warnings for setting obsolete .NET properties and subscribing to obsolete events** (reading and calling are
   already reported).
+- **.NET's `T?` through a Piper type parameter** (found by apps/tracker-desktop): in `fn Read<T>(…) => T? =
+  JsonSerializer.Deserialize<T>(…)`, .NET may give null for any reference `T`, but Piper reads the result as plain `T`,
+  as it can't tell whether `T` will be a reference type. That lets a null in. The result should be `T?`, converted by an
+  unconstrained helper (`value is null ? None : Some(value)`), for results, properties, `out` parameters and tasks alike.
+  The `PiperInterop` helpers are constrained to `class` today, and `ToNullableReference` has no unconstrained
+  equivalent for passing a `T?` the other way.
+- **Async event handlers** (found by apps/tracker-desktop): `button.Click += async (_, e) => { await Save(); }` is an
+  error, as an async lambda must return a Task. C# allows `async void` there, losing the exceptions it throws to the
+  synchronization context. To decide: allow it for event handlers only, as C# guidance suggests, perhaps with exceptions
+  reported rather than lost.
+- **Newtypes, later:** a newtype with type parameters, for phantom-typed ids (`newtype Id<T> = Guid;`, so an
+  `Id<Issue>` isn't an `Id<Project>`); and newtypes as JSON dictionary keys (`Dictionary<IssueId, …>` written as an
+  object, which needs the converter's property-name methods).
+
+### Ideas from other languages
+
+Weighed against what the apps needed (see each); in rough order of value for the cost.
+
+- **Property-based tests** (QuickCheck, Hypothesis, FsCheck): `test "name" for (a: int in 1..500, …) { … }` runs the
+  body over generated values, and shrinks a failure to the smallest input that fails. Several app tests check a
+  property with one hand-picked example (apps/grid's "the chunks cover the range" with 1000 and 7; "any order gives the
+  same figures" with one order). Piper's tests are built in, so this fits there: generators for the builtin types,
+  records and enums, with a seed printed on failure to repeat it.
+- **Structured concurrency** (Swift's `async let` and task groups, Kotlin's coroutine scopes): tasks started in a scope
+  are awaited or cancelled when it ends, and their exceptions aren't lost. apps/grid and apps/stock thread
+  cancellation tokens through every worker loop, pair `StartCluster` with `StopCluster` in each test, and stop with a
+  hand-written "cancel, then WhenAll"; the aspects plugin had to stop `[Command]` losing an async exception.
+- **Doc tests** (Rust, Elixir, Python): examples in `///` comments run by `piper test`, so documentation can't drift
+  from the code. Piper has both doc comments and built-in tests, so it's mostly plumbing.
+- **Units of measure** (F#), on hold: `decimal<GBP>`, `int<shares>`, checked at compile time and erased in the C#, so
+  `value + holding.shares` is an error. Valuable for money and quantities (apps/grid multiplies shares, prices and
+  volatilities), but unit arithmetic in the type checker is a large piece of work.
+- **Weighed and not taken:**
+  - **A checked `pure` keyword:** its strongest case, safety for actors and the parallel plugin, is about what crosses
+    a boundary, which a `Sendable`-style check (as Swift's) addresses directly: the actor plugins already warn about
+    mutable message fields, and lambdas given to the parallel plugin could be checked for captured `mut` variables.
+    Purity itself would have caught nothing in the apps so far (the grid's determinism is held by a test), D's checked
+    `pure` sees little use, and checking .NET calls needs a hand-kept list of pure members.
+  - **Macros or compile-time evaluation** (Zig, Rust): plugins already do this job.
+  - **Higher-kinded types, effect systems:** a large cost to learn, for little in the programs Piper is for.
+  - **Active patterns** (F#): `match` with property and list patterns, and helper functions, covered what the apps
+    needed.
 
 ## Production web and services
 
@@ -94,10 +136,14 @@ Server-side HTML belongs with [UI](#ui) (htmx over plain endpoints), not Razor.
 Piper programs can be consoles and servers; a UI should come from .NET's UI frameworks, built in code rather than XAML
 (nested object and collection initializers make a control tree read naturally).
 
-- **Desktop through interop (first):** a small code-first sample using Avalonia (cross-platform, from NuGet) and one
-  using WPF (`"frameworks": ["Microsoft.WindowsDesktop.App"]`), to find what's missing. Two gaps are known:
-  - `[STAThread]` on `Main` doesn't reach the generated entry point (`PiperEntryPoint.Main`), which WPF and WinForms need.
-  - No piper.json setting for a windowed program (MSBuild's `WinExe`), so a console window opens alongside it.
+- **Desktop through interop (first):** code-first samples, to find what's missing. Avalonia (cross-platform, from
+  NuGet) is done: [apps/tracker-desktop](../apps/tracker-desktop) ([what it found](../apps/tracker/NOTES.md#phase-5-a-desktop-client-avalonia)).
+  WPF (`"frameworks": ["Microsoft.WindowsDesktop.App"]`) is next. Two gaps remain:
+  - `[STAThread]` on `Main` doesn't reach the generated entry point (`PiperEntryPoint.Main`), which WPF and WinForms
+    need (Avalonia runs without it). `piper run` calls `Main` on the CLI's thread, so it would need to start an STA
+    thread too.
+  - No piper.json setting for a windowed program (MSBuild's `WinExe`), so a console window opens alongside it. The
+    launcher piper writes from the SDK's apphost would need its PE subsystem set to GUI, as the SDK does.
   XAML is out of scope: it relies on generated `InitializeComponent` partials the binder can't see.
 - **An MVU plugin:** Model-View-Update (as Elm and F#'s Fabulous) suits Piper: a record for the model, updated by
   spreading; an enum of messages, handled by an exhaustive `match`; and a view function returning a control tree. The

@@ -24,3 +24,6 @@ notes.txt: .txt
 unset
 True False
 a, b, c
+utf-8
+True
+False

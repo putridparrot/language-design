@@ -62,6 +62,9 @@ internal static class Lambdas
             captured.Add(() => n_1);
         }
         global::System.Console.WriteLine(string.Join<int>(" ", global::System.Linq.Enumerable.Select<global::System.Func<int>, int>(captured, (global::System.Func<int> f) => f())));
+        global::System.Func<int, int, string> neither = (int __1, int __2) => "ignored";
+        global::System.Console.WriteLine(neither(1, 2));
+        global::System.Console.WriteLine(string.Join<int>(" ", global::System.Linq.Enumerable.Select<string, int>(names, (string __3, int i) => i)));
     }
 }
 

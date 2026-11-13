@@ -1,0 +1,11 @@
+{
+  // Tracker Desktop: an Avalonia app for the Tracker API (apps/tracker), written in Piper. Start the API first
+  // (`piper run apps/tracker`), then `piper run apps/tracker-desktop` (`-- --help` for its options: the API's address, and
+  // who to sign in as). `piper test apps/tracker-desktop` runs its tests, against a fake API.
+  "name": "tracker-desktop",
+  "plugins": ["aspects", "args"],
+  "packages": {
+    "Avalonia.Desktop": "11.3.22",
+    "Avalonia.Themes.Fluent": "11.3.22"
+  }
+}

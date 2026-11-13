@@ -555,4 +555,90 @@ public class AspectsPluginTests
         Assert.Equal("PIP0503", error.Code);
         Assert.Contains("taking no parameters", error.Message);
     }
+
+    [Fact]
+    public void A_failing_command_is_reported_to_OnCommandFailed()
+    {
+        var output = Run("""
+            using System;
+            using System.Threading.Tasks;
+
+            [Notify]
+            class Editor {
+                [Command]
+                fn Save() { throw InvalidOperationException("disk full"); }
+
+                [Command]
+                async fn LoadAsync() => Task { await Task.Yield(); throw InvalidOperationException("not found"); }
+
+                fn OnCommandFailed(command: string, error: Exception) { Print($"{command} failed: {error.Message}"); }
+            }
+
+            async fn Main() {
+                let e = Editor();
+                e.SaveCommand.Execute(None);
+                e.LoadCommand.Execute(None);
+                await Task.Delay(200);
+            }
+            """);
+        Assert.Equal("Save failed: disk full\nLoad failed: not found\n", output);
+    }
+
+    /// <summary>Without OnCommandFailed, an async command's exception is posted to where it started, as async void's is.</summary>
+    [Fact]
+    public void An_async_commands_unhandled_failure_is_thrown_where_it_started()
+    {
+        var output = Run("""
+            using System;
+            using System.Collections.Generic;
+            using System.Threading;
+
+            /// A synchronization context keeping what's posted to it, as a UI thread's queue would.
+            class Queue: SynchronizationContext {
+                public let posted: List<SendOrPostCallback> = [];
+                override fn Post(d: SendOrPostCallback, state: object) { posted.Add(d); }
+            }
+
+            [Notify]
+            class Editor {
+                [Command]
+                async fn LoadAsync() => System.Threading.Tasks.Task {
+                    await System.Threading.Tasks.Task.CompletedTask;
+                    throw InvalidOperationException("not found");
+                }
+            }
+
+            fn Main() {
+                let queue = Queue();
+                SynchronizationContext.SetSynchronizationContext(queue);
+                defer SynchronizationContext.SetSynchronizationContext(None);
+                Editor().LoadCommand.Execute(None);
+                Print(queue.posted.Count);
+                try {
+                    queue.posted[0](None);
+                } catch (e: InvalidOperationException) {
+                    Print($"thrown: {e.Message}");
+                }
+            }
+            """);
+        Assert.Equal("1\nthrown: not found\n", output);
+    }
+
+    [Fact]
+    public void OnCommandFailed_cant_be_private()
+    {
+        var error = Assert.Single(Compile("""
+            using System;
+
+            [Notify]
+            class Editor {
+                [Command]
+                fn Save() { }
+                private fn OnCommandFailed(command: string, error: Exception) { }
+            }
+
+            fn Main() { }
+            """).Diagnostics);
+        Assert.Contains("not private", error.Message);
+    }
 }

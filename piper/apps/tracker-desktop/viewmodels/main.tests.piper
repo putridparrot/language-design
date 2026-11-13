@@ -1,0 +1,171 @@
+namespace TrackerDesktop;
+
+using System;
+using System.Collections.Generic;
+using System.Net;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+
+record Reply(status: int, body: string);
+
+/// The Tracker API as the tests need it: an answer for each method and path, and a record of the requests ("POST
+/// /api/issues/1/events {…}"). One it has no answer for is a 404.
+class FakeApi: HttpMessageHandler {
+    public let requests: List<string> = [];
+    let answers: Dictionary<string, Reply> = Dictionary<string, Reply>();
+    let json = JsonSerializerOptions(JsonSerializerDefaults.Web);
+
+    fn Answer(method: string, path: string, status: int, body: string) {
+        answers[$"{method} {path}"] = Reply(status, body);
+    }
+
+    fn AnswerJson<T>(method: string, path: string, value: T) {
+        Answer(method, path, 200, JsonSerializer.Serialize(value, json));
+    }
+
+    override async fn SendAsync(request: HttpRequestMessage, cancellationToken: CancellationToken) => Task<HttpResponseMessage> {
+        let key = $"{request.Method} {request.RequestUri?.PathAndQuery ?? ""}";
+        let body = if request.Content is Some(content) { await content.ReadAsStringAsync(cancellationToken) } else { "" };
+        requests.Add($"{key} {body}".Trim());
+        if answers.TryGetValue(key, out let reply) {
+            return HttpResponseMessage((HttpStatusCode)reply.status) { Content: StringContent(reply.body, Encoding.UTF8, "application/json") };
+        }
+        HttpResponseMessage(HttpStatusCode.NotFound)
+    }
+}
+
+fn Issue(id: int, status: string, next: List<string>) => IssueView =
+    IssueView(id, 1, $"Issue {id}", "", "Normal", status, None, None, DateTime(2026, 1, 1), DateTime(2026, 1, 1), next);
+
+fn Comment(issueId: int, author: string, text: string) => CommentView = CommentView(1, issueId, author, text, DateTime(2026, 1, 2, 9, 30, 0));
+
+/// An API with one project, WEB, holding an open issue with a comment and one in progress with none.
+fn Api() => FakeApi {
+    let api = FakeApi();
+    let projects: List<Project> = [Project(1, "WEB", "Website")];
+    api.AnswerJson("GET", "/api/projects", projects);
+    let issues: List<IssueView> = [Issue(1, "Open", ["Start", "Close"]), Issue(2, "InProgress", ["Submit", "Unassign", "Close"])];
+    api.AnswerJson("GET", "/api/projects/1/issues", issues);
+    let comments: List<CommentView> = [Comment(1, "bo", "Seen on Firefox too.")];
+    api.AnswerJson("GET", "/api/issues/1/comments", comments);
+    let none: List<CommentView> = [];
+    api.AnswerJson("GET", "/api/issues/2/comments", none);
+    api.AnswerJson("GET", "/api/issues/3/comments", none);
+    api
+}
+
+/// An HTTP handler that fails as a bug would, rather than as the network does (which the client reports itself).
+class BrokenApi: HttpMessageHandler {
+    override fn SendAsync(request: HttpRequestMessage, cancellationToken: CancellationToken) => Task<HttpResponseMessage> =
+        throw InvalidOperationException("handler bug");
+}
+
+fn Model(api: FakeApi) => MainViewModel =
+    MainViewModel.Create(TrackerClient(HttpClient(api) { BaseAddress: Uri("http://tracker.test") }, "ada"), "ada");
+
+async test "loading chooses the first project and shows its issues" {
+    let model = Model(Api());
+    await model.LoadAsync();
+    AssertEqual(0, model.SelectedProjectIndex);
+    AssertEqual(2, model.Issues.Count);
+    AssertEqual("Choose an issue.", model.Details);
+}
+
+async test "an issue's actions are those the API says come next" {
+    let model = Model(Api());
+    await model.LoadAsync();
+    model.SelectedIssueIndex = 1;
+    Assert(model.CanSubmit && model.CanUnassign && model.CanClose);
+    Assert(!model.CanStart && !model.CanApprove && !model.CanReopen);
+    Assert(model.SubmitCommand.CanExecute(None));
+    Assert(!model.StartCommand.CanExecute(None));
+    Assert(model.Details.Contains("Can do next: Submit, Unassign, Close"), model.Details);
+}
+
+async test "an action is sent for the chosen issue, which stays chosen" {
+    let api = Api();
+    let model = Model(api);
+    await model.LoadAsync();
+    model.SelectedIssueIndex = 0;
+    api.AnswerJson("POST", "/api/issues/1/events", Issue(1, "InProgress", ["Submit"]));
+    await model.StartAsync();
+    Assert(api.requests.Contains("POST /api/issues/1/events {\"kind\":\"Start\",\"assignee\":\"ada\"}"), string.Join("\n", api.requests));
+    AssertEqual("Start: Issue 1 is InProgress.", model.Message);
+    AssertEqual(0, model.SelectedIssueIndex);
+}
+
+async test "choosing a status reads the issues again, filtered" {
+    let api = Api();
+    let model = Model(api);
+    await model.LoadAsync();
+    model.StatusFilter = "Closed";
+    AssertEqual("GET /api/projects/1/issues?status=Closed", api.requests[api.requests.Count - 1]);
+}
+
+async test "what the API says is wrong is shown" {
+    let api = Api();
+    let model = Model(api);
+    await model.LoadAsync();
+    model.SelectedIssueIndex = 0;
+    api.Answer("POST", "/api/issues/1/events", 409, "{\"title\":\"Conflict\",\"detail\":\"Issue 1 can't Start while Closed.\"}");
+    await model.StartAsync();
+    AssertEqual("Issue 1 can't Start while Closed.", model.Message);
+}
+
+async test "a new issue needs a title and a project" {
+    let api = Api();
+    let model = Model(api);
+    Assert(!model.CanAddIssue);
+    await model.LoadAsync();
+    model.NewTitle = "  ";
+    Assert(!model.CanAddIssue);
+    model.NewTitle = "Crash on save";
+    model.NewDescription = "Every time.";
+    Assert(model.AddIssueCommand.CanExecute(None));
+    api.AnswerJson("POST", "/api/projects/1/issues", Issue(3, "Open", ["Start", "Close"]));
+    await model.AddIssueAsync();
+    Assert(api.requests.Contains("POST /api/projects/1/issues {\"title\":\"Crash on save\",\"description\":\"Every time.\",\"priority\":\"Normal\"}"),
+        string.Join("\n", api.requests));
+    AssertEqual("Added WEB-3.", model.Message);
+    AssertEqual("", model.NewTitle);
+    AssertEqual("", model.NewDescription);
+}
+
+async test "choosing an issue shows its comments" {
+    let model = Model(Api());
+    await model.LoadAsync();
+    AssertEqual("No comments yet.", model.CommentsText);
+    model.SelectedIssueIndex = 0;
+    await model.LoadCommentsAsync();
+    AssertEqual("bo, 2026-01-02 09:30:\nSeen on Firefox too.", model.CommentsText);
+    model.SelectedIssueIndex = 1;
+    await model.LoadCommentsAsync();
+    AssertEqual("No comments yet.", model.CommentsText);
+}
+
+async test "a comment is added to the chosen issue" {
+    let api = Api();
+    let model = Model(api);
+    await model.LoadAsync();
+    Assert(!model.CanAddComment);
+    model.SelectedIssueIndex = 1;
+    model.NewComment = "On it.";
+    Assert(model.AddCommentCommand.CanExecute(None));
+    api.AnswerJson("POST", "/api/issues/2/comments", Comment(2, "ada", "On it."));
+    let after: List<CommentView> = [Comment(2, "ada", "On it.")];
+    api.AnswerJson("GET", "/api/issues/2/comments", after);
+    await model.AddCommentAsync();
+    Assert(api.requests.Contains("POST /api/issues/2/comments {\"text\":\"On it.\"}"), string.Join("\n", api.requests));
+    AssertEqual("", model.NewComment);
+    AssertEqual("ada, 2026-01-02 09:30:\nOn it.", model.CommentsText);
+}
+
+async test "a command that throws says so, rather than failing silently" {
+    let model = MainViewModel.Create(TrackerClient(HttpClient(BrokenApi()) { BaseAddress: Uri("http://tracker.test") }, "ada"), "ada");
+    model.LoadCommand.Execute(None);
+    await Task.Delay(100);
+    AssertEqual("Load failed: handler bug", model.Message);
+}

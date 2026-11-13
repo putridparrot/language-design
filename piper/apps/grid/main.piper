@@ -1,0 +1,81 @@
+// Starting a coordinator, a worker node, or both in one process.
+namespace GridApp;
+
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Proto.Remote;
+
+args Options "Grid: a coordinator shares a Monte Carlo Value at Risk among workers that ask it for work. Commands: coordinator; worker; or none, for a coordinator and three workers in this process." {
+    host: string = "127.0.0.1" "This node's name, as the others reach it: the coordinator's service name, or a worker pod's IP address";
+    port: int? "The port the nodes talk on (gRPC); default 8000 for the coordinator, and any free one for a worker";
+    http: int = 8090 "coordinator: the port of the dashboard and API";
+    coordinator: string = "127.0.0.1:8000" "worker: the coordinator's host:port";
+    name: string? "worker: what the dashboard calls it (default: the machine's name and the port)";
+    workers: int = 1 "worker: how many chunks it works on at once";
+    words: List<string> "The command";
+}
+
+async fn Main(args: string[]) {
+    let options = Options.FromArgs(args);
+    Environment.ExitCode = match options.words {
+        ["coordinator"] => await Coordinate(options),
+        ["worker"] => await Worker(options),
+        [] => await Everything(options),
+        _ => {
+            Console.Error.WriteLine($"Unknown command: {string.Join(" ", options.words)}. Try --help.");
+            2
+        },
+    };
+}
+
+/// The coordinator: hosts the jobs, and serves the dashboard.
+async fn Coordinate(options: Options) => Task<int> {
+    let node = await StartNode(options.host, options.port ?? 8000);
+    let jobs = Jobs.Spawn(node, "jobs");
+    let url = HttpUrl(options);
+    Print($"Coordinator {node.Address}, dashboard on {url}");
+    await BuildApi(jobs, url).RunAsync();
+    await node.Remote().ShutdownAsync(true);
+    0
+}
+
+/// A worker node: asks the coordinator for work until it's stopped (Ctrl+C, or Kubernetes stopping the pod).
+async fn Worker(options: Options) => Task<int> {
+    let node = await StartNode(options.host, options.port ?? 0);
+    let name = options.name ?? $"{Environment.MachineName.ToLowerInvariant()}:{node.Address.Split(':')[^1]}";
+    using let stop = CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => {
+        e.Cancel = true;
+        stop.Cancel();
+    };
+    AppDomain.CurrentDomain.ProcessExit += (_, _) => stop.Cancel();
+    Print($"Worker {name} ({options.workers} at once) at {node.Address}, asking {options.coordinator}");
+    await RunWorkers(node, options.coordinator, name, options.workers, stop.Token);
+    await node.Remote().ShutdownAsync(true);
+    0
+}
+
+/// A coordinator and three workers, each on its own node in this process, so the work still goes over gRPC: the
+/// quickest way to see it.
+async fn Everything(options: Options) => Task<int> {
+    let node = await StartNode("127.0.0.1", options.port ?? 8000);
+    let jobs = Jobs.Spawn(node, "jobs");
+    using let stop = CancellationTokenSource();
+    let workers: List<Task> = [];
+    for i in 1..3 {
+        let worker = await StartNode("127.0.0.1", 0);
+        workers.Add(RunWorkers(worker, node.Address, $"worker-{i}", 1, stop.Token));
+    }
+    let url = HttpUrl(options);
+    Print($"Coordinator {node.Address} and three workers; dashboard on {url}");
+    await BuildApi(jobs, url).RunAsync();
+    stop.Cancel();
+    await Task.WhenAll(workers);
+    0
+}
+
+/// Where the dashboard listens: on loopback alone for a loopback host, otherwise on every interface.
+fn HttpUrl(options: Options) => string =
+    if options.host == "127.0.0.1" || options.host == "localhost" { $"http://127.0.0.1:{options.http}" } else { $"http://*:{options.http}" };

@@ -163,6 +163,9 @@ public sealed class RecordSymbol : NamedTypeDefinition
     /// <summary>A `record struct`: a value type (C#'s <c>readonly record struct</c>), copied rather than shared, with no allocation.</summary>
     public bool IsStruct => Declaration.Struct is not null;
 
+    /// <summary>A `newtype`: a record struct whose one field, <c>value</c>, it stands for (in printing, JSON and parsing).</summary>
+    public bool IsNewtype => Declaration.Newtype is not null;
+
     /// <summary>Field types are written in terms of the record's own type parameters; see <see cref="TypeSubstitution"/>.</summary>
     public ImmutableArray<FieldSymbol> Fields { get; internal set; } = [];
 

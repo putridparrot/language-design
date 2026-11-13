@@ -120,6 +120,37 @@ internal static class Results
         }
         global::System.Console.WriteLine(Show(Digits(12345, 1)));
         global::System.Console.WriteLine(Show(Digits(1, 0)));
+        Result<int, MathError> parsed = Compute(64, 1);
+        Result<int, MathError> mapped;
+        if (parsed is { IsOk: true, Value: var v_1 })
+        {
+            mapped = Result<int, MathError>.Ok(v_1 * 2);
+        }
+        else if (parsed is { IsOk: false, Error: var e })
+        {
+            mapped = Result<int, MathError>.Err(e);
+        }
+        else
+        {
+            throw new global::System.Diagnostics.UnreachableException();
+        }
+        global::System.Console.WriteLine(mapped);
+        Result<MathError, int> swapped;
+        if (parsed is { IsOk: true, Value: var v_2 })
+        {
+            swapped = Result<MathError, int>.Err(v_2);
+        }
+        else if (parsed is { IsOk: false, Error: var e_1 })
+        {
+            swapped = Result<MathError, int>.Ok(e_1);
+        }
+        else
+        {
+            throw new global::System.Diagnostics.UnreachableException();
+        }
+        global::System.Console.WriteLine(swapped);
+        Option<int> first = parsed is { IsOk: true, Value: var v_3 } ? Option<int>.Some(v_3) : Option<int>.None;
+        global::System.Console.WriteLine(first);
     }
 }
 

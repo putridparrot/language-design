@@ -50,5 +50,24 @@ public sealed class Scope
         return null;
     }
 
+    /// <summary>
+    /// The nearest symbol named <paramref name="name"/> that <paramref name="accept"/> accepts, looking past those it
+    /// doesn't; or, if none is accepted, the nearest of the name (so its use can be reported). A type position looks
+    /// past functions and variables, as C# does, so a function `List` doesn't hide the type `List&lt;T&gt;`.
+    /// </summary>
+    public Symbol? Lookup(string name, Func<Symbol, bool> accept)
+    {
+        Symbol? first = null;
+        for (var scope = this; scope is not null; scope = scope.Parent)
+        {
+            if (scope.LookupLocal(name) is not { } symbol)
+                continue;
+            if (accept(symbol))
+                return symbol;
+            first ??= symbol;
+        }
+        return first;
+    }
+
     public IEnumerable<Symbol> Symbols => _symbols.Values;
 }

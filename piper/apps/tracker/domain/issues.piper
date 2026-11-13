@@ -6,8 +6,14 @@ using Piper.Web;
 
 enum Priority { Low, Normal, High, Urgent }
 
+/// What identifies an issue, a project and a comment: each an int to the database and in JSON, but not to each other,
+/// so a project's id can't be looked up as an issue's.
+newtype IssueId = int;
+newtype ProjectId = int;
+newtype CommentId = int;
+
 /// An issue in a project. A class, as it changes over its life (and as EF Core tracks it, once stored).
-class Issue(id: int, projectId: int, title: string, priority: Priority, created: DateTime) {
+class Issue(id: IssueId, projectId: ProjectId, title: string, priority: Priority, created: DateTime) {
     public let id = id;
     public let projectId = projectId;
     public mut title = title;
@@ -42,9 +48,20 @@ statemachine Workflow(issue: Issue) {
 
 /// Why something asked of the tracker can't be done, and the HTTP status the API answers it with.
 enum IssueError {
-    [Status(404)] NotFound(id: int),
+    [Status(404)] NoIssue(id: IssueId),
+    [Status(404)] NoProject(id: ProjectId),
     [Status(409)] NotAllowed(action: string, current: WorkflowState),
     [Status(400)] Invalid(detail: string),
+}
+
+extend IssueError {
+    /// What went wrong, for a person: the command line prints it. (JSON has the variant's fields instead.)
+    prop Message => string = match this {
+        NoIssue(id) => $"There's no issue {id}.",
+        NoProject(id) => $"There's no project {id}.",
+        NotAllowed(action, current) => $"An issue that's {current.Name} can't be given {action}.",
+        Invalid(detail) => detail,
+    };
 }
 
 /// Moves an issue through its workflow, as `event` asks, if its status allows it.
@@ -64,7 +81,7 @@ record NewIssue(title: string, description: string, priority: Priority)
     requires title.Trim().Length > 0 && title.Length <= 200
     requires description.Length <= 10000;
 
-fn Create(id: int, projectId: int, request: NewIssue, now: DateTime) => Issue {
+fn Create(id: IssueId, projectId: ProjectId, request: NewIssue, now: DateTime) => Issue {
     let issue = Issue(id, projectId, request.title.Trim(), request.priority, now);
     issue.description = request.description;
     issue

@@ -1,0 +1,39 @@
+// Telling the outside world when an issue changes: a webhook, called with the issue after each transition.
+namespace Tracker;
+
+using System;
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Threading.Tasks;
+
+/// What's told about changed issues.
+trait Notifier {
+    fn IssueChanged(issue: IssueView) => Task;
+}
+
+/// Tells no one: when no webhook is configured.
+record NoNotifier();
+
+extend NoNotifier: Notifier {
+    fn IssueChanged(issue: IssueView) => Task = Task.CompletedTask;
+}
+
+/// Posts each changed issue to a webhook as JSON. A webhook that's briefly down is tried again: three attempts in all,
+/// 50 ms apart ([Retry] rewrites the method at compile time; nothing is intercepted at run time).
+class WebhookNotifier(client: HttpClient, url: string): Notifier {
+    [Retry(3, 50)]
+    async fn IssueChanged(issue: IssueView) => Task {
+        let response = await client.PostAsJsonAsync(url, issue);
+        response.EnsureSuccessStatusCode();
+    }
+}
+
+/// Tells `notifier` about `issue`. A notification that fails even after its retries is reported, not passed on: the
+/// change it's about has happened, and its caller shouldn't be told otherwise.
+async fn Notify(notifier: Notifier, issue: IssueView) {
+    try {
+        await notifier.IssueChanged(issue);
+    } catch (e: Exception) {
+        Console.Error.WriteLine($"Couldn't tell about issue {issue.id}: {e.Message}");
+    }
+}

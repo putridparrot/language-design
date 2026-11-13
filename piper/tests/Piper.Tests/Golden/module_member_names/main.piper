@@ -1,0 +1,17 @@
+// Members named as products.piper's functions' class would be, calling one of those functions: the class mustn't be
+// hidden by the member, in a class (a method) or a record (a field).
+
+class Catalog {
+    fn Products() => string = ProductName("widget");
+}
+
+record Shelf(Products: string);
+
+extend Shelf {
+    fn Label() => string = ProductName(this.Products);
+}
+
+fn Main() {
+    Print(Catalog().Products());
+    Print(Shelf("bolt").Label());
+}

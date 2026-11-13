@@ -60,6 +60,13 @@ internal static class Interop
         Option<string> present = Option<string>.Some("here");
         global::System.Console.WriteLine($"{(string.IsNullOrEmpty(global::Piper.Runtime.PiperInterop.ToNullableReference(missing)))} {(string.IsNullOrEmpty(global::Piper.Runtime.PiperInterop.ToNullableReference(present)))}");
         global::System.Console.WriteLine(string.Join(", ", "a", "b", "c"));
+        global::System.Console.WriteLine(global::System.Text.UTF8Encoding.UTF8.WebName);
+        global::System.Net.Http.HttpRequestMessage request = new global::System.Net.Http.HttpRequestMessage();
+        request.Headers.ConnectionClose = global::Piper.Runtime.PiperInterop.ToNullableValue(Option<bool>.Some(true));
+        Option<bool> temp_1 = global::Piper.Runtime.PiperInterop.FromNullableValue(request.Headers.ConnectionClose);
+        global::System.Console.WriteLine(temp_1.IsSome ? temp_1.Value : false);
+        request.Headers.ConnectionClose = global::Piper.Runtime.PiperInterop.ToNullableValue(Option<bool>.None);
+        global::System.Console.WriteLine(global::Piper.Runtime.PiperInterop.FromNullableValue(request.Headers.ConnectionClose) is { IsSome: true });
     }
 }
 

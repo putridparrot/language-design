@@ -1,0 +1,163 @@
+// The state of the coordinator's jobs, and the rules for handing out their chunks, as functions from one state to the
+// next. The `Jobs` actor keeps the current state and applies them one message at a time, so the rules need no locks,
+// and the tests can try them with no actors at all.
+//
+// Workers ask for work when they're free, so a faster worker takes more, and a worker that starts mid-job just starts
+// asking. A chunk is lent, not given: if its worker hasn't sent it back within the lease (the pod was deleted, or
+// stuck), the next worker to ask is given it again. Whichever copy comes back first is kept and a later one ignored,
+// which is safe because a chunk always gives the same answer.
+namespace GridApp;
+
+using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.Linq;
+
+/// What a job is: how many chunks, how many scenarios in each, and the seed its random numbers come from.
+record JobSpec(chunks: int, scenarios: int, seed: int);
+
+/// The answer to a worker asking for work.
+enum Assignment {
+    Work(chunk: Chunk),
+    Wait,
+}
+
+/// What a worker sends back: the chunk's sample, who worked it out, and how long it took.
+record Tally(job: int, chunk: int, worker: string, sample: Sample, milliseconds: long);
+
+/// One chunk's progress: its state ("waiting", "running" or "done"), the worker that has it (or did it), how many times
+/// it's been handed out, when it last was, and how long it took.
+record Cell(state: string, worker: string, attempts: int, taken: DateTime, milliseconds: long);
+
+/// A worker, as the coordinator knows it from its asking: when it last asked, the chunk it's on (-1 for none), and
+/// what it's done in this job.
+record Seen(name: string, last: DateTime, current: int, done: int, busyMs: long);
+
+/// A finished or cancelled job, for the history.
+record Run(job: int, spec: JobSpec, seconds: double, workers: int, retried: int, cancelled: bool, valuation: Valuation);
+
+/// Everything the coordinator knows.
+/// - `retried`: chunks handed out again after their lease ran out
+/// - `late`: results that came back after their chunk was done (or their job ended), and were ignored
+record Board(job: int, spec: JobSpec, running: bool, started: DateTime, finished: DateTime,
+             cells: ImmutableList<Cell>, samples: ImmutableDictionary<int, Sample>,
+             workers: ImmutableDictionary<string, Seen>, retried: int, late: int, history: ImmutableList<Run>);
+
+fn NewBoard(now: DateTime) => Board = Board(0, JobSpec(0, 0, 0), false, now, now, ImmutableList.Create<Cell>(),
+    ImmutableDictionary.Create<int, Sample>(), ImmutableDictionary.Create<string, Seen>(), 0, 0, ImmutableList.Create<Run>());
+
+/// How long a worker has a chunk before it's handed to another: four times as long as chunks have been taking, and
+/// at least five seconds. Until one is done, 30 seconds.
+fn Lease(board: Board) => TimeSpan {
+    let done = board.cells.Where(c => c.state == "done").ToList();
+    if done.Count == 0 {
+        return TimeSpan.FromSeconds(30);
+    }
+    TimeSpan.FromMilliseconds(Math.Max(5_000.0, 4.0 * done.Average(c => c.milliseconds)))
+}
+
+/// Starts a job, unless one is running. Workers keep their names, but their counts start again.
+fn StartJob(board: Board, spec: JobSpec, now: DateTime) => (board: Board, started: bool) {
+    if board.running {
+        return (board, false);
+    }
+    let workers = board.workers.ToImmutableDictionary(w => w.Key, w => Seen(w.Key, w.Value.last, -1, 0, 0L));
+    let cells = Enumerable.Repeat(Cell("waiting", "", 0, now, 0L), spec.chunks).ToImmutableList();
+    ({ ...board, job: board.job + 1, spec: spec, running: true, started: now, finished: now, cells: cells,
+       samples: ImmutableDictionary.Create<int, Sample>(), workers: workers, retried: 0, late: 0 }, true)
+}
+
+/// A worker asks for work: the first chunk no one has had, or else one whose lease has run out.
+fn TakeWork(board: Board, worker: string, now: DateTime) => (board: Board, assignment: Assignment) {
+    let known = Saw(board, worker, now);
+    if !known.running {
+        return (known, Assignment.Wait);
+    }
+    mut id = known.cells.FindIndex(c => c.state == "waiting");
+    mut again = false;
+    if id < 0 {
+        let lease = Lease(known);
+        id = known.cells.FindIndex(c => c.state == "running" && now - c.taken > lease);
+        again = id >= 0;
+    }
+    if id < 0 {
+        return (known, Assignment.Wait);
+    }
+    let cell = known.cells[id];
+    let seen = known.workers[worker];
+    let next = { ...known,
+        cells: known.cells.SetItem(id, Cell("running", worker, cell.attempts + 1, now, 0L)),
+        workers: known.workers.SetItem(worker, { ...seen, current: id }),
+        retried: if again { known.retried + 1 } else { known.retried } };
+    (next, Assignment.Work(Chunk(known.job, id, known.spec.scenarios, ChunkSeed(known.spec.seed, id))))
+}
+
+/// A worker sends back a chunk. It's kept unless the chunk is already done or its job is over; the last chunk in
+/// finishes the job, adding the samples up.
+fn Complete(board: Board, tally: Tally, now: DateTime) => (board: Board, kept: bool) {
+    let known = Saw(board, tally.worker, now);
+    let seen = known.workers[tally.worker];
+    let free = if seen.current == tally.chunk { ({ ...seen, current: -1 }) } else { seen };
+    let wanted = known.running && tally.job == known.job && tally.chunk >= 0 && tally.chunk < known.cells.Count
+        && known.cells[tally.chunk].state != "done";
+    if !wanted {
+        return ({ ...known, workers: known.workers.SetItem(tally.worker, free), late: known.late + 1 }, false);
+    }
+    let cell = known.cells[tally.chunk];
+    let next = { ...known,
+        cells: known.cells.SetItem(tally.chunk, Cell("done", tally.worker, cell.attempts, cell.taken, tally.milliseconds)),
+        samples: known.samples.Add(tally.chunk, tally.sample),
+        workers: known.workers.SetItem(tally.worker, { ...free, done: free.done + 1, busyMs: free.busyMs + tally.milliseconds }) };
+    if next.samples.Count < next.cells.Count {
+        return (next, true);
+    }
+    let valuation = Combine(next.samples.OrderBy(s => s.Key).Select(s => s.Value));
+    (Finish(next, now, valuation, false), true)
+}
+
+/// Stops the running job: chunks still out are ignored when they come back.
+fn CancelJob(board: Board, now: DateTime) => (board: Board, cancelled: bool) {
+    if !board.running {
+        return (board, false);
+    }
+    (Finish(board, now, NoValuation(), true), true)
+}
+
+/// Ends the job, adding it to the history (the latest twelve, newest first).
+fn Finish(board: Board, now: DateTime, valuation: Valuation, cancelled: bool) => Board {
+    let workers = board.cells.Where(c => c.state == "done").Select(c => c.worker).Distinct().Count();
+    let run = Run(board.job, board.spec, (now - board.started).TotalSeconds, workers, board.retried, cancelled, valuation);
+    let history = board.history.Insert(0, run);
+    { ...board, running: false, finished: now,
+      history: if history.Count > 12 { history.RemoveAt(12) } else { history } }
+}
+
+/// Notes that `worker` asked, now.
+fn Saw(board: Board, worker: string, now: DateTime) => Board {
+    let seen = if board.workers.TryGetValue(worker, out let known) { ({ ...known, last: now }) } else { Seen(worker, now, -1, 0, 0L) };
+    { ...board, workers: board.workers.SetItem(worker, seen) }
+}
+
+/// A worker for the dashboard: whether it's asked lately (busy workers ask between chunks, and idle ones every half
+/// second), the chunk it's on, how many it's done and how long they took on average.
+record WorkerView(name: string, active: bool, current: int, done: int, averageMs: long);
+
+/// What the dashboard shows.
+/// - `outstanding`: chunks a worker has now
+record View(job: int, spec: JobSpec, running: bool, seconds: double, done: int, outstanding: int, retried: int, late: int,
+            leaseSeconds: double, cells: ImmutableList<Cell>, workers: ImmutableList<WorkerView>, history: ImmutableList<Run>);
+
+/// The board, as the dashboard shows it. Workers not heard from for two minutes are left out.
+fn Describe(board: Board, now: DateTime) => View {
+    let lease = Lease(board);
+    let quiet = TimeSpan.FromSeconds(Math.Max(5.0, lease.TotalSeconds));
+    let workers = board.workers.Values
+        .Where(w => now - w.last < TimeSpan.FromMinutes(2))
+        .OrderBy(w => w.name)
+        .Select(w => WorkerView(w.name, now - w.last < quiet, w.current, w.done, if w.done == 0 { 0L } else { w.busyMs / w.done }))
+        .ToImmutableList();
+    let end = if board.running { now } else { board.finished };
+    View(board.job, board.spec, board.running, if board.job == 0 { 0.0 } else { (end - board.started).TotalSeconds },
+        board.cells.Count(c => c.state == "done"), board.cells.Count(c => c.state == "running"), board.retried,
+        board.late, lease.TotalSeconds, board.cells, workers, board.history)
+}

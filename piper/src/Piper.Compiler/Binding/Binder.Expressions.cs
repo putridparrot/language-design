@@ -1799,6 +1799,31 @@ public sealed partial class Binder
 
     private BoundExpression BindIf(IfExpressionSyntax syntax, TypeSymbol? expected)
     {
+        // `if ok { Ok(v) } else { Err(e) }`: branches building a Result or Option say its type between them.
+        if (expected is null && syntax.Else is { } elseBranch && AnyBuildsVariant([syntax.Then, elseBranch]))
+        {
+            expected = BranchesType([syntax.Then, elseBranch], (i, body) =>
+            {
+                var outer = _scope;
+                _scope = new Scope(outer);
+                try
+                {
+                    var type = Trial(() =>
+                    {
+                        // The then-branch sees what the condition binds.
+                        if (i == 0)
+                            BindCondition(syntax.Condition, allowPatternBindings: true);
+                        return BindExpression(body).Type;
+                    }, out bool failed);
+                    return failed ? null : type;
+                }
+                finally
+                {
+                    _scope = outer;
+                }
+            });
+        }
+
         // Variables bound by `is` in the condition are in scope in the then-block, but not the else.
         var outer = _scope;
         _scope = new Scope(outer);

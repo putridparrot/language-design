@@ -491,6 +491,11 @@ class Person(first: string, last: string) {
     `CanExecuteChanged`, so the button enables and disables itself.
   - The method must be an instance method, not private, taking no parameters. An async one is started and not
     awaited, as a button's click would be.
+  - **Failures:** a method `OnCommandFailed(command: string, error: Exception)` on the class, if there is one, hears
+    of each command's exception (`"Save"` and what it threw), async or not, as a place to show it. Without one, a
+    plain command's exception escapes `Execute`, and an async one's is thrown where C#'s `async void` would throw it:
+    on the synchronization context the command started on (the UI thread, so the framework's unhandled-exception
+    handling sees it), or else the thread pool. It's never lost in a task nobody awaits.
   - Each command is a small class implementing `ICommand`, made the first time the property is read.
 
 ```piper
@@ -612,6 +617,8 @@ A program calls them as `AppServices(builder.Services)` and `Api(app)`.
   - a route mapped twice with the same verb
   - a route parameter (`{postId}`) that no handler parameter takes
   - a handler parameter without a type (ASP.NET Core reads the types to bind the request)
+  - an error type answered as ProblemDetails with a field named `status`, which would be left out, as ProblemDetails
+    has its own (a warning, at the field)
 
   Errors in a handler's own code are reported in the handler, as for any lambda.
 
@@ -751,6 +758,10 @@ let big = await shop.Orders.Where(o => o.total > 100m).OrderBy(o => o.placed).To
 - **Optional fields** are nullable columns, None being NULL, and a query compares one with `== None` (SQL's
   `IS NULL`), `!= None` or `== Some(value)`. It can't compare one with an optional variable, as EF Core reads only
   the variable's container. That's an error when the query runs, saying to choose the query by the variable instead.
+- **[Newtypes](language.md#newtypes)** are stored as their values: an `IssueId` (`newtype IssueId = int;`) column is
+  an int column, and an optional one is nullable. A key that's a newtype of `int` or `long` is numbered by the
+  database, as an `int` key is: add a row with `IssueId(0)` and it's given the next number. Queries compare them in SQL
+  (`i.projectId == projectId`). [apps/tracker](../apps/tracker/README.md) keys its issues, projects and comments this way.
 - **Packages:** the plugin brings EF Core. The program's piper.json adds its database's provider, such as
   `"packages": { "Microsoft.EntityFrameworkCore.Sqlite": "10.0.14" }`.
 - **Checked:** a `key` or `index` naming a field its type doesn't have (a class's must be public, as EF Core maps
@@ -916,6 +927,14 @@ async fn Drain(worker: Worker, queue: ConcurrentQueue<Chunk>, results: Concurren
 piper run samples/grid -- worker 8001                                    # on each machine
 piper run samples/grid -- coordinator 8000 10.0.0.6:8001 10.0.0.7:8001   # then share a job among them
 ```
+
+[apps/grid](../apps/grid/README.md) turns that around for Kubernetes: workers ask the coordinator for chunks, so they
+need only its address, and pods can be added or removed mid-job. A chunk not sent back within its lease goes to
+another worker.
+
+[apps/stock](../apps/stock/README.md) runs actors as pods in Kubernetes (AKS). Products are actors shared out among
+the nodes by a hash of their code, and every node's HTTP API reaches any product wherever it is. Its StatefulSet gives
+each pod a stable DNS name, through a headless service, for the other nodes to reach it by.
 
 Still to come: actors that move between nodes when one fails, and finding nodes without addresses. That's
 Proto.Actor's clustering, or Orleans's virtual actors, which need Piper to have classes.

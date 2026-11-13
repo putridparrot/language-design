@@ -235,6 +235,8 @@ public sealed partial class Parser
                 return ParseClass();
             case TokenKind.Identifier when IsTypeAliasStart():
                 return ParseTypeAlias();
+            case TokenKind.Identifier when IsNewtypeStart():
+                return ParseNewtype();
             case TokenKind.EnumKeyword:
                 return ParseEnum();
             case TokenKind.TraitKeyword:
@@ -243,7 +245,7 @@ public sealed partial class Parser
                 return ParseExtend();
             default:
                 ReportOnce(Current.Span, () => _diagnostics.ReportExpectedDeclaration(Current.Span, Current));
-                while (!IsDeclarationStart(Current.Kind) && !IsClassStart() && !IsTypeAliasStart() && Current.Kind != TokenKind.EndOfFile)
+                while (!IsDeclarationStart(Current.Kind) && !IsClassStart() && !IsTypeAliasStart() && !IsNewtypeStart() && Current.Kind != TokenKind.EndOfFile)
                     NextToken();
                 return null;
         }
@@ -533,6 +535,34 @@ public sealed partial class Parser
         var target = ParseType();
         Expect(TokenKind.Semicolon);
         return new TypeAliasDeclarationSyntax(SpanFrom(keyword), name, target);
+    }
+
+    /// <summary>`newtype` is a keyword only here, at the start of a declaration; the word is reserved, so it can't be a name.</summary>
+    private bool IsNewtypeStart() => Current is { Kind: TokenKind.Identifier, Text: "newtype" } && Peek(1).Kind == TokenKind.Identifier;
+
+    /// <summary>
+    /// newtype = "newtype" IDENT "=" type [ requires ] ";" ;
+    /// A record struct with one field, <c>value</c>: <c>newtype IssueId = int;</c> is <c>record struct IssueId(value: int);</c>,
+    /// marked so that it's emitted to stand for its value (see <see cref="RecordDeclarationSyntax.Newtype"/>).
+    /// </summary>
+    private RecordDeclarationSyntax? ParseNewtype()
+    {
+        var keyword = NextToken();
+        var name = Expect(TokenKind.Identifier);
+        if (Current.Kind == TokenKind.Less)
+        {
+            _diagnostics.ReportGenericNewtype(Current.Span);
+            while (Current.Kind is not (TokenKind.Semicolon or TokenKind.EndOfFile))
+                NextToken();
+            Expect(TokenKind.Semicolon);
+            return null;
+        }
+        Expect(TokenKind.Equals);
+        var target = ParseType();
+        var requires = ParseRequires();
+        Expect(TokenKind.Semicolon);
+        var field = new ParameterSyntax(target.Span, new Token(TokenKind.Identifier, target.Span, "value"), target);
+        return new RecordDeclarationSyntax(SpanFrom(keyword), name, [], [field]) { Requires = requires, Struct = keyword, Newtype = keyword };
     }
 
     /// <summary>

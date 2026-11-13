@@ -2,6 +2,7 @@
 namespace Tracker;
 
 using System;
+using System.Net.Http;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using System.Threading.Tasks;
@@ -38,7 +39,7 @@ class HeaderAuthentication(options: IOptionsMonitor<AuthenticationSchemeOptions>
 }
 
 /// The web app, set up but not started: `Main` runs it, and the tests start it on a free port.
-fn BuildApp(settings: Settings, clock: Clock, urls: string) => WebApplication {
+fn BuildApp(settings: Settings, clock: Clock, notifier: Notifier, urls: string) => WebApplication {
     let builder = WebApplication.CreateBuilder();
     builder.Logging.ClearProviders();
     let addresses: string[] = [urls];
@@ -47,6 +48,7 @@ fn BuildApp(settings: Settings, clock: Clock, urls: string) => WebApplication {
     // One database context per request, as EF Core expects.
     builder.Services.AddScoped<TrackerDb>(provider => TrackerDb(DbContextOptionsBuilder<TrackerDb>().UseSqlite(settings.connection).Options));
     builder.Services.AddSingleton<Clock>(clock);
+    builder.Services.AddSingleton<Notifier>(notifier);
     Security(builder.Services, settings);
     builder.Services.AddAuthentication(HeaderAuthentication.Scheme)
         .AddScheme<AuthenticationSchemeOptions, HeaderAuthentication>(HeaderAuthentication.Scheme, options => {});
@@ -63,11 +65,8 @@ async fn Prepare(settings: Settings) {
     await db.Database.EnsureCreatedAsync();
 }
 
-async fn Main() {
-    let configuration = ConfigurationBuilder().AddJsonFile("appsettings.json", optional: true).AddEnvironmentVariables().Build();
-    let settings = SettingsFrom(configuration);
-    await Prepare(settings);
-    let app = BuildApp(settings, SystemClock(), "http://localhost:5080");
-    Print("Tracker on http://localhost:5080 (sign in with the X-User header)");
-    await app.RunAsync();
-}
+/// The notifier the settings ask for: a webhook, or no one.
+fn NotifierFor(settings: Settings) => Notifier = match settings.webhook {
+    Some(url) => WebhookNotifier(HttpClient(), url),
+    None => NoNotifier(),
+};

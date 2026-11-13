@@ -24,23 +24,31 @@ public static class PiperModel
     public static void Conventions(ModelConfigurationBuilder configuration, DbContext context)
     {
         // A Piper enum is a C# record hierarchy, which EF Core would take for entities: say they're values.
-        foreach (var type in PiperEnums(context.GetType()))
+        foreach (var type in ColumnTypes(context.GetType()).Where(PiperEnumConverter.IsFieldlessPiperEnum))
         {
             configuration.Properties(type).HaveConversion(typeof(PiperEnumConverter<>).MakeGenericType(type));
             configuration.Properties(typeof(Option<>).MakeGenericType(type)).HaveConversion(typeof(OptionPiperEnumConverter<>).MakeGenericType(type));
         }
+        // A newtype is stored as its value: an IssueId column is an int column.
+        foreach (var type in ColumnTypes(context.GetType()))
+        {
+            if (PiperNewtype.ValueType(type) is not { } value)
+                continue;
+            configuration.Properties(type).HaveConversion(typeof(PiperNewtypeConverter<,>).MakeGenericType(type, value));
+            var optional = value.IsValueType ? typeof(OptionNewtypeValueConverter<,>) : typeof(OptionNewtypeReferenceConverter<,>);
+            configuration.Properties(typeof(Option<>).MakeGenericType(type)).HaveConversion(optional.MakeGenericType(type, value));
+        }
         Conventions(configuration);
     }
 
-    /// <summary>The fieldless Piper enums the properties of <paramref name="context"/>'s tables' types have.</summary>
-    private static IEnumerable<Type> PiperEnums(Type context) =>
+    /// <summary>The types of the properties of <paramref name="context"/>'s tables' types, Options' as the type they hold.</summary>
+    private static IEnumerable<Type> ColumnTypes(Type context) =>
         context.GetProperties()
             .Where(p => p.PropertyType.IsGenericType && p.PropertyType.GetGenericTypeDefinition() == typeof(DbSet<>))
             .Select(p => p.PropertyType.GetGenericArguments()[0])
             .SelectMany(entity => entity.GetProperties(BindingFlags.Public | BindingFlags.Instance))
             .Select(p => p.PropertyType)
             .Select(t => t.IsGenericType && t.GetGenericTypeDefinition() == typeof(Option<>) ? t.GetGenericArguments()[0] : t)
-            .Where(PiperEnumConverter.IsFieldlessPiperEnum)
             .Distinct();
 
     /// <summary>The Option converters alone.</summary>
@@ -94,6 +102,12 @@ public static class PiperModel
             {
                 if (property.ClrType.IsGenericType && property.ClrType.GetGenericTypeDefinition() == typeof(Option<>))
                     MakeNullable(property);
+            }
+            // EF Core numbers new rows itself for an int or long key, but not for a newtype of one, unless told to.
+            if (entity.FindPrimaryKey() is { Properties: [var key] } && PiperNewtype.ValueType(key.ClrType) is { } value &&
+                (value == typeof(int) || value == typeof(long)) && key.ValueGenerated == Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never)
+            {
+                key.ValueGenerated = Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.OnAdd;
             }
         }
     }
@@ -157,6 +171,26 @@ public sealed class OptionReferenceConverter<T>() : ValueConverter<Option<T>, T?
     option => option.IsSome ? option.Value : null,
     value => value == null ? Option<T>.None : Option<T>.Some(value))
     where T : class;
+
+/// <summary>A newtype, stored as its value: <c>IssueId(5)</c> is <c>5</c>. Reading checks its invariants.</summary>
+public sealed class PiperNewtypeConverter<TNewtype, TValue>() : ValueConverter<TNewtype, TValue>(
+    newtype => PiperNewtype<TNewtype, TValue>.Value(newtype),
+    value => PiperNewtype<TNewtype, TValue>.Make(value))
+    where TNewtype : struct;
+
+/// <summary>An optional newtype of a value type, stored as its value or NULL.</summary>
+public sealed class OptionNewtypeValueConverter<TNewtype, TValue>() : ValueConverter<Option<TNewtype>, TValue?>(
+    option => option.IsSome ? PiperNewtype<TNewtype, TValue>.Value(option.Value) : null,
+    value => value.HasValue ? Option<TNewtype>.Some(PiperNewtype<TNewtype, TValue>.Make(value.Value)) : Option<TNewtype>.None)
+    where TNewtype : struct
+    where TValue : struct;
+
+/// <summary>An optional newtype of a reference type (a string), stored as its value or NULL.</summary>
+public sealed class OptionNewtypeReferenceConverter<TNewtype, TValue>() : ValueConverter<Option<TNewtype>, TValue?>(
+    option => option.IsSome ? PiperNewtype<TNewtype, TValue>.Value(option.Value) : null,
+    value => value != null ? Option<TNewtype>.Some(PiperNewtype<TNewtype, TValue>.Make(value)) : Option<TNewtype>.None)
+    where TNewtype : struct
+    where TValue : class;
 
 /// <summary>An <c>Option&lt;T&gt;</c> of a value type, stored as the value or NULL.</summary>
 public sealed class OptionValueConverter<T>() : ValueConverter<Option<T>, T?>(

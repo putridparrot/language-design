@@ -1,0 +1,312 @@
+// The dashboard the coordinator serves at /: one page, with no libraries. It asks /status as a job runs and shows its
+// chunks (who has each, and which were handed out again), the workers, the risk figures when it's done, and the
+// history, where runs with the same seed should have exactly the same figures however the work was shared out.
+namespace GridApp;
+
+/// The dashboard's HTML.
+fn DashboardPage() => string = """
+    <!doctype html>
+    <html lang="en">
+    <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Grid dashboard</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --page: #f9f9f7; --surface: #fcfcfb; --text: #0b0b0b; --text-2: #52514e; --muted: #898781;
+        --line: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11,11,11,0.10);
+        --done: #2a78d6; --running: #86b6ef; --retried: #eb6834; --waiting: #ecebe6;
+        --good: #006300; --bad: #d03b3b;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:where(:not([data-theme="light"])) {
+          color-scheme: dark;
+          --page: #0d0d0d; --surface: #1a1a19; --text: #f0efec; --text-2: #c3c2b7; --muted: #898781;
+          --line: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10);
+          --done: #3987e5; --running: #184f95; --retried: #d95926; --waiting: #262624;
+          --good: #0ca30c; --bad: #e66767;
+        }
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --page: #0d0d0d; --surface: #1a1a19; --text: #f0efec; --text-2: #c3c2b7; --muted: #898781;
+        --line: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10);
+        --done: #3987e5; --running: #184f95; --retried: #d95926; --waiting: #262624;
+        --good: #0ca30c; --bad: #e66767;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--page); color: var(--text);
+             font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+      main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+      h1 { font-size: 22px; margin: 0 0 4px; }
+      h2 { font-size: 15px; margin: 0 0 10px; }
+      .sub { color: var(--text-2); margin: 0 0 18px; max-width: 75ch; }
+      .panel { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 14px 16px;
+               margin-bottom: 14px; }
+      .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+      .controls > div { flex: 1 1 110px; max-width: 170px; }
+      label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 2px; }
+      input { width: 100%; padding: 6px 8px; border: 1px solid var(--axis); border-radius: 6px;
+              background: var(--page); color: var(--text); font: inherit; }
+      button { padding: 7px 14px; border: 1px solid var(--done); border-radius: 6px; background: var(--done);
+               color: #fff; font: inherit; cursor: pointer; }
+      button.secondary { background: transparent; color: var(--text); border-color: var(--axis); }
+      button:disabled { opacity: .45; cursor: default; }
+      .message { font-size: 13px; color: var(--bad); min-height: 1.3em; margin-top: 8px; }
+      .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 14px; }
+      @media (max-width: 480px) { .tiles { grid-template-columns: 1fr 1fr; } .worker .note { font-size: 12px; } }
+      .tile { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 10px 14px; }
+      .tile .k { font-size: 12px; color: var(--text-2); }
+      .tile .v { font-size: 22px; font-weight: 600; }
+      .tile .v small { font-size: 13px; font-weight: 400; color: var(--text-2); }
+      .bar { height: 6px; background: var(--waiting); border-radius: 3px; overflow: hidden; margin: 2px 0 12px; }
+      .bar > div { height: 100%; background: var(--done); border-radius: 3px; transition: width .3s; }
+      .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--text-2); margin-bottom: 8px; }
+      .key { display: inline-block; width: 11px; height: 11px; border-radius: 2px; vertical-align: -1px; margin-right: 5px; }
+      .cells { display: grid; grid-template-columns: repeat(auto-fill, minmax(13px, 1fr)); gap: 2px; }
+      .cell { aspect-ratio: 1; border-radius: 2px; background: var(--waiting); }
+      .waiting { background: var(--waiting); }
+      .running { background: var(--running); box-shadow: inset 0 0 0 1.5px var(--done); }
+      .done { background: var(--done); }
+      .retried { background: var(--retried); }
+      .columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 14px; }
+      .columns .panel { margin-bottom: 0; min-width: 0; }
+      .worker { display: grid; grid-template-columns: minmax(0, 160px) minmax(40px, 1fr) auto; gap: 10px;
+                align-items: center; font-size: 13px; padding: 4px 0; }
+      .worker .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .worker.gone .name { color: var(--muted); text-decoration: line-through; }
+      .track { height: 8px; background: var(--waiting); border-radius: 4px; overflow: hidden; }
+      .track > div { height: 100%; background: var(--done); border-radius: 0 4px 4px 0; transition: width .3s; }
+      .worker .note { color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .empty { color: var(--muted); font-size: 13px; }
+      svg text { fill: var(--text-2); font-size: 11px; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th { text-align: left; color: var(--text-2); font-weight: 500; }
+      th, td { padding: 5px 8px 5px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+      td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+      .same { color: var(--good); } .differs { color: var(--bad); }
+      .scroll { overflow-x: auto; }
+      #tip { position: fixed; pointer-events: none; background: var(--surface); color: var(--text);
+             border: 1px solid var(--ring); box-shadow: 0 4px 14px rgba(0,0,0,.15); border-radius: 6px;
+             padding: 6px 9px; font-size: 12px; display: none; z-index: 10; max-width: 260px; }
+    </style>
+    </head>
+    <body>
+    <main>
+      <h1>Grid</h1>
+      <p class="sub">A Monte Carlo Value at Risk for a stock portfolio, split into chunks. Workers ask the coordinator for a
+        chunk when they're free, so faster ones do more, and new ones join by asking. A chunk not sent back in time
+        (its worker's pod was deleted) is handed to another. Each chunk has its own seed, so the same job always gives
+        the same figures, however the work was shared out.</p>
+
+      <section class="panel">
+        <div class="controls">
+          <div><label for="chunks">Chunks</label><input id="chunks" type="number" min="1" max="5000" value="200"></div>
+          <div><label for="scenarios">Scenarios per chunk</label><input id="scenarios" type="number" min="1" value="250000"></div>
+          <div><label for="seed">Seed</label><input id="seed" type="number" value="42"></div>
+          <button id="start">Start</button>
+          <button id="cancel" class="secondary">Cancel</button>
+        </div>
+        <div class="message" id="message"></div>
+      </section>
+
+      <div class="tiles" id="tiles"></div>
+
+      <section class="panel">
+        <h2 id="chunksTitle">Chunks</h2>
+        <div class="bar"><div id="progress" style="width:0"></div></div>
+        <div class="legend">
+          <span><span class="key waiting"></span>Waiting</span>
+          <span><span class="key running"></span>Being worked on</span>
+          <span><span class="key done"></span>Done</span>
+          <span><span class="key retried"></span>Done after being handed out again</span>
+        </div>
+        <div class="cells" id="cells"></div>
+      </section>
+
+      <div class="columns">
+        <section class="panel">
+          <h2>Workers: chunks done in this job</h2>
+          <div id="workers"></div>
+        </section>
+        <section class="panel">
+          <h2 id="resultTitle">Profit and loss over ten days</h2>
+          <div id="result"><div class="empty">The figures appear when a job finishes.</div></div>
+        </section>
+      </div>
+
+      <section class="panel" style="margin-top:14px">
+        <h2>History</h2>
+        <div class="scroll" id="history"><div class="empty">No jobs yet.</div></div>
+      </section>
+    </main>
+    <div id="tip"></div>
+
+    <script>
+    const el = id => document.getElementById(id);
+    const money = n => Math.round(n).toLocaleString();
+    const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+    const ordinal = n => n + (n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th');
+    let view = null, cellJob = -1;
+
+    // Tooltips: anything with data-tip shows it while hovered.
+    const tip = el('tip');
+    document.addEventListener('mousemove', e => {
+      const target = e.target.closest('[data-tip]');
+      if (!target) { tip.style.display = 'none'; return; }
+      tip.innerHTML = target.dataset.tip;
+      tip.style.display = 'block';
+      const x = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8);
+      const y = e.clientY + 16 + tip.offsetHeight > window.innerHeight ? e.clientY - tip.offsetHeight - 10 : e.clientY + 16;
+      tip.style.left = x + 'px'; tip.style.top = y + 'px';
+    });
+
+    function tiles(v) {
+      const run = v.history[0];
+      const finished = run && run.job === v.job && !run.cancelled ? run.valuation : null;
+      const active = v.workers.filter(w => w.active).length;
+      const items = [
+        ['Job', v.job ? `${v.job} <small>${v.running ? 'running' : run && run.cancelled && run.job === v.job ? 'cancelled' : 'finished'}</small>` : '–'],
+        ['Chunks done', `${v.done} <small>of ${v.spec.chunks}</small>`],
+        ['Time', `${v.seconds.toFixed(1)} <small>s</small>`],
+        ['Workers asking', `${active}`],
+        ['Being worked on', `${v.outstanding}`],
+        ['Handed out again', `${v.retried}` + (v.late ? ` <small>${v.late} late, ignored</small>` : '')],
+      ];
+      if (finished) items.splice(1, 0, ['99% VaR, ten days', `${money(finished.var99)}`]);
+      el('tiles').innerHTML = items.map(([k, v]) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+    }
+
+    function cells(v) {
+      const box = el('cells');
+      if (cellJob !== v.job || box.children.length !== v.cells.length) {
+        box.innerHTML = v.cells.map(() => '<div class="cell"></div>').join('');
+        cellJob = v.job;
+      }
+      v.cells.forEach((c, i) => {
+        const node = box.children[i];
+        const kind = c.state === 'done' ? (c.attempts > 1 ? 'retried' : 'done') : c.state;
+        node.className = 'cell ' + kind;
+        const tries = c.attempts > 1 ? ` (${ordinal(c.attempts)} time handed out)` : '';
+        node.dataset.tip = c.state === 'waiting' ? `Chunk ${i}: waiting`
+          : c.state === 'running' ? `Chunk ${i}: with ${esc(c.worker)}${tries}`
+          : `Chunk ${i}: done by ${esc(c.worker)} in ${c.milliseconds} ms${tries}`;
+      });
+      el('progress').style.width = (v.spec.chunks ? 100 * v.done / v.spec.chunks : 0) + '%';
+      el('chunksTitle').textContent = v.job
+        ? `Chunks: ${v.spec.chunks} of ${v.spec.scenarios.toLocaleString()} scenarios, seed ${v.spec.seed}` : 'Chunks';
+    }
+
+    function workers(v) {
+      if (!v.workers.length) {
+        el('workers').innerHTML = '<div class="empty">No workers have asked for work. Start some, and they appear here.</div>';
+        return;
+      }
+      const most = Math.max(1, ...v.workers.map(w => w.done));
+      el('workers').innerHTML = v.workers.map(w => {
+        const note = !w.active ? 'not heard from' : w.current >= 0 ? `on chunk ${w.current}` : 'waiting';
+        const average = w.done ? `, ${w.averageMs} ms each` : '';
+        return `<div class="worker ${w.active ? '' : 'gone'}" data-tip="${esc(w.name)}: ${w.done} chunks${average}; ${note}">
+          <span class="name">${esc(w.name)}</span>
+          <div class="track"><div style="width:${100 * w.done / most}%"></div></div>
+          <span class="note">${w.done} · ${note}</span></div>`;
+      }).join('');
+    }
+
+    // The latest finished job's profit and loss, as a histogram, with its VaR marked; the worst 1% in the second colour.
+    function result(v) {
+      const run = v.history.find(r => !r.cancelled);
+      if (!run) return;
+      const x = run.valuation, bars = x.histogram, n = bars.length, step = (x.high - x.low) / n;
+      const W = 600, H = 190, top = 26, bottom = 22, plot = H - top - bottom;
+      const most = Math.max(...bars), sx = i => (i / n) * W, sy = c => top + plot - (c / most) * plot;
+      const at = pnl => ((pnl - x.low) / (x.high - x.low)) * W;
+      const rects = bars.map((c, i) => {
+        const from = x.low + i * step, to = from + step;
+        const worst = to <= -x.var99;
+        const h = Math.max(c ? 1 : 0, top + plot - sy(c));
+        const label = `${money(from)} to ${money(to)}: ${c.toLocaleString()} scenarios${worst ? ' (the worst 1%)' : ''}`;
+        return `<rect x="${sx(i) + 0.5}" y="${top + plot - h}" width="${W / n - 1}" height="${h}" rx="1"
+                  fill="var(${worst ? '--retried' : '--done'})"></rect>
+                <rect x="${sx(i)}" y="${top}" width="${W / n}" height="${plot}" fill="transparent" data-tip="${label}"></rect>`;
+      }).join('');
+      // The 99% label goes left of its line and the 95% one right, so they don't run into each other.
+      const marker = (pnl, text, left) => `<line x1="${at(pnl)}" x2="${at(pnl)}" y1="${top - 14}" y2="${top + plot}"
+          stroke="var(--text-2)" stroke-dasharray="3 3"></line>
+        <text x="${at(pnl) + (left ? -4 : 4)}" y="${top - 6}" text-anchor="${left ? 'end' : 'start'}">${text}</text>`;
+      el('resultTitle').textContent = `Profit and loss over ten days: job ${run.job}`;
+      el('result').innerHTML = `
+        <svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Histogram of simulated ten-day profit and loss">
+          ${rects}
+          <line x1="0" x2="${W}" y1="${top + plot}" y2="${top + plot}" stroke="var(--axis)"></line>
+          ${marker(-x.var99, '99% VaR', true)}${marker(-x.var95, '95% VaR', false)}
+          <text x="0" y="${H - 6}">${money(x.low)}</text>
+          <text x="${at(0)}" y="${H - 6}" text-anchor="middle">0</text>
+          <text x="${W}" y="${H - 6}" text-anchor="end">${money(x.high)}</text>
+        </svg>
+        <div class="legend"><span><span class="key done"></span>Scenarios, by profit or loss</span>
+          <span><span class="key retried"></span>The worst 1%, beyond the 99% VaR</span></div>
+        <table>
+          <tr><td>Portfolio value</td><td class="n">${money(x.value)}</td></tr>
+          <tr><td>Scenarios</td><td class="n">${x.scenarios.toLocaleString()}</td></tr>
+          <tr><td>Average profit</td><td class="n">${money(x.mean)}</td></tr>
+          <tr><td>95% VaR: a loss beaten in only 1 in 20 scenarios</td><td class="n">${money(x.var95)}</td></tr>
+          <tr><td>99% VaR: beaten in only 1 in 100</td><td class="n">${money(x.var99)}</td></tr>
+          <tr><td>Expected shortfall: the average of that worst 1%</td><td class="n">${money(x.shortfall99)}</td></tr>
+          <tr><td>99% VaR by formula, a check (assumes normal returns)</td><td class="n">${money(x.formulaVar99)}</td></tr>
+        </table>`;
+    }
+
+    // Each finished run, against the latest earlier run of the same job (chunks, scenarios and seed): the figures
+    // should match exactly.
+    function history(v) {
+      if (!v.history.length) return;
+      const runs = v.history;
+      const rows = runs.map((r, i) => {
+        const before = runs.slice(i + 1).find(o => !o.cancelled && o.spec.chunks === r.spec.chunks
+          && o.spec.scenarios === r.spec.scenarios && o.spec.seed === r.spec.seed);
+        const same = r.cancelled || !before ? '' : r.valuation.var99 === before.valuation.var99 && r.valuation.mean === before.valuation.mean
+          ? `<span class="same">✓ same as job ${before.job}</span>` : `<span class="differs">✗ differs from job ${before.job}</span>`;
+        return `<tr><td>${r.job}</td><td>${r.spec.chunks} × ${r.spec.scenarios.toLocaleString()}</td><td class="n">${r.spec.seed}</td>
+          <td class="n">${r.workers}</td><td class="n">${r.retried}</td><td class="n">${r.seconds.toFixed(1)} s</td>
+          <td class="n">${r.cancelled ? 'cancelled' : money(r.valuation.var99)}</td><td>${same}</td></tr>`;
+      }).join('');
+      el('history').innerHTML = `<table><tr><th>Job</th><th>Chunks × scenarios</th><th class="n">Seed</th>
+        <th class="n">Workers</th><th class="n">Handed out again</th><th class="n">Time</th><th class="n">99% VaR</th>
+        <th>Same job before</th></tr>${rows}</table>`;
+    }
+
+    async function poll() {
+      try {
+        const response = await fetch('/status', { cache: 'no-store' });
+        view = await response.json();
+        tiles(view); cells(view); workers(view); result(view); history(view);
+        el('start').disabled = view.running;
+        el('cancel').disabled = !view.running;
+        if (el('message').dataset.from === 'poll') el('message').textContent = '';
+      } catch (e) {
+        el('message').textContent = 'The coordinator isn\'t answering: ' + e.message;
+        el('message').dataset.from = 'poll';
+      }
+      timer = setTimeout(poll, view && view.running ? 500 : 2000);
+    }
+    let timer = 0;
+
+    async function post(url) {
+      const response = await fetch(url, { method: 'POST' });
+      el('message').dataset.from = 'action';
+      let text = response.ok ? '' : await response.text();
+      try { text = JSON.parse(text); } catch { }
+      el('message').textContent = text;
+      clearTimeout(timer);
+      poll();
+    }
+
+    el('start').onclick = () => post(`/jobs?chunks=${+el('chunks').value}&scenarios=${+el('scenarios').value}&seed=${+el('seed').value}`);
+    el('cancel').onclick = () => post('/jobs/cancel');
+    poll();
+    </script>
+    </body>
+    </html>
+    """;

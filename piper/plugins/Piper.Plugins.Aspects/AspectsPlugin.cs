@@ -36,7 +36,7 @@ public sealed class AspectsPlugin : IPiperPlugin
         new Decorator("Command")
         {
             ReadBy = "Notify",
-            Description = "`[Command]` on a method of a `[Notify]` class adds an `ICommand` property running it: `Save` gets `SaveCommand`. A `CanSave` method or property, if there is one, says when it can run, and the command tells its watchers again when what `CanSave` reads changes.",
+            Description = "`[Command]` on a method of a `[Notify]` class adds an `ICommand` property running it: `Save` gets `SaveCommand`. A `CanSave` method or property, if there is one, says when it can run, and the command tells its watchers again when what `CanSave` reads changes. An `OnCommandFailed(command: string, error: Exception)` method, if there is one, hears of each command's failure.",
         },
         new Decorator("NotifyIgnore")
         {
@@ -104,6 +104,7 @@ public sealed class AspectsPlugin : IPiperPlugin
         var computed = Computed(@class);
         var dependents = Dependents(computed, notified.Select(f => f.Name.Text).ToHashSet());
         var commands = Commands(d, @class, computed);
+        var failed = commands.Count == 0 ? null : CommandFailedHandler(d, @class);
         var span = d.Attribute.Span;
 
         var fields = new List<ClassFieldSyntax>();
@@ -183,23 +184,20 @@ public sealed class AspectsPlugin : IPiperPlugin
                 """, ("field", command.Field), ("Command", command.Class), ("name", command.Property), ("c", local));
             fields.AddRange(members);
 
-            var execute = command.Method.Async is null
-                ? d.Template.Statement("owner.$method();", ("method", command.Method.Name.Text))
-                : d.Template.Statement("let $task = owner.$method();", ("task", d.FreshName("task")), ("method", command.Method.Name.Text));
             var canExecute = command.Can switch
             {
                 null => d.Template.Expression("true"),
                 { } can when can.IsProperty => d.Template.Expression("owner.$can", ("can", can.Name)),
                 { } can => d.Template.Expression("owner.$can()", ("can", can.Name)),
             };
-            companions.AddRange(d.Template.Declarations("""
+            companions.AddRange(d.Template.Declarations($$"""
                 class $Command(owner: $Owner): System.Windows.Input.ICommand {
                     event CanExecuteChanged: System.EventHandler;
                     fn CanExecute(parameter: object?) => bool = $canExecute;
-                    fn Execute(parameter: object?) { $execute }
+                    {{Execute(command, failed is not null)}}
                     fn RaiseCanExecuteChanged() { CanExecuteChanged(this, System.EventArgs.Empty); }
                 }
-                """, ("Command", command.Class), ("Owner", @class.Name), ("canExecute", canExecute), ("execute", new[] { execute })));
+                """, ("Command", command.Class), ("Owner", @class.Name), ("canExecute", canExecute), ("method", command.Method.Name.Text)));
         }
 
         var result = @class with
@@ -214,6 +212,53 @@ public sealed class AspectsPlugin : IPiperPlugin
             result = result with { Bases = result.Bases.Add(@interface) };
         }
         return [result, .. companions];
+    }
+
+    /// <summary>
+    /// A command's <c>Execute</c>, running <c>owner.$method</c>. With an <c>OnCommandFailed</c> handler, what the method
+    /// throws goes there. Without one, a plain method's exception escapes <c>Execute</c>, and an async one's is thrown
+    /// where C#'s <c>async void</c> would throw it: on the synchronization context the command started on (the UI
+    /// thread, in an app), or else the thread pool. Either way it isn't lost, as it would be in a task nobody awaits.
+    /// </summary>
+    private static string Execute(CommandInfo command, bool handled)
+    {
+        var name = command.Property.Text[..^"Command".Length];
+        var report = $"owner.OnCommandFailed(\"{name}\", e);";
+        if (command.Method.Async is null)
+        {
+            return handled
+                ? $$"""fn Execute(parameter: object?) { try { owner.$method(); } catch (e) { {{report}} } }"""
+                : "fn Execute(parameter: object?) { owner.$method(); }";
+        }
+        var rethrow = """
+            let failure = System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e);
+            match context {
+                Some(c) => c.Post(_ => failure.Throw(), None),
+                None => { let _ = System.Threading.ThreadPool.QueueUserWorkItem(_ => failure.Throw()); },
+            }
+            """;
+        return $$"""
+            fn Execute(parameter: object?) { let _ = Run(System.Threading.SynchronizationContext.Current); }
+            private async fn Run(context: System.Threading.SynchronizationContext?) => System.Threading.Tasks.Task {
+                try { await owner.$method(); } catch (e) { {{(handled ? report : rethrow)}} }
+            }
+            """;
+    }
+
+    /// <summary>
+    /// The class's <c>OnCommandFailed(command: string, error: Exception)</c> method, if it has one, which hears of each
+    /// command's failure. The commands call it from outside the class, so it can't be private.
+    /// </summary>
+    private static FunctionDeclarationSyntax? CommandFailedHandler(TypeDecoratorContext d, ClassDeclarationSyntax @class)
+    {
+        if (@class.Methods.FirstOrDefault(m => m.Name.Text == "OnCommandFailed" && m.Static is null) is not { } handler)
+            return null;
+        if (handler.Private is not null || handler.Parameters.Length != 2)
+        {
+            d.Report(handler.Name.Span, "The commands report their failures to 'OnCommandFailed' from outside the class: make it fn OnCommandFailed(command: string, error: Exception), not private.");
+            return null;
+        }
+        return handler;
     }
 
     /// <summary>A <c>[Command]</c> method, and what its command is made of.</summary>

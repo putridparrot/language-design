@@ -1,0 +1,59 @@
+// Starting a node, or running the demonstration against running nodes.
+namespace StockApp;
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Proto.Remote;
+
+args Options "Stock: products as actors, spread over several nodes. Commands: serve (the default) starts a node; load URL... reserves one product from many clients at once through those nodes' HTTP APIs." {
+    host: string = "127.0.0.1" "This node's name, as the other nodes reach it: a container's or pod's DNS name";
+    port: int = 8000 "The port the nodes talk on (gRPC)";
+    http: int = 8080 "The port of this node's HTTP API";
+    nodes: string? "Every node's host:port, comma-separated, in the same order on every node (default: this one alone)";
+    sku: string? "load: the product to reserve (default: a new one each run)";
+    stock: int = 100 "load: how many to put in stock first";
+    requests: int = 500 "load: how many reservations to try";
+    concurrency: int = 50 "load: how many at once";
+    words: List<string> "The command, and the URLs for load";
+}
+
+async fn Main(args: string[]) {
+    let options = Options.FromArgs(args);
+    Environment.ExitCode = match options.words {
+        [] | ["serve"] => await Serve(options),
+        ["load", first, ...rest] => await Load(options, [first, ...rest]),
+        _ => {
+            Console.Error.WriteLine($"Unknown command: {string.Join(" ", options.words)}. Try --help.");
+            2
+        },
+    };
+}
+
+async fn Serve(options: Options) => Task<int> {
+    let node = await StartNode(options.host, options.port);
+    let nodes = match options.nodes {
+        Some(list) => [...list.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)],
+        None => [node.Address],
+    };
+    if !nodes.Contains(node.Address) {
+        Console.Error.WriteLine($"This node is {node.Address}, which --nodes doesn't list: {string.Join(", ", nodes)}");
+        await node.Remote().ShutdownAsync(true);
+        return 2;
+    }
+    let local = options.host == "127.0.0.1" || options.host == "localhost";
+    let url = if local { $"http://127.0.0.1:{options.http}" } else { $"http://*:{options.http}" };
+    let app = BuildApi(Shards(node, nodes), url);
+    Print($"Node {node.Address} (node {nodes.IndexOf(node.Address) + 1} of {nodes.Count}), HTTP on {url}");
+    await app.RunAsync();
+    await node.Remote().ShutdownAsync(true);
+    0
+}
+
+async fn Load(options: Options, urls: List<string>) => Task<int> {
+    let sku = options.sku ?? $"widget-{Guid.NewGuid().ToString("N")[..<6]}";
+    let report = await RunLoad(urls, sku, options.stock, options.requests, options.concurrency);
+    Print(Describe(report, sku));
+    if report.Exact() { 0 } else { 1 }
+}

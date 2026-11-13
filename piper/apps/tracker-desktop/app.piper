@@ -1,0 +1,36 @@
+// Starting the desktop app: Avalonia with its Fluent theme, showing the main window, calling the API as one user.
+namespace TrackerDesktop;
+
+using System;
+using System.Net.Http;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Themes.Fluent;
+
+args Options "Tracker Desktop: a window on the Tracker API. Start the API first, with `piper run apps/tracker`." {
+    api: string = "http://localhost:5080" "Where the API is";
+    user: string? "Who to sign in as (default: your user name)";
+}
+
+/// The application: its theme, and the window it opens (made once Avalonia is ready for windows).
+class App(window: () => Window): Application {
+    override fn Initialize() {
+        Styles.Add(FluentTheme());
+    }
+
+    override fn OnFrameworkInitializationCompleted() {
+        if ApplicationLifetime is Some(desktop: IClassicDesktopStyleApplicationLifetime) {
+            desktop.MainWindow = window();
+        }
+        base.OnFrameworkInitializationCompleted();
+    }
+}
+
+fn Main(args: string[]) {
+    let options = Options.FromArgs(args);
+    let user = options.user ?? Environment.UserName;
+    let http = HttpClient() { BaseAddress: Uri(options.api) };
+    let model = MainViewModel.Create(TrackerClient(http, user), user);
+    AppBuilder.Configure<App>(() => App(() => MainWindow(model))).UsePlatformDetect().StartWithClassicDesktopLifetime(args);
+}

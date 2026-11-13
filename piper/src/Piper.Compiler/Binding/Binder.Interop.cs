@@ -115,7 +115,7 @@ public sealed partial class Binder
                 _diagnostics.ReportNotAValue(member.Span, member.Text, "method");
                 return new BoundErrorExpression();
             }
-            return BindClrMemberRead(null, type, member, clrType.GetMember(member.Text, flags), map);
+            return BindClrMemberRead(null, type, member, StaticMembers(clrType, member.Text), map);
         }
 
         var methods = WithoutHidden(clrType.GetMethods(flags | BindingFlags.FlattenHierarchy).Where(m => m.Name == member.Text)).ToList();
@@ -194,6 +194,24 @@ public sealed partial class Binder
     /// Drops methods hidden by a same-signature method of a more derived type (C#'s <c>new</c>), which reflection
     /// still returns: <c>Exception.GetType()</c> hides <c>object.GetType()</c>.
     /// </summary>
+    /// <summary>
+    /// A .NET type's public static properties, fields and events named <paramref name="name"/>, its base classes' included
+    /// as in C# (<c>ComboBox.SelectedIndexProperty</c> is declared by <c>SelectingItemsControl</c>), nearest first, so
+    /// one a derived class redeclares hides the base's.
+    /// </summary>
+    private static MemberInfo[] StaticMembers(Type type, string name) =>
+        [.. type.GetMember(name, BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy)
+            .OrderBy(m => Distance(type, m.DeclaringType))];
+
+    /// <summary>How many base classes up from <paramref name="type"/> <paramref name="declaring"/> is.</summary>
+    private static int Distance(Type type, Type? declaring)
+    {
+        int distance = 0;
+        for (var t = type; t is not null && t != declaring; t = t.BaseType)
+            distance++;
+        return distance;
+    }
+
     private static IEnumerable<MethodInfo> WithoutHidden(IEnumerable<MethodInfo> methods) => methods
         .GroupBy(m => (m.Name, m.IsGenericMethodDefinition ? m.GetGenericArguments().Length : 0,
             string.Join(",", m.GetParameters().Select(p => p.ParameterType))))

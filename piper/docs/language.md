@@ -35,8 +35,9 @@ Notation: `{ x }` is zero or more, `[ x ]` is optional, `|` separates alternativ
 compilationUnit = { using } [ "namespace" qualifiedName ";" ] { using } { attributes [ "public" | "private" ] declaration } EOF ;
 using           = "using" qualifiedName ";" ;                (* a Piper or .NET namespace *)
 qualifiedName   = IDENT { "." IDENT } ;
-declaration     = function | record | class | enum | trait | extend | typeAlias | test | pluginDeclaration ;
+declaration     = function | record | class | enum | trait | extend | typeAlias | newtype | test | pluginDeclaration ;
 typeAlias       = "type" IDENT "=" type ";" ;                 (* another name for the type; "type" is a keyword only here *)
+newtype         = "newtype" IDENT "=" type { requires } ";" ; (* a distinct type over the value; a keyword only here *)
 pluginDeclaration = KEYWORD … ;                               (* a plugin's syntax: see plugins.md *)
 test            = [ "async" ] "test" STRING block ;            (* run by piper test, left out of other builds *)
 attributes      = { "[" attribute { "," attribute } [ "," ] "]" } ;
@@ -185,7 +186,7 @@ generic call `a<b, c>(d)`, as in C#.
 ### Lexical structure
 
 - **Identifiers:** ASCII letters, digits and `_`, not starting with a digit.
-- **Reserved words:** `requires` is a keyword only after a signature, but can't be a name anywhere. `const operator test where type impl module import self base public internal protected sealed abstract override virtual class struct interface` aren't keywords yet but may become ones, so they can't be used as names (of variables, parameters, fields, functions or types). `class`, `abstract`, `sealed`, `virtual`, `override`, `protected` and `base` are used by [classes](#classes), and `type` by [type aliases](#type-aliases), and `struct` by [record structs](#types), and still can't be names. `lock`, `event`, `params`, `typeof` and `nameof` are keywords only where they start their constructs, so they can be names elsewhere. `prop`, `get`, `set`, `init` and `value` are keywords only where properties use them, and `not` and `and` only in [patterns](#pattern-matching) (`not` before a pattern, `and` after one), so they can be names elsewhere. They can still follow a dot, to reach a .NET member of that name.
+- **Reserved words:** `requires` is a keyword only after a signature, but can't be a name anywhere. `const operator test where type newtype impl module import self base public internal protected sealed abstract override virtual class struct interface` aren't keywords yet but may become ones, so they can't be used as names (of variables, parameters, fields, functions or types). `class`, `abstract`, `sealed`, `virtual`, `override`, `protected` and `base` are used by [classes](#classes), `type` by [type aliases](#type-aliases), `newtype` by [newtypes](#newtypes), and `struct` by [record structs](#types), and still can't be names. `lock`, `event`, `params`, `typeof` and `nameof` are keywords only where they start their constructs, so they can be names elsewhere. `prop`, `get`, `set`, `init` and `value` are keywords only where properties use them, and `not` and `and` only in [patterns](#pattern-matching) (`not` before a pattern, `and` after one), so they can be names elsewhere. They can still follow a dot, to reach a .NET member of that name.
 - **Keywords:** `fn let mut if else while for in return break continue record enum match trait extend static this null is namespace using private try catch finally defer throw out true false`; `async`, `await`, `yield` and `ref`, which are contextual as in C# (still usable as names); and the builtin type names `int long double bool string char object byte sbyte short ushort uint ulong float decimal unit`.
 - **Comments:** `// line` and `/* block */`. Block comments nest. `///` lines directly above a declaration, method, parameter, field or enum variant are its documentation: the editor shows it, and the generated C# carries it as XML documentation (`piper build --exe` and `--library` also write the `.xml` file).
 - **Integers:** `42`, `1_000_000`, `0xFF`, `0b1010`. Suffixes as in C#: `L` long (`3_000_000_000L`), `U` uint (or ulong if it doesn't fit), `UL` ulong. An unsuffixed literal must fit in int (C# would make a larger one a uint or long; Piper asks for the suffix); as in C#, `-2147483648` and `-9223372036854775808L` are allowed too.
@@ -777,6 +778,9 @@ fn Compute(a: int, b: int) => Result<int, MathError> {
 
 - **`?` propagates errors.** On a `Result`, `?` unwraps `Ok`, or returns the `Err` from a function that itself returns a `Result` with a compatible error type. A `Result` has no conditional access, so `Divide(a, b)?.ToString()` is `?` then `.ToString()`. On an `Option`, `?.` is always conditional access; write `(F()?).name` to unwrap first.
 - **Pattern matching:** `Result` values match like any enum, e.g. `Err(MathError.DivideByZero)`.
+- **Branches build one together:** where nothing says what type is expected, the arms of a `match` or the branches of an
+  `if` that build `Ok(…)` and `Err(…)` (or `Some(…)` and `None`) say it between them:
+  `match r { Ok(v) => Ok(v * 2), Err(e) => Err(e) }` is a `Result<int, E>`, though neither arm could say so alone.
 - **No redeclaring:** `Option` and `Result` are built in, so they can't be redeclared. You can extend them with methods, e.g. `extend Option { fn IsNone() => bool = this is None; }`, and make them implement traits.
 - **One runtime:** they're defined once, in the `Piper.Runtime` assembly (as `Piper.Runtime.Option<T>` and `Piper.Runtime.Result<T, E>`), which every compiled Piper program and library references. So Piper libraries can pass them to each other, and C# code can use them too.
 
@@ -841,6 +845,7 @@ using System.Collections.Generic;
 
 let root = Math.Sqrt(16);                  // static method (int widens to double)
 let max = int.MaxValue;                    // static field
+let utf8 = UTF8Encoding.UTF8;              // a base class's static, through a derived type, as in C#
 let shout = "piper".ToUpper();             // instance method on a builtin type
 let length = shout.Length;                 // property
 let builder = StringBuilder();             // constructor: call the type, as for Piper records
@@ -991,11 +996,56 @@ let total: decimal = prices[0];   // Money is decimal: they mix freely
 ```
 
 - **Just a name:** an alias is interchangeable with its type everywhere, and leaves nothing in the C#. To make a type
-  that can't be mixed up with another (an `Email` that isn't any `string`), declare a record.
+  that can't be mixed up with another (an `Email` that isn't any `string`), declare a [newtype](#newtypes).
 - **What it can name:** any type (generic ones constructed, tuples, function types and other aliases), in any order in
   the program. A cycle (`type A = B; type B = A;`) is an error, as are type parameters on the alias, which C# doesn't
   allow either.
 - **Visibility:** an alias belongs to its namespace (`Shop.Cart`) unless it's `private`, which keeps it to its file.
+
+### Newtypes
+
+`newtype Name = Type;` makes a distinct type over a value, as Rust's and Haskell's newtypes, F#'s single-case unions
+and Kotlin's value classes do. Where an alias is another name for the same type, a newtype can't be mixed up with
+its type, or with another newtype over it:
+
+```piper
+newtype IssueId = int;
+newtype ProjectId = int;
+newtype Email = string requires value.Contains("@");
+
+fn FindIssue(id: IssueId) => Issue? { … }
+
+FindIssue(IssueId(5))         // fine
+FindIssue(ProjectId(5))       // error: Cannot convert type 'ProjectId' to 'IssueId'
+FindIssue(5)                  // error: Cannot convert type 'int' to 'IssueId'
+let n: int = IssueId(5);      // error: write IssueId(5).value
+```
+
+- **What it is:** a [record struct](#types) with one field, `value`: `newtype IssueId = int;` is
+  `record struct IssueId(value: int);`. So it's made as `IssueId(5)`, its value is `id.value`, and it has a record's
+  equality, patterns (`IssueId(5)`), spread (`{ ...id, value: 6 }`) and `extend` methods and operators. As a struct,
+  it costs nothing: no allocation, just its value.
+- **Nothing passes through implicitly:** an `IssueId` has no `+`, and isn't an `int`. Add what makes sense with
+  `extend` (`operator +` on a `Price`, a `Next()` on an id).
+- **Invariants:** `requires` checks the value when one is made, as for any record: `Email("nobody")` throws an
+  `ArgumentException`.
+- **It stands for its value:**
+  - **Printing and interpolation:** an `IssueId(5)` prints as `5`, and goes into a string or URL as `5`. A numeric
+    one takes format specifiers (`{id:D5}`), and one whose value is comparable sorts by it (`ids.Order()`, LINQ's `OrderBy`).
+  - **JSON:** it's its value: `5`, or `"ada@example.com"`, not `{"value": 5}`. JSON its invariants reject is a
+    `JsonException` (a 400 from an API), as for records.
+  - **Parsing:** `IssueId.Parse("5")` is `Some(IssueId(5))`, and None for text that isn't a number, or whose value
+    its invariants reject. Numbers are read in the invariant culture. It's there when the value can be read from
+    text (a string, a number, `bool`, `char`, or a .NET type with a `TryParse`, such as `Guid` or `DateOnly`), unless
+    the newtype declares its own `Parse`.
+  - **Web APIs:** it also has the static `TryParse` ASP.NET Core binds route and query values with, so an endpoint
+    can take `(id: IssueId)` from `/issues/{id:int}`.
+  - **Databases:** the [data plugin](plugins.md) stores it as its value (an `IssueId` column is an int column, an
+    optional one nullable), and numbers new rows for a key that's a newtype of `int` or `long`, as for an `int` key.
+- **Defaults:** like any record struct, an array of newtypes can be made empty (`IssueId[3]`) only when the value's
+  default is a value: so `Email[3]` is an error, as its strings would be null.
+- **Limits:** a newtype can't have type parameters (PIP0113); for a phantom-typed id (`Id<Issue>`), declare a
+  `record struct Id<T>(value: Guid);`.
 
 ### Lambdas and function values
 
@@ -1018,6 +1068,7 @@ names.Sort((a, b) => a.Length - b.Length);    // a .NET delegate type
 - An error in a lambda passed to an overloaded .NET method is reported in the lambda, not as "no overload accepts
   these arguments", when its parameters say which overload is meant.
 - A lambda without annotations needs an expected function type; a lambda with too few or many parameters for it is an error.
+- A parameter named `_` binds nothing, so a lambda can have several: `window.Opened += (_, _) => Load();`.
 - **A function named as a value** (top-level, local, or a static method of a record, enum or class: `Point.Make`)
   converts to any delegate type with its signature, as a C# method group does: `numbers.ConvertAll(Square)` (a
   `Converter`), `numbers.FindAll(IsEven)` (a `Predicate`), `words.Sort(ByLength)` (a `Comparison`), `Thread(Work)` (a
@@ -1467,6 +1518,7 @@ As in C#, functions and methods are PascalCase (`Print`, `Main`, `Area()`), and 
 | Piper | C# |
 |---|---|
 | `record P(x: int)`, `record struct V(x: int)` | `internal sealed record P(int x);`, `internal readonly record struct V(int x);` (`public` when declared `public`) |
+| `newtype IssueId = int;` | `[PiperNewtype] internal readonly record struct IssueId(int @value) : IComparable<IssueId>, IFormattable`, with `ToString()` giving the value, `Parse` and a `TryParse` calling it, and a nested JSON converter writing the value |
 | `class A(x: int): B(x), Named { mut n = x; public let m = 1; … }` | `internal partial class A(int x) : B(x), Named { private int n = x; public int m { get; } = 1; … }` |
 | `static mut count = 0;`, `public static let Empty = A(0);` in a class | `private static int count = 0;`, `public static A Empty { get; } = new A(0);`, used as `A.count` |
 | `prop Total => decimal = t;`, `prop N: int { get; private set; } = 0;`, `prop Name => string { get = n; set { n = value; } }` | `public decimal Total => this.t;`, `public int N { get; private set; } = 0;`, `public string Name { get => this.n; set { this.n = value; } }` |

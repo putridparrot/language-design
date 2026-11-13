@@ -1,0 +1,29 @@
+namespace StockApp;
+
+using System.Collections.Generic;
+using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Builder;
+
+async test "the load run through every node's API reserves each unit exactly once" {
+    let cluster = await StartCluster();
+    let apps = cluster.Select(shards => BuildApi(shards, "http://127.0.0.1:0")).ToList();
+    for app in apps { await app.StartAsync(); }
+    let urls: List<string> = [...apps.Select(app => app.Urls.First())];
+
+    let report = await RunLoad(urls, "gear", 40, 150, 20);
+    Assert(report.Exact(), Describe(report, "gear"));
+    AssertEqual(110, report.Refused());
+    AssertEqual(3, report.outcomes.Select(o => o.servedBy).Distinct().Count());
+    AssertEqual(1, report.outcomes.Select(o => o.keptBy).Distinct().Count());
+
+    // A quantity that makes no sense is refused before any actor is asked.
+    using let http = HttpClient();
+    let bad = await http.PostAsync($"{urls[0]}/stock/gear/reserve?quantity=0", None);
+    AssertEqual(HttpStatusCode.BadRequest, bad.StatusCode);
+
+    for app in apps { await app.StopAsync(); }
+    await StopCluster(cluster);
+}

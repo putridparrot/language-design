@@ -1,0 +1,3 @@
+// A function in products.piper, whose functions C# keeps in a static class named after the file.
+
+fn ProductName(sku: string) => string = $"product-{sku}";

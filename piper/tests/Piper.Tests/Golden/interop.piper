@@ -69,4 +69,14 @@ fn Main() {
     let present: string? = "here";
     Print($"{string.IsNullOrEmpty(missing)} {string.IsNullOrEmpty(present)}");
     Print(string.Join(", ", "a", "b", "c"));
+
+    // A static member through a derived type, as in C#: UTF8 is declared by Encoding, UTF8Encoding's base.
+    Print(UTF8Encoding.UTF8.WebName);
+
+    // A .NET bool? property is set from a bool, or None, and read as an Option.
+    let request = System.Net.Http.HttpRequestMessage();
+    request.Headers.ConnectionClose = true;
+    Print(request.Headers.ConnectionClose ?? false);
+    request.Headers.ConnectionClose = None;
+    Print(request.Headers.ConnectionClose is Some(_));
 }

@@ -172,6 +172,52 @@ public class DataPluginTests
     }
 
     [Fact]
+    public void Newtypes_are_stored_as_their_values_and_keys_of_them_are_numbered()
+    {
+        var output = Run("""
+            using System;
+            using System.Linq;
+            using System.Threading.Tasks;
+            using Microsoft.EntityFrameworkCore;
+
+            newtype ProjectId = int;
+            newtype IssueId = long;
+            newtype Email = string requires value.Contains("@");
+
+            record Project(id: ProjectId, name: string);
+            record Issue(id: IssueId, project: ProjectId, reporter: Email, watcher: Email?);
+
+            database Work {
+                table Projects: Project key id;
+                table Issues: Issue key id index project;
+            }
+
+            async fn Main() {
+                using let work = Work(DbContextOptionsBuilder<Work>().UseSqlite("Data Source=:memory:").Options);
+                await work.Database.OpenConnectionAsync();
+                await work.Database.EnsureCreatedAsync();
+                let web = Project(ProjectId(0), "Website");          // 0: the database numbers it
+                work.Projects.Add(web);
+                await work.SaveChangesAsync();
+                let first = Issue(IssueId(0), web.id, Email("ada@example.com"), None);
+                let second = Issue(IssueId(0), web.id, Email("alan@example.com"), Some(Email("ada@example.com")));
+                work.Issues.AddRange(first, second);
+                await work.SaveChangesAsync();
+                work.ChangeTracker.Clear();
+
+                let wanted = ProjectId(1);
+                let found = await work.Issues.Where(i => i.project == wanted).OrderBy(i => i.id).ToListAsync();
+                Print(string.Join(", ", found.Select(i => $"{i.id} {i.reporter} {i.watcher}")));
+                let watched = await work.Issues.SingleAsync(i => i.watcher == Some(Email("ada@example.com")));
+                Print(watched.id);
+                let script = work.Database.GenerateCreateScript();
+                Print($"{script.Contains("\"id\" INTEGER NOT NULL CONSTRAINT")} {script.Contains("\"reporter\" TEXT NOT NULL")} {script.Contains("\"watcher\" TEXT NULL")}");
+            }
+            """);
+        Assert.Equal("1 ada@example.com None, 2 alan@example.com Some(ada@example.com)\n2\nTrue True True\n", output);
+    }
+
+    [Fact]
     public void Comparing_an_option_column_with_an_option_variable_says_how_to_write_it()
     {
         var result = Compile(Shop + """

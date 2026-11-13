@@ -153,6 +153,9 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportGenericTypeAlias(TextSpan span) =>
         Error("PIP0110", span, "A type alias can't have type parameters, as in C#; name a constructed type instead: 'type Names = List<string>;'.");
 
+    public void ReportGenericNewtype(TextSpan span) =>
+        Error("PIP0113", span, "A newtype can't have type parameters; for one with them, declare a record struct: 'record struct Id<T>(value: Guid);'.");
+
     public void ReportTypeAliasCycle(TextSpan span, string name) =>
         Error("PIP0381", span, $"The type alias '{name}' refers to itself, through its own type or another alias's.");
 

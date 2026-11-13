@@ -401,6 +401,63 @@ public sealed partial class WebPlugin
     /// </summary>
     public void Analyze(PluginAnalysis analysis)
     {
+        WarnAboutStatusFields(analysis);
+        AnalyzePolicies(analysis);
+    }
+
+    /// <summary>
+    /// An error type, answered as ProblemDetails, with a field named `status` loses it: ProblemDetails has its own status,
+    /// the HTTP one, so the field is left out. A warning at the field says so, once for each type.
+    /// </summary>
+    private static void WarnAboutStatusFields(PluginAnalysis analysis)
+    {
+        var warned = new HashSet<Piper.Binding.TypeSymbol>();
+        foreach (var expansion in analysis.Expansions.Where(e => e.Data is EndpointsData))
+        {
+            var function = analysis.Program.Functions.FirstOrDefault(f => expansion.Result.Any(r => ReferenceEquals(r, f.Symbol.Declaration)));
+            if (function is null)
+                continue;
+            foreach (var lambda in Piper.Binding.BoundTreeWalker.DescendantsAndSelf(function.Body).OfType<Piper.Binding.BoundLambdaExpression>())
+            {
+                if (ErrorType(lambda.ReturnType) is not { } error || !warned.Add(error.OriginalDefinition))
+                    continue;
+                foreach (var (file, field) in StatusFields(error.OriginalDefinition))
+                {
+                    analysis.ReportWarning(file, field.Span,
+                        $"A ProblemDetails has its own 'status', the HTTP one, so this field is left out of the answer. Give it another name, such as 'current'.");
+                }
+            }
+        }
+    }
+
+    /// <summary>The E of a handler's <c>Result&lt;T, E&gt;</c>, awaited or not.</summary>
+    private static Piper.Binding.TypeSymbol? ErrorType(Piper.Binding.TypeSymbol type)
+    {
+        if (type is Piper.Binding.ClrTypeSymbol { TypeArguments: [var awaited] } task &&
+            task.Type == typeof(Task<>) || type is Piper.Binding.ClrTypeSymbol { TypeArguments: [_] } valueTask && valueTask.Type == typeof(ValueTask<>))
+        {
+            type = type.TypeArguments[0];
+        }
+        return type.OriginalDefinition is Piper.Binding.EnumSymbol { Name: "Result" } && type.TypeArguments is [_, var error] ? error : null;
+    }
+
+    /// <summary>The fields named `status` of an enum's variants or a record, with the file declaring them.</summary>
+    private static IEnumerable<(Piper.Text.SourceText File, Token Field)> StatusFields(Piper.Binding.TypeSymbol type)
+    {
+        IEnumerable<ParameterSyntax> fields = type switch
+        {
+            Piper.Binding.EnumSymbol { Declaration: { } declaration } => declaration.Variants.SelectMany(v => v.Fields),
+            Piper.Binding.RecordSymbol record => record.Declaration.Fields,
+            _ => [],
+        };
+        if (type.DeclaringFile is not { } file)
+            yield break;
+        foreach (var field in fields.Where(f => string.Equals(f.Name.Text, "status", StringComparison.OrdinalIgnoreCase)))
+            yield return (file, field.Name);
+    }
+
+    private static void AnalyzePolicies(PluginAnalysis analysis)
+    {
         var uses = analysis.Expansions.Where(e => e.Data is EndpointsData).ToList();
         var declarations = analysis.Expansions.Where(e => e.Data is PoliciesData).ToList();
         if (declarations.Count == 0)

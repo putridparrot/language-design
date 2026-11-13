@@ -1,0 +1,164 @@
+// The calculation the grid shares out: a Monte Carlo Value at Risk (VaR) for a stock portfolio. Each chunk simulates
+// many possible ten-day futures for the portfolio and counts where its profit or loss landed; the counts from every
+// chunk add up to the answer. A chunk's random numbers come from its own seed, so it gives the same counts whichever
+// worker runs it, however many times: a chunk that's run twice (its first worker vanished) changes nothing.
+namespace GridApp;
+
+using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.Linq;
+
+/// A holding in the portfolio: how many shares, at what price, and how its price moves in a day. `volatility` is one
+/// standard deviation of the daily return, and `drift` the average daily return.
+record Holding(ticker: string, shares: int, price: double, volatility: double, drift: double);
+
+/// The portfolio: a fixed one, so every node has it without being sent it.
+fn Portfolio() => List<Holding> = [
+    Holding("ACME", 1_200, 84.50, 0.021, 0.0004),
+    Holding("BOLT", 3_000, 22.10, 0.034, 0.0006),
+    Holding("CRANE", 450, 310.00, 0.016, 0.0003),
+    Holding("DELTA", 2_200, 47.75, 0.025, 0.0002),
+    Holding("EMBER", 800, 129.40, 0.029, 0.0005),
+    Holding("FJORD", 5_000, 9.85, 0.041, 0.0001),
+    Holding("GLEN", 1_500, 66.30, 0.019, 0.0003),
+    Holding("HALO", 600, 205.60, 0.023, 0.0004),
+];
+
+/// How many trading days ahead the risk is measured: the regulators' ten.
+fn HorizonDays() => int = 10;
+
+/// How many buckets the profit or loss is counted in. They're spread evenly over five standard deviations either side
+/// of nothing; the few scenarios beyond land in the end buckets.
+fn Buckets() => int = 1_000;
+
+/// What the portfolio is worth today.
+fn PortfolioValue(holdings: List<Holding>) => double = holdings.Sum(h => h.shares * h.price);
+
+/// One standard deviation of the profit or loss over the horizon, were the returns normal and the holdings
+/// independent: the yardstick the buckets are laid out on, and what the formula estimate is made from.
+fn Spread(holdings: List<Holding>) => double =
+    Math.Sqrt(holdings.Sum(h => Math.Pow(h.shares * h.price * h.volatility, 2)) * HorizonDays());
+
+/// The profit expected over the horizon, from the holdings' drift.
+fn ExpectedGain(holdings: List<Holding>) => double = holdings.Sum(h => h.shares * h.price * h.drift) * HorizonDays();
+
+/// How wide each bucket is, in money.
+fn BucketWidth(holdings: List<Holding>) => double = 10.0 * Spread(holdings) / Buckets();
+
+/// The bucket a profit (or, below 0, a loss) is counted in.
+fn Bucket(pnl: double, width: double) => int =
+    Math.Clamp((int)Math.Floor(pnl / width) + Buckets() / 2, 0, Buckets() - 1);
+
+/// The profit or loss in the middle of bucket `i`.
+fn Middle(i: int, width: double) => double = (i - Buckets() / 2 + 0.5) * width;
+
+/// A normally distributed random number, by the Box-Muller transform.
+fn Normal(random: Random) => double =
+    Math.Sqrt(-2.0 * Math.Log(1.0 - random.NextDouble())) * Math.Cos(2.0 * Math.PI * random.NextDouble());
+
+/// A piece of a job: simulate `scenarios` futures with the random numbers from `seed`.
+record Chunk(job: int, id: int, scenarios: int, seed: int);
+
+/// What a chunk found: how many scenarios landed in each bucket, and their total profit or loss.
+record Sample(counts: ImmutableList<int>, total: double);
+
+/// Chunk `id`'s seed, in a job seeded with `seed`: different for every chunk, and the same every time.
+fn ChunkSeed(seed: int, id: int) => int = (int)(((long)seed * 1_000_003L + id) % 2_147_483_647L);
+
+/// Simulates `scenarios` futures of the portfolio over the horizon. Each holding's price follows a random walk (each
+/// day's return normal, with its drift and volatility), and the portfolio's profit or loss is counted in its bucket.
+fn Simulate(scenarios: int, seed: int) => Sample {
+    let holdings = Portfolio();
+    let width = BucketWidth(holdings);
+    let random = Random(seed);
+    let counts = int[Buckets()];
+    mut total = 0.0;
+    for _ in 0..<scenarios {
+        mut pnl = 0.0;
+        for h in holdings {
+            let step = h.drift - 0.5 * h.volatility * h.volatility;
+            mut growth = 0.0;
+            for _ in 0..<HorizonDays() {
+                growth += step + h.volatility * Normal(random);
+            }
+            pnl += h.shares * h.price * (Math.Exp(growth) - 1.0);
+        }
+        counts[Bucket(pnl, width)] += 1;
+        total += pnl;
+    }
+    Sample(counts.ToImmutableList(), total)
+}
+
+/// The risk, from every chunk's sample. Losses are positive numbers.
+/// - `var95`, `var99`: the loss exceeded in only 5% (1%) of the scenarios: Value at Risk
+/// - `shortfall99`: the average loss in that worst 1%: Expected Shortfall
+/// - `formulaVar99`: the 99% VaR worked out from a formula instead, as if the returns were normal: a check on the
+///   simulation, which should come close
+/// - `histogram`: the scenarios counted in 100 wider bars, from `low` to `high`, for drawing
+record Valuation(scenarios: long, value: double, mean: double, var95: double, var99: double, shortfall99: double,
+                 formulaVar99: double, histogram: ImmutableList<long>, low: double, high: double);
+
+/// Nothing found: what a cancelled job has.
+fn NoValuation() => Valuation = Valuation(0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ImmutableList.Create<long>(), 0.0, 0.0);
+
+/// Adds the samples up into the risk figures. Give them in chunk order, so the total is added up in the same order
+/// every time, and the same job always gives exactly the same figures.
+fn Combine(samples: IEnumerable<Sample>) => Valuation {
+    let holdings = Portfolio();
+    let width = BucketWidth(holdings);
+    let counts = long[Buckets()];
+    mut total = 0.0;
+    for sample in samples {
+        for i in 0..<Buckets() {
+            counts[i] += sample.counts[i];
+        }
+        total += sample.total;
+    }
+    let scenarios = counts.Sum();
+    if scenarios == 0 {
+        return NoValuation();
+    }
+    let bars = Buckets() / 100;
+    let histogram = Enumerable.Range(0, 100).Select(b => Enumerable.Range(b * bars, bars).Sum(i => counts[i]));
+    let spread = Spread(holdings);
+    Valuation(
+        scenarios,
+        PortfolioValue(holdings),
+        total / scenarios,
+        Loss(counts, scenarios, 0.95, width),
+        Loss(counts, scenarios, 0.99, width),
+        Shortfall(counts, scenarios, 0.99, width),
+        2.326348 * spread - ExpectedGain(holdings),
+        histogram.ToImmutableList(),
+        Middle(0, width) - width / 2.0,
+        Middle(Buckets() - 1, width) + width / 2.0)
+}
+
+/// The loss exceeded in only `1 - level` of the scenarios: counting from the worst bucket up until that many
+/// scenarios have been passed.
+fn Loss(counts: long[], scenarios: long, level: double, width: double) => double {
+    let tail = (1.0 - level) * scenarios;
+    mut passed = 0L;
+    mut i = 0;
+    while i < counts.Length - 1 && passed + counts[i] < tail {
+        passed += counts[i];
+        i += 1;
+    }
+    -Middle(i, width)
+}
+
+/// The average loss over the worst `1 - level` of the scenarios.
+fn Shortfall(counts: long[], scenarios: long, level: double, width: double) => double {
+    let tail = (1.0 - level) * scenarios;
+    mut taken = 0.0;
+    mut sum = 0.0;
+    mut i = 0;
+    while i < counts.Length && taken < tail {
+        let take = Math.Min((double)counts[i], tail - taken);
+        sum += take * Middle(i, width);
+        taken += take;
+        i += 1;
+    }
+    if taken == 0.0 { 0.0 } else { -sum / taken }
+}

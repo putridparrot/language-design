@@ -16,6 +16,7 @@ using Microsoft.Extensions.DependencyInjection;
 config Settings from "Tracker" {
     connection: string = "Data Source=tracker.db";
     searchesPerMinute: int = 60 requires searchesPerMinute > 0;
+    webhook: string?;                       // where to post changed issues, if anywhere
 }
 
 /// The time now: a service, so tests can fix it.
@@ -43,12 +44,15 @@ record NewComment(text: string) requires text.Trim().Length > 0;
 
 /// An issue as the API shows it, with what can be done to it next.
 record IssueView(
-    id: int, projectId: int, title: string, description: string, priority: Priority, status: WorkflowState,
+    id: IssueId, projectId: ProjectId, title: string, description: string, priority: Priority, status: WorkflowState,
     assignee: string?, resolution: string?, created: DateTime, updated: DateTime, next: List<string>);
 
 fn View(issue: Issue) => IssueView = IssueView(
     issue.id, issue.projectId, issue.title, issue.description, issue.priority, issue.status,
-    issue.assignee, issue.resolution, issue.created, issue.updated, Workflow.Resume(issue.status, issue).Events);
+    issue.assignee, issue.resolution, Utc(issue.created), Utc(issue.updated), Workflow.Resume(issue.status, issue).Events);
+
+/// A time the tracker stored, which is always UTC: SQLite keeps it as text without saying so, so it comes back unmarked.
+fn Utc(time: DateTime) => DateTime = DateTime.SpecifyKind(time, DateTimeKind.Utc);
 
 /// Who may do what: anyone signed in works with issues; admins make projects; searching is limited per minute, as
 /// the settings say.
@@ -63,17 +67,20 @@ endpoints Api "/api" authorize {
     get "/projects" async (db: TrackerDb) => await db.Projects.OrderBy(p => p.code).ToListAsync();
     post "/projects" authorize "admin" async (project: NewProject, db: TrackerDb) => await AddProject(db, project);
 
-    get "/projects/{projectId:int}/issues" ratelimit "search" async (projectId: int, status: string?, q: string?, db: TrackerDb) =>
+    get "/projects/{projectId:int}/issues" ratelimit "search" async (projectId: ProjectId, status: string?, q: string?, db: TrackerDb) =>
         await SearchViews(db, projectId, status, q);
-    post "/projects/{projectId:int}/issues" async (projectId: int, issue: NewIssue, db: TrackerDb, clock: Clock) =>
+    post "/projects/{projectId:int}/issues" async (projectId: ProjectId, issue: NewIssue, db: TrackerDb, clock: Clock) =>
         await AddIssue(db, projectId, issue, clock.Now()) ?> View;
 
-    get "/issues/{id:int}" async (id: int, db: TrackerDb) => await FindIssue(db, id) ?> View;
-    post "/issues/{id:int}/events" async (id: int, event: WorkflowEvent, db: TrackerDb, clock: Clock) =>
-        await Transition(db, id, event, clock.Now()) ?> View;
+    get "/issues/{id:int}" async (id: IssueId, db: TrackerDb) => await FindIssue(db, id) ?> View;
+    post "/issues/{id:int}/events" async (id: IssueId, event: WorkflowEvent, db: TrackerDb, clock: Clock, notifier: Notifier) => {
+        let result = await Transition(db, id, event, clock.Now()) ?> View;
+        if result is Ok(view) { await Notify(notifier, view); }
+        result
+    }
 
-    get "/issues/{id:int}/comments" async (id: int, db: TrackerDb) => await CommentsOn(db, id);
-    post "/issues/{id:int}/comments" async (id: int, comment: NewComment, user: ClaimsPrincipal, db: TrackerDb, clock: Clock) =>
+    get "/issues/{id:int}/comments" async (id: IssueId, db: TrackerDb) => await CommentsOn(db, id);
+    post "/issues/{id:int}/comments" async (id: IssueId, comment: NewComment, user: ClaimsPrincipal, db: TrackerDb, clock: Clock) =>
         await AddComment(db, id, user.Identity?.Name ?? "someone", comment.text, clock.Now());
 }
 
@@ -81,13 +88,13 @@ async fn AddProject(db: TrackerDb, request: NewProject) => Task<Result<Project, 
     if await db.Projects.AnyAsync(p => p.code == request.code) {
         return Err(IssueError.Invalid($"There's already a project {request.code}."));
     }
-    let project = Project(0, request.code, request.name.Trim());
+    let project = Project(ProjectId(0), request.code, request.name.Trim());
     db.Projects.Add(project);
     await db.SaveChangesAsync();
     Ok(project)
 }
 
-async fn SearchViews(db: TrackerDb, projectId: int, status: string?, text: string?) => Task<Result<List<IssueView>, IssueError>> {
+async fn SearchViews(db: TrackerDb, projectId: ProjectId, status: string?, text: string?) => Task<Result<List<IssueView>, IssueError>> {
     let wanted = ParseStatus(status)?;
     Ok((await Search(db, projectId, wanted, text)).Select(View).ToList())
 }

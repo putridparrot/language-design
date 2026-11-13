@@ -1,0 +1,20 @@
+42
+issue 42
+True
+43
+0007 costs 3.75
+True
+the answer
+1,2,3
+Crash on save
+{"id":7,"project":2,"reporter":"ada@example.com"}
+True
+"00000000-0000-0000-0000-000000000000"
+JSON rejected: Invariant failed: value.Contains("@") (value = nobody)
+True
+True
+True
+True
+True
+True
+rejected: Invariant failed: value.Contains("@") (value = nobody)

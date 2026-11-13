@@ -1,0 +1,124 @@
+// The window, laid out in code (Piper has no XAML): controls set from the view model where they only read it, and
+// bound to it by name where they change it or follow its changes.
+namespace TrackerDesktop;
+
+using System;
+using System.Collections.Generic;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Templates;
+using Avalonia.Data;
+using Avalonia.Layout;
+using Avalonia.Media;
+
+fn MainWindow(model: MainViewModel) => Window {
+    let window = Window() {
+        Title: "Tracker",
+        Width: 1000,
+        Height: 640,
+        DataContext: model,
+        Content: DockPanel() {
+            Children: {
+                Docked(Toolbar(model), Dock.Top),
+                Docked(Bound(TextBlock() { Margin: Thickness(8), Foreground: Brushes.DimGray }, TextBlock.TextProperty, "Message"), Dock.Bottom),
+                Columns(IssueList(model), IssuePane(model)),
+            },
+        },
+    };
+    window.Opened += (_, _) => model.LoadCommand.Execute(None);
+    window
+}
+
+/// Choosing the project, and filtering its issues.
+fn Toolbar(model: MainViewModel) => Control = StackPanel() {
+    Orientation: Orientation.Horizontal,
+    Spacing: 8,
+    Margin: Thickness(8),
+    Children: {
+        Label("Project"),
+        Bound(Shown(ComboBox() { DisplayMemberBinding: Binding("name"), Width: 180 }, ItemsControl.ItemsSourceProperty, "Projects"),
+            ComboBox.SelectedIndexProperty, "SelectedProjectIndex"),
+        Label("Status"),
+        Bound(ComboBox() { ItemsSource: Statuses(), Width: 120 }, ComboBox.SelectedItemProperty, "StatusFilter"),
+        Bound(TextBox() { Watermark: "Words in the title", Width: 220 }, TextBox.TextProperty, "SearchText"),
+        Button() { Content: "Refresh", Command: model.RefreshCommand },
+    },
+};
+
+/// The chosen project's issues, one line each.
+fn IssueList(model: MainViewModel) => Control = Bound(
+    Shown(ListBox() {
+        // A plain StackPanel, as the virtualizing default keeps the chosen issue's old row when the list is replaced.
+        ItemsPanel: FuncTemplate<Panel>(() => StackPanel()),
+        ItemTemplate: FuncDataTemplate<IssueView>((issue, _) => TextBlock() { Text: $"#{issue.id}  {issue.status,-10}  {issue.priority,-6}  {issue.title}" }),
+        Margin: Thickness(8, 0),
+    }, ItemsControl.ItemsSourceProperty, "Issues"),
+    ListBox.SelectedIndexProperty, "SelectedIssueIndex");
+
+/// The chosen issue, what can be done to it, and a new issue.
+fn IssuePane(model: MainViewModel) => Control = ScrollViewer() {
+    Content: StackPanel() {
+        Spacing: 8,
+        Margin: Thickness(8, 0),
+        Children: {
+            Bound(TextBlock() { TextWrapping: TextWrapping.Wrap }, TextBlock.TextProperty, "Details"),
+            Label("Assign to"),
+            Bound(TextBox(), TextBox.TextProperty, "Assignee"),
+            Label("Reason or resolution (for Reject and Close)"),
+            Bound(TextBox(), TextBox.TextProperty, "Reason"),
+            WrapPanel() {
+                Children: {
+                    Action("Start", model.StartCommand),
+                    Action("Submit", model.SubmitCommand),
+                    Action("Unassign", model.UnassignCommand),
+                    Action("Approve", model.ApproveCommand),
+                    Action("Reject", model.RejectCommand),
+                    Action("Close", model.CloseCommand),
+                    Action("Reopen", model.ReopenCommand),
+                },
+            },
+            Separator(),
+            Label("Comments"),
+            Shown(TextBlock() { TextWrapping: TextWrapping.Wrap }, TextBlock.TextProperty, "CommentsText"),
+            Bound(TextBox() { Watermark: "Add a comment", AcceptsReturn: true, TextWrapping: TextWrapping.Wrap, MinHeight: 60 }, TextBox.TextProperty, "NewComment"),
+            Button() { Content: "Comment", Command: model.AddCommentCommand },
+            Separator(),
+            Label("New issue"),
+            Bound(TextBox() { Watermark: "Title" }, TextBox.TextProperty, "NewTitle"),
+            Bound(TextBox() { Watermark: "Description", AcceptsReturn: true, TextWrapping: TextWrapping.Wrap, MinHeight: 60 }, TextBox.TextProperty, "NewDescription"),
+            Bound(ComboBox() { ItemsSource: Priorities(), Width: 120 }, ComboBox.SelectedItemProperty, "NewPriority"),
+            Button() { Content: "Add", Command: model.AddIssueCommand },
+        },
+    },
+};
+
+/// The status filter's choices (the API's workflow states, and "Any"), and the priorities, as the API names them.
+fn Statuses() => List<string> = ["Any", "Open", "InProgress", "InReview", "Closed"];
+fn Priorities() => List<string> = ["Low", "Normal", "High", "Urgent"];
+
+/// Two columns, the second wider.
+fn Columns(left: Control, right: Control) => Control {
+    Grid.SetColumn(right, 1);
+    Grid() { ColumnDefinitions: ColumnDefinitions("2*,3*"), Children: { left, right } }
+}
+
+fn Docked(control: Control, side: Dock) => Control {
+    DockPanel.SetDock(control, side);
+    control
+}
+
+fn Label(text: string) => Control = TextBlock() { Text: text, VerticalAlignment: VerticalAlignment.Center };
+
+fn Action(text: string, command: System.Windows.Input.ICommand) => Control = Button() { Content: text, Command: command, Margin: Thickness(0, 0, 4, 4) };
+
+/// `control`, with `property` bound to the view model's property named `path`: both ways, for the control to change it.
+fn Bound(control: Control, property: AvaloniaProperty, path: string) => Control {
+    control.Bind(property, Binding(path) { Mode: BindingMode.TwoWay });
+    control
+}
+
+/// `control`, with `property` following the view model's property named `path`.
+fn Shown(control: Control, property: AvaloniaProperty, path: string) => Control {
+    control.Bind(property, Binding(path) { Mode: BindingMode.OneWay });
+    control
+}

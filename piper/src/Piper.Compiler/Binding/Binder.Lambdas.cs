@@ -240,7 +240,8 @@ public sealed partial class Binder
         _scope = new Scope(_scope);
         foreach (var (parameter, syntaxParameter) in parameters.Zip(syntax.Parameters))
         {
-            if (!syntaxParameter.Name.IsMissing && !_scope.TryDeclare(parameter))
+            // `_` binds nothing, so `(_, _) => …` (an event handler ignoring both) is fine, as in C#.
+            if (!syntaxParameter.Name.IsMissing && parameter.Name != "_" && !_scope.TryDeclare(parameter))
                 _diagnostics.ReportDuplicateDeclaration(syntaxParameter.Name.Span, parameter.Name);
         }
         _return = context;
@@ -796,10 +797,23 @@ public sealed partial class Binder
                 _ => null,
             } is { } container && IsClrBacked(container) && FindClrEvent(container, member.Member.Text, System.Reflection.BindingFlags.Static) is { } staticEvent:
                 return BindEventAssignment(syntax, null, container, staticEvent);
+            // `Environment.ExitCode = 3`, `Console.ForegroundColor = …`: a .NET type's static property or field.
+            case MemberAccessExpressionSyntax member when ResolveContainer(member.Target) switch
+            {
+                TypeSymbol type => type,
+                ClrTypeGroupSymbol group => NonGenericMember(group),
+                _ => null,
+            } is { } staticContainer && IsClrBacked(staticContainer) &&
+                StaticMembers(ClrContext(staticContainer).Type, member.Member.Text).Length > 0:
+                target = BindExpression(member);
+                name = member.Member.Text;
+                break;
             default:
                 return null;
         }
 
+        // A .NET `T?` value-type property (`Nullable<T>`, an Option in Piper) is assigned a Nullable, not an Option.
+        var nullableValue = target is BoundNullableBoundaryExpression { Kind: NullableBoundaryKind.FromNullableValue };
         if (target is BoundNullableBoundaryExpression boundary)
             target = boundary.Operand;
         if (target.Type == TypeSymbol.Error)
@@ -851,7 +865,10 @@ public sealed partial class Binder
             if (value.Type.IsOption && value.Type.TypeArguments[0] == target.Type && ClrTypes.IsReferenceType(target.Type) &&
                 target is not BoundIndexExpression { PiperIndexer: not null })
                 return new BoundClrAssignmentExpression(target, null, new BoundNullableBoundaryExpression(value, NullableBoundaryKind.ToNullableReference, target.Type));
-            return new BoundClrAssignmentExpression(target, null, Convert(value, target.Type, syntax.Value.Span));
+            var converted = Convert(value, target.Type, syntax.Value.Span);
+            if (nullableValue && converted.Type.IsOption)
+                converted = new BoundNullableBoundaryExpression(converted, NullableBoundaryKind.ToNullableValue, converted.Type);
+            return new BoundClrAssignmentExpression(target, null, converted);
         }
 
         var kind = Operators.GetBinaryKind(compound)!.Value;

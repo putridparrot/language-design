@@ -97,9 +97,15 @@ public sealed partial class CSharpEmitter
             // The entry point's own Main method would hide a module class of that name.
             "Main",
         ];
+        // A type's members would hide a module class of their name inside the type: a `Products()` method calling a
+        // function of products.piper, whose module class would otherwise be `Products`. (Only module class names avoid
+        // these; locals may share a member's name.)
+        HashSet<string> memberNames = [.. program.Methods.Select(m => m.Symbol.Name), .. program.Types.SelectMany(MemberNames)];
         foreach (var file in program.Files)
         {
-            var moduleName = UniqueTopLevelName(ModuleName(file.FileName), "Module");
+            var moduleName = ModuleName(file.FileName);
+            while (memberNames.Contains(moduleName) || _topLevelNames.Contains(moduleName))
+                moduleName += "Module";
             _moduleClassNames[file] = moduleName;
             _extensionClassNames[file] = UniqueTopLevelName(moduleName + "Extensions", "_");
 
@@ -116,6 +122,16 @@ public sealed partial class CSharpEmitter
         }
         _runtimeFile = program.Main?.DeclaringFile ?? program.Files[0];
     }
+
+    /// <summary>The names a type's own members have in C#, which hide a top-level class of the same name inside it.</summary>
+    private static IEnumerable<string> MemberNames(TypeSymbol type) => type switch
+    {
+        RecordSymbol record => record.Fields.Select(f => f.Name),
+        ClassSymbol @class => @class.Fields.Concat(@class.StaticFields).Select(f => f.Name)
+            .Concat(@class.Events.Select(e => e.Name)).Concat(@class.Parameters.Select(p => p.Name)),
+        EnumSymbol @enum => @enum.Variants.Select(v => v.Name),
+        _ => [],
+    };
 
     private string UniqueTopLevelName(string name, string suffix)
     {
@@ -324,19 +340,25 @@ public sealed partial class CSharpEmitter
     {
         var partial = IsPartial(record) ? "partial " : "";
         var kind = record.IsStruct ? $"readonly {partial}record struct" : $"sealed {partial}record";
+        var value = record.IsNewtype ? NewtypeValue.Of(record.Fields[0].Type) : null;
+        var bases = BaseList(TraitsFrom(record, file));
+        if (value is not null && HomeFile(record) == file)
+            bases = AddBases(bases, value.Interfaces(Escape(record.Name)));
         var header = $"{Visibility(record)} {kind} {Escape(record.Name)}{TypeParameterList(record.TypeParameters)}" +
-                     $"({RecordFields(record)}){BaseList(TraitsFrom(record, file))}{Constraints(record.TypeParameters)}";
+                     $"({RecordFields(record)}){bases}{Constraints(record.TypeParameters)}";
         var methods = MethodsFrom(record, file).ToList();
-        bool json = !record.Invariants.IsEmpty && !HasJsonConverter(record);
+        bool json = (record.IsNewtype || !record.Invariants.IsEmpty) && !HasJsonConverter(record);
         EmitDocumentation(record, record.Fields);
         EmitAttributes(record);
+        if (record.IsNewtype)
+            _writer.WriteLine("[global::Piper.Runtime.PiperNewtype]");
         if (json)
         {
             // A generic record's converter is closed with its type arguments by the runtime, as an attribute can't.
             var converter = record.TypeParameters.IsEmpty ? $"{Escape(record.Name)}.{JsonConverterName}" : "global::Piper.Runtime.PiperRecordJsonConverterFactory";
             _writer.WriteLine($"[global::System.Text.Json.Serialization.JsonConverter(typeof({converter}))]");
         }
-        if (methods.Count == 0 && record.Invariants.IsEmpty)
+        if (methods.Count == 0 && record.Invariants.IsEmpty && value is null)
         {
             _writer.WriteLine(header + ";");
             return;
@@ -347,16 +369,127 @@ public sealed partial class CSharpEmitter
         if (!record.Invariants.IsEmpty)
         {
             EmitInvariants(record);
+            if (methods.Count > 0 || json || value is not null)
+                _writer.WriteLine();
+        }
+        if (value is not null)
+        {
+            EmitNewtypeMembers(record, value);
             if (methods.Count > 0 || json)
                 _writer.WriteLine();
         }
         if (json)
         {
-            EmitRecordJson(record);
+            if (record.IsNewtype)
+                EmitNewtypeJson(record);
+            else
+                EmitRecordJson(record);
             if (methods.Count > 0)
                 _writer.WriteLine();
         }
         EmitMembers(methods);
+        _writer.CloseBrace();
+    }
+
+    private static string AddBases(string bases, IReadOnlyList<string> more) =>
+        more.Count == 0 ? bases : bases.Length == 0 ? $" : {string.Join(", ", more)}" : $"{bases}, {string.Join(", ", more)}";
+
+    /// <summary>
+    /// What a newtype's value can do, which the newtype passes on: be sorted (<c>IComparable</c>, so LINQ's
+    /// <c>OrderBy</c> works), be formatted (<c>IFormattable</c>, for <c>{id:D5}</c>), and be parsed from text
+    /// (<c>TryParse</c>, which ASP.NET Core binds route and query values with).
+    /// </summary>
+    private sealed record NewtypeValue(bool Comparable, bool Formattable)
+    {
+        public static NewtypeValue Of(TypeSymbol type)
+        {
+            if (type == TypeSymbol.String || type == TypeSymbol.Bool || type == TypeSymbol.Char)
+                return new(true, false);
+            if (type.IsNumeric)
+                return new(true, true);
+            if (type is ClrTypeSymbol { IsArray: false } clr && !clr.Type.ContainsGenericParameters)
+            {
+                var interfaces = clr.Type.GetInterfaces();
+                bool Has(string name) => interfaces.Any(i => i.IsGenericType ? i.GetGenericTypeDefinition().FullName == name && i.GetGenericArguments()[0] == clr.Type : i.FullName == name);
+                return new(Has("System.IComparable`1"), Has("System.IFormattable"));
+            }
+            return new(false, false);
+        }
+
+        public IReadOnlyList<string> Interfaces(string self) =>
+            [.. Comparable ? new[] { $"global::System.IComparable<{self}>" } : [], .. Formattable ? new[] { "global::System.IFormattable" } : []];
+    }
+
+    /// <summary>
+    /// A newtype's members standing for its value: <c>ToString</c> gives the value's (so it prints, and goes into
+    /// interpolated strings and URLs, as the value), and <c>CompareTo</c>, formatting and <c>TryParse</c> when the value has
+    /// them. <c>TryParse</c> fails, rather than throws, for text whose value its invariants reject.
+    /// </summary>
+    private void EmitNewtypeMembers(RecordSymbol record, NewtypeValue value)
+    {
+        var self = Escape(record.Name);
+        var field = Escape(record.Fields[0].Name);
+        var type = TypeName(record.Fields[0].Type);
+        _writer.WriteLine($"public override string ToString() => {field}.ToString() ?? \"\";");
+        if (value.Comparable)
+            _writer.WriteLine($"public int CompareTo({self} other) => global::System.Collections.Generic.Comparer<{type}>.Default.Compare({field}, other.{field});");
+        if (value.Formattable)
+            _writer.WriteLine($"public string ToString(string? format, global::System.IFormatProvider? provider) => {field}.ToString(format, provider);");
+        // ASP.NET Core binds route and query values with a static TryParse; this one is Piper's Parse (which the binder
+        // gives a newtype whose value can be read from text, unless it declares its own).
+        var parse = record.Methods.FirstOrDefault(m => m is { Name: "Parse", IsStatic: true, Parameters: [{ Type: var p }] } &&
+                                                       p == TypeSymbol.String && m.ReturnType.IsOption && m.ReturnType.TypeArguments[0] == record);
+        if (parse is null)
+            return;
+        _writer.WriteLine();
+        _writer.WriteLine($"public static bool TryParse(string? text, global::System.IFormatProvider? provider, out {self} result)");
+        _writer.OpenBrace();
+        _writer.WriteLine($"var parsed = text is null ? default : {Escape(parse.Name)}(text);");
+        _writer.WriteLine("result = parsed.IsSome ? parsed.Value : default;");
+        _writer.WriteLine("return parsed.IsSome;");
+        _writer.CloseBrace();
+        _writer.WriteLine();
+        _writer.WriteLine($"public static bool TryParse(string? text, out {self} result) => TryParse(text, null, out result);");
+    }
+
+    /// <summary>
+    /// A newtype is its value in JSON: <c>IssueId(5)</c> is <c>5</c>, not <c>{"value":5}</c>. Reading checks its
+    /// invariants, as a record's converter does, so JSON breaking them is a <c>JsonException</c> (a 400 from ASP.NET Core).
+    /// </summary>
+    private void EmitNewtypeJson(RecordSymbol record)
+    {
+        const string json = "global::System.Text.Json";
+        var self = Escape(record.Name);
+        var field = Escape(record.Fields[0].Name);
+        var type = TypeName(record.Fields[0].Type);
+        _writer.WriteLine($"public sealed class {JsonConverterName} : {json}.Serialization.JsonConverter<{self}>");
+        _writer.OpenBrace();
+        _writer.WriteLine($"public override {self} Read(ref {json}.Utf8JsonReader reader, global::System.Type type, {json}.JsonSerializerOptions options)");
+        _writer.OpenBrace();
+        if (ClrTypes.IsReferenceType(record.Fields[0].Type))
+        {
+            _writer.WriteLine($"if ({json}.JsonSerializer.Deserialize<{type}>(ref reader, options) is not {{ }} parsed)");
+            _writer.WriteLine($"    throw new {json}.JsonException(\"Expected {record.Name}, not null.\");");
+        }
+        else
+            _writer.WriteLine($"var parsed = {json}.JsonSerializer.Deserialize<{type}>(ref reader, options);");
+        if (record.Invariants.IsEmpty)
+            _writer.WriteLine($"return new {self}(parsed);");
+        else
+        {
+            _writer.WriteLine("try");
+            _writer.OpenBrace();
+            _writer.WriteLine($"return new {self}(parsed);");
+            _writer.CloseBrace();
+            _writer.WriteLine("catch (global::System.ArgumentException invalid)");
+            _writer.OpenBrace();
+            _writer.WriteLine($"throw new {json}.JsonException(invalid.Message, invalid);");
+            _writer.CloseBrace();
+        }
+        _writer.CloseBrace();
+        _writer.WriteLine();
+        _writer.WriteLine($"public override void Write({json}.Utf8JsonWriter writer, {self} value, {json}.JsonSerializerOptions options) =>");
+        _writer.WriteLine($"    {json}.JsonSerializer.Serialize(writer, value.{field}, options);");
         _writer.CloseBrace();
     }
 

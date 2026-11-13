@@ -1,0 +1,65 @@
+namespace StockApp;
+
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Proto;
+using Proto.Remote;
+
+/// Three nodes in this process, on free ports, each knowing all three: as three pods would be, but on localhost.
+async fn StartCluster() => Task<List<Shards>> {
+    let systems = await Task.WhenAll(Enumerable.Range(0, 3).Select(_ => StartNode("127.0.0.1", 0)));
+    let addresses: List<string> = [...systems.Select(s => s.Address)];
+    [...systems.Select(s => Shards(s, addresses))]
+}
+
+async fn StopCluster(cluster: List<Shards>) {
+    for shards in cluster {
+        await shards.Node().Remote().ShutdownAsync(true);
+    }
+}
+
+test "every node picks the same owner for a product, and products spread over the nodes" {
+    AssertEqual(OwnerIndex("widget", 3), OwnerIndex("widget", 3));
+    let counts = Enumerable.Range(0, 300).Select(i => OwnerIndex($"sku-{i}", 3)).GroupBy(n => n).ToDictionary(g => g.Key, g => g.Count());
+    AssertEqual(3, counts.Count);
+    Assert(counts.Values.All(n => n > 60), string.Join(", ", counts.Values));
+}
+
+async test "a product is kept by one node, whichever node asks" {
+    let cluster = await StartCluster();
+    let level = await cluster[0].Ask("bolt", p => p.Receive(5));
+    AssertEqual(cluster[0].Owner("bolt"), level.node);
+    for shards in cluster {
+        AssertEqual(5, (await shards.Ask("bolt", p => p.Show())).onHand);
+    }
+    let owner = cluster.First(s => s.address == level.node);
+    AssertEqual("bolt", (await owner.Products()).Single());
+    await StopCluster(cluster);
+}
+
+async test "any node shows every node, each with the products it keeps" {
+    let cluster = await StartCluster();
+    for sku in ["bolt", "gear", "nut", "washer"] {
+        await cluster[0].Ask(sku, p => p.Receive(3));
+    }
+    let views = await cluster[2].Cluster();
+    AssertEqual(3, views.Count);
+    Assert(views.All(v => v.up));
+    AssertEqual(4, views.Sum(v => v.products.Count));
+    for view in views {
+        Assert(view.products.All(p => p.node == view.address && p.onHand == 3 && cluster[0].Owner(p.sku) == view.address));
+    }
+    await StopCluster(cluster);
+}
+
+async test "reservations from every node at once never oversell" {
+    let cluster = await StartCluster();
+    await cluster[0].Ask("widget", p => p.Receive(50));
+    let reservations = await Task.WhenAll(Enumerable.Range(0, 200).Select(i => cluster[i % 3].Ask("widget", p => p.Reserve(1))));
+    AssertEqual(50, reservations.Count(r => r.granted));
+    let level = await cluster[1].Ask("widget", p => p.Show());
+    AssertEqual(0, level.onHand);
+    AssertEqual(50, level.reserved);
+    await StopCluster(cluster);
+}

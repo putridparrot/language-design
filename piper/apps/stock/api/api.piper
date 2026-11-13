@@ -1,0 +1,88 @@
+// The HTTP API every node serves: any node answers for any product, by asking the product's actor wherever it is.
+namespace StockApp;
+
+using System.Collections.Generic;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Primitives;
+
+/// An answer, with the node that served the request: `result.node` is the one keeping the product, which is often
+/// another.
+record Served<T>(servedBy: string, result: T);
+
+record NodeInfo(address: string, nodes: List<string>, products: List<string>);
+
+/// Why a request couldn't be answered: the node that served it, and what went wrong.
+record Failure(servedBy: string, error: string, message: string);
+
+/// What `GET /` shows: which node answered, and what can be asked.
+fn Usage(address: string) => string = $"""
+    Stock, served by {address}
+
+    GET  /dashboard                          watch the nodes, and try it, in a browser
+    GET  /stock/{"{sku}"}                        the product's level, and the node keeping it
+    POST /stock/{"{sku}"}/receive?quantity=10    add to it
+    POST /stock/{"{sku}"}/reserve?quantity=1     take from it (409 if there aren't enough)
+    GET  /nodes                              this node, all of them, and the products this node keeps
+    GET  /cluster                            every node, and the products each keeps
+
+    Refresh to see another node answer, when a load balancer is in front of them.
+    """;
+
+/// The API, set up but not started, listening on `url`:
+/// - `GET /`: what can be asked, as text
+/// - `GET /stock/{sku}`: the product's level
+/// - `POST /stock/{sku}/receive?quantity=10`: adds to it
+/// - `POST /stock/{sku}/reserve?quantity=1`: takes from it, or 409 if there aren't enough
+/// - `GET /nodes`: this node, all of them, and the products this node keeps
+/// - `GET /cluster`: every node, and the products each keeps, with their levels
+/// - `GET /dashboard`: all of that in a browser, with buttons to try it
+/// - `GET /healthz`: "ok", for Kubernetes' probes
+fn BuildApi(shards: Shards, url: string) => WebApplication {
+    let builder = WebApplication.CreateBuilder();
+    builder.Logging.ClearProviders();
+    let urls: string[] = [url];
+    builder.WebHost.UseUrls(urls);
+    let app = builder.Build();
+    let address = shards.address;
+
+    // A product's node that doesn't answer (stopped, restarting, or too slow) is a 503, which a client can retry,
+    // rather than a 500: the node serving the request is fine.
+    //
+    // Every answer closes its connection, so a browser's next request opens another, which the load balancer can send
+    // to another node: otherwise the dashboard would keep talking to the one node it reached first.
+    app.Use(async (context: HttpContext, next: RequestDelegate) => {
+        context.Response.Headers["Connection"] = StringValues("close");
+        try {
+            await next(context);
+        } catch (e: System.Exception) {
+            let unavailable = e is _: System.TimeoutException || e is _: Proto.DeadLetterException;
+            context.Response.StatusCode = if unavailable { 503 } else { 500 };
+            await context.Response.WriteAsJsonAsync(Failure(address, e.GetType().Name, e.Message));
+        }
+    });
+
+    app.MapGet("/stock/\{sku}", async (sku: string) => Served(address, await shards.Ask(sku, p => p.Show())));
+    app.MapPost("/stock/\{sku}/receive", async (sku: string, quantity: int) => {
+        if quantity <= 0 {
+            return Results.BadRequest("quantity must be more than 0");
+        }
+        Results.Ok(Served(address, await shards.Ask(sku, p => p.Receive(quantity))))
+    });
+    app.MapPost("/stock/\{sku}/reserve", async (sku: string, quantity: int) => {
+        if quantity <= 0 {
+            return Results.BadRequest("quantity must be more than 0");
+        }
+        let reservation = await shards.Ask(sku, p => p.Reserve(quantity));
+        if reservation.granted { Results.Ok(Served(address, reservation)) } else { Results.Conflict(Served(address, reservation)) }
+    });
+    app.MapGet("/nodes", async () => NodeInfo(address, shards.Nodes(), await shards.Products()));
+    app.MapGet("/cluster", async () => Served(address, await shards.Cluster()));
+    app.MapGet("/healthz", () => "ok");
+    app.MapGet("/", () => Usage(address));
+    let page = DashboardPage();
+    app.MapGet("/dashboard", () => Results.Content(page, "text/html"));
+    app
+}

@@ -503,4 +503,30 @@ public class WebPluginTests
         Assert.Equal("PIP0505", warning.Code);
         Assert.Contains("'authorize' needs the app to register and use its middleware", warning.Message);
     }
+
+    /// <summary>An error's field named `status` would be left out of its ProblemDetails, which has its own: a warning.</summary>
+    [Fact]
+    public void An_error_field_named_status_is_warned_about()
+    {
+        var text = """
+            using System.Threading.Tasks;
+
+            enum OrderError {
+                Stuck(id: int, status: string),
+                Missing(id: int),
+            }
+
+            fn Find(id: int) => Result<int, OrderError> = Err(OrderError.Missing(id));
+
+            endpoints Orders {
+                get "/orders/{id:int}" (id: int) => Find(id);
+                get "/later/{id:int}" async (id: int) => { await Task.Yield(); Find(id) }
+            }
+            fn Main() { }
+            """;
+        var warning = Assert.Single(Compile(text).Diagnostics);
+        Assert.Equal("PIP0505", warning.Code);
+        Assert.Contains("its own 'status'", warning.Message);
+        Assert.Equal(text.IndexOf("status: string", StringComparison.Ordinal), warning.Span.Start);
+    }
 }

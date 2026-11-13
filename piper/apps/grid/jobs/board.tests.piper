@@ -1,0 +1,90 @@
+namespace GridApp;
+
+using System;
+using System.Linq;
+
+/// The chunk a worker was given, or -1 for none.
+fn Given(assignment: Assignment) => int = match assignment {
+    Work(chunk) => chunk.id,
+    Wait => -1,
+};
+
+/// What a worker would send back for chunk `id` of the current job.
+fn Result(board: Board, id: int, worker: string) => Tally =
+    Tally(board.job, id, worker, Simulate(board.spec.scenarios, ChunkSeed(board.spec.seed, id)), 10L);
+
+fn Started(chunks: int, now: DateTime) => Board = StartJob(NewBoard(now), JobSpec(chunks, 200, 9), now).board;
+
+test "each chunk is handed out once, then workers wait" {
+    let now = DateTime(2026, 1, 1);
+    mut board = Started(3, now);
+    for (worker, expected) in [("a", 0), ("b", 1), ("c", 2), ("a", -1)] {
+        let (next, assignment) = TakeWork(board, worker, now);
+        board = next;
+        AssertEqual(expected, Given(assignment));
+    }
+    AssertEqual(0, board.retried);
+}
+
+test "a chunk not sent back within its lease goes to the next worker, and the copy that's late is ignored" {
+    let now = DateTime(2026, 1, 1);
+    mut board = TakeWork(Started(1, now), "a", now).board;
+    AssertEqual(-1, Given(TakeWork(board, "b", now.AddSeconds(29)).assignment));   // the first lease is 30 seconds
+    let (later, assignment) = TakeWork(board, "b", now.AddSeconds(31));
+    board = later;
+    AssertEqual(0, Given(assignment));
+    AssertEqual(1, board.retried);
+    AssertEqual(2, board.cells[0].attempts);
+
+    let (first, kept) = Complete(board, Result(board, 0, "a"), now.AddSeconds(32));   // a was only slow
+    Assert(kept);
+    let (second, keptAgain) = Complete(first, Result(board, 0, "b"), now.AddSeconds(33));
+    Assert(!keptAgain);
+    AssertEqual(1, second.late);
+    AssertEqual("a", second.cells[0].worker);
+    Assert(!second.running);
+}
+
+test "the last chunk in finishes the job, with the same figures whatever order they came back in" {
+    let now = DateTime(2026, 1, 1);
+    mut board = Started(4, now);
+    for worker in ["a", "b", "c", "d"] {
+        board = TakeWork(board, worker, now).board;
+    }
+    for (id, worker) in [(2, "c"), (0, "a"), (3, "d"), (1, "b")] {
+        board = Complete(board, Result(board, id, worker), now.AddSeconds(5)).board;
+    }
+    Assert(!board.running);
+    let run = board.history.Single();
+    let expected = Combine(Enumerable.Range(0, 4).Select(id => Simulate(200, ChunkSeed(9, id))));
+    AssertEqual(expected.var99, run.valuation.var99);
+    AssertEqual(expected.mean, run.valuation.mean);
+    Assert(expected.histogram.SequenceEqual(run.valuation.histogram));
+    AssertEqual(4, run.workers);
+    AssertEqual(5.0, run.seconds);
+}
+
+test "a job can't start while one runs, and a cancelled job's results are ignored" {
+    let now = DateTime(2026, 1, 1);
+    let board = TakeWork(Started(2, now), "a", now).board;
+    Assert(!StartJob(board, JobSpec(5, 10, 1), now).started);
+    let (cancelled, done) = CancelJob(board, now);
+    Assert(done);
+    Assert(cancelled.history.Single().cancelled);
+    let (after, kept) = Complete(cancelled, Result(board, 0, "a"), now);
+    Assert(!kept);
+    AssertEqual(1, after.late);
+    Assert(StartJob(after, JobSpec(5, 10, 1), now).started);
+}
+
+test "the dashboard's view: who's working on what" {
+    let now = DateTime(2026, 1, 1);
+    let board = TakeWork(TakeWork(Started(3, now), "b", now).board, "a", now.AddSeconds(1)).board;
+    let view = Describe(board, now.AddSeconds(2));
+    AssertEqual(2, view.outstanding);
+    AssertEqual("a,b", string.Join(",", view.workers.Select(w => w.name)));
+    AssertEqual(1, view.workers[0].current);
+    Assert(view.workers.All(w => w.active));
+    Assert(!Describe(board, now.AddMinutes(1)).workers.Any(w => w.active));
+    AssertEqual(0, Describe(board, now.AddMinutes(3)).workers.Count);
+}

@@ -1,0 +1,26 @@
+namespace GridApp;
+
+using System.Linq;
+
+test "a chunk gives the same sample every time, wherever it's run" {
+    let first = Simulate(2_000, ChunkSeed(42, 7));
+    let again = Simulate(2_000, ChunkSeed(42, 7));
+    Assert(first.counts.SequenceEqual(again.counts));
+    AssertEqual(first.total, again.total);
+    Assert(ChunkSeed(42, 0) != ChunkSeed(42, 1));
+    Assert(ChunkSeed(42, 0) != ChunkSeed(43, 0));
+}
+
+test "every scenario is counted once" {
+    AssertEqual(3_000, Simulate(3_000, 1).counts.Sum());
+}
+
+test "the simulation comes close to the formula, and the figures are in order" {
+    let valuation = Combine(Enumerable.Range(0, 20).Select(id => Simulate(5_000, ChunkSeed(1, id))));
+    AssertEqual(100_000L, valuation.scenarios);
+    AssertEqual(100_000L, valuation.histogram.Sum());
+    let gap = System.Math.Abs(valuation.var99 - valuation.formulaVar99) / valuation.formulaVar99;
+    Assert(gap < 0.1, $"simulated {valuation.var99:F0}, formula {valuation.formulaVar99:F0}");
+    Assert(0.0 < valuation.var95 && valuation.var95 < valuation.var99 && valuation.var99 < valuation.shortfall99,
+        $"{valuation.var95:F0} {valuation.var99:F0} {valuation.shortfall99:F0}");
+}

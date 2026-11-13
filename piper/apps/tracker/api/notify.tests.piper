@@ -1,0 +1,42 @@
+namespace Tracker;
+
+using System;
+using System.Collections.Generic;
+using System.Net;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+
+/// A webhook that fails its first `failures` calls, then succeeds, recording what it was sent.
+class FlakyWebhook(failures: int): HttpMessageHandler {
+    public mut calls = 0;
+    public let bodies: List<string> = [];
+
+    override async fn SendAsync(request: HttpRequestMessage, cancellationToken: CancellationToken) => Task<HttpResponseMessage> {
+        calls += 1;
+        if request.Content is Some(content) {
+            bodies.Add(await content.ReadAsStringAsync(cancellationToken));
+        }
+        HttpResponseMessage(if calls <= failures { HttpStatusCode.ServiceUnavailable } else { HttpStatusCode.OK })
+    }
+}
+
+fn SomeView() => IssueView = View(NewBug());
+
+async test "a webhook that's briefly down is tried again" {
+    let webhook = FlakyWebhook(2);
+    await Notify(WebhookNotifier(HttpClient(webhook), "http://hooks.test/issues"), SomeView());
+    AssertEqual(3, webhook.calls);
+    Assert(webhook.bodies[2].Contains("\"title\":\"Crash on save\""), webhook.bodies[2]);
+}
+
+async test "a webhook that stays down doesn't fail the change it's told about" {
+    let webhook = FlakyWebhook(10);
+    await Notify(WebhookNotifier(HttpClient(webhook), "http://hooks.test/issues"), SomeView());
+    AssertEqual(3, webhook.calls);
+}
+
+test "the settings choose the notifier" {
+    Assert(NotifierFor(Settings("Data Source=:memory:", 60, None)) is _: NoNotifier);
+    Assert(NotifierFor(Settings("Data Source=:memory:", 60, Some("http://hooks.test"))) is _: WebhookNotifier);
+}

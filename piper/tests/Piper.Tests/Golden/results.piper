@@ -44,4 +44,13 @@ fn Main() {
     if Compute(64, 1) is Ok(v) { Print($"64 -> {v}"); }
     Print(Show(Digits(12345, 1)));
     Print(Show(Digits(1, 0)));
+
+    // Branches building a Result or Option say its type between them, with nothing else saying it.
+    let parsed = Compute(64, 1);
+    let mapped = match parsed { Ok(v) => Ok(v * 2), Err(e) => Err(e) };
+    Print(mapped);
+    let swapped = match parsed { Ok(v) => Err(v), Err(e) => Ok(e) };
+    Print(swapped);
+    let first = if parsed is Ok(v) { Some(v) } else { None };
+    Print(first);
 }

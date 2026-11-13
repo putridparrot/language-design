@@ -1,0 +1,50 @@
+namespace GridApp;
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Proto.Remote;
+
+async fn WaitForJob(jobs: Jobs, job: int) => Task<View> {
+    let deadline = DateTime.UtcNow.AddSeconds(60);
+    mut view = await jobs.Status();
+    while (view.running || view.job < job) && DateTime.UtcNow < deadline {
+        await Task.Delay(100);
+        view = await jobs.Status();
+    }
+    view
+}
+
+async test "workers on three nodes share a job over gRPC, and a chunk whose worker vanished is done by another" {
+    let coordinator = await StartNode("127.0.0.1", 0);
+    let jobs = Jobs.Spawn(coordinator, "jobs");
+    Assert(await jobs.Start(JobSpec(12, 2_000, 5)));
+
+    // A worker that takes a chunk and is never heard from again, as a deleted pod would.
+    let vanished = await StartNode("127.0.0.1", 0);
+    let taken = await Jobs.Connect(vanished, coordinator.Address, "jobs").Take("vanished");
+    AssertEqual(0, Given(taken));
+    await vanished.Remote().ShutdownAsync(true);
+
+    using let stop = CancellationTokenSource();
+    let nodes = [await StartNode("127.0.0.1", 0), await StartNode("127.0.0.1", 0), await StartNode("127.0.0.1", 0)];
+    let workers: List<Task> = [...nodes.Select((node, i) => RunWorkers(node, coordinator.Address, $"w{i}", 1, stop.Token))];
+
+    let view = await WaitForJob(jobs, 1);
+    stop.Cancel();
+    await Task.WhenAll(workers);
+    for node in [...nodes, coordinator] {
+        await node.Remote().ShutdownAsync(true);
+    }
+
+    Assert(!view.running, "the job didn't finish within a minute");
+    let run = view.history.Single();
+    AssertEqual(1, run.retried);
+    Assert(view.cells[0].worker != "vanished");
+    let expected = Combine(Enumerable.Range(0, 12).Select(id => Simulate(2_000, ChunkSeed(5, id))));
+    AssertEqual(expected.var99, run.valuation.var99);
+    AssertEqual(expected.mean, run.valuation.mean);
+    Assert(expected.histogram.SequenceEqual(run.valuation.histogram));
+}

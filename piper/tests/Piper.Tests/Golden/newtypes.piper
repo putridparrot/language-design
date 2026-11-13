@@ -1,0 +1,73 @@
+// Newtypes: a distinct type over a value, which can't be mixed up with another over the same type, and which stands
+// for its value in printing, JSON and parsing.
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
+
+newtype IssueId = int;
+newtype ProjectId = int;
+newtype Email = string requires value.Contains("@");
+newtype Price = decimal;
+newtype Ticket = Guid;
+
+/// An issue, with ids that can't be swapped by mistake.
+record Issue(id: IssueId, project: ProjectId, reporter: Email);
+
+extend Price {
+    operator +(other: Price) => Price = Price(this.value + other.value);
+}
+
+extend IssueId {
+    fn Next() => IssueId = IssueId(this.value + 1);
+}
+
+fn Describe(id: IssueId) => string = $"issue {id}";
+
+fn Main() {
+    let id = IssueId(42);
+    let project = ProjectId(42);
+
+    // It is its value when printed or interpolated, and its value is `value`.
+    Print(id);
+    Print(Describe(id));
+    Print(id.value == project.value);
+    Print(id.Next());
+    Print($"{IssueId(7):D4} costs {Price(2.5m) + Price(1.25m):F2}");
+
+    // Equality, patterns, sorting and dictionary keys work as for any record struct.
+    Print(id == IssueId(42));
+    Print(match id {
+        IssueId(42) => "the answer",
+        _ => "another",
+    });
+    let ids = [IssueId(3), IssueId(1), IssueId(2)];
+    Print(string.Join(",", ids.OrderBy(i => i)));
+    let titles = [IssueId(1): "Crash on save"];
+    Print(titles[IssueId(1)]);
+
+    // In JSON it's its value, not an object holding it.
+    let issue = Issue(IssueId(7), ProjectId(2), Email("ada@example.com"));
+    let text = JsonSerializer.Serialize(issue);
+    Print(text);
+    Print(JsonSerializer.Deserialize<Issue>(text) == Some(issue));
+    Print(JsonSerializer.Serialize(Ticket(Guid.Empty)));
+    try {
+        JsonSerializer.Deserialize<Issue>("""{"id":1,"project":2,"reporter":"nobody"}""");
+    } catch (e: JsonException) {
+        Print($"JSON rejected: {e.Message}");
+    }
+
+    // Parsing from text, as its value parses: None for text that isn't one, or that its invariants reject.
+    Print(IssueId.Parse("12") == Some(IssueId(12)));
+    Print(IssueId.Parse("twelve") == None);
+    Print(Email.Parse("ada@example.com") == Some(Email("ada@example.com")));
+    Print(Email.Parse("nobody") == None);
+    Print(Ticket.Parse("00000000-0000-0000-0000-000000000001") is Some(_));
+    Print(Price.Parse("2.50") == Some(Price(2.5m)));
+    try {
+        Email("nobody");
+    } catch (e: ArgumentException) {
+        Print($"rejected: {e.Message}");
+    }
+}

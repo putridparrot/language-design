@@ -1,0 +1,79 @@
+// The demonstration: many clients reserving one product at once, through every node, and none of them overselling it.
+namespace StockApp;
+
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Text.Json;
+using System.Threading.Tasks;
+
+/// What one reservation came to: granted or refused (or failed, with no answer), the node that served it, and the
+/// node keeping the product.
+record Outcome(status: int, servedBy: string, keptBy: string);
+
+/// The outcomes, and the product's level afterwards.
+record LoadReport(stock: int, outcomes: List<Outcome>, onHand: int, reserved: int);
+
+extend LoadReport {
+    fn Granted() => int = this.outcomes.Count(o => o.status == 200);
+    fn Refused() => int = this.outcomes.Count(o => o.status == 409);
+    fn Failed() => int = this.outcomes.Count(o => o.status != 200 && o.status != 409);
+
+    /// Every unit was reserved exactly once: none oversold, none lost.
+    fn Exact() => bool = this.Granted() == this.stock && this.onHand == 0 && this.reserved == this.stock;
+}
+
+/// Puts `stock` of `sku` in, then reserves one at a time, `requests` times, `concurrency` at once, sharing the
+/// requests among `urls` (the nodes, or one load balancer in front of them). Each request opens its own connection, so
+/// a load balancer spreads them over the nodes rather than keeping one.
+async fn RunLoad(urls: List<string>, sku: string, stock: int, requests: int, concurrency: int) => Task<LoadReport> {
+    using let http = HttpClient();
+    let first = urls[0].TrimEnd('/');
+    let received = await http.PostAsync($"{first}/stock/{sku}/receive?quantity={stock}", None);
+    received.EnsureSuccessStatusCode();
+
+    let pending = ConcurrentQueue<int>(Enumerable.Range(0, requests));
+    let outcomes = ConcurrentBag<Outcome>();
+    let clients = Enumerable.Range(0, concurrency).Select(async _ => {
+        while pending.TryDequeue(out let n) {
+            outcomes.Add(await ReserveOne(http, urls[n % urls.Count].TrimEnd('/'), sku));
+        }
+    });
+    await Task.WhenAll(clients);
+
+    let level = JsonDocument.Parse(await http.GetStringAsync($"{first}/stock/{sku}")).RootElement.GetProperty("result");
+    LoadReport(stock, [...outcomes], level.GetProperty("onHand").GetInt32(), level.GetProperty("reserved").GetInt32())
+}
+
+async fn ReserveOne(http: HttpClient, url: string, sku: string) => Task<Outcome> {
+    let request = HttpRequestMessage(HttpMethod.Post, $"{url}/stock/{sku}/reserve?quantity=1");
+    request.Headers.ConnectionClose = true;
+    try {
+        let response = await http.SendAsync(request);
+        let body = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        return Outcome((int)response.StatusCode, Text(body, "servedBy"), Text(body.GetProperty("result"), "node"));
+    } catch (e: Exception) {
+        return Outcome(0, $"(failed: {e.GetType().Name})", "");
+    }
+}
+
+fn Text(element: JsonElement, name: string) => string = element.GetProperty(name).GetString() ?? "";
+
+/// The report, as `piper run apps/stock -- load …` prints it.
+fn Describe(report: LoadReport, sku: string) => string {
+    let lines: List<string> = [
+        $"{report.outcomes.Count} reservations of {sku}, with {report.stock} in stock:",
+        $"  granted {report.Granted()}, refused {report.Refused()} (none left), failed {report.Failed()}",
+        $"  kept by {string.Join(", ", report.outcomes.Select(o => o.keptBy).Where(k => k != "").Distinct())}",
+        "  served by:",
+    ];
+    for group in report.outcomes.GroupBy(o => o.servedBy).OrderBy(g => g.Key) {
+        lines.Add($"    {group.Key}: {group.Count()}");
+    }
+    lines.Add($"  afterwards: {report.onHand} on hand, {report.reserved} reserved");
+    lines.Add(if report.Exact() { "  every unit reserved exactly once: none oversold" } else { "  MISMATCH: the counts don't add up" });
+    string.Join("\n", lines)
+}

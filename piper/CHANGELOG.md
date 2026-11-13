@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Newtypes:** `newtype IssueId = int;` makes a distinct type over a value, which can't be mixed up with its type or
+  another newtype over it (`FindIssue(ProjectId(5))` is an error). It's a record struct with one field, `value`, so it
+  costs nothing at run time, and takes `requires` (`newtype Email = string requires value.Contains("@");`). It stands for
+  its value: it prints as it, formats and sorts as it, is it in JSON, and has `IssueId.Parse(text) => IssueId?` and the
+  `TryParse` ASP.NET Core binds routes with. The data plugin stores it as its value, and numbers keys of `int` and
+  `long` newtypes. [apps/tracker](apps/tracker/README.md) now keys its issues, projects and comments with newtypes,
+  which also split its `NotFound(id: int)` error, used for both, into `NoIssue` and `NoProject`.
+
 - **apps/tracker:** an issue tracker API written in Piper, to find what a real program needs. It has a domain with a
   workflow state machine, SQLite storage, a web API with policies, and tests at each layer.
   [apps/tracker/NOTES.md](apps/tracker/NOTES.md) records each gap it found, and what was done. From it:
@@ -16,6 +24,35 @@
   - **Data:** fieldless enums are columns holding the variant's name (optional ones nullable), and `let` fields are
     columns.
   - **Web:** a `policies` block can take parameters, so limits can come from configuration.
+  - **.NET statics:** a .NET type's static property or field can be assigned (`Environment.ExitCode = 2`).
+  - **Name lookup:** a type position looks past a function or variable of the name, so a function `List` doesn't hide
+    `List<T>`.
+  - **Branches build a Result or Option together:** `match r { Ok(v) => Ok(v * 2), Err(e) => Err(e) }` and
+    `if … { Some(x) } else { None }` infer their type from all the branches, where nothing else says it.
+  - **Web:** a warning for an error type's field named `status`, which its ProblemDetails would leave out.
+  - The tracker also has a webhook notifier with `[Retry]`, and an admin command line (`add-project`, `import`,
+    `list`) from an `args` declaration. tests/AppsTests runs its tests with the rest.
+- **apps/tracker-desktop:** an Avalonia window on the tracker's API, laid out in code with an MVVM view model using
+  `[Notify]` and `[Command]`, and tested against a fake API. From it:
+  - **Inherited .NET statics:** a static property or field declared by a base class can be named through a derived
+    type, as in C# (`ComboBox.SelectedIndexProperty`, declared by `SelectingItemsControl`). Static methods already could.
+  - **`_` lambda parameters** bind nothing, so `(_, _) => …` is allowed, as in C#.
+  - **Aspects:** a `[Notify]` class's `OnCommandFailed(command: string, error: Exception)` method hears of each
+    `[Command]`'s failure. Without one, an async command's exception is thrown on the synchronization context it
+    started on, as `async void`'s is, rather than lost in a task nobody awaits.
+- **apps/stock:** products as actors spread over several nodes on the remote actors plugin, behind an HTTP API on
+  each, with a Dockerfile, a Docker Compose file and a Kubernetes manifest (a StatefulSet and a headless service) for
+  running it as pods on AKS. A load run reserves one product through every node at once without overselling it, and a
+  dashboard served by every node shows the nodes, their products and which node answered each request. From
+  it:
+  - **A file's class** (where its top-level functions go in C#) is no longer hidden by a member of the same name: a
+    `Products()` method calling a function of products.piper was an internal compiler error.
+  - **Setting a .NET `T?` value-type property** (`request.Headers.ConnectionClose = true`, or `None`) converts the
+    Option to a Nullable, rather than being an internal compiler error.
+- **apps/grid:** grid computing on the remote actors plugin. A coordinator shares a Monte Carlo Value at Risk among
+  workers that ask it for chunks, so workers (Kubernetes pods in a Deployment) can be scaled mid-job. A chunk not sent
+  back within its lease goes to another worker, and per-chunk seeds give the same figures however the work was
+  shared. Its dashboard shows the chunks, the workers, the result and the history. It needed no compiler fixes.
 
 - **Expression trees:** a lambda passed where .NET takes an `Expression<Func<…>>` is an expression tree, as in C#. So
   a query on an `IQueryable` uses `Queryable`'s operators, which a provider such as EF Core translates to SQL, rather

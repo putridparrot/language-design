@@ -1,0 +1,96 @@
+// The tracker's command line: serving the API, and a few administrative commands working on the database directly.
+namespace Tracker;
+
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+
+args Command "Tracker: an issue tracker API. Commands: serve (the default), add-project CODE NAME, import CODE FILE (a CSV of title,priority lines), list CODE." {
+    port: int = 5080 "Where to serve the API";
+    connection: string? "The database, overriding the Tracker:Connection setting";
+    words: List<string> "The command and its arguments";
+}
+
+async fn Main(args: string[]) {
+    let command = Command.FromArgs(args);
+    // Settings from appsettings.json beside where it runs and the environment (Tracker__Webhook=…).
+    let configuration = ConfigurationBuilder().AddJsonFile(Path.GetFullPath("appsettings.json"), optional: true).AddEnvironmentVariables().Build();
+    let configured = SettingsFrom(configuration);
+    let settings = match command.connection {
+        Some(connection) => { ...configured, connection: connection },
+        None => configured,
+    };
+    await Prepare(settings);
+    Environment.ExitCode = await Run(command.words, settings, command.port);
+}
+
+/// Runs a command; the exit code.
+async fn Run(words: List<string>, settings: Settings, port: int) => Task<int> {
+    match words {
+        [] | ["serve"] => {
+            let url = $"http://localhost:{port}";
+            let app = BuildApp(settings, SystemClock(), NotifierFor(settings), url);
+            Print($"Tracker on {url} (sign in with the X-User header)");
+            await app.RunAsync();
+            0
+        },
+        ["add-project", code, name] => await Report(AddProject(Open(settings), NewProject(code, name)), p => $"Added {p.code}, project {p.id}"),
+        ["import", code, file] => await Import(Open(settings), code, file),
+        ["list", code] => await List(Open(settings), code),
+        _ => {
+            Console.Error.WriteLine($"Unknown command: {string.Join(" ", words)}. Try --help.");
+            2
+        },
+    }
+}
+
+fn Open(settings: Settings) => TrackerDb =
+    TrackerDb(DbContextOptionsBuilder<TrackerDb>().UseSqlite(settings.connection).Options);
+
+/// Prints what a command did, or why it couldn't; the exit code.
+async fn Report<T>(work: Task<Result<T, IssueError>>, describe: (T) => string) => Task<int> {
+    match await work {
+        Ok(done) => { Print(describe(done)); 0 },
+        Err(problem) => { Console.Error.WriteLine(problem.Message); 1 },
+    }
+}
+
+/// Adds the issues in a CSV file, `title,priority` on each line, to the project with `code`.
+async fn Import(db: TrackerDb, code: string, file: string) => Task<int> {
+    using let _ = db;
+    let Some(project) = await db.Projects.FirstOrDefaultAsync(p => p.code == code) else {
+        Console.Error.WriteLine($"There's no project {code}.");
+        return 1;
+    };
+    mut added = 0;
+    for (line, number) in File.ReadAllLines(file).Select((line, index) => (line, index + 1)) {
+        let fields = line.Split(',');
+        let priority = if fields.Length > 1 { Priority.Parse(fields[1].Trim()) } else { Some(Priority.Normal) };
+        match (fields[0].Trim(), priority) {
+            ("", _) => {},
+            (title, Some(p)) => {
+                if await AddIssue(db, project.id, NewIssue(title, "", p), DateTime.UtcNow) is Ok(_) { added += 1; }
+            },
+            (_, None) => Console.Error.WriteLine($"Line {number}: '{fields[1].Trim()}' isn't a priority: {string.Join(", ", Priority.Values)}."),
+        }
+    }
+    Print($"Imported {added} issues into {code}.");
+    0
+}
+
+/// Prints a project's issues.
+async fn List(db: TrackerDb, code: string) => Task<int> {
+    using let _ = db;
+    let Some(project) = await db.Projects.FirstOrDefaultAsync(p => p.code == code) else {
+        Console.Error.WriteLine($"There's no project {code}.");
+        return 1;
+    };
+    for issue in await Search(db, project.id, None, None) {
+        Print($"{code}-{issue.id} [{issue.status.Name}] {issue.priority.Name}: {issue.title}");
+    }
+    0
+}

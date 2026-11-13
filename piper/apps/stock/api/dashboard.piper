@@ -1,0 +1,244 @@
+// The dashboard every node serves at /dashboard: one page, with no libraries, that shows the nodes and the products
+// each keeps, and which node answered each request, with buttons to stock, reserve, and run the load demonstration
+// from the browser.
+namespace StockApp;
+
+/// The dashboard's HTML. It asks `/cluster` every two seconds; each answer closes its connection, so behind a load
+/// balancer the requests spread over the nodes, and the page counts which node served each one.
+fn DashboardPage() => string = """
+    <!doctype html>
+    <html lang="en">
+    <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Stock dashboard</title>
+    <style>
+      :root {
+        --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #5f6b7a; --line: #dde2e8;
+        --accent: #2563eb; --accent-soft: #dbe6fd; --good: #15803d; --good-soft: #dcfce7;
+        --bad: #b91c1c; --bad-soft: #fee2e2; --warn: #a16207;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #111418; --panel: #1a1f26; --text: #e6e9ee; --muted: #94a0b0; --line: #2c333d;
+          --accent: #6ea0ff; --accent-soft: #1e2d4d; --good: #4ade80; --good-soft: #153222;
+          --bad: #f87171; --bad-soft: #3a1a1a; --warn: #facc15;
+        }
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--text);
+             font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+      main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+      h1 { font-size: 22px; margin: 0 0 4px; }
+      h2 { font-size: 16px; margin: 0 0 12px; }
+      .sub { color: var(--muted); margin: 0 0 20px; }
+      .nodes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 20px; }
+      .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+      .node.answered { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+      .node.down { border-color: var(--bad); }
+      .node-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+      .node-name { font-weight: 600; font-size: 16px; overflow-wrap: anywhere; }
+      .badge { font-size: 12px; padding: 1px 8px; border-radius: 99px; white-space: nowrap; }
+      .badge.up { background: var(--good-soft); color: var(--good); }
+      .badge.down { background: var(--bad-soft); color: var(--bad); }
+      .you { margin-top: 6px; font-size: 13px; color: var(--accent); font-weight: 500; }
+      .served { margin: 10px 0 12px; font-size: 13px; color: var(--muted); }
+      .bar { height: 6px; background: var(--line); border-radius: 3px; margin-top: 4px; overflow: hidden; }
+      .bar > div { height: 100%; background: var(--accent); transition: width .3s; }
+      table { width: 100%; border-collapse: collapse; font-size: 14px; }
+      th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; }
+      th, td { padding: 4px 0; border-bottom: 1px solid var(--line); }
+      td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+      tr.recent td { color: var(--accent); }
+      .empty { color: var(--muted); font-size: 13px; }
+      .tools { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+      label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+      .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-bottom: 10px; }
+      .row > div { flex: 1 1 80px; }
+      input { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+              background: var(--bg); color: var(--text); font: inherit; }
+      button { padding: 7px 14px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent);
+               color: #fff; font: inherit; cursor: pointer; }
+      button.secondary { background: transparent; color: var(--accent); }
+      button:disabled { opacity: .5; cursor: default; }
+      .out { font-size: 14px; min-height: 1.4em; white-space: pre-wrap; }
+      .out .good { color: var(--good); } .out .bad { color: var(--bad); } .out .warn { color: var(--warn); }
+      progress { width: 100%; height: 8px; }
+      .status { color: var(--bad); font-size: 13px; min-height: 1.2em; }
+    </style>
+    </head>
+    <body>
+    <main>
+      <h1>Stock</h1>
+      <p class="sub">Each product is an actor, kept by one node. Any node answers for any product, by asking its actor
+        wherever it is. The outlined node answered your last request; each request opens its own connection, so a load
+        balancer spreads them over the nodes. The page refreshes every two seconds.</p>
+      <div class="status" id="status"></div>
+      <div class="nodes" id="nodes"></div>
+
+      <div class="tools">
+        <section class="panel">
+          <h2>One product</h2>
+          <div class="row">
+            <div><label for="sku">Product</label><input id="sku" value="bolt"></div>
+            <div><label for="qty">Quantity</label><input id="qty" type="number" min="1" value="5"></div>
+          </div>
+          <div class="row">
+            <button id="receive">Receive</button>
+            <button id="reserve" class="secondary">Reserve</button>
+          </div>
+          <div class="out" id="one"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Many clients at once</h2>
+          <div class="row">
+            <div><label for="stock">In stock</label><input id="stock" type="number" min="1" value="100"></div>
+            <div><label for="requests">Reservations</label><input id="requests" type="number" min="1" value="300"></div>
+            <div><label for="concurrency">At once</label><input id="concurrency" type="number" min="1" value="20"></div>
+          </div>
+          <div class="row"><button id="load">Run</button></div>
+          <progress id="progress" value="0" max="1" hidden></progress>
+          <div class="out" id="loadOut"></div>
+        </section>
+      </div>
+    </main>
+
+    <script>
+    const el = id => document.getElementById(id);
+    const served = new Map();     // node -> how many of this page's requests it served
+    let answered = null;          // the node that served the last request
+    let cluster = [];             // the last /cluster answer
+    let recent = null;            // the product last touched here, highlighted
+
+    // "stock-1.stock-nodes:8000" -> "stock-1"; "stock-0:8000" -> "stock-0"; an IP address stays whole.
+    const short = a => /^[\d.]+:\d+$/.test(a) ? a : a.split('.')[0].split(':')[0];
+    const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
+    // Every request counts against the node that served it; only yours (not the page's refreshes) move the outline.
+    function count(node, yours) {
+      if (!node) return;
+      served.set(node, (served.get(node) || 0) + 1);
+      if (yours) answered = node;
+    }
+
+    // A request, counted against the node that served it. Answers that aren't JSON come back as text.
+    async function ask(url, method, yours) {
+      const response = await fetch(url, { method: method || 'GET', cache: 'no-store' });
+      const text = await response.text();
+      let body = null;
+      try { body = JSON.parse(text); } catch { }
+      if (body && body.servedBy) count(body.servedBy, yours);
+      return { status: response.status, body, text };
+    }
+
+    function render() {
+      const total = [...served.values()].reduce((a, b) => a + b, 0) || 1;
+      const names = cluster.length ? cluster.map(n => n.address) : [...served.keys()];
+      el('nodes').innerHTML = names.map(address => {
+        const node = cluster.find(n => n.address === address) || { address, up: true, products: [] };
+        const mine = served.get(address) || 0;
+        const rows = node.products.length
+          ? `<table><tr><th>Product</th><th class="n">On hand</th><th class="n">Reserved</th></tr>${
+              node.products.map(p => `<tr class="${p.sku === recent ? 'recent' : ''}"><td>${esc(p.sku)}</td>` +
+                `<td class="n">${p.onHand}</td><td class="n">${p.reserved}</td></tr>`).join('')}</table>`
+          : `<div class="empty">${node.up ? 'Keeps no products yet' : 'Not answering'}</div>`;
+        return `<div class="panel node ${address === answered ? 'answered' : ''} ${node.up ? '' : 'down'}">
+          <div class="node-head"><span class="node-name" title="${esc(address)}">${esc(short(address))}</span>
+            <span class="badge ${node.up ? 'up' : 'down'}">${node.up ? 'up' : 'down'}</span></div>
+          ${address === answered ? '<div class="you">Answered your last request</div>' : ''}
+          <div class="served">Served ${mine} of this page's requests, refreshes included
+            <div class="bar"><div style="width:${Math.round(100 * mine / total)}%"></div></div></div>
+          ${rows}</div>`;
+      }).join('');
+    }
+
+    async function poll() {
+      try {
+        const answer = await ask('/cluster');
+        if (answer.status !== 200) throw new Error(answer.body ? answer.body.message : answer.text);
+        cluster = answer.body.result;
+        el('status').textContent = '';
+      } catch (e) {
+        el('status').textContent = 'Not answering: ' + e.message;
+      }
+      render();
+    }
+
+    async function one(kind) {
+      const sku = el('sku').value.trim(), quantity = +el('qty').value;
+      if (!sku) return;
+      recent = sku;
+      const { status, body, text } = await ask(`/stock/${encodeURIComponent(sku)}/${kind}?quantity=${quantity}`, 'POST', true);
+      const by = body && body.servedBy ? short(body.servedBy) : '?';
+      let line;
+      if (status === 200 && kind === 'receive') {
+        line = `<span class="good">Received ${quantity}</span>: ${body.result.onHand} on hand.`;
+      } else if (status === 200) {
+        line = `<span class="good">Reserved ${quantity}</span>: ${body.result.left} left.`;
+      } else if (status === 409) {
+        line = `<span class="warn">Refused</span>: only ${body.result.left} left.`;
+      } else {
+        line = `<span class="bad">${status}</span>: ${esc(body ? body.message || text : text)}`;
+      }
+      const keeper = body && body.result && body.result.node ? short(body.result.node) : null;
+      el('one').innerHTML = line + `\nServed by ${esc(by)}` + (keeper ? `, kept by ${esc(keeper)}.` : '.');
+      poll();
+    }
+
+    // The load demonstration, from the browser: stock a new product, then reserve one at a time from many clients at
+    // once, and check every unit was reserved exactly once.
+    async function load() {
+      const stock = +el('stock').value, requests = +el('requests').value, concurrency = +el('concurrency').value;
+      const sku = 'widget-' + Math.random().toString(16).slice(2, 8);
+      const button = el('load'), progress = el('progress');
+      button.disabled = true;
+      progress.hidden = false; progress.max = requests; progress.value = 0;
+      recent = sku;
+      el('loadOut').textContent = `Stocking ${sku}…`;
+      try {
+        await ask(`/stock/${sku}/receive?quantity=${stock}`, 'POST', true);
+        let next = 0, granted = 0, refused = 0, failed = 0;
+        const by = new Map();
+        async function client() {
+          while (next < requests) {
+            next++;
+            try {
+              const { status, body } = await ask(`/stock/${sku}/reserve?quantity=1`, 'POST', true);
+              if (body && body.servedBy) by.set(body.servedBy, (by.get(body.servedBy) || 0) + 1);
+              if (status === 200) granted++; else if (status === 409) refused++; else failed++;
+            } catch { failed++; }
+            progress.value = granted + refused + failed;
+          }
+        }
+        const ticker = setInterval(render, 250);
+        await Promise.all(Array.from({ length: Math.min(concurrency, requests) }, client));
+        clearInterval(ticker);
+        const level = (await ask(`/stock/${sku}`, 'GET', true)).body.result;
+        const exact = failed === 0 && level.reserved === granted && level.onHand + level.reserved === stock;
+        el('loadOut').innerHTML =
+          `${requests} reservations of ${esc(sku)}, with ${stock} in stock:\n` +
+          `granted ${granted}, refused ${refused}, failed ${failed}\n` +
+          `kept by ${esc(short(level.node))}; served by ` +
+          [...by].sort().map(([n, c]) => `${esc(short(n))} ${c}`).join(', ') + '\n' +
+          `afterwards ${level.onHand} on hand, ${level.reserved} reserved\n` +
+          (exact ? '<span class="good">Every unit reserved exactly once: none oversold</span>'
+                 : '<span class="bad">The counts don\'t add up</span>');
+      } catch (e) {
+        el('loadOut').innerHTML = `<span class="bad">${esc(e.message)}</span>`;
+      } finally {
+        button.disabled = false;
+        progress.hidden = true;
+        poll();
+      }
+    }
+
+    el('receive').onclick = () => one('receive');
+    el('reserve').onclick = () => one('reserve');
+    el('load').onclick = load;
+    poll();
+    setInterval(poll, 2000);
+    </script>
+    </body>
+    </html>
+    """;

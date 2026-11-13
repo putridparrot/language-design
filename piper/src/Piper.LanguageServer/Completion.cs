@@ -16,7 +16,7 @@ public static class Completion
     [
         "fn", "let", "mut", "if", "else", "while", "for", "in", "return", "break", "continue", "record", "enum", "match",
         "trait", "extend", "static", "this", "null", "is", "namespace", "using", "private", "try", "catch", "finally",
-        "defer", "throw", "out", "true", "false", "async", "await", "yield", "ref", "typeof", "nameof", "type", "lock", "event", "params",
+        "defer", "throw", "out", "true", "false", "async", "await", "yield", "ref", "typeof", "nameof", "type", "newtype", "lock", "event", "params",
     ];
 
     // LSP CompletionItemKind values.

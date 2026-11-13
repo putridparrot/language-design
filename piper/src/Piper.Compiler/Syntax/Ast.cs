@@ -273,6 +273,12 @@ public sealed record RecordDeclarationSyntax(
 
     /// <summary>`record struct Point(…)`: a value type, C#'s <c>readonly record struct</c>, rather than a class.</summary>
     public Token? Struct { get; init; }
+
+    /// <summary>
+    /// `newtype IssueId = int;`: a record struct with one field, <c>value</c>, that stands for its value: it prints as
+    /// it, is it in JSON, and parses from text as it does. <see cref="Struct"/> is this token too.
+    /// </summary>
+    public Token? Newtype { get; init; }
 }
 
 public sealed record EnumDeclarationSyntax(

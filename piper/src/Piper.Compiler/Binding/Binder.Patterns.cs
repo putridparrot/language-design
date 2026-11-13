@@ -11,6 +11,32 @@ public sealed partial class Binder
         var scrutinee = RequireValue(BindExpression(syntax.Scrutinee), syntax.Scrutinee.Span);
         var scrutineeType = scrutinee.Type;
 
+        // `match r { Ok(v) => Ok(f(v)), Err(e) => Err(e) }`: arms building a Result or Option say its type between them.
+        if (expected is null && AnyBuildsVariant(syntax.Arms.Select(a => a.Body)))
+        {
+            expected = BranchesType([.. syntax.Arms.Select(a => a.Body)], (i, body) =>
+            {
+                var arm = syntax.Arms[i];
+                var outer = _scope;
+                _scope = new Scope(outer);
+                try
+                {
+                    var type = Trial(() =>
+                    {
+                        BindPattern(arm.Pattern, scrutineeType, allowBindings: true);
+                        if (arm.Guard is not null)
+                            BindCondition(arm.Guard, allowPatternBindings: true);
+                        return BindExpression(body).Type;
+                    }, out bool failed);
+                    return failed ? null : type;
+                }
+                finally
+                {
+                    _scope = outer;
+                }
+            });
+        }
+
         var arms = new List<BoundMatchArm>();
         bool patternErrors = false;
         foreach (var arm in syntax.Arms)

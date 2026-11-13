@@ -6,3 +6,6 @@ Err(Negative { value = -1 })
 64 -> 80
 ok: 6
 error: divide by zero
+Ok(160)
+Err(80)
+Some(80)

@@ -1,0 +1,15 @@
+# What the grid image's build needs from the piper folder: the compiler, its plugins, and this app.
+**/bin
+**/obj
+**/.vs
+**/node_modules
+artifacts
+docs
+editors
+samples
+tests
+*.db
+*.db-shm
+*.db-wal
+apps/*
+!apps/grid

@@ -1,0 +1,132 @@
+# The grid app on Kubernetes (AKS, or any other cluster): one coordinator, and workers that can be scaled while a job
+# runs (kubectl scale deployment grid-worker --replicas=6). Workers find the coordinator by its service's name, and
+# tell it their pod's IP address to reply to, so they need no stable names of their own: a Deployment, not a
+# StatefulSet.
+#
+# Set the image to yours (see README.md), then:  kubectl apply -f apps/grid/k8s/grid.yaml
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: grid-coordinator           # what the workers ask for work, and what the coordinator calls itself
+  labels:
+    app: grid
+spec:
+  selector:
+    app: grid
+    role: coordinator
+  ports:
+    - name: actors
+      port: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grid                       # the dashboard
+  labels:
+    app: grid
+spec:
+  type: LoadBalancer
+  selector:
+    app: grid
+    role: coordinator
+  ports:
+    - name: http
+      port: 8090
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grid-coordinator
+spec:
+  replicas: 1                      # one: it holds the jobs
+  strategy:
+    type: Recreate                 # never two at once
+  selector:
+    matchLabels:
+      app: grid
+      role: coordinator
+  template:
+    metadata:
+      labels:
+        app: grid
+        role: coordinator
+    spec:
+      containers:
+        - name: coordinator
+          image: REGISTRY/grid:1
+          args: ["coordinator", "--host", "grid-coordinator", "--port", "8000", "--http", "8090"]
+          ports:
+            - name: actors
+              containerPort: 8000
+            - name: http
+              containerPort: 8090
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grid-worker
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: grid
+      role: worker
+  template:
+    metadata:
+      labels:
+        app: grid
+        role: worker
+    spec:
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: worker
+          image: REGISTRY/grid:1
+          args:
+            - worker
+            - --host
+            - $(POD_IP)                # what the coordinator replies to
+            - --port
+            - "8000"
+            - --coordinator
+            - grid-coordinator:8000
+            - --name
+            - $(POD_NAME)              # what the dashboard calls it
+            - --workers
+            - "1"                      # one chunk at a time: one CPU each, below
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: actors
+              containerPort: 8000
+          resources:
+            requests:
+              cpu: 500m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
