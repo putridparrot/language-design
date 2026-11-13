@@ -580,6 +580,96 @@ A program calls them as `AppServices(builder.Services)` and `Api(app)`.
   program gets dependency injection from ASP.NET Core, whose newer version wins over the package's.
 - **Routes** are written as ASP.NET Core documents them, `"/users/{id}"`: as in C#, only a `$"…"` string
   interpolates, so a plain string's braces are the route's own.
+- **Typed links:** an endpoint can be named, between its verb and its route, and then has a route function in
+  `<Group>Routes`, which makes its path. Its parameters are the route's values, with the types the handler takes them
+  as, so a link with the wrong type, or to an endpoint that isn't there, doesn't compile:
+
+  ```piper
+  endpoints Site {
+      get Lot "/lots/{id:int}" (id: LotId) => LotPage(id);
+      get Files "/files/{*path}" (path: string) => FilePage(path);
+  }
+
+  <a href={SiteRoutes.Lot(lot.id)}>{lot.title}</a>     // "/lots/7"
+  SiteRoutes.Files("photos/a b.jpg")                    // "/files/photos/a%20b.jpg"
+  ```
+
+  Each value is escaped for the path (a catch-all, `{*path}`, keeping its `/`s), and numbers, dates and ids are written
+  in the invariant culture, as ASP.NET Core reads them. The group's prefix is included.
+- **Forms:** a handler taking a `Form<T>` (from Piper.Web) gets a posted HTML form read into the record `T`:
+
+  ```piper
+  record NewLot(title: string, startPrice: decimal, reserve: decimal?, category: Category, featured: bool)
+      requires (reserve ?? startPrice) >= startPrice;
+
+  post Create "/lots" (form: Form<NewLot>) => match form.Result {
+      Ok(lot) => Listed(Save(lot)),
+      Err(errors) => NewLotPage(Some(form), Some(errors)),   // shown again, as it was filled in, with what's wrong
+  };
+  ```
+
+  - Each field is read from the form field of its name, by its type: text as it is; numbers (in the invariant culture,
+    as browsers send them), dates, `Guid`s, enums and newtypes by parsing; a `bool` from a checkbox; and an optional
+    field is None when empty.
+  - `form.Result` is `Ok(record)`, or `Err(errors)`: a `FormErrors`, with `errors.For("startPrice")` the message for a
+    field that's missing or isn't a value of its type ("'lots' isn't a number."), `errors.Form` the message for the
+    whole form, and `errors.All` every message. `form.Text("title")` is what was sent, to fill the form in again.
+  - The record's `requires` are checked once every field has been read. Give each a message for people
+    ([`else "…"`](language.md#preconditions-and-invariants)): one whose condition mentions a single field
+    (`requires title.Trim().Length > 0 else "Give the lot a title."`) is that field's error, and any other the form's.
+    Without a message, the condition itself is shown, which suits only a developer.
+  - **Anti-forgery:** every `<form method="post">` in markup gets a hidden anti-forgery field, made for the request its
+    page answers, and a `Form<T>` checks it before reading the form: a post without a valid one (a forged one, from
+    another site) is a 400. It needs ASP.NET Core's antiforgery: `builder.Services.AddAntiforgery()`.
+- **htmx** ([htmx.org](https://htmx.org), Zero-Clause BSD) for pages that update in part, with no JavaScript written:
+  - **Served by the app:** each `endpoints` group maps `/_piper/htmx.min.js` (htmx 2.0.4, in Piper.Web; once per app),
+    and `<Htmx.Script />` in a page's `<head>` loads it. It also sends the page's anti-forgery token as a header with
+    every request htmx makes, so an `hx-post` on a button (with no form, so no field for the token) passes a
+    `Form<T>`'s check as a form does.
+  - **Layouts:** `endpoints Site layout Page { … }`, with `fn Page(body: Html) => Html`. An endpoint's markup is put in
+    the layout for a browser loading the page, and sent alone, as the fragment htmx swaps in, when htmx asks (but in
+    full for an `hx-boost`ed link, or history being restored, which want the page). So each handler is written once,
+    for both:
+
+    ```piper
+    fn Page(body: Html) => Html = <html><head><Htmx.Script /></head><body>{body}</body></html>;
+
+    endpoints Site layout Page {
+        get Lot "/lots/{id:int}" (id: LotId) => LotView(id);              // the page, or just the fragment
+        post Bid "/lots/{id:int}/bids" (id: LotId, form: Form<NewBid>) => match form.Result {
+            Ok(bid) => PlaceBid(id, bid),
+            Err(errors) => BidForm(id, Some(errors)),
+        };
+    }
+
+    <button hx-post={SiteRoutes.Bid(lot.id)} hx-include="#amount" hx-target="#bids">Bid</button>
+    ```
+
+    The answer then varies by `HX-Request` (said in its `Vary` header), for caches.
+  - **Live pages:** the server pushes fragments to the pages watching a topic, which htmx swaps in, so a price, a list
+    or a countdown changes on every open page when it changes on the server. A page watches with htmx's server-sent
+    events extension (htmx-ext-sse 2.2.2, Zero-Clause BSD, which `<Htmx.Script />` also loads), connecting to
+    `Live.Url(topic)`, and elements in it say which events they swap in:
+
+    ```piper
+    <section hx-ext="sse" sse-connect={Live.Url($"lot-{lot.id}")}>
+        <span sse-swap="price">{lot.current:C}</span>
+    </section>
+    ```
+
+    Anything that changes it (a handler, the actor holding the lot) publishes the new fragment, by topic and event:
+    `Live.Publish($"lot-{id}", "price", <span>{price:C}</span>)`, which says how many pages it went to. The app serves the
+    connections at `/_piper/live` (mapped by every endpoints group, once per app): each sends its topics' events as
+    they're published, and a comment every 15 seconds so proxies keep it open. A page that can't keep up has its oldest
+    updates dropped rather than holding the publisher up, and a page that closes stops watching. There's no state per
+    page beyond its connection, and the topics are the process's: an app on several pods publishes on each (from the
+    actor that holds the state, say), as each pod's pages connect to it.
+  - **All of it together:** [apps/auction](../apps/auction/README.md) is an auction site using markup, typed links,
+    forms, a layout, htmx and live pages, with each lot an actor.
+  - **`HtmxRequest`:** a handler taking `(htmx: HtmxRequest)` reads what htmx sent (`htmx.IsHtmx`, `Boosted`,
+    `Target`, `TriggerId`, `TriggerName`, `CurrentUrl`), and tells it what to do next with response headers:
+    `Redirect(url)`, `PushUrl(url)`, `ReplaceUrl(url)`, `TriggerEvent("bid-placed")` (for other parts of the page to
+    react to, with `hx-trigger="bid-placed from:body"`), `Retarget(selector)`, `Reswap("outerHTML")` and `Refresh()`.
 - **Piper's types in requests and responses:**
   - An optional handler parameter, `(name: string?, page: int?)`, is None when the request leaves it out, rather than a
     400. (C# gets it as `Option<string>?`, which ASP.NET Core treats as optional, and parses with `Option`'s `TryParse`.)
@@ -587,6 +677,8 @@ A program calls them as `AppServices(builder.Services)` and `Api(app)`.
     is its name or an object naming it in `"kind"`.
   - A request body that a record's `requires` rejects is answered 400 before the handler runs, so a record's invariants
     validate the request.
+  - A handler returning [markup](language.md#markup) (`Html`) answers with a page, `text/html`, as do `Some(page)` and
+    `Ok(page)`: `get "/lots/{id:int}" (id: LotId) => LotPage(id);`, where `LotPage` returns `Html?`, is the page or a 404.
   - A handler returning an Option answers 200 with the value, or 404 for None, and one returning a Result answers 200
     with the value, or the error as ProblemDetails. Awaited results count too, and `Ok(None)` is a 404:
 

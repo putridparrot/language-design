@@ -403,8 +403,10 @@ public sealed partial class Parser
 
     /// <summary>`async` is a keyword only where C# treats it as one: before `fn` (or `static fn`) and before a lambda.</summary>
     /// <summary>
-    /// requires = { "requires" condition { "," condition } } ;  conditions are expressions without assignment, so a
-    /// function's `= body` that follows isn't read as one. `requires` is reserved, so it only means this.
+    /// requires  = { "requires" condition { "," condition } } ;
+    /// condition = expression [ "else" expression ] ;   (* the message when it fails: requires price > 0 else "…" *)
+    /// Conditions are expressions without assignment, so a function's `= body` that follows isn't read as one.
+    /// `requires` is reserved, so it only means this.
     /// </summary>
     private ImmutableArray<ExpressionSyntax> ParseRequires()
     {
@@ -412,14 +414,24 @@ public sealed partial class Parser
         while (Current is { Kind: TokenKind.Identifier, Text: "requires" })
         {
             NextToken();
-            conditions.Add(ParseHead(() => ParseBinary(0)));
+            conditions.Add(ParseCondition());
             while (Current.Kind == TokenKind.Comma)
             {
                 NextToken();
-                conditions.Add(ParseHead(() => ParseBinary(0)));
+                conditions.Add(ParseCondition());
             }
         }
         return conditions.ToImmutable();
+
+        ExpressionSyntax ParseCondition()
+        {
+            var condition = ParseHead(() => ParseBinary(0));
+            if (Current.Kind != TokenKind.ElseKeyword)
+                return condition;
+            NextToken();
+            var message = ParseHead(() => ParseBinary(0));
+            return new ContractMessageSyntax(TextSpan.FromBounds(condition.Span.Start, message.Span.End), condition, message);
+        }
     }
 
     /// <summary>`test "name"`: `test` is reserved, so it only means this.</summary>
@@ -2110,6 +2122,8 @@ public sealed partial class Parser
             }
             case TokenKind.InterpolatedStringLiteral:
                 return ParseInterpolatedString();
+            case TokenKind.MarkupLiteral:
+                return ParseMarkup();
             case TokenKind.NullKeyword:
             {
                 var keyword = NextToken();
@@ -2342,7 +2356,7 @@ public sealed partial class Parser
     /// <summary>Tokens that can start an operand, so that `await` before one is the operator rather than a name.</summary>
     private static bool StartsOperand(TokenKind kind) => kind is
         TokenKind.Identifier or TokenKind.PredefinedTypeKeyword or TokenKind.IntegerLiteral or TokenKind.DoubleLiteral or
-        TokenKind.CharLiteral or TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral or TokenKind.OpenParen or
+        TokenKind.CharLiteral or TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral or TokenKind.MarkupLiteral or TokenKind.OpenParen or
         TokenKind.OpenBracket or TokenKind.ThisKeyword or TokenKind.TrueKeyword or TokenKind.FalseKeyword or
         TokenKind.NullKeyword or TokenKind.Bang or TokenKind.Tilde or TokenKind.IfKeyword or TokenKind.MatchKeyword;
 

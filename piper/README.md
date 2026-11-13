@@ -28,7 +28,7 @@ The installed tool is a copy of the compiler as it was built; after changing the
 piper new hello               # make a program folder: hello/piper.json and hello/main.piper (with a test)
 piper new api --template web  # or a web API, using the services and web plugins
 piper run hello               # transpile, compile and run a folder's program, or a file: piper run hello.piper
-piper run hello --watch       # and run it again whenever a .piper file or piper.json changes
+piper run hello --watch       # and run it again whenever a .piper file or piper.json changes (a web app's open pages reload)
 piper build src/ -o out/      # write the C# (one .cs per .piper file; it references the Piper.Runtime package)
 piper build app.piper --exe   # compile to bin/app.exe (plus app.dll, its .pdb and Piper.Runtime.dll)
 piper build src/ --library    # compile to bin/src.dll; --name and -o choose the name and folder

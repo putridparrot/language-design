@@ -1,0 +1,112 @@
+// What the auction is about, without actors or the web: lots, bids, and the rules for both.
+namespace Auction;
+
+using System;
+using System.Collections.Immutable;
+using System.Globalization;
+
+/// What identifies a lot: an int, but not to be mixed up with any other.
+newtype LotId = int;
+
+/// A lot as it's offered: what the seller fills in.
+/// - `startPrice`: the first bid must be at least this
+/// - `reserve`: the lowest price the seller will sell at, if any; below it, the lot ends unsold
+/// - `minutes`: how long bidding runs
+record NewLot(title: string, description: string, seller: string, startPrice: decimal, reserve: decimal?, minutes: int)
+    requires title.Trim().Length > 0 else "Give the lot a title."
+    requires seller.Trim().Length > 0 else "Say who's selling it."
+    requires startPrice > 0m else "The starting price must be more than nothing."
+    requires (reserve ?? startPrice) >= startPrice else "The reserve can't be below the starting price."
+    requires minutes >= 1 && minutes <= 10_080 else "Bidding runs from a minute to a week.";
+
+/// A bid as someone makes it.
+record NewBid(bidder: string, amount: decimal)
+    requires bidder.Trim().Length > 0 else "Say who's bidding."
+    requires amount > 0m else "Bid something.";
+
+/// A bid taken.
+record BidView(bidder: string, amount: decimal, at: DateTime);
+
+/// A lot as everyone sees it.
+/// - `current`, `leader`: the highest bid and who made it, if anyone has bid
+/// - `bids`: newest first
+record LotView(
+    id: LotId, title: string, description: string, seller: string, startPrice: decimal, reserve: decimal?,
+    current: decimal?, leader: string?, bids: ImmutableList<BidView>, ends: DateTime, state: LotLifeState);
+
+/// How long before its end a lot is closing: a bid then keeps it open at least this much longer, so no one can win by
+/// bidding in the last second.
+fn ClosingWindow() => TimeSpan = TimeSpan.FromSeconds(30);
+
+/// How much a bid must beat the current one by: a pound up to 100, five above.
+fn Increment(current: decimal) => decimal = if current < 100m { 1m } else { 5m };
+
+/// The least a bid can be: the starting price, or the current bid and its increment.
+fn Minimum(startPrice: decimal, current: decimal?) => decimal = match current {
+    Some(price) => price + Increment(price),
+    None => startPrice,
+};
+
+/// Whether the highest bid meets the reserve, so the lot sells.
+fn ReserveMet(current: decimal?, reserve: decimal?) => bool = match (current, reserve) {
+    (Some(price), Some(least)) => price >= least,
+    (Some(_), None) => true,
+    _ => false,
+};
+
+/// A lot's life. It's open from the start; in its last moments it's closing, where each bid keeps it open a little
+/// longer; and when its time is up it's sold (if the reserve is met) or unsold. Bids are taken only while it's open or
+/// closing, so `CanBid` is the rule for when bidding is allowed; the amount is checked before (see `Minimum`).
+statemachine LotLife(startPrice: decimal, reserve: decimal?, ends: DateTime) {
+    public mut current: decimal? = None;
+    public mut leader: string? = None;
+    public mut closesAt = ends;
+    public mut bids: ImmutableList<BidView> = ImmutableList.Create<BidView>();
+
+    // A machine can't have methods of its own, so taking a bid is written in each transition that does.
+    state Open {
+        on Bid(bidder: string, amount: decimal, at: DateTime) => Closing if closesAt - at <= ClosingWindow() {
+            current = Some(amount);
+            leader = Some(bidder);
+            bids = bids.Insert(0, BidView(bidder, amount, at));
+        }
+        on Bid(bidder: string, amount: decimal, at: DateTime) => Open {
+            current = Some(amount);
+            leader = Some(bidder);
+            bids = bids.Insert(0, BidView(bidder, amount, at));
+        }
+        on Tick(at: DateTime) => Sold if at >= closesAt && ReserveMet(current, reserve);
+        on Tick(at: DateTime) => Unsold if at >= closesAt;
+        on Tick(at: DateTime) => Closing if closesAt - at <= ClosingWindow();
+        on Tick(at: DateTime) => Open;
+    }
+    state Closing {
+        on Bid(bidder: string, amount: decimal, at: DateTime) => Closing {
+            current = Some(amount);
+            leader = Some(bidder);
+            bids = bids.Insert(0, BidView(bidder, amount, at));
+            if closesAt - at < ClosingWindow() {
+                closesAt = at + ClosingWindow();
+            }
+        }
+        on Tick(at: DateTime) => Sold if at >= closesAt && ReserveMet(current, reserve);
+        on Tick(at: DateTime) => Unsold if at >= closesAt;
+        on Tick(at: DateTime) => Closing;
+    }
+    state Sold;
+    state Unsold;
+}
+
+/// Why a bid wasn't taken.
+enum BidRefusal {
+    TooLow(minimum: decimal),
+    Ended,
+}
+
+extend BidRefusal {
+    /// For the person bidding.
+    prop Message => string = match this {
+        TooLow(minimum) => $"Bid at least £{minimum.ToString("N2", CultureInfo.InvariantCulture)}.",
+        Ended => "Bidding on this lot has ended.",
+    };
+}

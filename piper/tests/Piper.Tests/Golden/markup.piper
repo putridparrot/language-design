@@ -1,0 +1,94 @@
+// Markup literals: HTML in expressions, with holes escaped by their type, components as functions, and for, if and
+// match inside.
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+
+newtype LotId = int;
+
+enum LotState {
+    Open(ends: DateTime),
+    Sold(price: decimal),
+    Withdrawn,
+}
+
+record Lot(id: LotId, title: string, current: decimal, state: LotState, seller: string?);
+
+/// A component: a function returning markup, used as a tag.
+fn Badge(text: string, tone: string = "info") => Html = <span class={$"badge {tone}"}>{text}</span>;
+
+/// A component with children.
+fn Card(title: string, children: Html) => Html =
+    <section class="card">
+        <h2>{title}</h2>
+        {children}
+    </section>;
+
+fn State(state: LotState) => Html = match state {
+    Open(ends) => <>closes {ends:yyyy-MM-dd}</>,
+    Sold(price) => <Badge text={$"sold for {price:F2}"} tone="done" />,
+    Withdrawn => <em>withdrawn</em>,
+};
+
+fn Row(lot: Lot) => Html =
+    <tr data-id={lot.id}>
+        <td><a href={$"/lots/{lot.id}"}>{lot.title}</a></td>
+        <td>{lot.current:F2}</td>
+        <td>{State(lot.state)}</td>
+        <td>{lot.seller}</td>
+    </tr>;
+
+fn Table(lots: List<Lot>, admin: bool) => Html =
+    <Card title="Lots">
+        <table>
+            {for lot in lots { Row(lot) }}
+        </table>
+        {if lots.Count == 0 { <p>Nothing for sale.</p> }}
+        {if admin { <button disabled={lots.Count == 0}>Close all</button> }}
+        <br>
+        <input type="text" name="q" value={"<script>"} />
+    </Card>;
+
+/// A whole page: its doctype, and a style and a script, whose braces and '<' are code, not markup.
+fn Page(title: string, body: Html) => Html =
+    <!doctype html>
+    <html lang="en">
+        <head>
+            <title>{title}</title>
+            <style>
+                body { margin: 0; }
+            </style>
+        </head>
+        <body>
+            {body}
+            <script>
+                if (1 < 2) { console.log("ready"); }
+            </script>
+        </body>
+    </html>;
+
+fn Main() {
+    CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+    Print(Page("Lots & more", <p>Welcome</p>));
+    let lots = [
+        Lot(LotId(1), "Clock & <case>", 12.5m, LotState.Open(DateTime(2026, 12, 1)), Some("Ada")),
+        Lot(LotId(2), "Vase", 40m, LotState.Sold(42m), None),
+        Lot(LotId(3), "Chair", 7m, LotState.Withdrawn, Some("O'Brien")),
+    ];
+    Print(Row(lots[0]));
+    Print(Table(lots, false));
+    Print(Table([], true));
+
+    // Pairs, deconstructed in the loop.
+    let totals = [("bids", 3), ("watchers", 12)];
+    Print(<ul>{for (name, count) in totals { <li>{name}: {count}</li> }}</ul>);
+
+    // Markup is a value: compared, and kept as it is when it goes into more markup.
+    let title = <b>bold</b>;
+    Print(<p>{title} and {"<b>not bold</b>"}</p>);
+    Print(<p>{Html.Raw("<i>trusted</i>")}</p> == <p><i>trusted</i></p>);
+    Print(<>
+        text over
+        several lines,   kept   as spaces on one
+    </>);
+}

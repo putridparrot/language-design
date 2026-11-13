@@ -18,6 +18,21 @@
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
+  <!--
+    Browser reload for watched runs (src/Piper.Watch), built against ASP.NET Core, which piper itself doesn't
+    use: so built, not referenced, and copied beside piper.dll for watched web programs to load.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\Piper.Watch\Piper.Watch.csproj" ReferenceOutputAssembly="false" Private="false" />
+  </ItemGroup>
+
+  <Target Name="IncludeBrowserReload" AfterTargets="IncludeBundledPlugins">
+    <ItemGroup>
+      <ContentWithTargetPath Include="$(MSBuildThisFileDirectory)..\Piper.Watch\bin\runtime\Piper.Watch.dll" TargetPath="Piper.Watch.dll"
+                             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+
   <Import Project="..\BundledPlugins.targets" />
 
 </Project>

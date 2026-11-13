@@ -1,0 +1,54 @@
+// `requires … else "message"`: the message to fail with, for a person, built only when the check fails; the
+// exception says which field or parameter it's about when the condition mentions just one.
+using System;
+using System.Text.Json;
+using Piper.Runtime;
+
+record Bid(lot: int, amount: decimal)
+    requires amount > 0m else "Bid something."
+    requires lot > 0 && amount < 1_000_000m else $"A bid on lot {lot} can't be {amount}.";
+
+record struct Percent(value: int) requires value >= 0 && value <= 100 else "A percentage is from 0 to 100.";
+
+class Auction(title: string, reserve: decimal) requires reserve >= 0m else "A reserve can't be below nothing." {
+    public let name = title;
+}
+
+fn Withdraw(balance: decimal, amount: decimal) => decimal
+    requires amount <= balance else $"Only {balance} to withdraw."
+{
+    balance - amount
+}
+
+/// Without `else`, as before: the condition is the message.
+record Plain(count: int) requires count >= 0;
+
+fn Show(make: () => string) {
+    try {
+        Print(make());
+    } catch (e: PiperContractException) {
+        Print($"{e.Message} [field {e.Field ?? "none"}; {e.Condition}]");
+    } catch (e: ArgumentException) {
+        Print(e.Message);
+    }
+}
+
+/// A number the compiler can't see the value of, so the checks happen when the program runs.
+fn Read(text: string) => int = int.Parse(text);
+
+fn Main() {
+    let zero = Read("0");
+    let one = Read("1");
+    Show(() => $"{Bid(one, 5m)}");
+    Show(() => $"{Bid(one, zero)}");
+    Show(() => $"{Bid(zero, 5m)}");
+    Show(() => $"{Percent(150 * one)}");
+    Show(() => Auction("Clock", -one).name);
+    Show(() => $"{Withdraw(10m, 25m * one)}");
+    Show(() => $"{Plain(-one)}");
+    try {
+        JsonSerializer.Deserialize<Bid>("""{"lot":1,"amount":-2}""");
+    } catch (e: JsonException) {
+        Print($"JSON: {e.Message}");
+    }
+}

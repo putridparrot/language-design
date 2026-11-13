@@ -15,7 +15,8 @@ const string Usage = """
       piper run   <inputs...> [--watch] [-- <args...>]
                                            Transpile, compile and run; <args> go to Main(args: string[]). The `--` can be
                                            left out when the first starts with '-': piper run app --port 8001.
-                                           --watch runs it again whenever a .piper file or piper.json changes
+                                           --watch runs it again whenever a .piper file or piper.json changes,
+                                           and reloads a web program's open pages
       piper test  <inputs...> [--filter <text>]
                                            Run the program's test blocks (those whose name contains <text>)
       piper new   <folder> [--template <name>]
@@ -238,7 +239,7 @@ switch (command)
     default:
         // The name `piper build` would give it, so libraries that name the program's types (serializers) agree with a built copy.
         var programName = assemblyName ?? Path.GetFileNameWithoutExtension(Path.TrimEndingDirectorySeparator(Path.GetFullPath(inputs[0])));
-        var run = Runner.Run(result.Files, captureOutput: false, result.References, programArguments, programName);
+        var run = Runner.Run(result.Files, captureOutput: false, Watch.WithBrowserReload(result.References), programArguments, programName);
         foreach (var error in run.Errors)
             Console.Error.WriteLine(error);
         return run.Success ? 0 : 3;

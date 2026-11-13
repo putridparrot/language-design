@@ -260,6 +260,357 @@ public class WebPluginTests
             """, run.Output.Replace("\r\n", "\n"));
     }
 
+    /// <summary>A handler's markup is a page: text/html, alone or in an Option (None is 404) or a Result.</summary>
+    [Fact]
+    public void Markup_is_answered_as_a_page()
+    {
+        var result = Compile(""""
+            using System;
+            using System.Linq;
+            using System.Net.Http;
+            using Microsoft.AspNetCore.Builder;
+            using Microsoft.AspNetCore.Hosting;
+            using Microsoft.Extensions.Logging;
+
+            newtype LotId = int;
+
+            fn Lot(id: LotId) => Html? = if id == LotId(1) { Some(<h1>Clock &amp; case</h1>) } else { None };
+            fn Bid(id: LotId, amount: int) => Result<Html, string> =
+                if amount > 0 { Ok(<p>Bid {amount} on lot {id}</p>) } else { Err("must be more than 0") };
+
+            endpoints Site {
+                get "/" () => <main><a href="/lots/1">{"Lot <1>"}</a></main>;
+                get "/lots/{id:int}" (id: LotId) => Lot(id);
+                post "/lots/{id:int}/bids" (id: LotId, amount: int) => Bid(id, amount);
+            }
+
+            async fn Main() {
+                let builder = WebApplication.CreateBuilder();
+                builder.Logging.ClearProviders();
+                let urls: string[] = ["http://127.0.0.1:0"];
+                builder.WebHost.UseUrls(urls);
+                let app = builder.Build();
+                Site(app);
+                await app.StartAsync();
+                using let client = HttpClient();
+                client.BaseAddress = Uri(app.Urls.First());
+
+                async fn Show(what: string, response: HttpResponseMessage) {
+                    let media = response.Content.Headers.ContentType?.MediaType ?? "none";
+                    Print($"{what} {(int)response.StatusCode} {media} [{await response.Content.ReadAsStringAsync()}]");
+                }
+                for path in ["/", "/lots/1", "/lots/2"] {
+                    await Show(path, await client.GetAsync(path));
+                }
+                await Show("bid 5", await client.PostAsync("/lots/1/bids?amount=5", StringContent("")));
+                await Show("bid 0", await client.PostAsync("/lots/1/bids?amount=0", StringContent("")));
+                await app.StopAsync();
+            }
+            """");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("""
+            / 200 text/html [<main><a href="/lots/1">Lot &lt;1&gt;</a></main>]
+            /lots/1 200 text/html [<h1>Clock &amp; case</h1>]
+            /lots/2 404 none []
+            bid 5 200 text/html [<p>Bid 5 on lot 1</p>]
+            bid 0 400 application/problem+json [{"type":"https://tools.ietf.org/html/rfc9110#section-15.5.1","title":"Bad Request","status":400,"detail":"must be more than 0"}]
+
+            """, run.Output.Replace("\r\n", "\n"));
+    }
+
+    /// <summary>
+    /// Named endpoints have route functions, typed by their handlers' parameters; a posted form is read into a record,
+    /// with errors by field, and its anti-forgery token (put in every post form) is checked.
+    /// </summary>
+    [Fact]
+    public void Routes_are_typed_and_forms_are_read_into_records()
+    {
+        var result = Compile(""""
+            using System;
+            using System.Linq;
+            using System.Net;
+            using System.Net.Http;
+            using System.Text;
+            using System.Text.RegularExpressions;
+            using System.Threading.Tasks;
+            using Microsoft.AspNetCore.Builder;
+            using Microsoft.AspNetCore.Hosting;
+            using Microsoft.Extensions.DependencyInjection;
+            using Microsoft.Extensions.Logging;
+            using Piper.Web;
+
+            newtype LotId = int;
+            enum Category { Art, Clocks }
+
+            record NewLot(title: string, startPrice: decimal, reserve: decimal?, category: Category, featured: bool)
+                requires title.Trim().Length > 0 else "Give the lot a title."
+                requires (reserve ?? startPrice) >= startPrice else "The reserve can't be below the starting price.";
+
+            fn NewLotPage(form: Form<NewLot>?, errors: FormErrors?) => Html =
+                <form method="post" action={SiteRoutes.Create()}>
+                    <input name="title" value={form?.Text("title")} />
+                    <span class="error">{errors?.For("title")}</span>
+                    <span class="error">{errors?.For("startPrice")}</span>
+                    <p class="error">{errors?.Form}</p>
+                </form>;
+
+            endpoints Site {
+                get Lot "/lots/{id:int}" (id: LotId) => <a href={SiteRoutes.Lot(id)}>lot {id}</a>;
+                get Files "/files/{*path}" (path: string) => <p>{path}</p>;
+                get NewLot "/lots/new" () => NewLotPage(None, None);
+                post Create "/lots" (form: Form<NewLot>) => match form.Result {
+                    Ok(lot) => <p>Listed {lot.title}: {lot.category.Name}, from {lot.startPrice:F2}{if lot.featured { <b> (featured)</b> }}</p>,
+                    Err(errors) => NewLotPage(Some(form), Some(errors)),
+                };
+            }
+
+            async fn Main() {
+                Print(SiteRoutes.Lot(LotId(7)));
+                Print(SiteRoutes.Files("photos/a b.jpg"));
+                Print(SiteRoutes.Create());
+
+                let builder = WebApplication.CreateBuilder();
+                builder.Logging.ClearProviders();
+                builder.Services.AddAntiforgery();
+                let urls: string[] = ["http://127.0.0.1:0"];
+                builder.WebHost.UseUrls(urls);
+                let app = builder.Build();
+                Site(app);
+                await app.StartAsync();
+                let handler = HttpClientHandler() { CookieContainer: CookieContainer() };
+                using let client = HttpClient(handler);
+                client.BaseAddress = Uri(app.Urls.First());
+
+                let page = await client.GetStringAsync("/lots/new");
+                Print(page.Contains("name=\"__RequestVerificationToken\""));
+                let token = Uri.EscapeDataString(Regex.Match(page, "__RequestVerificationToken\" value=\"([^\"]+)\"").Groups[1].Value);
+
+                async fn Post(fields: string) => Task<string> {
+                    let body = StringContent(fields, Encoding.UTF8, "application/x-www-form-urlencoded");
+                    let response = await client.PostAsync(SiteRoutes.Create(), body);
+                    let text = await response.Content.ReadAsStringAsync();
+                    $"{(int)response.StatusCode} {Regex.Replace(text, "<input type=\"hidden\"[^>]*>", "")}"
+                }
+                Print(await Post($"__RequestVerificationToken={token}&title=Clock&startPrice=12.50&category=Clocks&featured=on"));
+                Print(await Post($"__RequestVerificationToken={token}&title=&startPrice=lots&category=Art"));
+                Print(await Post($"__RequestVerificationToken={token}&title=Vase&startPrice=40&reserve=10&category=Art"));
+                Print(await Post($"__RequestVerificationToken={token}&title=+&startPrice=40&category=Art"));
+                Print((await Post("title=Clock&startPrice=1&category=Art")).Split(' ')[0]);
+                Print(await client.GetStringAsync(SiteRoutes.Lot(LotId(3))));
+                await app.StopAsync();
+            }
+            """");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("""
+            /lots/7
+            /files/photos/a%20b.jpg
+            /lots
+            True
+            200 <p>Listed Clock: Clocks, from 12.50<b> (featured)</b></p>
+            200 <form method="post" action="/lots"><input name="title" value=""><span class="error"></span><span class="error">&#39;lots&#39; isn&#39;t a number.</span><p class="error"></p></form>
+            200 <form method="post" action="/lots"><input name="title" value="Vase"><span class="error"></span><span class="error"></span><p class="error">The reserve can&#39;t be below the starting price.</p></form>
+            200 <form method="post" action="/lots"><input name="title" value=" "><span class="error">Give the lot a title.</span><span class="error"></span><p class="error"></p></form>
+            400
+            <a href="/lots/3">lot 3</a>
+
+            """, run.Output.Replace("\r\n", "\n"));
+    }
+
+    /// <summary>
+    /// htmx: the app serves it; a group's layout wraps a page for a browser but not for htmx, which gets the fragment;
+    /// HtmxRequest reads what htmx sent and sets its response headers; and an hx-post sends the anti-forgery token as a
+    /// header, which Form&lt;T&gt; accepts.
+    /// </summary>
+    [Fact]
+    public void Htmx_gets_fragments_and_browsers_get_pages()
+    {
+        var result = Compile(""""
+            using System;
+            using System.Linq;
+            using System.Net;
+            using System.Net.Http;
+            using System.Text.RegularExpressions;
+            using System.Threading.Tasks;
+            using Microsoft.AspNetCore.Builder;
+            using Microsoft.AspNetCore.Hosting;
+            using Microsoft.Extensions.DependencyInjection;
+            using Microsoft.Extensions.Logging;
+            using Piper.Web;
+
+            record NewBid(amount: decimal) requires amount > 0m else "Bid something.";
+
+            fn Page(body: Html) => Html =
+                <html><head><Htmx.Script /></head><body>{body}</body></html>;
+
+            endpoints Site layout Page {
+                get Lot "/lots/{id:int}" (id: int) => <section id="lot">Lot {id}</section>;
+                post Bid "/lots/{id:int}/bids" (id: int, form: Form<NewBid>, htmx: HtmxRequest) => match form.Result {
+                    Ok(bid) => {
+                        htmx.TriggerEvent("bid-placed");
+                        <p>{bid.amount:F2} on lot {id}, from {htmx.TriggerId ?? "somewhere"}</p>
+                    },
+                    Err(errors) => <p class="error">{errors.For("amount")}</p>,
+                };
+            }
+
+            async fn Main() {
+                let builder = WebApplication.CreateBuilder();
+                builder.Logging.ClearProviders();
+                builder.Services.AddAntiforgery();
+                let urls: string[] = ["http://127.0.0.1:0"];
+                builder.WebHost.UseUrls(urls);
+                let app = builder.Build();
+                Site(app);
+                await app.StartAsync();
+                let handler = HttpClientHandler() { CookieContainer: CookieContainer() };
+                using let client = HttpClient(handler);
+                client.BaseAddress = Uri(app.Urls.First());
+
+                let script = await client.GetAsync(Htmx.ScriptPath);
+                Print($"script {(int)script.StatusCode} {script.Content.Headers.ContentType?.MediaType ?? ""} {(await script.Content.ReadAsStringAsync()).StartsWith("var htmx=")}");
+
+                // A browser gets the page; htmx, the fragment; a boosted link, the page.
+                let page = await client.GetStringAsync(SiteRoutes.Lot(7));
+                Print(Regex.Replace(page, "<head>.*</head>", "<head>…</head>"));
+                Print(page.Contains("name=\"piper-antiforgery\""));
+                async fn Fragment(boosted: bool) => Task<string> {
+                    let request = HttpRequestMessage(HttpMethod.Get, SiteRoutes.Lot(7));
+                    request.Headers.Add("HX-Request", "true");
+                    if boosted { request.Headers.Add("HX-Boosted", "true"); }
+                    let response = await client.SendAsync(request);
+                    $"{await response.Content.ReadAsStringAsync()} (vary {response.Headers.Vary})"
+                }
+                Print(await Fragment(false));
+                Print((await Fragment(true)).StartsWith("<html>"));
+
+                // An hx-post on a button: no form field for the token, which comes as a header instead.
+                let meta = Regex.Match(page, "data-header=\"([^\"]+)\" content=\"([^\"]+)\"");
+                async fn Bid(amount: string, token: bool) => Task<string> {
+                    let request = HttpRequestMessage(HttpMethod.Post, SiteRoutes.Bid(7));
+                    request.Headers.Add("HX-Request", "true");
+                    request.Headers.Add("HX-Trigger", "bid-button");
+                    if token { request.Headers.Add(meta.Groups[1].Value, WebUtility.HtmlDecode(meta.Groups[2].Value)); }
+                    request.Content = StringContent($"amount={amount}", System.Text.Encoding.UTF8, "application/x-www-form-urlencoded");
+                    let response = await client.SendAsync(request);
+                    let events = if response.Headers.TryGetValues("HX-Trigger", out let values) { string.Join(",", values) } else { "none" };
+                    $"{(int)response.StatusCode} {await response.Content.ReadAsStringAsync()} (events {events})"
+                }
+                Print(await Bid("12.5", true));
+                Print(await Bid("0", true));
+                Print((await Bid("12.5", false)).Split(' ')[0]);
+                await app.StopAsync();
+            }
+            """");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("""
+            script 200 text/javascript True
+            <html><head>…</head><body><section id="lot">Lot 7</section></body></html>
+            True
+            <section id="lot">Lot 7</section> (vary HX-Request)
+            True
+            200 <p>12.50 on lot 7, from bid-button</p> (events bid-placed)
+            200 <p class="error">Bid something.</p> (events none)
+            400
+
+            """, run.Output.Replace("\r\n", "\n"));
+    }
+
+    /// <summary>
+    /// Live pages: a page watches a topic over server-sent events; publishing a fragment to it (here from a handler
+    /// taking a bid) sends it to every watching page, as a named event htmx's SSE extension swaps in.
+    /// </summary>
+    [Fact]
+    public void Published_fragments_reach_the_pages_watching_their_topic()
+    {
+        var result = Compile(""""
+            using System;
+            using System.IO;
+            using System.Linq;
+            using System.Net.Http;
+            using System.Threading.Tasks;
+            using Microsoft.AspNetCore.Builder;
+            using Microsoft.AspNetCore.Hosting;
+            using Microsoft.Extensions.Logging;
+            using Piper.Web;
+
+            fn Topic(lot: int) => string = $"lot-{lot}";
+            fn Price(amount: decimal) => Html = <span class="price">{amount:F2}
+                <small>current</small></span>;
+
+            endpoints Site {
+                get Lot "/lots/{id:int}" (id: int) =>
+                    <section hx-ext="sse" sse-connect={Live.Url(Topic(id))}>
+                        <span sse-swap="price">{Price(10m)}</span>
+                    </section>;
+                post Bid "/lots/{id:int}/bids" (id: int, amount: decimal) => {
+                    let pages = Live.Publish(Topic(id), "price", Price(amount));
+                    <p>Bid {amount:F2}, shown on {pages} pages</p>
+                };
+            }
+
+            async fn Main() {
+                let builder = WebApplication.CreateBuilder();
+                builder.Logging.ClearProviders();
+                let urls: string[] = ["http://127.0.0.1:0"];
+                builder.WebHost.UseUrls(urls);
+                let app = builder.Build();
+                Site(app);
+                await app.StartAsync();
+                using let client = HttpClient();
+                client.BaseAddress = Uri(app.Urls.First());
+
+                Print(await client.GetStringAsync(SiteRoutes.Lot(7)));
+                let sse = await client.GetAsync(Live.Url(Topic(7)), HttpCompletionOption.ResponseHeadersRead);
+                Print(sse.Content.Headers.ContentType?.MediaType ?? "");
+                using let reader = StreamReader(await sse.Content.ReadAsStreamAsync());
+                Print(await reader.ReadLineAsync() ?? "");   // ": connected": the page is watching
+                await reader.ReadLineAsync();
+
+                let posted = await client.PostAsync($"{SiteRoutes.Bid(7)}?amount=12.5", StringContent(""));
+                Print(await posted.Content.ReadAsStringAsync());
+                mut line = await reader.ReadLineAsync() ?? "";
+                while line != "" {
+                    Print(line);
+                    line = await reader.ReadLineAsync() ?? "";
+                }
+                // Markup over several lines is sent as one event, a data line each.
+                Live.Publish(Topic(7), "note", Html.Raw("<b>one\ntwo</b>"));
+                line = await reader.ReadLineAsync() ?? "";
+                while line != "" {
+                    Print(line);
+                    line = await reader.ReadLineAsync() ?? "";
+                }
+                Print(Live.Watching(Topic(7)));
+                Print(Live.Publish(Topic(8), "price", Price(1m)));
+                sse.Dispose();
+                await app.StopAsync();
+            }
+            """");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("""
+            <section hx-ext="sse" sse-connect="/_piper/live?topic=lot-7"><span sse-swap="price"><span class="price">10.00<small>current</small></span></span></section>
+            text/event-stream
+            : connected
+            <p>Bid 12.50, shown on 1 pages</p>
+            event: price
+            data: <span class="price">12.50<small>current</small></span>
+            event: note
+            data: <b>one
+            data: two</b>
+            1
+            0
+
+            """, run.Output.Replace("\r\n", "\n"));
+    }
+
     [Fact]
     public void The_web_plugin_no_longer_adds_services()
     {

@@ -1,0 +1,8 @@
+Bid { lot = 1, amount = 5 }
+Bid something. [field amount; Invariant failed: amount > 0m (amount = 0)]
+A bid on lot 0 can't be 5. [field none; Invariant failed: lot > 0 && amount < 1_000_000m (lot = 0, amount = 5)]
+A percentage is from 0 to 100. [field value; Invariant failed: value >= 0 && value <= 100 (value = 150)]
+A reserve can't be below nothing. [field reserve; Invariant failed: reserve >= 0m (reserve = -1)]
+Only 10 to withdraw. [field none; Precondition failed: amount <= balance (balance = 10, amount = 25)]
+Invariant failed: count >= 0 (count = -1)
+JSON: Bid something.

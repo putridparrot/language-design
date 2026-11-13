@@ -118,7 +118,9 @@ public sealed class RemoteActorPlugin : IPiperPlugin
                 arms.Add($$"""
                     {{message}}.{{handler.Name.Text}}{{arguments}} => {
                         try {
-                            __context.Respond({{hole[handler.Body]}});
+                            // The body is the handler's declared result, so `Ok(x)` or `None` infer from it, as in a function.
+                            let __result: {{hole[handler.Result]}} = {{hole[handler.Body]}};
+                            __context.Respond(__result);
                         } catch (__error: System.Exception) {
                             __context.Respond({{fault}}(__error.Message));
                         }

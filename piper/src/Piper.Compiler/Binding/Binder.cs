@@ -178,6 +178,8 @@ public sealed partial class Binder
             _builtins.TryDeclare(type);
         // `object` is a keyword for System.Object, as in C#.
         _builtins.TryDeclare("object", ClrTypeSymbol.For(typeof(object)));
+        // What markup literals make (`<p>{name}</p>`): markup, as opposed to a string of text.
+        _builtins.TryDeclare("Html", ClrTypeSymbol.For(typeof(Piper.Runtime.Html)));
         foreach (var function in BuiltinFunctions.All)
             _builtins.TryDeclare(function);
 

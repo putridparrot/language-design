@@ -53,6 +53,13 @@ them too.
   error, as an async lambda must return a Task. C# allows `async void` there, losing the exceptions it throws to the
   synchronization context. To decide: allow it for event handlers only, as C# guidance suggests, perhaps with exceptions
   reported rather than lost.
+- **Found by apps/auction:**
+  - **Helper methods in a `statemachine`** (and an `actor`): a machine has only data and states, so an action shared
+    by transitions (taking a bid) is written in each of them.
+  - **A list literal's `None`s typed by a later `Some`:** `[None, None, Some("ada")]` needs a type annotation, as each
+    element is typed on its own; the elements' common type should give the `None`s theirs.
+  - **`[NotNullIfNotNull]` results:** `WebUtility.HtmlDecode(text)` and others return non-null for a non-null argument,
+    as .NET says, but Piper reads their `string?` as optional.
 - **Newtypes, later:** a newtype with type parameters, for phantom-typed ids (`newtype Id<T> = Guid;`, so an
   `Id<Issue>` isn't an `Id<Project>`); and newtypes as JSON dictionary keys (`Dictionary<IssueId, …>` written as an
   object, which needs the converter's property-name methods).
@@ -131,6 +138,163 @@ Server-side HTML belongs with [UI](#ui) (htmx over plain endpoints), not Razor.
 - **Hosts beyond the web:** `Host.CreateApplicationBuilder` for console programs and workers, so they get configuration,
   logging and lifetime as a web app does, rather than a bare `ServiceCollection`.
 
+## Cloud and distributed
+
+What [apps/stock](../apps/stock/README.md) and [apps/grid](../apps/grid/README.md) wrote by hand, running as pods in
+Kubernetes, that the language or its plugins could provide. They also raise the priority of what's planned above:
+health checks (both apps hand-write `/healthz`), graceful shutdown (a deleted grid pod abandons its chunk rather than
+finishing it), container publishing, and hosted workers; and of actor clustering (see the remote actors plugin in
+[plugins.md](plugins.md)). In the order they'd best be done:
+
+1. **Checking message compatibility at compile time.** The remote actors plugin needs every node to run the same
+   program, but a rolling update (how Kubernetes deploys, as the stock app's redeploys did) always has old and new pods
+   talking for a while. A message that gains a required field, renames one or changes a field's type breaks them
+   mid-rollout. Piper knows every message type, so `piper build` could keep their shapes in a checked-in file and report
+   breaking changes against it: a field removed or retyped, a new field without a default, a handler removed. The same
+   check suits records sent as JSON by an API. Cheap, and a check only the compiler is placed to make.
+2. **Tracing through actors** (OpenTelemetry). The stock and grid apps needed hand-built dashboards and `servedBy`
+   fields to see which node did what. The plugin generates each remote message's envelope, so it can carry the trace
+   context: one request becomes one trace through HTTP, node A and the product actor on node B, with handler times and
+   mailbox depth as metrics. Locally, .NET Aspire's dashboard shows them with no setup.
+3. **Actors that keep their state** (event sourcing). Both apps lose their state when a pod restarts: stock's counts,
+   grid's jobs. Actors' handlers already take commands, so an actor could declare its events, save each as it's handled,
+   and replay them when it starts:
+
+   ```piper
+   actor Product(sku: string) persisted {
+       event Received(quantity: int) { onHand += quantity; }
+       on Receive(quantity: int) => Level { emit Received(quantity); … }
+   }
+   ```
+
+   The compiler can check that every event changes state, and that replaying needs nothing but the events. It would be
+   stored through Proto.Persistence or the data plugin. With clustering, it would replace the stock app's fixed
+   `--nodes` list, `hash % count` and StatefulSet. The largest of these.
+4. **Failure policies.** The same patterns were written by hand several times: stock retries once after a dead letter,
+   grid lends chunks with a lease and ignores late results, the tracker retries its webhook (with `[Retry]`). The
+   aspects plugin could add `[Timeout]` and `[CircuitBreaker]` beside `[Retry]`, and asks to remote actors take the
+   same policies.
+5. **An outbox, and queues.** The tracker tells its webhook after saving a change; if the process dies in between, the
+   notification is lost. An outbox writes the message in the change's own transaction and sends it afterwards, so it
+   can't be lost, which suits the data plugin. A queue plugin would give jobs that must survive a restart somewhere to
+   live, as the grid's README suggests for long ones: see [the messaging plugin](#a-messaging-plugin) below.
+6. **Testing distributed programs.** Both apps wrote their own `StartCluster` and `StopCluster`, and the grid's
+   "vanished worker" test was put together by hand. A test helper could give a cluster in one process, with faults to
+   inject: stop a node, drop or delay messages to one, split the network. Property-based tests (above) suit it, with
+   the faults among the generated inputs.
+7. **Deploying without hand-written files.** Each app has a Dockerfile copying the repository to build the compiler,
+   and Kubernetes YAML with the same `POD_IP` plumbing. `piper build --publish` (planned above) could use the .NET SDK's
+   container publishing, so there's no Dockerfile; and a declaration of the app's roles (a coordinator and workers,
+   their ports and replicas) could generate the Kubernetes or Aspire manifests.
+
+More, around the services themselves:
+
+- **Typed clients generated from `endpoints`.** [apps/tracker-desktop](../apps/tracker-desktop/README.md)'s
+  `TrackerClient` was written by hand, with its own copies of the API's records; when the tracker's ids became
+  newtypes, the copies didn't follow, and only stayed working because the JSON didn't change. Piper knows every route,
+  parameter and result type, so it can generate the client, sharing the record types, and a change to the API breaks
+  its clients at compile time rather than in production. Between services too, as OpenAPI does, but checked. The most
+  valuable of these.
+- **Ids made anywhere** (`newtype OrderId = Guid`, as UUIDv7). The tracker's ids are numbered by the database, so an
+  issue has none until it's saved; with messaging and an outbox, an event needs one first. Time-ordered GUIDs
+  (`Guid.CreateVersion7()`, in .NET) index well and are made on any node. With newtypes this is small: a standard way
+  to declare such an id and make a new one, which the data plugin stores.
+- **Secrets that can't leak.** A `Secret<T>`, or a `secret` field of a `config` record (the tracker's webhook URL, a
+  connection string), prints and serializes as `***`; the compiler stops it being interpolated into a string or a
+  log, and `.reveal()` is the one way to its value. It could come from Azure Key Vault through the config plugin.
+- **Structured logging from interpolation.** The apps logged with `Console.Error.WriteLine($"…")`.
+  `log.Info($"Reserved {quantity} of {sku}")` could compile to a logging template with named fields, as C#'s
+  `LoggerMessage` generator does, so logs are queried by field (in Application Insights, Seq) while staying natural
+  Piper. It goes with tracing (item 2).
+- **Serverless hosts, and Native AOT.** A `consumer` or an endpoint could also run as an Azure Function (a queue or
+  HTTP trigger), the code unchanged and only the host different. That wants Native AOT and trimming, for fast starts
+  when scaling from zero, and Piper's runtime uses reflection in places (enum JSON, the data plugin's converters,
+  newtypes' delegates). Worth checking Piper programs against AOT early, before more reflection goes in, with
+  source-generated JSON where it's needed.
+- **Idempotent endpoints.** A client retrying a POST after a timeout can add an issue twice.
+  `post "/issues" idempotent …` keeps each request's `Idempotency-Key` header and its response, and answers a repeat
+  with the same response. Message handlers get the same through the outbox's de-duplication.
+
+### A messaging plugin
+
+Service buses and message queues (Azure Service Bus first, then RabbitMQ) as declarations: what messages there are,
+where they go and who handles them, so the compiler checks what C# libraries find only when the system runs. Programs
+name what they mean (a command, an event, an ordering key); which broker carries it is configuration.
+
+**Constraints.** No heavy dependencies, and only open source or Piper's own code. So no MassTransit or NServiceBus
+(commercial licences), no Wolverine or Rebus (whose conventions and runtime code generation would show through), and no
+Dapr (a sidecar per service). Instead, a thin runtime of Piper's own (`Piper.Messaging`) with an adapter per transport,
+each over the broker's official, open-source client: Azure.Messaging.ServiceBus (MIT), RabbitMQ.Client (Apache 2.0 or MPL 2.0).
+A program brings only its transport's package, as the data plugin's programs bring their database's provider.
+
+**Meaning, not the lowest common denominator.** The brokers differ (Service Bus has sessions, scheduling, duplicate
+detection and dead-lettering; RabbitMQ routes through exchanges; Kafka is a log, not a queue), so code says only what
+they share, and each transport maps it:
+
+| In code | Service Bus | RabbitMQ |
+|---|---|---|
+| **command**: to one receiver | a queue | a queue |
+| **event**: to every subscriber | a topic, a subscription per consumer | a fanout exchange, a queue per consumer |
+| **key**: in order, per key | a session id | a consistent-hash exchange |
+| **delay** | a scheduled message | a delayed exchange, or a TTL and dead-letter queue |
+| **reject** | the dead-letter queue | a dead-letter exchange |
+
+Transport-specific settings (connection, prefetch, lock duration, duplicate detection) are configuration
+(`"Messaging": { "Transport": "ServiceBus", … }`), never code. Kafka is left for later, as streams, a concept of its
+own, rather than forced into queues.
+
+**What it looks like:**
+
+```piper
+messages Orders {
+    command PlaceOrder(orderId: OrderId, lines: ImmutableList<Line>) queue "orders";
+    event OrderPlaced(orderId: OrderId, total: decimal) topic "order-events" key orderId;
+}
+
+consumer Billing(db: BillingDb) {
+    on OrderPlaced(e) => Handled {
+        if await AlreadyBilled(db, e.orderId) { return Handled.Done; }    // handlers are idempotent
+        match await Charge(e) {
+            Ok(_) => Handled.Done,
+            Err(Declined(reason)) => Handled.Reject(reason),             // dead-lettered: retrying won't help
+            Err(Unavailable) => Handled.RetryLater(TimeSpan.FromSeconds(30)),
+        }
+    }
+}
+
+await bus.Send(PlaceOrder(id, lines));
+await bus.Publish(OrderPlaced(id, total));
+```
+
+**What Piper adds:**
+
+1. **A handler's result is the message's fate.** `Handled` is `Done`, `RetryLater(after)` or `Reject(reason)`, matched
+   exhaustively, rather than "throw to retry": complete, abandon or schedule again, and dead-letter. An unexpected
+   exception still retries, by the configured policy, and dead-letters after the last attempt.
+2. **Contracts and routing checked at compile time:** messages are data (records, enums, newtypes, immutable
+   collections, as the actor plugin checks); a command has exactly one handler in the program; a handler for a message
+   the program doesn't declare, or an ordered event without a `key`, is reported.
+3. **Versions checked** ([item 1](#cloud-and-distributed) above): queues keep old messages for days, and other teams
+   read your events, so breaking changes to a message's recorded shape are errors.
+4. **An outbox, with the data plugin:** a `Publish` while saving to a database goes into the same transaction and is
+   sent afterwards, so a change and its message are never separated.
+5. **Topology from declarations:** the compiler knows every queue, topic and subscription, so they're created at start
+   if missing, or written out as Bicep or Terraform, rather than drifting from the code.
+6. **Testing:** an in-memory transport, with assertions on what was sent and published, and later the fault injection
+   of item 6.
+7. **Later, sagas:** a long-running process following several messages is a `statemachine` (the state-machines
+   plugin) whose events are messages, correlated by a key and saved between them.
+
+**Messages or actors:** actors are fast request and reply within one cluster; messages are durable and asynchronous,
+between services. Both stay, and the docs say when to use which.
+
+**In order:** the runtime with the in-memory and Service Bus transports, `messages` and `consumer` with `Handled`, and
+the compile-time checks; then the outbox and topology; then RabbitMQ; then versions and sagas.
+
+**To decide:** whether Piper services must interoperate with existing C# services on the same bus. Their envelope
+(headers, type names, correlation) is a protocol; if they use MassTransit's or NServiceBus's, the transports would need
+an option to read and write it.
+
 ## UI
 
 Piper programs can be consoles and servers; a UI should come from .NET's UI frameworks, built in code rather than XAML
@@ -150,9 +314,112 @@ Piper programs can be consoles and servers; a UI should come from .NET's UI fram
   plugin would supply the runtime (diffing the view, dispatching messages) over Avalonia. For the classic MVVM style
   instead, the `aspects` plugin's `[Notify]` gives a class `INotifyPropertyChanged`, as C# gets it from a source
   generator.
-- **Web UI:** server-rendered HTML through the web plugin, with htmx for interactivity, and perhaps an HTML templating
-  plugin. Blazor is a poor fit, as Razor components need the Razor compiler.
+- **Web UI:** see [Web UI](#web-ui) below.
 - **Terminal UI:** Spectre.Console or Terminal.Gui as packages should already work; a sample would show it.
+
+### Web UI
+
+**The problem, in Piper's own apps.** The stock and grid dashboards are hundreds of lines of HTML and JavaScript in
+raw strings, which nothing checks: the JavaScript was syntax-checked with `node` by hand, values escaped by a
+hand-written `esc()`, updates polled for, and URLs (`/stock/${sku}/receive`) tied to the routes by nothing. The server
+is typed and the UI isn't, so they drift. One way of writing views should serve both kinds of app: content sites
+(server-rendered, cached, found by search engines) and interactive ones (live, several people seeing the same thing
+change), and a page should be able to start as one and gain parts of the other.
+
+1. **Typed HTML.** Done: markup literals ([Markup](language.md#markup)), with escaping by type, components, `for` and
+   `if` in holes, and pages from web handlers; typed links (`SiteRoutes.Lot(id)`) and forms read into records
+   (`Form<T>`, with anti-forgery tokens), in the [web plugin](plugins.md). Still to come:
+   - **Editor support:** the VS Code grammar colours markup as code, and the language server doesn't yet colour or
+     complete inside it.
+   - ~~**Messages for `requires`**~~, done: `requires … else "message"`, shown beside the field it's about.
+   - **All of a form's errors at once:** a record's `requires` are checked only once every field has been read, so a
+     form with a field that doesn't parse doesn't also say what's wrong with the others.
+   - **Typed forms in markup:** `<form for={NewLot}>` checking its inputs' names against the record's fields; today
+     they're strings (`errors.For("title")`).
+   - **Query values in route functions:** they take the route's values only.
+   Markup literals in expressions (as JSX, or Scala's XML), compiled to an `Html` value:
+
+   ```piper
+   fn LotRow(lot: LotView) => Html =
+       <tr>
+           <td><a href={Routes.Lot(lot.id)}>{lot.title}</a></td>
+           <td>{lot.current:C}</td>
+           <td>{match lot.state { Open(ends) => <Countdown until={ends} />, Sold(price) => $"sold for {price:C}", _ => "" }}</td>
+       </tr>;
+   ```
+
+   - **Escaping by type:** a `string` in markup is always escaped; only an `Html` value goes in as markup, and raw HTML
+     takes an explicit `Html.Raw(…)`. Cross-site scripting can't be written by accident.
+   - **Links checked against routes:** the compiler knows every endpoint, so it generates `Routes.Lot(id: LotId)`; a
+     link to no route, or with the wrong type ([newtypes](language.md#newtypes) included), is a compile error.
+   - **Forms bound to records:** `<form for={NewLot}>` is checked against the record's fields; a submitted form is
+     parsed into it, and its `requires` failures come back as messages beside the fields. Every `<form>` gets an
+     anti-forgery token, which C# leaves to be remembered.
+   - **`match` and `if` in markup,** so every state of an enum is rendered; **components are functions** returning
+     `Html`, with nothing new to learn.
+   - It's a language feature, as the lexer must read markup in expressions. The alternative needing no lexer change, a
+     builder over trailing closures (`tr { td { … } }`, as Kotlin's HTML DSL), reads worse to anyone who knows HTML.
+2. ~~**htmx support**~~, done (see the [web plugin](plugins.md)): the app serves htmx, `<Htmx.Script />` loads it with
+   the anti-forgery token as a header, a group's `layout` gives browsers the page and htmx the fragment, and
+   `HtmxRequest` reads and sets htmx's headers. `hx-get={SiteRoutes.Search()}` is checked like any other link.
+3. ~~**Watching**~~, done: `piper run --watch` recompiles on save, restarts, and reloads the open pages. Still to
+   come with live pages: keeping a live page's model across the restart.
+4. ~~**Live pages**~~, done as htmx and pushed fragments (see the [web plugin](plugins.md)): pages watch topics over
+   server-sent events, and `Live.Publish(topic, event, fragment)` updates every page watching. It was chosen over the
+   MVU design below as much smaller, reusing markup, layouts, routes and forms, and keeping no state per page, so it
+   scales as any site does; state stays where it is (actors, the database). The MVU design stays here, for if typed
+   events from the browser (`on:click={Msg.Bid(5)}`) and a model per page are wanted later:
+
+   **MVU on the server** (not built): the [MVU plugin](#ui)'s model, run on the server, as Phoenix LiveView does:
+
+   ```piper
+   live LotPage at "/lots/{id:int}" {
+       record Model(lot: LotView, bidding: decimal?, message: string?);
+       enum Msg { Bid(amount: decimal), Outbid(by: decimal), Tick }
+
+       async fn Init(id: LotId, lots: Lots) => Model = …;
+       async fn Update(model: Model, msg: Msg) => Model = match msg { … };
+       fn View(model: Model) => Html = <div>…</div>;
+   }
+   ```
+
+   - The model stays on the server. A small script of Piper's own (a few KB) sends the browser's events over a
+     WebSocket or server-sent events; the server runs `Update`, compares the new view with the old, and sends what
+     changed. No JavaScript, and no API layer for the app's own UI: typed from the database to the button.
+   - The server can push: an actor or a message updates every page watching it.
+   - A live page renders as ordinary HTML first, then connects, so it's found by search engines and shows at once.
+   - The same model, messages and update can drive Avalonia on the desktop. `Update` is testable without a browser.
+   - Each page holds a connection and a little memory, and lives in a sticky session or, better, an actor, so it can
+     run on any node. That suits apps people sign in to, dashboards and live events; content pages stay plain.
+
+**Not, for now:** Piper in the browser (WebAssembly through Blazor, or compiled to JavaScript): large downloads, or a
+large compiler. If ever needed, Blazor components can be written as plain C# (`BuildRenderTree`), without Razor, so
+markup literals could compile to them. A front end in TypeScript stays a fine choice: [typed clients](#cloud-and-distributed)
+generated from `endpoints` can write TypeScript types too.
+
+**The proving app: an auction site**, built: [apps/auction](../apps/auction/README.md), with what it found. It differs
+from the plan below in places: lots open when listed (no Scheduled state), run in one process (not over pods), and
+have no newtype for money. The plan, as written, still lists what's left for it (caching, pods, persistence,
+property-based tests, messaging). As the tracker proved the API side, people list items, others browse and search,
+then bid live as the clock runs down. Each part of it exercises one of the above:
+
+- **Listing pages and search:** server-rendered, cached (the web plugin's `cache`), with search as you type through
+  htmx.
+- **Listing an item:** a form bound to `NewLot`, whose `requires` check the starting price, the reserve and the end.
+- **A lot's life:** a `statemachine`, Scheduled → Open → Closing (extended by a last-minute bid) → Sold or Unsold,
+  which each view `match`es on.
+- **Bidding:** each lot an actor, taking bids one at a time, so two people can't both win at a price: the stock app's
+  guarantee, in a UI people watch. Lots spread over pods with the remote actors plugin.
+- **The lot page, live:** the current price, a countdown, "you've been outbid" and the bids, pushed to everyone
+  watching.
+- **Types and tests:** newtypes (`LotId`, `BidderId`, a `Money` requiring more than 0), and, once they exist,
+  [property-based tests](#ideas-from-other-languages) that the highest bid wins and bids never fall.
+- **Later:** telling the winner and the seller through the [messaging plugin](#a-messaging-plugin) and an outbox, and
+  the bids kept by persisted actors, so a restart loses nothing.
+
+**In order:** typed HTML with routes and forms (with which the auction's pages and forms work, server-rendered); htmx
+support; `piper watch`; live pages, proved by the auction's bidding. Like the tracker, the app records each gap it
+finds, and what was done.
 
 ## Tools
 

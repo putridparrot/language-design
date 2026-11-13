@@ -307,6 +307,12 @@ public static class ClrTypes
                     return null;
                 arguments.Add(piper);
             }
+            // Piper.Runtime's Option and Result, which a library written for Piper (Piper.Web's Form<T>) returns, are
+            // Piper's own, so matched with Some/None and Ok/Err.
+            if (definition.FullName == "Piper.Runtime.Option`1")
+                return option.Construct([.. arguments]);
+            if (definition.FullName == "Piper.Runtime.Result`2" && option.Result is { } result)
+                return result.Construct([.. arguments]);
             // (int, string) is a Piper tuple, named as the member's [TupleElementNames] says: Math.DivRem's (Quotient, Remainder).
             return isTuple
                 ? TupleTypeSymbol.Create([.. arguments], names)

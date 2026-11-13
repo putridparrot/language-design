@@ -1,0 +1,60 @@
+// The auction's endpoints. A browser gets each page in the layout; htmx gets the fragment it asked for.
+namespace Auction;
+
+using System;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Piper.Web;
+
+endpoints Site layout Page {
+    get Home "/" async (auction: Auctioneer) => HomePage(await auction.List(None), DateTime.UtcNow);
+
+    /// The rows matching what's typed in the search box.
+    get Search "/search" async (q: string?, auction: Auctioneer) => Rows(await auction.List(q), DateTime.UtcNow);
+
+    get NewLot "/lots/new" () => NewLotForm(None, None);
+
+    /// Lists the lot, and (for htmx) goes to it; or shows the form again with what's wrong.
+    post CreateLot "/lots" async (form: Form<NewLot>, auction: Auctioneer, htmx: HtmxRequest) => match form.Result {
+        Ok(offer) => {
+            let id = await auction.Open(offer, DateTime.UtcNow);
+            htmx.Redirect(SiteRoutes.Lot(id));
+            <p class="card">Listed. <a href={SiteRoutes.Lot(id)}>See it</a>.</p>
+        },
+        Err(errors) => NewLotForm(Some(form), Some(errors)),
+    };
+
+    get Lot "/lots/{id:int}" async (id: LotId, auction: Auctioneer) => match await auction.Find(id) {
+        Some(lot) => Some(LotPage(await lot.Show(), DateTime.UtcNow)),
+        None => None,
+    };
+
+    /// A bid: the bidding panel again, saying how it went. Everyone watching the lot sees the new price at once.
+    post Bid "/lots/{id:int}/bids" async (id: LotId, form: Form<NewBid>, auction: Auctioneer) => match await auction.Find(id) {
+        Some(lot) => Some(match form.Result {
+            Ok(bid) => match await lot.Bid(bid, DateTime.UtcNow) {
+                Ok(view) => BidPanel(view, Some(bid.bidder), None, Some("You're the highest bidder.")),
+                Err(refusal) => BidPanel(await lot.Show(), Some(bid.bidder), None, Some(refusal.Message)),
+            },
+            Err(errors) => BidPanel(await lot.Show(), Some(form.Text("bidder")), Some(errors), None),
+        }),
+        None => None,
+    };
+}
+
+/// The app, listening on `url`, and its auctioneer (which the tests drive directly too).
+fn BuildApp(url: string) => (app: WebApplication, auction: Auctioneer) {
+    let builder = WebApplication.CreateBuilder();
+    builder.Logging.ClearProviders();
+    builder.Services.AddAntiforgery();
+    let auction = Auctioneer.Spawn(Broadcast);
+    builder.Services.AddSingleton<Auctioneer>(auction);
+    let urls: string[] = [url];
+    builder.WebHost.UseUrls(urls);
+    let app = builder.Build();
+    Site(app);
+    (app, auction)
+}

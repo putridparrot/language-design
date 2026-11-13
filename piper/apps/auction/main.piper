@@ -1,0 +1,49 @@
+// Starting the auction: the app, the clock that tells the lots the time, and a few lots to bid on.
+namespace Auction;
+
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Hosting;
+
+args Options "Auction: lots listed and bid on live, in the browser." {
+    port: int = 5090 "Where to serve it";
+    empty: bool "Start with no lots (without it, a few are listed to bid on)";
+}
+
+async fn Main(args: string[]) {
+    let options = Options.FromArgs(args);
+    let (app, auction) = BuildApp($"http://localhost:{options.port}");
+    if !options.empty {
+        await ListDemoLots(auction, DateTime.UtcNow);
+    }
+    await app.StartAsync();
+    Print($"Auction on http://localhost:{options.port}; Ctrl+C to stop.");
+    using let stop = CancellationTokenSource();
+    let clock = KeepTime(auction, stop.Token);
+    await app.WaitForShutdownAsync();
+    stop.Cancel();
+    await clock;
+}
+
+/// Tells the lots the time once a second (their countdowns move, and they end on time), until stopped.
+async fn KeepTime(auction: Auctioneer, stop: CancellationToken) {
+    while !stop.IsCancellationRequested {
+        auction.Tick(DateTime.UtcNow);
+        try {
+            await Task.Delay(1000, stop);
+        } catch (_: OperationCanceledException) {
+        }
+    }
+}
+
+async fn ListDemoLots(auction: Auctioneer, now: DateTime) {
+    let lots = [
+        NewLot("Brass carriage clock", "Victorian, keeps good time, with its key.", "Ada", 40m, Some(60m), 5),
+        NewLot("Pair of blue glass vases", "Hand blown, 30cm tall. Not a chip on them.", "Alan", 15m, None, 3),
+        NewLot("Oak writing desk", "Three drawers, leather top, some wear.", "Grace", 120m, Some(200m), 10),
+    ];
+    for lot in lots {
+        await auction.Open(lot, now);
+    }
+}

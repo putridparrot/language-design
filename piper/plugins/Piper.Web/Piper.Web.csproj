@@ -12,6 +12,17 @@
     <OutDir>$(MSBuildThisFileDirectory)bin\runtime\</OutDir>
   </PropertyGroup>
 
+  <!--
+    htmx 2.0.4 and its server-sent events extension, htmx-ext-sse 2.2.2 (both Zero-Clause BSD, their licences beside
+    them), served by apps at /_piper/htmx.min.js and /_piper/htmx-sse.js: see PiperHtmx.cs and PiperLive.cs.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\htmx.min.js" LogicalName="Piper.Web.htmx.min.js" />
+    <EmbeddedResource Include="Resources\htmx-sse.js" LogicalName="Piper.Web.htmx-sse.js" />
+    <None Include="Resources\htmx.LICENSE.txt" />
+    <None Include="Resources\htmx-sse.LICENSE.txt" />
+  </ItemGroup>
+
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <!-- A program has its own Piper.Runtime; this must use that one, not a copy. -->

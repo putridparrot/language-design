@@ -59,6 +59,7 @@ property        = "prop" ( IDENT | "this" "[" parameters "]" )                  
 accessor        = [ "private" | "protected" ] ( "get" | "set" | "init" ) ( ";" | "=" expression ";" | block ) ;   (* prop, get, set and init are keywords only here *)
 constructor     = IDENT "(" [ parameters ] ")" [ ":" "this" "(" [ arguments ] ")" ] block ;   (* IDENT is the class's name *)
 requires        = "requires" condition { "," condition } ;    (* condition: an expression without assignment, of type bool *)
+condition       = expression [ "else" expression ] ;           (* else: the message when it fails, a string *)
 enum            = "enum" IDENT [ typeParameters ] "{" [ variant { "," variant } [ "," ] ] "}" ;
 variant         = IDENT [ "(" [ parameters ] ")" ] ;
 trait           = "trait" IDENT [ typeParameters ] [ ":" type { "," type } ] "{" { attributes ( function | property ) } "}" ;   (* ": Named" inherits *)
@@ -113,7 +114,12 @@ arguments       = argument { "," argument } [ "," ] ;
 argument        = [ IDENT ":" ] ( expression | "out" [ "let" | "mut" ] IDENT | "ref" expression ) ;   (* name: a named argument; out and ref: only for .NET out and ref parameters *)
 primary         = INT | DOUBLE | CHAR | STRING | "true" | "false" | "null" | IDENT [ typeArguments ] | "this"
                 | "(" expression ")" | tuple | block | if | match | lambda | collection | recordSpread | "throw" expression
-                | "typeof" "(" type ")" | "nameof" "(" expression ")" ;   (* keywords only before "(", as in C# *)
+                | "typeof" "(" type ")" | "nameof" "(" expression ")"    (* keywords only before "(", as in C# *)
+                | markup ;
+markup          = [ "<!doctype" TEXT ">" ] element ;             (* where an expression starts; see Markup *)
+element         = "<" NAME { attribute } ( "/>" | ">" { TEXT | element | hole } "</" NAME ">" ) | "<>" { TEXT | element | hole } "</>" ;
+attribute       = NAME [ "=" ( '"' TEXT '"' | "'" TEXT "'" | hole ) ] ;
+hole            = "{" [ expression [ ":" FORMAT ] | "for" ( IDENT | parenthesizedDesignation ) "in" expression block ] "}" ;
 index           = postfix "[" ( expression { "," expression } | "^" expression | sliceRange ) "]" ;
 sliceRange      = [ indexEnd ] ( ".." | "..<" ) [ indexEnd ] ;   (* ".." includes its end, "..<" excludes it; "..<" needs one *)
 indexEnd        = [ "^" ] expression ;                          (* "^n": counting from the end *)
@@ -874,7 +880,7 @@ points.Add(Point(1, 2));                   // and can hold Piper values
   if !int.TryParse(text, out let n) { return; }
   Print(n * 2);
   ```
-  Where .NET may write null (`out string?`), the variable is optional. `[MaybeNullWhen(false)]`, as on `Dictionary.TryGetValue`, means null only when the call returns false, so where it returned true the variable is a plain value: in the body of `if names.TryGetValue(key, out let name) { Print(name.Length); }` (or a `while`, or later in an `&&` chain), and after a guard `if !names.TryGetValue(key, out let name) { return; }`. Anywhere else it is optional. Piper functions have no `out` parameters; they return several values as a [tuple](#tuples-and-deconstruction).
+  Where .NET may write null (`out string?`), the variable is optional. `[MaybeNullWhen(false)]`, as on `Dictionary.TryGetValue` (or `[NotNullWhen(true)]` on an `out T?`, as on `Version.TryParse` and `HttpHeaders.TryGetValues`), means null only when the call returns false, so where it returned true the variable is a plain value: in the body of `if names.TryGetValue(key, out let name) { Print(name.Length); }` (or a `while`, or later in an `&&` chain), and after a guard `if !names.TryGetValue(key, out let name) { return; }`. Anywhere else it is optional. Piper functions have no `out` parameters; they return several values as a [tuple](#tuples-and-deconstruction).
 - **`in` parameters** take ordinary arguments.
 - **`ref` parameters** take `ref x`, where x is a `mut` variable of exactly the parameter's type, or an array element: `Interlocked.Increment(ref counter)`, `Array.Resize(ref items, 10)`. .NET's nullability on a ref parameter is ignored, since the variable already has a type.
 - **Operators** a .NET type declares work as in C#: `date > other` on DateOnly, `end - start` on DateTime (a TimeSpan), `span += TimeSpan.FromHours(1)`, BigInteger arithmetic.
@@ -902,6 +908,66 @@ JsonSerializer.Serialize(Todo(2, Some("x"), Status.Closed("done"))) // {"id":2,"
 - **Enums:** a variant without fields is its name (`"Open"`), and one with fields an object naming it in `"kind"`, then its fields. Generic enums work too (`Tree<int>`). A variant's field that JSON would also call `kind` can't be told apart from the variant's name, so reading or writing such an enum throws an `InvalidOperationException` saying which field; give it another JSON name (`[JsonPropertyName("type")] kind: string`). An enum with a `[JsonConverter(…)]` of its own uses that instead.
 - **Invariants:** JSON that a record's `requires` rejects is a `JsonException` with the invariant's message, as any other bad JSON is, rather than an `ArgumentException`. A web API answers it with 400 rather than 500. Otherwise such a record is JSON as any other: its fields' attributes (`[JsonPropertyName("sku")]`, `[JsonIgnore]`), their defaults and the serializer's options all apply. (C# gets a converter nested in the record, which lets System.Text.Json read a copy of its fields and then makes the record from them.) A record with a `[JsonConverter(…)]` of its own uses that instead.
 - **Text:** `Option<T>` has a static `TryParse`, so a framework reading a value from text (a query string, a route) gets None for no text, and otherwise parses a T: a string, a .NET enum, or anything with a `TryParse` (numbers, `bool`, dates, `Guid`).
+
+### Markup
+
+HTML is written in expressions, as JSX has it, and is a value of type `Html`:
+
+```piper
+fn Badge(text: string, tone: string = "info") => Html = <span class={$"badge {tone}"}>{text}</span>;
+
+fn Row(lot: Lot) => Html =
+    <tr data-id={lot.id}>
+        <td><a href={$"/lots/{lot.id}"}>{lot.title}</a></td>
+        <td>{lot.current:C}</td>
+        <td>{match lot.state {
+            Open(ends) => <>closes {ends:d}</>,
+            Sold(price) => <Badge text={$"sold for {price:C}"} tone="done" />,
+            Withdrawn => <em>withdrawn</em>,
+        }}</td>
+    </tr>;
+
+fn Table(lots: List<Lot>) => Html =
+    <table>
+        {for lot in lots { Row(lot) }}
+        {if lots.Count == 0 { <tr><td>Nothing for sale.</td></tr> }}
+    </table>;
+```
+
+- **Where markup starts:** a `<` followed by a letter (or `<>`, a fragment) where an expression starts: after `=`, `=>`,
+  `(`, `[`, `{`, `,`, `:`, `return`, `??`, `|>`, `==` or `!=`. So `a < b`, `List<int>` and a relational pattern
+  (`< 0`) aren't markup.
+- **Holes,** `{expression}`, are escaped by their type, so markup can't be injected by accident:
+  - an `Html` (a nested literal, a component's result) goes in as it is;
+  - a `string` is text, escaped (`<` becomes `&lt;`);
+  - a number, date, `Guid`, newtype of one, or anything else formattable is its text, in the current culture, and can
+    take a format: `{price:C}`, `{ends:yyyy-MM-dd}`;
+  - an optional one renders nothing for None, and a list of `Html` its items one after another;
+  - anything else is an error (PIP0509) that says what can go in markup: a `Task` asks whether you meant to await it,
+    a `bool` suggests an `if`, a function whether you meant to call it.
+- **`for` and `if` in holes:** `{for x in xs { … }}` renders its body (a block whose value is `Html`) for each item,
+  and can deconstruct (`{for (name, count) in totals { … }}`). An `if` without an `else` renders nothing when false.
+  `match` and `if … else` work as anywhere, each arm giving `Html`.
+- **Attributes:** `name="text"` as written; `name={expression}` escaped, with a number or newtype in the invariant
+  culture (as code reads attributes) and None leaving the attribute out; `name={flag}`, a `bool`, is HTML's boolean
+  attribute, written alone when true and left out when false; and `name` alone is present.
+- **Components** are functions returning `Html`, used as tags whose name starts with a capital (or has a dot:
+  `<Ui.Card>`): `<Badge text="x" />` is `Badge(text: "x")`, with the attributes as named arguments (so their defaults
+  apply), and the children, if any, as a `children: Html` argument.
+- **Forms:** a `<form method="post">` gets a hidden anti-forgery field when a web handler renders it, which the web
+  plugin's `Form<T>` checks (see the web plugin).
+- **Elements:** HTML's void elements (`<br>`, `<img …>`, `<input …>`) need no closing tag. Any other element written
+  `<div />` is written out as `<div></div>`, as HTML has no self-closing tags. `<script>` and `<style>` hold code, read
+  as written up to their closing tag, braces and all. A literal can start with `<!doctype html>`, for a whole page.
+- **Text:** on one line, it's kept as written; whitespace running over lines goes, and the lines join with a space, as
+  in JSX, so markup can be indented freely. Text can't contain `<`, `{` or `}`: write `&lt;`, or a hole such as
+  `{"{"}`. HTML comments are left out.
+- **Mistakes** are reported where they are (PIP0114): an unclosed or mismatched tag (an unclosed `<p>` in a `<div>` is
+  one error, not a cascade), a `<` in text, an attribute of a component that isn't a parameter name (`data-x`).
+- **The value:** `Html` is markup, as a `string` is text. `html.ToString()` is the markup, `Html.Empty` is none, and
+  `Html.Raw(markup)` is the one way to make markup from a string, for HTML from somewhere trusted. Two are equal when
+  their markup is. A web handler returning `Html` (or an Option or Result of it) answers with a page (see the web
+  plugin).
 
 ### Attributes
 
@@ -1474,6 +1540,21 @@ class Grid(width: int, height: int) requires width > 0, height > 0 { … }
   `Invariant failed: n != 0 (n = 0)` rather than dividing by zero. A class's conditions are over the arguments it was
   made with: fields can change afterwards, and they aren't checked again. A derived class's and its base class's are
   each checked, the derived class's first.
+- **Messages:** `else` after a condition gives the message to fail with, for a person rather than a developer:
+
+  ```piper
+  record NewLot(title: string, startPrice: decimal, reserve: decimal?)
+      requires title.Trim().Length > 0 else "Give the lot a title."
+      requires (reserve ?? startPrice) >= startPrice else $"The reserve can't be below {startPrice:C}.";
+  ```
+
+  The message is a string (an interpolated one can name the fields or parameters), built only when the check fails.
+  The failure is then a `PiperContractException` (an `ArgumentException`, from Piper.Runtime) whose `Message` is the
+  message as written, whose `Field` is the field or parameter the condition is about, when it mentions just one (`title`
+  above; none for the reserve's, which mentions two), and whose `Condition` is what failed, for a developer
+  (`Invariant failed: … (…)`). A form read with the web plugin's `Form<T>` shows it beside that field, or for the whole
+  form; JSON a record's invariant rejects is a `JsonException` with it; and a constant call breaking the condition is
+  reported with it. A condition without `else` fails as described above.
 - **At compile time** a call whose arguments are constants that break a condition is an error (PIP0340), such as
   `Sqrt(-1.0)`, `Percentage(150)` or `Grid(0, 5)`. Calls that can't be decided this way are left to run time.
 - **Not yet:** trait methods (PIP0341), enum variants and lambdas can't have `requires` clauses.
@@ -1518,6 +1599,7 @@ As in C#, functions and methods are PascalCase (`Print`, `Main`, `Area()`), and 
 | Piper | C# |
 |---|---|
 | `record P(x: int)`, `record struct V(x: int)` | `internal sealed record P(int x);`, `internal readonly record struct V(int x);` (`public` when declared `public`) |
+| `<td class="x">{title}</td>` | `PiperHtml.Concat(PiperHtml.Trusted("<td class=\"x\">"), PiperHtml.Hole(title), PiperHtml.Trusted("</td>"))`; an attribute's hole is `PiperHtml.Attribute("name", value)`, `{for x in xs { … }}` is `PiperHtml.Each(xs, (x) => …)`, and `<Card title="t" />` is `Card(title: "t")` |
 | `newtype IssueId = int;` | `[PiperNewtype] internal readonly record struct IssueId(int @value) : IComparable<IssueId>, IFormattable`, with `ToString()` giving the value, `Parse` and a `TryParse` calling it, and a nested JSON converter writing the value |
 | `class A(x: int): B(x), Named { mut n = x; public let m = 1; … }` | `internal partial class A(int x) : B(x), Named { private int n = x; public int m { get; } = 1; … }` |
 | `static mut count = 0;`, `public static let Empty = A(0);` in a class | `private static int count = 0;`, `public static A Empty { get; } = new A(0);`, used as `A.count` |

@@ -1,0 +1,85 @@
+// The auction's actors: one per lot, which takes its bids one at a time, and the auctioneer, which keeps the
+// catalogue and tells the lots the time.
+namespace Auction;
+
+using System;
+using System.Collections.Immutable;
+using System.Linq;
+using System.Threading.Tasks;
+
+/// What happened to a lot, for whoever shows it: the web pages, told live (see web/live.piper).
+enum LotChange {
+    /// A bid was taken; `outbid` is who led before, if it was someone else.
+    BidTaken(lot: LotView, outbid: string?),
+    /// Time passed: the countdown moved, and `ended` says whether it just ended.
+    Ticked(lot: LotView, ended: bool),
+}
+
+/// The lot as everyone sees it, from what it was offered as and its life so far.
+fn ViewOf(id: LotId, offer: NewLot, life: LotLife) => LotView = LotView(
+    id, offer.title.Trim(), offer.description, offer.seller.Trim(), offer.startPrice, offer.reserve,
+    life.current, life.leader, life.bids, life.closesAt, life.State);
+
+/// One lot. It holds the lot's life and takes one message at a time, so bids arriving together (from every page, on
+/// every thread) are taken in turn: each is checked against the bid before it, and no two people lead at once.
+actor Lot(id: LotId, offer: NewLot, opened: DateTime, changed: (LotChange) => unit) {
+    let life = LotLife(offer.startPrice, offer.reserve, opened.AddMinutes(offer.minutes));
+
+    on Bid(bid: NewBid, at: DateTime) => Result<LotView, BidRefusal> {
+        let minimum = Minimum(offer.startPrice, life.current);
+        let bidder = bid.bidder.Trim();
+        // Bidding ends at its time, even before the clock's next tick has told the lot so.
+        if at >= life.closesAt || !life.CanBid(bidder, bid.amount, at) {
+            Err(BidRefusal.Ended)
+        } else if bid.amount < minimum {
+            Err(BidRefusal.TooLow(minimum))
+        } else {
+            let previous = life.leader;
+            life.Bid(bidder, bid.amount, at);
+            let view = ViewOf(id, offer, life);
+            changed(LotChange.BidTaken(view, if previous is Some(leader) && leader != bidder { Some(leader) } else { None }));
+            Ok(view)
+        }
+    }
+
+    on Tick(at: DateTime) {
+        if !life.IsFinal {
+            life.Tick(at);
+            changed(LotChange.Ticked(ViewOf(id, offer, life), life.IsFinal));
+        }
+    }
+
+    on Show() => LotView { ViewOf(id, offer, life) }
+}
+
+/// The catalogue: it opens lots, finds them, lists them, and passes the time on to them.
+actor Auctioneer(changed: (LotChange) => unit) {
+    mut lots = ImmutableDictionary.Create<LotId, Lot>();
+    mut next = 1;
+
+    on Open(offer: NewLot, at: DateTime) => LotId {
+        let id = LotId(next);
+        next += 1;
+        lots = lots.Add(id, Lot.Spawn(id, offer, at, changed));
+        id
+    }
+
+    on Find(id: LotId) => Lot? {
+        if lots.TryGetValue(id, out let lot) { Some(lot) } else { None }
+    }
+
+    /// The lots whose titles have `text` in them (all, without it), newest first.
+    on List(text: string?) => ImmutableList<LotView> {
+        let views = await Task.WhenAll(lots.Values.Select(lot => lot.Show()));
+        views
+            .Where(v => text is None || v.title.Contains(text ?? "", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(v => v.id)
+            .ToImmutableList()
+    }
+
+    on Tick(at: DateTime) {
+        for lot in lots.Values {
+            lot.Tick(at);
+        }
+    }
+}

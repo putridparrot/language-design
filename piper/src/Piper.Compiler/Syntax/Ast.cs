@@ -496,6 +496,12 @@ public sealed record ContinueStatementSyntax(TextSpan Span, Token Keyword) : Sta
 
 public abstract record ExpressionSyntax(TextSpan Span) : SyntaxNode(Span);
 
+/// <summary>
+/// <c>requires condition else "message"</c>: a `requires` clause with the message to give when it fails, which is
+/// evaluated only then. It appears only among a declaration's `Requires`.
+/// </summary>
+public sealed record ContractMessageSyntax(TextSpan Span, ExpressionSyntax Condition, ExpressionSyntax Message) : ExpressionSyntax(Span);
+
 public sealed record LiteralExpressionSyntax(TextSpan Span, Token Literal, object? Value) : ExpressionSyntax(Span);
 
 public sealed record InterpolatedStringExpressionSyntax(TextSpan Span, ImmutableArray<InterpolatedStringPartSyntax> Parts)

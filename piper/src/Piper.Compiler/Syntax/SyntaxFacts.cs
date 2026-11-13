@@ -211,6 +211,7 @@ public static class SyntaxFacts
             TokenKind.DoubleLiteral => "a floating-point literal",
             TokenKind.CharLiteral => "a character literal",
             TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral => "a string literal",
+            TokenKind.MarkupLiteral => "markup",
             _ => "an invalid token",
         };
 }

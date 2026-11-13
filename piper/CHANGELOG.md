@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+- **apps/auction:** an auction site proving Piper's web UI: markup pages, typed links, forms read into records with
+  `requires` messages, htmx, and live pages (each bid, and each lot's countdown, pushed to every page watching it). Each
+  lot is an actor taking its bids one at a time, and its life a state machine. Tried in a browser as well as tested.
+  From it:
+  - **Actors' ask handlers infer from their declared result** (both actor plugins): `Ok(view)`, `Err(…)` and `None` in
+    a handler's body take their type from its `=> Result<…>`, as in a function.
+
+- **Markup:** HTML in expressions, as JSX has it, of a new builtin type `Html`: `<td><a href={url}>{title}</a></td>`.
+  Holes are escaped by their type (a string is text, an `Html` is markup, a number takes a format, `{price:C}`), and
+  what can't go in markup (a Task, a bool, a function) is an error saying so. Components are functions used as tags
+  (`<Badge text="x" />`, children as a `children` argument); `{for x in xs { … }}` and `if` without `else` work in
+  holes; `name={flag}` is a boolean attribute; void elements, `<script>` and `<style>` and `<!doctype html>` are HTML's.
+  It compiles to calls to Piper.Runtime's `PiperHtml`, and a web handler returning `Html` answers with a page.
+- **Live pages (web plugin):** `Live.Publish("lot-7", "price", fragment)` pushes markup to every page watching the
+  topic, which htmx's server-sent events extension (htmx-ext-sse 2.2.2, Zero-Clause BSD, loaded by `<Htmx.Script />`)
+  swaps in: `<section hx-ext="sse" sse-connect={Live.Url("lot-7")}><span sse-swap="price">…</span></section>`. Apps
+  serve the connections at `/_piper/live`, with keep-alives, and drop a slow page's oldest updates rather than wait.
+  Checked in a browser (headless Edge): htmx's swaps and pushed updates both arrive.
+- **htmx (web plugin):** apps serve htmx 2.0.4 (Zero-Clause BSD, in Piper.Web) at `/_piper/htmx.min.js`, which
+  `<Htmx.Script />` loads with the anti-forgery token sent as a header on htmx's requests. `endpoints Site layout Page`
+  puts each endpoint's markup in `Page(body)` for a browser, and sends the fragment alone when htmx asks. An
+  `HtmxRequest` handler parameter reads htmx's request headers and sets its response ones (`Redirect`, `PushUrl`,
+  `TriggerEvent`, `Retarget`, …).
+- **`[NotNullWhen(true)] out T?`** (`Version.TryParse`, `HttpHeaders.TryGetValues`) gives a plain value where the call
+  returned true, as `[MaybeNullWhen(false)]` already did.
+- **Messages for `requires`:** `requires title.Trim().Length > 0 else "Give the lot a title."` fails with that message
+  (any string, built only on failure), as a `PiperContractException` naming the field or parameter the condition is
+  about when it mentions just one. Forms show it beside that field, JSON reports it, and a constant call breaking it
+  is reported with it. Conditions without `else` are unchanged.
+- **Typed links and forms (web plugin):** a named endpoint (`get Lot "/lots/{id:int}" (id: LotId) => …`) has a route
+  function, `SiteRoutes.Lot(id: LotId) => string`, so links are checked against the routes and their types. A handler
+  taking a `Form<T>` gets a posted form read into a record: `form.Result` is `Ok(record)`, or `Err(errors)` with a
+  message per field (missing, or not a value of its type) and for a failed `requires`. Every `<form method="post">` in
+  markup carries an anti-forgery token, which `Form<T>` checks.
+- **Piper.Runtime's `Option` and `Result` from .NET are Piper's:** a library member returning them (such as
+  `form.Result`) is matched with `Some`/`None` and `Ok`/`Err`, as Piper's own are.
+- **Generic .NET methods' constraints are checked:** an overload whose inferred type arguments break its constraints
+  (`where T : IFormattable` for an Option) is passed over, as C# does, rather than chosen and then rejected by C# as an
+  internal compiler error.
+
+- **`piper run --watch` reloads the browser:** after a restart, a web program's open pages reload once it answers
+  again. Each watched run of a program using ASP.NET Core loads Piper.Watch (beside piper), an ASP.NET Core hosting
+  startup putting a small script in the HTML pages a browser asks for, which listens to an event stream the watcher
+  serves on loopback. Only pages are touched: JSON, files and event streams the program serves pass through unbuffered.
+
 - **Newtypes:** `newtype IssueId = int;` makes a distinct type over a value, which can't be mixed up with its type or
   another newtype over it (`FindIssue(ProjectId(5))` is an error). It's a record struct with one field, `value`, so it
   costs nothing at run time, and takes `requires` (`newtype Email = string requires value.Contains("@");`). It stands for

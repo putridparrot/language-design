@@ -11,7 +11,7 @@ namespace Piper.Syntax;
 /// within the <see cref="SourceText"/>, so a lexer over a sub-range (an interpolation hole)
 /// reports diagnostics at the right place.
 /// </summary>
-public sealed class Lexer
+public sealed partial class Lexer
 {
     private readonly SourceText _source;
     private readonly DiagnosticBag _diagnostics;
@@ -61,6 +61,13 @@ public sealed class Lexer
     }
 
     public Token NextToken()
+    {
+        var token = ScanToken();
+        _previous = token.Kind;
+        return token;
+    }
+
+    private Token ScanToken()
     {
         SkipTrivia();
 
@@ -121,6 +128,8 @@ public sealed class Lexer
             case '!': return Peek(1) == '=' ? Punctuation(TokenKind.BangEquals, 2) : Punctuation(TokenKind.Bang, 1);
             case '^': return Peek(1) == '=' ? Punctuation(TokenKind.CaretEquals, 2) : Punctuation(TokenKind.Caret, 1);
             case '~': return Punctuation(TokenKind.Tilde, 1);
+            case '<' when StartsMarkup():
+                return ScanMarkup();
             case '<':
                 return Peek(1) switch
                 {

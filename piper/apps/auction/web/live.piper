@@ -1,0 +1,40 @@
+// What changes on the pages as lots change: each change to a lot is pushed, as fragments, to the pages watching it.
+namespace Auction;
+
+using System;
+using Piper.Web;
+
+/// What a lot's page watches.
+fn LotTopic(id: LotId) => string = $"lot-{id}";
+
+/// What the lot list watches; each row swaps in its own event.
+fn ListTopic() => string = "lots";
+
+fn RowEvent(id: LotId) => string = $"lot-{id}";
+
+/// What a bidder's panel watches, for their being outbid on a lot.
+fn OutbidTopic(id: LotId, bidder: string) => string = $"outbid-{id}-{bidder.Trim().ToLowerInvariant()}";
+
+/// The lots' changes, pushed to the pages: given to the auctioneer, which gives it to each lot.
+fn Broadcast(change: LotChange) {
+    let now = DateTime.UtcNow;
+    match change {
+        BidTaken(lot, outbid) => {
+            Live.Publish(LotTopic(lot.id), "price", Price(lot));
+            Live.Publish(LotTopic(lot.id), "status", Status(lot, now));
+            Live.Publish(LotTopic(lot.id), "bids", Bids(lot));
+            Live.Publish(ListTopic(), RowEvent(lot.id), RowCells(lot, now));
+            if outbid is Some(who) {
+                Live.Publish(OutbidTopic(lot.id, who), "outbid",
+                    <>You've been outbid: {lot.leader ?? "someone"} bid {Money(lot.current ?? 0m)}.</>);
+            }
+        },
+        Ticked(lot, ended) => {
+            Live.Publish(LotTopic(lot.id), "status", Status(lot, now));
+            Live.Publish(ListTopic(), RowEvent(lot.id), RowCells(lot, now));
+            if ended {
+                Live.Publish(LotTopic(lot.id), "price", Price(lot));
+            }
+        },
+    }
+}

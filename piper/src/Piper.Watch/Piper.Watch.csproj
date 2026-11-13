@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Browser reload for watched runs (piper run with its watch option): an ASP.NET Core hosting startup that puts a small script in each HTML page
+    a browser asks for, which reloads the page when the watcher has restarted the program. It ships beside piper.dll,
+    and `piper run` adds it to a watched program's references when the program uses ASP.NET Core; nothing else loads it.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Piper.Watch</RootNamespace>
+    <!-- One place whatever the configuration, so the CLI can copy it beside itself. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\runtime\</OutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>

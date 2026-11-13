@@ -1041,7 +1041,14 @@ public sealed record BoundAttribute(
 /// A `requires` condition: <see cref="Condition"/> bound in the function's (or record's) scope, its source
 /// <see cref="Text"/>, and the parameters (or fields) it mentions, whose values a failure reports.
 /// </summary>
-public sealed record BoundContract(BoundExpression Condition, string Text, ImmutableArray<VariableSymbol> Mentioned, TextSpan Span);
+public sealed record BoundContract(BoundExpression Condition, string Text, ImmutableArray<VariableSymbol> Mentioned, TextSpan Span)
+{
+    /// <summary><c>requires … else message</c>: the message (a string) to fail with, evaluated only when the condition fails.</summary>
+    public BoundExpression? Message { get; init; }
+
+    /// <summary>The parameter or field the condition is about: the one it mentions, if it mentions just one.</summary>
+    public string? Subject { get; init; }
+}
 
 /// <summary>A hole of an interpolated string with C#'s alignment and format: <c>{price,10:C}</c>.</summary>
 public sealed class BoundFormattedExpression(BoundExpression value, int? alignment, string? format) : BoundExpression

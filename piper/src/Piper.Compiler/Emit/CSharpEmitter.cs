@@ -567,7 +567,7 @@ public sealed partial class CSharpEmitter
         // initializers run before the base constructor (and before the base arguments are evaluated).
         var checks = string.Join(" && ", @class.Invariants.Select(contract =>
             $"global::Piper.Runtime.PiperContract.Invariant({Expr(contract.Condition, AssignmentPrecedence)}, {Literal(contract.Text)}, " +
-            $"{Expr(Piper.Binding.Binder.ContractValues(contract), AssignmentPrecedence)})"));
+            $"{Expr(Piper.Binding.Binder.ContractValues(contract), AssignmentPrecedence)}{ContractMessage(contract)})"));
         var firstStored = @class.Fields.FirstOrDefault(f => f.Initializer is not null);
         if (checks.Length > 0 && firstStored is null)
             _writer.WriteLine($"private readonly bool __PiperInvariants = {checks};");
@@ -828,7 +828,7 @@ public sealed partial class CSharpEmitter
         foreach (var contract in record.Invariants)
         {
             var values = Expr(Piper.Binding.Binder.ContractValues(contract), AssignmentPrecedence);
-            value = $"global::Piper.Runtime.PiperContract.Invariant({value}, {Expr(contract.Condition, AssignmentPrecedence)}, {Literal(contract.Text)}, {values})";
+            value = $"global::Piper.Runtime.PiperContract.Invariant({value}, {Expr(contract.Condition, AssignmentPrecedence)}, {Literal(contract.Text)}, {values}{ContractMessage(contract)})";
         }
         foreach (var field in record.Fields)
         {
@@ -1957,6 +1957,13 @@ public sealed partial class CSharpEmitter
         receiver is null ? TypeName(container) : Expr(receiver, PrimaryPrecedence);
 
     /// <summary>A call to one of the helpers that turn .NET's null into None and back.</summary>
+    /// <summary>
+    /// For an invariant with <c>else "…"</c>: the field it's about and its message, as a lambda (built only when the
+    /// check fails); nothing otherwise, so invariants without one are emitted as they were.
+    /// </summary>
+    private string ContractMessage(BoundContract contract) =>
+        contract.Message is { } message ? $", {Literal(contract.Subject ?? "")}, () => {Expr(message, AssignmentPrecedence)}" : "";
+
     private string NullableBoundary(BoundNullableBoundaryExpression boundary)
     {
         // `Console.WriteLine(xs?.Count)`: an int? passed as object? is boxed, as ToNullableReference needs a class.
@@ -1972,6 +1979,8 @@ public sealed partial class CSharpEmitter
             return $"global::System.Console.WriteLine({Expr(call.Arguments[0], ConditionalPrecedence)})";
         if (call.Function == BuiltinFunctions.Assert)
             return $"global::Piper.Runtime.PiperAssert.True({Arguments(call.Arguments)})";
+        if (call.Function == BuiltinFunctions.Require && call.Arguments.Length == 5)
+            return $"global::Piper.Runtime.PiperContract.Require({Arguments(call.Arguments[..4])}, () => {Expr(call.Arguments[4], AssignmentPrecedence)})";
         if (call.Function == BuiltinFunctions.Require)
             return $"global::Piper.Runtime.PiperContract.Require({Arguments(call.Arguments)})";
         if (call.Function == BuiltinFunctions.AssertEqual)

@@ -1,0 +1,184 @@
+// The auction's pages, as markup: the layout, the lot list, a lot's page with its bidding, and the form to sell
+// something. Parts of them are pushed to as lots change (see live.piper), so each part is a function both use.
+namespace Auction;
+
+using System;
+using System.Collections.Immutable;
+using System.Globalization;
+using System.Linq;
+using Piper.Web;
+
+/// The layout every page is put in (htmx asks for fragments, and gets them alone).
+fn Page(body: Html) => Html =
+    <!doctype html>
+    <html lang="en">
+        <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <title>Auction</title>
+            <Htmx.Script />
+            <style>
+                :root { color-scheme: light dark; --ink: #1b1f24; --muted: #5f6b7a; --line: #dde2e8; --page: #f6f7f9;
+                        --card: #fff; --accent: #2563eb; --good: #15803d; --warn: #a16207; --bad: #b91c1c; }
+                @media (prefers-color-scheme: dark) {
+                    :root { --ink: #e6e9ee; --muted: #94a0b0; --line: #2c333d; --page: #111418; --card: #1a1f26;
+                            --accent: #6ea0ff; --good: #4ade80; --warn: #facc15; --bad: #f87171; }
+                }
+                * { box-sizing: border-box; }
+                body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.5 system-ui, "Segoe UI", sans-serif; }
+                header { display: flex; gap: 18px; align-items: baseline; padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
+                header .brand { font-weight: 700; font-size: 18px; color: var(--ink); text-decoration: none; }
+                main { max-width: 960px; margin: 0 auto; padding: 20px 16px 48px; }
+                a { color: var(--accent); }
+                .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+                table { width: 100%; border-collapse: collapse; }
+                th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+                th { color: var(--muted); font-weight: 500; font-size: 13px; }
+                .price { font-size: 26px; font-weight: 700; }
+                .price small, .muted { color: var(--muted); font-size: 13px; font-weight: 400; }
+                .open { color: var(--good); } .closing { color: var(--warn); font-weight: 600; } .ended { color: var(--muted); }
+                label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 2px; }
+                input, textarea { width: 100%; max-width: 420px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
+                                  background: var(--page); color: var(--ink); font: inherit; }
+                button { margin-top: 12px; padding: 8px 16px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; font: inherit; cursor: pointer; }
+                .error { color: var(--bad); font-size: 13px; }
+                .notice { color: var(--good); font-weight: 600; }
+                .outbid { color: var(--bad); font-weight: 600; }
+                ul.bids { list-style: none; padding: 0; margin: 0; }
+                ul.bids li { padding: 4px 0; border-bottom: 1px solid var(--line); }
+                .columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 16px; }
+            </style>
+        </head>
+        <body>
+            <header>
+                <a class="brand" href={SiteRoutes.Home()}>Auction</a>
+                <a href={SiteRoutes.NewLot()}>Sell something</a>
+            </header>
+            <main>{body}</main>
+        </body>
+    </html>;
+
+/// Money, as the auction shows it.
+fn Money(amount: decimal) => string = "£" + amount.ToString("N2", CultureInfo.InvariantCulture);
+
+/// How long until `ends`: "2h 05m", "4m 03s", "12s".
+fn TimeLeft(ends: DateTime, now: DateTime) => string {
+    let left = if ends > now { ends - now } else { TimeSpan.Zero };
+    if left.TotalHours >= 1.0 {
+        return $"{(int)left.TotalHours}h {left.Minutes:D2}m";
+    }
+    if left.TotalMinutes >= 1.0 {
+        return $"{left.Minutes}m {left.Seconds:D2}s";
+    }
+    $"{left.Seconds}s"
+}
+
+/// Where a lot is in its life, and how long it has left.
+fn Status(lot: LotView, now: DateTime) => Html = match lot.state {
+    Open => <span class="open">{TimeLeft(lot.ends, now)} left</span>,
+    Closing => <span class="closing">Closing: {TimeLeft(lot.ends, now)} left</span>,
+    Sold => <span class="ended">Sold to {lot.leader ?? "?"} for {Money(lot.current ?? 0m)}</span>,
+    Unsold => <span class="ended">Ended unsold{if lot.current is Some(_) { <> (reserve not met)</> }}</span>,
+};
+
+/// The price: the highest bid, or the starting price.
+fn Price(lot: LotView) => Html = match lot.current {
+    Some(price) => <><span class="price">{Money(price)}</span> <small class="muted">{lot.bids.Count} {if lot.bids.Count == 1 { "bid" } else { "bids" }}</small></>,
+    None => <><span class="price">{Money(lot.startPrice)}</span> <small class="muted">to start</small></>,
+};
+
+/// The latest bids.
+fn Bids(lot: LotView) => Html =
+    <>
+        {for bid in lot.bids.Take(10) { <li><b>{Money(bid.amount)}</b> by {bid.bidder} <span class="muted">at {bid.at:HH:mm:ss}</span></li> }}
+        {if lot.bids.IsEmpty { <li class="muted">No bids yet.</li> }}
+    </>;
+
+/// A row's cells in the lot list, which are pushed again as the lot changes.
+fn RowCells(lot: LotView, now: DateTime) => Html =
+    <>
+        <td><a href={SiteRoutes.Lot(lot.id)}>{lot.title}</a></td>
+        <td>{Price(lot)}</td>
+        <td>{Status(lot, now)}</td>
+    </>;
+
+fn Rows(lots: ImmutableList<LotView>, now: DateTime) => Html =
+    <>
+        {for lot in lots { <tr sse-swap={RowEvent(lot.id)}>{RowCells(lot, now)}</tr> }}
+        {if lots.IsEmpty { <tr><td colspan="3" class="muted">Nothing found.</td></tr> }}
+    </>;
+
+/// The lot list, with search as you type. Its rows change live as lots are bid on and end.
+fn HomePage(lots: ImmutableList<LotView>, now: DateTime) => Html =
+    <section class="card">
+        <input type="search" name="q" placeholder="Search lots" aria-label="Search lots"
+               hx-get={SiteRoutes.Search()} hx-trigger="input changed delay:300ms" hx-target="#lots" />
+        <table>
+            <thead><tr><th>Lot</th><th>Price</th><th>Bidding</th></tr></thead>
+            <tbody id="lots" hx-ext="sse" sse-connect={Live.Url(ListTopic())}>{Rows(lots, now)}</tbody>
+        </table>
+    </section>;
+
+/// A lot's page: everything on it changes live, as anyone bids and as its time runs out.
+fn LotPage(lot: LotView, now: DateTime) => Html =
+    <div class="columns" hx-ext="sse" sse-connect={Live.Url(LotTopic(lot.id))}>
+        <section class="card">
+            <h1>{lot.title}</h1>
+            <p>{lot.description}</p>
+            <p class="muted">Sold by {lot.seller}{if lot.reserve is Some(_) { <>; it has a reserve</> }}.</p>
+            <div sse-swap="price">{Price(lot)}</div>
+            <p sse-swap="status">{Status(lot, now)}</p>
+            {BidPanel(lot, None, None, None)}
+        </section>
+        <section class="card">
+            <h2>Bids</h2>
+            <ul class="bids" sse-swap="bids">{Bids(lot)}</ul>
+        </section>
+    </div>;
+
+/// The bidding form, which a bid replaces with how it went. Once someone has bid, it also watches for their being
+/// outbid, which is pushed to them alone.
+fn BidPanel(lot: LotView, bidder: string?, errors: FormErrors?, message: string?) => Html =
+    <div id="bid-panel">
+        <form method="post" action={SiteRoutes.Bid(lot.id)} hx-post={SiteRoutes.Bid(lot.id)} hx-target="#bid-panel" hx-swap="outerHTML">
+            <label for="bidder">Your name</label>
+            <input id="bidder" name="bidder" value={bidder ?? ""} required />
+            <span class="error">{errors?.For("bidder")}</span>
+            <label for="amount">Your bid (at least {Money(Minimum(lot.startPrice, lot.current))})</label>
+            <input id="amount" name="amount" type="number" step="0.01" min={Minimum(lot.startPrice, lot.current)} required />
+            <span class="error">{errors?.For("amount")}</span>
+            <button>Bid</button>
+        </form>
+        <p class="notice">{message}</p>
+        {match bidder {
+            Some(name) if message is Some(_) =>
+                <div hx-ext="sse" sse-connect={Live.Url(OutbidTopic(lot.id, name))}><p class="outbid" sse-swap="outbid"></p></div>,
+            _ => Html.Empty,
+        }}
+    </div>;
+
+/// Selling something: the form, shown again with what's wrong until it's right.
+fn NewLotForm(form: Form<NewLot>?, errors: FormErrors?) => Html =
+    <form id="new-lot" class="card" method="post" action={SiteRoutes.CreateLot()}
+          hx-post={SiteRoutes.CreateLot()} hx-target="#new-lot" hx-swap="outerHTML">
+        <h1>Sell something</h1>
+        <p class="error">{errors?.Form}</p>
+        <label for="title">What it is</label>
+        <input id="title" name="title" value={form?.Text("title")} />
+        <span class="error">{errors?.For("title")}</span>
+        <label for="description">About it</label>
+        <textarea id="description" name="description">{form?.Text("description")}</textarea>
+        <label for="seller">Your name</label>
+        <input id="seller" name="seller" value={form?.Text("seller")} />
+        <span class="error">{errors?.For("seller")}</span>
+        <label for="startPrice">Starting price (£)</label>
+        <input id="startPrice" name="startPrice" value={form?.Text("startPrice")} />
+        <span class="error">{errors?.For("startPrice")}</span>
+        <label for="reserve">Reserve (£, optional)</label>
+        <input id="reserve" name="reserve" value={form?.Text("reserve")} />
+        <span class="error">{errors?.For("reserve")}</span>
+        <label for="minutes">Bidding runs for (minutes)</label>
+        <input id="minutes" name="minutes" value={form?.Text("minutes") ?? "5"} />
+        <span class="error">{errors?.For("minutes")}</span>
+        <button>List it</button>
+    </form>;

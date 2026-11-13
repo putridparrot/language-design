@@ -52,7 +52,11 @@ public sealed class Lowerer
     /// </summary>
     /// <summary>A record's or class's invariants, checked in an initializer, so lowered as one.</summary>
     private ImmutableArray<BoundContract> LowerInvariants(ImmutableArray<BoundContract> invariants) =>
-        [.. invariants.Select(contract => contract with { Condition = LowerInitializer(contract.Condition) })];
+        [.. invariants.Select(contract => contract with
+        {
+            Condition = LowerInitializer(contract.Condition),
+            Message = contract.Message is { } message ? LowerInitializer(message) : null,
+        })];
 
     private BoundExpression LowerInitializer(BoundExpression value)
     {

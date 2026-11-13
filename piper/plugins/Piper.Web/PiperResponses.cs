@@ -22,7 +22,8 @@ public sealed class StatusAttribute(int code) : Attribute
 
 /// <summary>
 /// Answers a handler's Option or Result as HTTP: <c>Some(x)</c> and <c>Ok(x)</c> are 200 with <c>x</c>, <c>None</c> is
-/// 404, and <c>Err(e)</c> is ProblemDetails with the status <see cref="StatusAttribute"/> gives. The web plugin wraps
+/// 404, and <c>Err(e)</c> is ProblemDetails with the status <see cref="StatusAttribute"/> gives. Markup (<see cref="Html"/>),
+/// alone or inside either, is a page: <c>text/html</c>. The web plugin wraps
 /// each endpoint it maps in <see cref="Answer"/>; a handler returning anything else is left alone, at no cost.
 /// </summary>
 public static class PiperResponses
@@ -32,12 +33,57 @@ public static class PiperResponses
 
     private static readonly ConcurrentDictionary<Type, Func<object, HttpContext, object?>?> Readers = new();
 
-    public static RouteHandlerBuilder Answer(RouteHandlerBuilder endpoint) => endpoint.AddEndpointFilterFactory(Filter);
+    public static RouteHandlerBuilder Answer(RouteHandlerBuilder endpoint) => endpoint.AddEndpointFilterFactory((context, next) => Filter(context, next, null));
 
-    /// <summary>A filter for a handler whose result (once awaited) is an Option or Result; other handlers get none.</summary>
-    private static EndpointFilterDelegate Filter(EndpointFilterFactoryContext context, EndpointFilterDelegate next) =>
+    /// <summary>
+    /// An endpoint of a group with a <c>layout</c>: its markup is put in the layout, <c>Page(body)</c>, unless htmx asked
+    /// for just the fragment (see <see cref="Htmx.WantsFragment"/>). So a handler is written once, for both.
+    /// </summary>
+    public static RouteHandlerBuilder Answer(RouteHandlerBuilder endpoint, Func<Html, Html> layout) =>
+        endpoint.AddEndpointFilterFactory((context, next) => Filter(context, next, layout));
+
+    private static readonly AsyncLocal<HttpContext?> Request = new();
+
+    /// <summary>The request a handler answering with markup is answering (for <see cref="Htmx.Script"/>), or null.</summary>
+    internal static HttpContext? Answering => Request.Value;
+
+    private const string LayoutKey = "Piper.Web.Layout";
+
+    /// <summary>
+    /// A <c>&lt;form method="post"&gt;</c>'s hidden anti-forgery field, made (and its cookie set) for the request being
+    /// answered; none without ASP.NET Core's antiforgery.
+    /// </summary>
+    private static Html FormToken(HttpContext http)
+    {
+        if (http.RequestServices.GetService<Microsoft.AspNetCore.Antiforgery.IAntiforgery>() is not { } antiforgery)
+            return Html.Empty;
+        var tokens = antiforgery.GetAndStoreTokens(http);
+        return Html.Raw($"<input type=\"hidden\" name=\"{System.Net.WebUtility.HtmlEncode(tokens.FormFieldName)}\" value=\"{System.Net.WebUtility.HtmlEncode(tokens.RequestToken)}\">");
+    }
+
+    /// <summary>
+    /// A filter for a handler whose result (once awaited) is an Option, a Result or markup; other handlers get none. While
+    /// it runs, the request is known to the forms its markup makes.
+    /// </summary>
+    private static EndpointFilterDelegate Filter(EndpointFilterFactoryContext context, EndpointFilterDelegate next, Func<Html, Html>? layout) =>
         Reader(Awaited(context.MethodInfo.ReturnType)) is { } read
-            ? async invocation => await next(invocation) is { } value ? read(value, invocation.HttpContext) : null
+            ? async invocation =>
+            {
+                var http = invocation.HttpContext;
+                if (layout is not null)
+                    http.Items[LayoutKey] = layout;
+                PiperHtml.FormTokenSource = () => FormToken(http);
+                Request.Value = http;
+                try
+                {
+                    return await next(invocation) is { } value ? read(value, http) : null;
+                }
+                finally
+                {
+                    PiperHtml.FormTokenSource = null;
+                    Request.Value = null;
+                }
+            }
             : next;
 
     private static Type Awaited(Type type) =>
@@ -45,10 +91,12 @@ public static class PiperResponses
             ? type.GetGenericArguments()[0]
             : type;
 
-    /// <summary>How to answer a value of <paramref name="type"/>, if it's an Option or Result.</summary>
+    /// <summary>How to answer a value of <paramref name="type"/>, if it's an Option, a Result or markup.</summary>
     private static Func<object, HttpContext, object?>? Reader(Type type) =>
         Readers.GetOrAdd(type, t =>
         {
+            if (t == typeof(Html))
+                return (value, http) => Page((Html)value, http);
             if (!t.IsGenericType)
                 return null;
             var definition = t.GetGenericTypeDefinition();
@@ -59,6 +107,21 @@ public static class PiperResponses
                     .MakeGenericMethod(t.GetGenericArguments())
                     .CreateDelegate<Func<object, HttpContext, object?>>();
         });
+
+    /// <summary>
+    /// Markup (a markup literal's <see cref="Html"/>) as a page: <c>text/html</c>, not JSON. In a group with a layout,
+    /// put in it, unless htmx asked for the fragment alone; the answer then varies by <c>HX-Request</c>, for caches.
+    /// </summary>
+    private static IResult Page(Html markup, HttpContext http)
+    {
+        if (http.Items[LayoutKey] is Func<Html, Html> layout)
+        {
+            http.Response.Headers.Append("Vary", "HX-Request");
+            if (!Htmx.WantsFragment(http))
+                markup = layout(markup);
+        }
+        return TypedResults.Content(markup.ToString(), "text/html; charset=utf-8");
+    }
 
     private static object? FromOption<T>(object value, HttpContext http) =>
         (Option<T>)value is { IsSome: true } some ? Ok(some.Value, http) : TypedResults.NotFound();
@@ -77,6 +140,7 @@ public static class PiperResponses
     private static object? Ok<T>(T value, HttpContext http) => value switch
     {
         null => null,
+        Html markup => Page(markup, http),
         string or IResult => value,
         _ when Reader(typeof(T)) is { } read => read(value, http),
         _ => TypedResults.Json(value),

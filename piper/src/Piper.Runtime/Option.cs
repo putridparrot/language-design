@@ -63,7 +63,7 @@ internal static class OptionParsing
             t.GetMethod("TryParse", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static, [typeof(string), typeof(IFormatProvider), t.MakeByRefType()]) ??
             t.GetMethod("TryParse", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static, [typeof(string), t.MakeByRefType()]));
         if (parse is null)
-            return false;
+            return TryParsePiper(type, text, out value);
         object?[] arguments = parse.GetParameters().Length == 3
             ? [text, provider ?? System.Globalization.CultureInfo.InvariantCulture, null]
             : [text, null];
@@ -72,6 +72,29 @@ internal static class OptionParsing
         value = arguments[^1];
         return true;
     }
+
+    /// <summary>A Piper enum without fields, by its generated <c>static fn Parse(name: string) =&gt; E?</c>.</summary>
+    private static bool TryParsePiper(Type type, string text, out object? value)
+    {
+        value = null;
+        var optional = typeof(Option<>).MakeGenericType(type);
+        if (type.GetMethod("Parse", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static, [typeof(string)]) is not { } parse ||
+            parse.ReturnType != optional || parse.Invoke(null, [text]) is not { } result || optional.GetProperty(nameof(Option<int>.IsSome))!.GetValue(result) is not true)
+            return false;
+        value = optional.GetProperty(nameof(Option<int>.Value))!.GetValue(result);
+        return true;
+    }
+}
+
+/// <summary>
+/// Reading text as a value of a type, as ASP.NET Core binds route and query values: a string as it is, a number, date,
+/// <c>Guid</c> or newtype by its <c>TryParse</c> (numbers in the invariant culture unless told otherwise), and a Piper
+/// enum without fields by its variant's name. For libraries reading forms and other text into Piper's types.
+/// </summary>
+public static class PiperText
+{
+    public static bool TryParse(Type type, string text, IFormatProvider? provider, out object? value) =>
+        OptionParsing.TryParse(type, text, provider, out value);
 }
 
 /// <summary>

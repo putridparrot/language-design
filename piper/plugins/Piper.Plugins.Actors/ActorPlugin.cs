@@ -95,7 +95,9 @@ public sealed class ActorPlugin : IPiperPlugin
                 arms.Add($$"""
                     {{handler.Name.Text}}({{withReply}}) => {
                         try {
-                            __reply.SetResult({{hole[handler.Body]}});
+                            // The body is the handler's declared result, so `Ok(x)` or `None` infer from it, as in a function.
+                            let __result: {{hole[handler.Result]}} = {{hole[handler.Body]}};
+                            __reply.SetResult(__result);
                         } catch (__error: System.Exception) {
                             __reply.SetException(__error);
                         }

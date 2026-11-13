@@ -31,8 +31,26 @@ internal static class Out_parameters
         return $"'{text}' is {@value * 2} doubled";
     }
 
+    /// <summary>
+    /// `[NotNullWhen(true)] out Version? version`, as `[MaybeNullWhen(false)]`: where it returned true, there&apos;s a value.
+    /// </summary>
+    internal static int Major(string text)
+    {
+        global::System.Version version;
+        if (global::System.Version.TryParse(text, out version))
+        {
+            return version.Major;
+        }
+        else
+        {
+            return -1;
+        }
+    }
+
     internal static void Main()
     {
+        global::System.Console.WriteLine(Major("3.1.4"));
+        global::System.Console.WriteLine(Major("three"));
         global::System.Console.WriteLine(ParseOr("42", 0));
         global::System.Console.WriteLine(ParseOr("forty-two", -1));
         global::System.Console.WriteLine(Describe("1.25"));

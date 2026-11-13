@@ -1,0 +1,74 @@
+namespace Auction;
+
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+
+/// An auctioneer whose changes are kept, rather than pushed to pages.
+fn Recording(changes: ConcurrentQueue<LotChange>) => Auctioneer = Auctioneer.Spawn(change => changes.Enqueue(change));
+
+async test "bids arriving at once are taken one at a time: each beats the last, and one bidder leads" {
+    let changes = ConcurrentQueue<LotChange>();
+    let auction = Recording(changes);
+    let id = await auction.Open(NewLot("Clock", "", "Ada", 10m, None, 5), Noon());
+    let Some(lot) = await auction.Find(id) else { Assert(false, "the lot should be there"); return; };
+
+    // 400 bids at once, from four bidders, of amounts that often clash.
+    let bids = await Task.WhenAll(Enumerable.Range(0, 400).Select(i =>
+        lot.Bid(NewBid($"bidder{i % 4}", 10m + (i % 50) * 3m + (i / 50)), Noon().AddSeconds(1))));
+    let taken = bids.Where(b => b is Ok(_)).Count();
+    let view = await lot.Show();
+
+    AssertEqual(taken, view.bids.Count);
+    AssertEqual(taken, changes.Count);
+    // Newest first, each above the one before by at least its increment, and the leader made the highest.
+    for (newer, older) in view.bids.Zip(view.bids.Skip(1)) {
+        Assert(newer.amount >= older.amount + Increment(older.amount), $"{newer.amount} after {older.amount}");
+    }
+    AssertEqual(Some(view.bids[0].amount), view.current);
+    AssertEqual(Some(view.bids[0].bidder), view.leader);
+    Assert(bids.Where(b => b is Err(BidRefusal.TooLow(_))).Count() == 400 - taken);
+}
+
+async test "being outbid is told to the bidder who led, not to someone outbidding themselves" {
+    let changes = ConcurrentQueue<LotChange>();
+    let auction = Recording(changes);
+    let id = await auction.Open(NewLot("Vase", "", "Alan", 10m, None, 5), Noon());
+    let Some(lot) = await auction.Find(id) else { Assert(false, "the lot should be there"); return; };
+    await lot.Bid(NewBid("ada", 10m), Noon());
+    await lot.Bid(NewBid("ada", 12m), Noon());
+    await lot.Bid(NewBid("grace", 15m), Noon());
+    let outbid = changes.Select(c => match c { BidTaken(_, who) => who, Ticked(_, _) => None }).ToList();
+    // Annotated: a list literal's leading None doesn't take its type from a later Some.
+    let expected: List<string?> = [None, None, Some("ada")];
+    AssertEqual(expected, outbid);
+}
+
+async test "time ends lots, which then refuse bids" {
+    let changes = ConcurrentQueue<LotChange>();
+    let auction = Recording(changes);
+    let id = await auction.Open(NewLot("Desk", "", "Grace", 100m, Some(150m), 1), Noon());
+    let Some(lot) = await auction.Find(id) else { Assert(false, "the lot should be there"); return; };
+    await lot.Bid(NewBid("ada", 120m), Noon());
+    auction.Tick(Noon().AddMinutes(2));
+    // Asked through the auctioneer, which takes the tick first, and has passed it to the lot before it asks it.
+    let view = (await auction.List(None)).Single();
+    AssertEqual(LotLifeState.Unsold, view.state);
+    Assert(changes.Any(c => c is Ticked(_, true)));
+    Assert(await lot.Bid(NewBid("alan", 500m), Noon().AddMinutes(2)) is Err(BidRefusal.Ended));
+    // A bid after the end is refused even before the clock has told the lot.
+    let late = await auction.Open(NewLot("Lamp", "", "Grace", 5m, None, 1), Noon());
+    let Some(lamp) = await auction.Find(late) else { Assert(false, "the lot should be there"); return; };
+    Assert(await lamp.Bid(NewBid("ada", 5m), Noon().AddMinutes(1)) is Err(BidRefusal.Ended));
+}
+
+async test "the catalogue lists lots newest first, by words in their titles" {
+    let auction = Recording(ConcurrentQueue<LotChange>());
+    for title in ["Carriage clock", "Blue vase", "Clock key"] {
+        await auction.Open(NewLot(title, "", "Ada", 1m, None, 5), Noon());
+    }
+    AssertEqual(["Clock key", "Blue vase", "Carriage clock"], (await auction.List(None)).Select(l => l.title).ToList());
+    AssertEqual(["Clock key", "Carriage clock"], (await auction.List(Some("clock"))).Select(l => l.title).ToList());
+}

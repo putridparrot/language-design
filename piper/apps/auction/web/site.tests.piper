@@ -1,0 +1,70 @@
+namespace Auction;
+
+using System;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+using Piper.Web;
+
+/// Sends a form as htmx would: its fields, and the anti-forgery token as the header htmx sends it in.
+async fn PostForm(client: HttpClient, url: string, token: (header: string, value: string), fields: string) => Task<HttpResponseMessage> {
+    let request = HttpRequestMessage(HttpMethod.Post, url);
+    request.Headers.Add("HX-Request", "true");
+    request.Headers.Add(token.header, token.value);
+    request.Content = StringContent(fields, Encoding.UTF8, "application/x-www-form-urlencoded");
+    await client.SendAsync(request)
+}
+
+/// The token a page gives htmx (see Htmx.Script), from its meta tag.
+fn TokenOf(page: string) => (header: string, value: string) {
+    let found = Regex.Match(page, "name=\"piper-antiforgery\" data-header=\"([^\"]+)\" content=\"([^\"]+)\"");
+    // `?? ""`: HtmlDecode gives a string for a string ([NotNullIfNotNull]), which Piper doesn't read yet.
+    (found.Groups[1].Value, WebUtility.HtmlDecode(found.Groups[2].Value) ?? "")
+}
+
+async test "lots are listed, sold, bid on and pushed to the pages watching them, over HTTP" {
+    let (app, auction) = BuildApp("http://127.0.0.1:0");
+    await app.StartAsync();
+    let handler = HttpClientHandler() { CookieContainer: CookieContainer() };
+    using let client = HttpClient(handler);
+    client.BaseAddress = Uri(app.Urls.First());
+    await auction.Open(NewLot("Brass carriage clock", "Victorian.", "Ada", 40m, None, 5), DateTime.UtcNow);
+
+    // The list, and searching it.
+    let home = await client.GetStringAsync(SiteRoutes.Home());
+    Assert(home.Contains(">Brass carriage clock</a>") && home.Contains("sse-connect=\"/_piper/live?topic=lots\""));
+    Assert((await client.GetStringAsync($"{SiteRoutes.Search()}?q=vase")).Contains("Nothing found."));
+
+    // Selling something: what's wrong, beside its fields; then listed, and htmx sent to it.
+    let token = TokenOf(await client.GetStringAsync(SiteRoutes.NewLot()));
+    let wrong = await PostForm(client, SiteRoutes.CreateLot(), token, "title=&description=&seller=Grace&startPrice=lots&minutes=5");
+    let form = await wrong.Content.ReadAsStringAsync();
+    Assert(form.Contains("&#39;lots&#39; isn&#39;t a number."), form);
+    let listed = await PostForm(client, SiteRoutes.CreateLot(), token, "title=Oak+desk&description=&seller=Grace&startPrice=100&reserve=150&minutes=5");
+    let destination = listed.Headers.GetValues("HX-Redirect").Single();
+    AssertEqual(SiteRoutes.Lot(LotId(2)), destination);
+
+    // A page watching the lot, and a bid through its form: the bidder is told, and the watching page is pushed to.
+    let page = await client.GetStringAsync(destination);
+    Assert(page.Contains($"sse-connect=\"{Live.Url(LotTopic(LotId(2)))}\""));
+    let watching = await client.GetAsync(Live.Url(LotTopic(LotId(2))), HttpCompletionOption.ResponseHeadersRead);
+    using let events = StreamReader(await watching.Content.ReadAsStreamAsync());
+    await events.ReadLineAsync();   // ": connected"
+    await events.ReadLineAsync();
+
+    let bid = await PostForm(client, SiteRoutes.Bid(LotId(2)), TokenOf(page), "bidder=Alan&amount=100");
+    Assert((await bid.Content.ReadAsStringAsync()).Contains("You&#39;re the highest bidder."));
+    AssertEqual("event: price", await events.ReadLineAsync() ?? "");
+    Assert((await events.ReadLineAsync() ?? "").Contains("&#163;100.00"));
+
+    let low = await PostForm(client, SiteRoutes.Bid(LotId(2)), TokenOf(page), "bidder=Ada&amount=100");
+    Assert((await low.Content.ReadAsStringAsync()).Contains("Bid at least &#163;105.00."));   // £100, and £5 more above £100
+    AssertEqual(HttpStatusCode.NotFound, (await client.GetAsync(SiteRoutes.Lot(LotId(99)))).StatusCode);
+
+    watching.Dispose();
+    await app.StopAsync();
+}

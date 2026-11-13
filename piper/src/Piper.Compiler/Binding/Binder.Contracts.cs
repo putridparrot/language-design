@@ -80,17 +80,23 @@ public sealed partial class Binder
         var outer = _scope;
         _scope = scope;
         var contracts = ImmutableArray.CreateBuilder<BoundContract>();
-        foreach (var syntax in conditions)
+        foreach (var written in conditions)
         {
+            var (syntax, messageSyntax) = written is ContractMessageSyntax withMessage ? (withMessage.Condition, withMessage.Message) : (written, null);
             // Like an if's condition, it can bind with `is` (`i is Some(v) && v > 0`), in a scope of its own.
             _scope = new Scope(scope);
             var condition = BindCondition(syntax, allowPatternBindings: true);
             var text = _file.Source.ToString(syntax.Span);
+            bool Mentions(VariableSymbol v) => Regex.IsMatch(text, $@"(?<![\w.]){Regex.Escape(v.Name)}\b");
             // The values worth showing when it fails: those of the variables it mentions that print as their value.
-            var mentioned = variables
-                .Where(v => PrintsValue(v.Type) && Regex.IsMatch(text, $@"(?<![\w.]){Regex.Escape(v.Name)}\b"))
-                .ToImmutableArray();
-            contracts.Add(new BoundContract(condition, text, mentioned, syntax.Span));
+            var mentioned = variables.Where(v => PrintsValue(v.Type) && Mentions(v)).ToImmutableArray();
+            // `else "…"`: a string, in the condition's scope (it can name the fields or parameters, as in $"… {price}").
+            var message = messageSyntax is null ? null : Convert(RequireValue(BindExpression(messageSyntax, TypeSymbol.String), messageSyntax.Span), TypeSymbol.String, messageSyntax.Span);
+            contracts.Add(new BoundContract(condition, text, mentioned, syntax.Span)
+            {
+                Message = message,
+                Subject = variables.Where(Mentions).ToList() is [var only] ? only.Name : null,
+            });
         }
         _scope = outer;
         return contracts.ToImmutable();
@@ -119,8 +125,9 @@ public sealed partial class Binder
         }
         foreach (var contract in contracts)
         {
+            // Said with its own message, when that's plain text.
             if (ConstantFolding.Evaluate(contract.Condition, values) is false)
-                _diagnostics.ReportContractBroken(span, owner, kind, contract.Text);
+                _diagnostics.ReportContractBroken(span, owner, kind, contract.Message is BoundLiteralExpression { Value: string message } ? message : contract.Text);
         }
     }
 
@@ -137,7 +144,9 @@ public sealed partial class Binder
                 contract.Condition,
                 new BoundLiteralExpression(contract.Text, TypeSymbol.String),
                 ContractValues(contract),
-                new BoundLiteralExpression(contract.Mentioned is [var only] ? only.Name : "", TypeSymbol.String),
+                new BoundLiteralExpression(contract.Message is null ? contract.Mentioned is [var only] ? only.Name : "" : contract.Subject ?? "", TypeSymbol.String),
+                // `else "…"`: the message, which the emitter makes a lambda, so it's built only when the check fails.
+                .. contract.Message is { } message ? [message] : Array.Empty<BoundExpression>(),
             ],
             TypeSymbol.Unit)) { SourceSpan = contract.Span });
 

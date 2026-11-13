@@ -427,7 +427,7 @@ public sealed partial class Binder
                 }
                 else if (member is MethodInfo { IsGenericMethodDefinition: true } inferable)
                 {
-                    if (InferMethodTypeArguments(inferable, arguments, map) is not { } inferred)
+                    if (InferMethodTypeArguments(inferable, arguments, map) is not { } inferred || !MeetsConstraints(inferable, inferred))
                         continue;
                     memberMap = inferred;
                 }
@@ -450,7 +450,16 @@ public sealed partial class Binder
             if (!ReportLambdaErrors(Applicable(lambdaShapesOnly: true), arguments))
             {
                 var described = arguments.Select(a => a.Type ?? (a.None is not null ? _option : ClrTypeSymbol.For(typeof(Delegate))));
-                _diagnostics.ReportNoApplicableOverload(span, displayName, described);
+                // A markup literal's hole or attribute (a call to PiperHtml, which markup is written as) holding what
+                // can't go in markup: said in markup's terms, at the hole.
+                bool attribute = displayName == "PiperHtml.Attribute";
+                var held = displayName == "PiperHtml.Hole" ? arguments.FirstOrDefault() : attribute ? arguments.ElementAtOrDefault(1) : null;
+                if (held?.Type is { } heldType)
+                    _diagnostics.ReportNotMarkup(held.Span, heldType, attribute);
+                else if (held?.Lambda is not null)
+                    _diagnostics.ReportNotMarkup(held.Span, ClrTypeSymbol.For(typeof(Delegate)), attribute);
+                else
+                    _diagnostics.ReportNoApplicableOverload(span, displayName, described);
             }
             return null;
         }
@@ -1153,6 +1162,37 @@ public sealed partial class Binder
         return generics.All(result.ContainsKey) ? result : null;
     }
 
+    /// <summary>
+    /// Whether inferred type arguments meet a generic method's constraints, as C# requires: so a candidate whose
+    /// arguments don't (an <c>Option</c> for <c>where T : IFormattable</c>) is passed over, for another overload or an
+    /// error, rather than chosen and rejected by C# as an internal compiler error. Checked: base types and interfaces, and
+    /// <c>struct</c> and <c>class</c>. A constraint naming type parameters (<c>IComparable&lt;T&gt;</c>) is left to C#.
+    /// A newtype has what its value has (the emitter makes it formattable and comparable when its value is).
+    /// </summary>
+    private bool MeetsConstraints(MethodInfo method, IReadOnlyDictionary<Type, TypeSymbol> map)
+    {
+        foreach (var parameter in method.GetGenericArguments())
+        {
+            if (!map.TryGetValue(parameter, out var argument) || argument == TypeSymbol.Error || argument is TypeParameterSymbol)
+                continue;
+            var attributes = parameter.GenericParameterAttributes;
+            if ((attributes & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0 && ClrTypes.IsReferenceType(argument))
+                return false;
+            if ((attributes & GenericParameterAttributes.ReferenceTypeConstraint) != 0 && !ClrTypes.IsReferenceType(argument))
+                return false;
+            var checkedType = argument.OriginalDefinition is RecordSymbol { IsNewtype: true, Fields: [var value] } ? value.Type : argument;
+            foreach (var constraint in parameter.GetGenericParameterConstraints())
+            {
+                if (constraint.ContainsGenericParameters || constraint == typeof(ValueType))
+                    continue;
+                bool met = (ClrTypes.ToClr(checkedType) is { } clr && constraint.IsAssignableFrom(clr)) || Implements(checkedType, ClrTypeSymbol.For(constraint));
+                if (!met)
+                    return false;
+            }
+        }
+        return true;
+    }
+
     private static bool Unresolved(Type type, Type[] generics, Dictionary<Type, TypeSymbol> result) =>
         type.IsGenericParameter
             ? generics.Contains(type) && !result.ContainsKey(type)
@@ -1250,6 +1290,10 @@ public sealed partial class Binder
                     nullWhenFalse = state != NullabilityState.Nullable && maybeNullWhen.ConstructorArguments is [{ Value: false }];
                     state = NullabilityState.Nullable;
                 }
+                // `[NotNullWhen(true)] out T? value` (HttpHeaders.TryGetValues) says the same thing the other way round.
+                else if (state == NullabilityState.Nullable &&
+                         info.CustomAttributes.FirstOrDefault(a => a.AttributeType.Name == "NotNullWhenAttribute") is { ConstructorArguments: [{ Value: true }] })
+                    nullWhenFalse = true;
             }
             else if (isRef)
             {

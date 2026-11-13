@@ -12,6 +12,8 @@ public enum TokenKind
     CharLiteral,
     StringLiteral,
     InterpolatedStringLiteral,
+    /// <summary><c>&lt;p&gt;Hello, {name}&lt;/p&gt;</c>: its <see cref="Token.Value"/> is a <see cref="MarkupElement"/>.</summary>
+    MarkupLiteral,
 
     // Keywords
     FnKeyword,

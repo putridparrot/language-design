@@ -14,7 +14,12 @@ fn Describe(text: string) => string {
     $"'{text}' is {value * 2} doubled"
 }
 
+/// `[NotNullWhen(true)] out Version? version`, as `[MaybeNullWhen(false)]`: where it returned true, there's a value.
+fn Major(text: string) => int = if Version.TryParse(text, out let version) { version.Major } else { -1 };
+
 fn Main() {
+    Print(Major("3.1.4"));
+    Print(Major("three"));
     Print(ParseOr("42", 0));
     Print(ParseOr("forty-two", -1));
     Print(Describe("1.25"));

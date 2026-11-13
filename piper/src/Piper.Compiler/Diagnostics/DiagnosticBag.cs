@@ -153,6 +153,25 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportGenericTypeAlias(TextSpan span) =>
         Error("PIP0110", span, "A type alias can't have type parameters, as in C#; name a constructed type instead: 'type Names = List<string>;'.");
 
+    public void ReportInvalidMarkup(TextSpan span, string message) =>
+        Error("PIP0114", span, message);
+
+    public void ReportNotMarkup(TextSpan span, TypeSymbol type, bool attribute)
+    {
+        bool function = type is ClrTypeSymbol { Type.FullName: "System.Delegate" } or ClrTypeSymbol { Type.BaseType.FullName: "System.MulticastDelegate" };
+        var hint = type switch
+        {
+            ClrTypeSymbol { Type.Name: "Task" or "Task`1" or "ValueTask" or "ValueTask`1" } => " Did you mean to await it?",
+            _ when function => " Did you mean to call it?",
+            _ when type == TypeSymbol.Bool && !attribute => " Show something for it with an if: {if done { <b>done</b> }}.",
+            _ => " Make it text first: {value.Name}, or {$\"…\"}.",
+        };
+        var what = attribute ? "An attribute's value can be text, Html, a bool, or a number, date or other formattable value"
+                             : "Markup can hold Html, text (escaped), or a number, date or other formattable value";
+        var shown = function ? "function" : $"'{type}'";
+        Error("PIP0509", span, $"A {shown} can't be put in markup. {what}; a list of Html, or {{for x in xs {{ … }}}}, for several.{hint}");
+    }
+
     public void ReportGenericNewtype(TextSpan span) =>
         Error("PIP0113", span, "A newtype can't have type parameters; for one with them, declare a record struct: 'record struct Id<T>(value: Guid);'.");
 

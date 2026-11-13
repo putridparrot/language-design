@@ -314,8 +314,12 @@ public sealed class EnumSymbol : NamedTypeDefinition
             new VariantSymbol("Err", result) { Fields = [new FieldSymbol("error", error)] },
         ];
 
+        option.Result = result;
         return (option, result);
     }
+
+    /// <summary>For the builtin Option: the Result made with it, so .NET's <c>Piper.Runtime.Result&lt;T, E&gt;</c> maps to it.</summary>
+    internal EnumSymbol? Result { get; private set; }
 
     public ImmutableArray<VariantSymbol> Variants { get; internal set; } = [];
 

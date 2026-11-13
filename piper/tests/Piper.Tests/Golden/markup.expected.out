@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><title>Lots &amp; more</title><style>
+                body { margin: 0; }
+            </style></head><body><p>Welcome</p><script>
+                if (1 < 2) { console.log("ready"); }
+            </script></body></html>
+<tr data-id="1"><td><a href="/lots/1">Clock &amp; &lt;case&gt;</a></td><td>12.50</td><td>closes 2026-12-01</td><td>Ada</td></tr>
+<section class="card"><h2>Lots</h2><table><tr data-id="1"><td><a href="/lots/1">Clock &amp; &lt;case&gt;</a></td><td>12.50</td><td>closes 2026-12-01</td><td>Ada</td></tr><tr data-id="2"><td><a href="/lots/2">Vase</a></td><td>40.00</td><td><span class="badge done">sold for 42.00</span></td><td></td></tr><tr data-id="3"><td><a href="/lots/3">Chair</a></td><td>7.00</td><td><em>withdrawn</em></td><td>O&#39;Brien</td></tr></table><br><input type="text" name="q" value="&lt;script&gt;"></section>
+<section class="card"><h2>Lots</h2><table></table><p>Nothing for sale.</p><button disabled>Close all</button><br><input type="text" name="q" value="&lt;script&gt;"></section>
+<ul><li>bids: 3</li><li>watchers: 12</li></ul>
+<p><b>bold</b> and &lt;b&gt;not bold&lt;/b&gt;</p>
+True
+text over several lines,   kept   as spaces on one

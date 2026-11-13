@@ -1,0 +1,7 @@
+{
+  // Auction: lots listed and bid on live, in the browser. Pages are markup, updated in part by htmx and pushed to by
+  // the server; each lot is an actor, so bids arriving at once are taken one at a time; a lot's life is a state
+  // machine. See README.md. `piper run apps/auction` serves it (http://localhost:5090); `piper test apps/auction`.
+  "name": "auction",
+  "plugins": ["web", "actors", "state-machines", "args"]
+}

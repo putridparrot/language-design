@@ -51,6 +51,7 @@ public sealed partial class WebPlugin : IPiperPlugin
                 ["delete"] = "Maps a DELETE request to the route: `MapDelete`.",
                 ["patch"] = "Maps a PATCH request to the route: `MapPatch`.",
                 ["async"] = "The handler awaits, so it runs as an async lambda.",
+                ["layout"] = "The function, `fn Page(body: Html) => Html`, putting each endpoint's markup in a page, unless htmx asked for just the fragment.",
                 ["authorize"] = "Only signed-in users may call it, or with names, only those the authorization policies named allow: `RequireAuthorization`. After the group's route it applies to every endpoint.",
                 ["anonymous"] = "Anyone may call it, even in a group needing authorization: `AllowAnonymous`.",
                 ["ratelimit"] = "Calls are limited by the rate limit policy named, answering 429 when it's exceeded: `RequireRateLimiting`. `ratelimit off` turns a group's off: `DisableRateLimiting`.",
@@ -86,16 +87,27 @@ public sealed partial class WebPlugin : IPiperPlugin
     ];
 
     /// <summary>
-    /// endpoints = "endpoints" IDENT [ STRING ] "{" { endpoint } "}" ;
-    /// endpoint  = ( "get" | "post" | "put" | "delete" | "patch" ) STRING [ "async" ] lambdaParameters "=>" ( block [ ";" ] | expression ";" ) ;
+    /// endpoints = "endpoints" IDENT [ STRING ] [ "layout" IDENT ] { policyWord } "{" { endpoint } "}" ;
+    /// endpoint  = ( "get" | "post" | "put" | "delete" | "patch" ) [ IDENT ] STRING [ "async" ] lambdaParameters "=>" ( block [ ";" ] | expression ";" ) ;
+    /// A named endpoint (<c>get Lot "/lots/{id:int}" …</c>) has a route function in <c>&lt;Name&gt;Routes</c>, which links to it.
     /// Routes are written as ASP.NET Core documents them: <c>"/users/{id}"</c> is a route parameter, not interpolation.
     /// </summary>
     private static IEnumerable<DeclarationSyntax> Endpoints(PluginParser p)
     {
         var name = p.Expect(TokenKind.Identifier);
         var prefix = p.Current.Kind is TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral ? Route(p, p.NextToken()) : null;
+        // `layout Page`: the function putting each endpoint's markup in a page, unless htmx asked for the fragment.
+        Token? ReadLayout()
+        {
+            if (!p.AtWord("layout"))
+                return null;
+            p.ReadWord();
+            return p.Expect(TokenKind.Identifier);
+        }
+        var layout = ReadLayout();
         // `authorize "admin" ratelimit "api"` after the group's route: for each endpoint, unless it says otherwise.
         var groupWords = ReadPolicyWords(p);
+        layout ??= ReadLayout();
         var policyUses = new List<PolicyName>(NamesUsed(groupWords.Values));
         var policyWords = groupWords.Values.Select(w => w.Word).ToList();
         p.Expect(TokenKind.OpenBrace);
@@ -103,6 +115,9 @@ public sealed partial class WebPlugin : IPiperPlugin
         var router = prefix is null ? null : p.FreshName("group");
         var mappings = new List<StatementSyntax>();
         var mapped = new HashSet<string>();
+        var routeNames = new HashSet<string>();
+        var routeFunctions = new List<string>();
+        var routeHoles = new List<(string, object)>();
         while (p.Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
         {
             var verb = p.Current;
@@ -113,6 +128,10 @@ public sealed partial class WebPlugin : IPiperPlugin
                 continue;
             }
             p.ReadWord();
+            // `get Lot "/lots/{id:int}" …`: a name, for the route function linking to it (SiteRoutes.Lot(id)).
+            var endpointName = p.Current.Kind == TokenKind.Identifier ? p.NextToken() : null;
+            if (endpointName is not null && !routeNames.Add(endpointName.Text))
+                p.Report(endpointName.Span, $"There's already an endpoint named '{endpointName.Text}' in {name.Text}.");
 
             if (p.Current.Kind is not (TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral))
             {
@@ -142,10 +161,15 @@ public sealed partial class WebPlugin : IPiperPlugin
             if (handler.Parameters.Any(parameter => parameter.Type is null))
                 continue;
             CheckRoute(p, routeToken, (string)route.Value!, handler);
+            if (endpointName is not null)
+                routeFunctions.Add(RouteFunction(endpointName, (string?)prefix?.Value + (string)route.Value!, routeToken.Span, handler, routeHoles));
 
             // A handler returning an Option or Result is answered as one: 200 or 404, or 200 or ProblemDetails.
-            var endpoint = p.Template.Expression($"{Responses}.Answer({Routing}.{method}($router, $route, $handler))",
-                ("router", (object?)router ?? "app"), ("route", route), ("handler", handler));
+            var endpoint = layout is null
+                ? p.Template.Expression($"{Responses}.Answer({Routing}.{method}($router, $route, $handler))",
+                    ("router", (object?)router ?? "app"), ("route", route), ("handler", handler))
+                : p.Template.Expression($"{Responses}.Answer({Routing}.{method}($router, $route, $handler), $layout)",
+                    ("router", (object?)router ?? "app"), ("route", route), ("handler", handler), ("layout", layout));
             mappings.Add(new ExpressionStatementSyntax(endpoint.Span, ApplyPolicies(p, endpoint, words.Values)));
         }
         p.Expect(TokenKind.CloseBrace);
@@ -153,9 +177,60 @@ public sealed partial class WebPlugin : IPiperPlugin
 
         if (router is not null)
             mappings.Insert(0, p.Template.Statement($"let $group = {Routing}.MapGroup(app, $prefix);", ("group", router), ("prefix", prefix!)));
-        return p.Template.Declarations(
+        // htmx, which <Htmx.Script /> puts in pages, served by the app (mapped once however many groups there are).
+        mappings.Insert(0, p.Template.Statement("Piper.Web.Htmx.MapScript(app);"));
+        var map = p.Template.Declarations(
             "fn $name(app: Microsoft.AspNetCore.Routing.IEndpointRouteBuilder) { $mappings }",
             ("name", name), ("mappings", mappings));
+        if (routeFunctions.Count == 0)
+            return map;
+
+        // `endpoints Site` with named endpoints: `class SiteRoutes { static fn Lot(id: LotId) => string = …; }`.
+        var routes = new Token(TokenKind.Identifier, name.Span, name.Text + "Routes");
+        return map.AddRange(p.Template.Declarations(
+            $"class $routes {{\n{string.Join("\n", routeFunctions)}\n}}", [("routes", routes), .. routeHoles]));
+    }
+
+    /// <summary>
+    /// <c>static fn Lot(id: LotId) =&gt; string = PiperRoutes.Path("/lots/", PiperRoutes.Segment(id));</c> for a named
+    /// endpoint: the route's path (its group's prefix and its own), with a parameter for each route value, of the type
+    /// the handler takes it as, so a link of the wrong type, or to a route that isn't there, doesn't compile.
+    /// </summary>
+    private static string RouteFunction(Token name, string route, TextSpan span, LambdaExpressionSyntax handler, List<(string, object)> holes)
+    {
+        string Hole(object value)
+        {
+            var hole = $"r{holes.Count}";
+            holes.Add((hole, value));
+            return "$" + hole;
+        }
+        LiteralExpressionSyntax Text(string text) => new(span, new Token(TokenKind.StringLiteral, span, text, text) { IsGenerated = true }, text);
+
+        var path = route.Replace("//", "/");
+        var parameters = new List<string>();
+        var pieces = new List<string>();
+        var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int at = 0;
+        for (int open = path.IndexOf('{'); open >= 0; open = path.IndexOf('{', at))
+        {
+            int close = path.IndexOf('}', open);
+            if (close < 0)
+                break;
+            if (open > at)
+                pieces.Add(Hole(Text(path[at..open])));
+            at = close + 1;
+            var inside = path[(open + 1)..close];
+            var parameterName = inside.TrimStart('*').Split(':', '=', '?')[0];
+            if (handler.Parameters.FirstOrDefault(p => p.Name.Text.Equals(parameterName, StringComparison.OrdinalIgnoreCase)) is not { Type: { } type } parameter)
+                continue;   // reported by CheckRoute
+            var reference = Hole(parameter.Name);
+            if (taken.Add(parameter.Name.Text))
+                parameters.Add($"{reference}: {Hole(type)}");
+            pieces.Add(inside.StartsWith('*') ? $"Piper.Runtime.PiperRoutes.CatchAll({reference})" : $"Piper.Runtime.PiperRoutes.Segment({reference})");
+        }
+        if (at < path.Length || pieces.Count == 0)
+            pieces.Add(Hole(Text(at < path.Length ? path[at..] : "/")));
+        return $"static fn {Hole(name)}({string.Join(", ", parameters)}) => string = Piper.Runtime.PiperRoutes.Path({string.Join(", ", pieces)});";
     }
 
     /// <summary>
