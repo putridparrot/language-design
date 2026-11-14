@@ -61,6 +61,29 @@ them too.
 - **Newtypes, later:** a newtype with type parameters, for phantom-typed ids (`newtype Id<T> = Guid;`, so an
   `Id<Issue>` isn't an `Id<Project>`); and newtypes as JSON dictionary keys (`Dictionary<IssueId, …>` written as an
   object, which needs the converter's property-name methods).
+- **Interpolation that escapes for where it's going.** Markup escapes its holes by type, so cross-site scripting can't
+  be written by accident; the same for the other places text goes would do that for injection generally:
+  `sql$"select * from lots where id = {id}"` is a parameterized query (each hole a parameter, never text),
+  `url$"/search?q={text}"` encodes each hole for its part of the URL, and `shell$"git log {branch}"` passes each hole
+  as one argument. A raw piece takes `Sql.Raw(…)`, as markup's does `Html.Raw(…)`. Each kind is a type with its own
+  holes' rules, so a plugin could add one (`ldap$`, `regex$`). The data plugin's raw SQL would take `sql$` only.
+- **Typestate from `statemachine`.** A machine's state as part of its type: `Order<Unpaid>`, `Order<Paid>`, where
+  `order.Ship()` on an unpaid one is a compile error rather than a refused transition at run time, and each
+  transition returns the machine in its next state. Protocols (pay, then pack, then ship; open before send) checked
+  where they're written. For a machine kept in a variable whose state isn't known statically (an actor's), it stays
+  as today, with `match` on its state giving the typed one.
+- **Error sets inferred** (as Zig's): `fn Place(…) => Result<Order, _>` gets as its error the union of what its `?`s
+  can raise (`StockError | PaymentError`), so a `match` on it must handle exactly those, and a new failure deep down
+  shows at every caller that doesn't. In C# it's a generated enum over the errors, or the errors' common trait.
+- **`requires` proven where it can be.** Constant checking already reports a `requires` that constant arguments
+  break. Following the code's flow, the compiler could also know that after `if amount > 0m`, `Money(amount)` can't
+  fail (and leave the check out), and warn where a `requires` must fail on some path. A light refinement type, with
+  nothing new to write: newtypes and their `requires` are the refinements.
+- **Nested updates in a spread:** `{ ...order, address.city: "Leeds" }`, rather than a spread inside a spread for
+  each level of records within records; `{ ...board, cells[i].worker: "a" }` for a list's item, perhaps, later.
+- **String-literal enums:** `enum Swap { "innerHTML", "outerHTML", "none" }`, which are their strings in JSON, markup
+  attributes and parsing, but checked as any enum (and matched exhaustively). Web APIs are full of such strings
+  (htmx's `hx-swap`, CSS values, statuses); the markup completion's values could come from them.
 
 ### Ideas from other languages
 
@@ -174,7 +197,9 @@ finishing it), container publishing, and hosted workers; and of actor clustering
 4. **Failure policies.** The same patterns were written by hand several times: stock retries once after a dead letter,
    grid lends chunks with a lease and ignores late results, the tracker retries its webhook (with `[Retry]`). The
    aspects plugin could add `[Timeout]` and `[CircuitBreaker]` beside `[Retry]`, and asks to remote actors take the
-   same policies.
+   same policies. And supervision, as Erlang's: an actor that throws is restarted by a policy its parent declares
+   (restart it, restart its siblings too, or give up after so many failures in a minute), rather than each handler
+   catching what it can; deterministic simulation (item 6) tests the policies.
 5. **An outbox, and queues.** The tracker tells its webhook after saving a change; if the process dies in between, the
    notification is lost. An outbox writes the message in the change's own transaction and sends it afterwards, so it
    can't be lost, which suits the data plugin. A queue plugin would give jobs that must survive a restart somewhere to
@@ -183,12 +208,58 @@ finishing it), container publishing, and hosted workers; and of actor clustering
    "vanished worker" test was put together by hand. A test helper could give a cluster in one process, with faults to
    inject: stop a node, drop or delay messages to one, split the network. Property-based tests (above) suit it, with
    the faults among the generated inputs.
+
+   **Deterministic simulation** goes further, as FoundationDB and TigerBeetle test themselves, but built in: the whole
+   cluster (actors, remote actors, messaging, timers) runs in one process on one thread, with a simulated clock and
+   network, and every choice the run makes (which message is delivered next, which is dropped, delayed or duplicated,
+   when a node restarts, when the network splits) comes from the property test's recorded choices. So:
+
+   ```piper
+   test "no stock is sold twice" for (orders: List<Order>) simulate (nodes: 3, faults: on) {
+       …   // drive the cluster; check what's true however it ran
+   }
+   ```
+
+   - A race is found by trying thousands of schedules in seconds, with simulated time racing ahead.
+   - It shrinks like any failure, since the schedule is just more choices: to the fewest events that cause it ("node 2
+     restarts between the reservation and its confirmation"), shown as a timeline.
+   - `--seed` replays it exactly, under the debugger too, as nothing depends on real threads or time.
+   - It's possible only because the compiler sees every place a program reads the clock, gets random numbers, sleeps,
+     starts a task or does I/O, so in a simulated test each is routed to the simulator (and one it can't route, such
+     as a .NET call doing its own I/O, is reported). Other languages need the program written against a framework from
+     the start; Piper's actors, timers and messages would be simulated as written.
 7. **Deploying without hand-written files.** Each app has a Dockerfile copying the repository to build the compiler,
    and Kubernetes YAML with the same `POD_IP` plumbing. `piper build --publish` (planned above) could use the .NET SDK's
    container publishing, so there's no Dockerfile; and a declaration of the app's roles (a coordinator and workers,
    their ports and replicas) could generate the Kubernetes or Aspire manifests.
+8. **Durable workflows, checked by the compiler** (a `workflow` plugin, as Temporal and Azure Durable Functions). A
+   process that runs for minutes or weeks (an order paid, packed, shipped, refunded if it isn't), surviving restarts by
+   replaying its history of steps. Those frameworks need the workflow's code to be deterministic, so a replay takes the
+   same path, and leave that to discipline: a `DateTime.Now`, a `Random` or a direct HTTP call in one is a bug found in
+   production. Piper can check it:
+
+   ```piper
+   workflow Fulfil(order: Order) {
+       let payment = await activity Charge(order);            // run once, its result recorded
+       await timer(TimeSpan.FromDays(2));                     // durable: survives restarts
+       if !(await activity Shipped(order.id)) { await activity Refund(payment); }
+   }
+   ```
+
+   - In a workflow's body, reading the clock, random numbers, I/O and anything else that differs between runs is a
+     compile error; it goes in an `activity`, whose result is recorded and replayed.
+   - A `statemachine` can be a workflow's state, and compensating steps (undo a charge if shipping fails) make sagas,
+     with the messaging plugin's (item 7 there).
+   - The compatibility check (item 1) covers workflows too: changing one while instances are mid-way is a breaking
+     change unless the new code replays the old history.
+   - Deterministic simulation (item 6) runs them, with crashes between their steps.
 
 More, around the services themselves:
+
+- **What crosses a process boundary, checked.** A message to a remote actor, a queue or a workflow must be data that
+  survives the trip: immutable, serializable, and holding no handles (a stream, a connection, a lambda). The actor
+  plugins already warn about a message's mutable fields; a check like Swift's `Sendable` would make each of these an
+  error where the message type is declared, rather than a failure when it's first sent.
 
 - **Typed clients generated from `endpoints`.** [apps/tracker-desktop](../apps/tracker-desktop/README.md)'s
   `TrackerClient` was written by hand, with its own copies of the API's records; when the tracker's ids became
