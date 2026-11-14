@@ -17,8 +17,9 @@ const string Usage = """
                                            left out when the first starts with '-': piper run app --port 8001.
                                            --watch runs it again whenever a .piper file or piper.json changes,
                                            and reloads a web program's open pages
-      piper test  <inputs...> [--filter <text>]
-                                           Run the program's test blocks (those whose name contains <text>)
+      piper test  <inputs...> [--filter <text>] [--seed <n>]
+                                           Run the program's test blocks (those whose name contains <text>);
+                                           --seed repeats a property test's failure, from the seed it showed
       piper new   <folder> [--template <name>]
                                            Make a program folder: console (the default), or web (an API using the
                                            services and web plugins)
@@ -68,6 +69,7 @@ var inputs = new List<string>();
 string? outputDirectory = null;
 string? assemblyName = null;
 string? filter = null;
+int? seed = null;
 bool executable = false, library = false, watch = false;
 string[] programArguments = [];
 for (int i = 1; i < args.Length; i++)
@@ -84,6 +86,11 @@ for (int i = 1; i < args.Length; i++)
         assemblyName = args[++i];
     else if (args[i] == "--filter" && i + 1 < args.Length && command == "test")
         filter = args[++i];
+    else if (args[i] == "--seed" && i + 1 < args.Length && command == "test" && int.TryParse(args[i + 1], out var seedValue))
+    {
+        seed = seedValue;
+        i++;
+    }
     else if (args[i] == "--exe" && command == "build")
         executable = true;
     else if (args[i] == "--library" && command == "build")
@@ -182,7 +189,7 @@ switch (command)
             Console.WriteLine("No tests found; write them as test \"name\" { … } blocks.");
             return 0;
         }
-        var tests = Runner.RunTests(result.Files, filter, result.References);
+        var tests = Runner.RunTests(result.Files, filter, result.References, seed);
         foreach (var error in tests.Errors)
             Console.Error.WriteLine(error);
         foreach (var test in tests.Results)

@@ -38,7 +38,7 @@ public sealed class Lowerer
             record.Invariants = lowerer.LowerInvariants(record.Invariants);
         return new BoundProgram(program.Files, program.FileNamespaces, program.Types, program.BuiltinTypes, LowerAll(program.Functions), LowerAll(program.Methods), program.Main)
         {
-            Tests = [.. program.Tests.Select(t => t with { Function = LowerAll([t.Function])[0] })],
+            Tests = [.. program.Tests.Select(t => t with { Function = LowerAll([t.Function])[0], Generators = LowerAll(t.Generators) })],
             ExternalConformances = program.ExternalConformances,
         };
     }

@@ -61,9 +61,20 @@ public abstract record DeclarationSyntax(TextSpan Span, Token Name) : SyntaxNode
 /// <c>test "adds up" { … }</c> (or <c>async test</c>): a test, run by <c>piper test</c> and left out of other builds.
 /// <see cref="DeclarationSyntax.Name"/> is the name's string literal; <see cref="Function"/> is the body as a
 /// parameterless function (named after the test's position, so it can't be called).
+/// A property test, <c>test "name" for (x: int in 1..10, xs: List&lt;int&gt;) requires … { … }</c>, is a function of
+/// its parameters, run by <c>piper test</c> over generated values; its `requires` are calls to
+/// <c>PiperProperty.Assume</c> at the start of its body.
 /// </summary>
 public sealed record TestDeclarationSyntax(TextSpan Span, Token Name, string TestName, FunctionDeclarationSyntax Function)
-    : DeclarationSyntax(Span, Name);
+    : DeclarationSyntax(Span, Name)
+{
+    /// <summary>
+    /// For each parameter with an <c>in</c> range or collection, a function making its generator
+    /// (<c>PiperGen.Range&lt;int&gt;(1, 10)</c>), named after the test's function and the parameter's position:
+    /// <c>PiperTest_40_0</c>. The others are generated from their types.
+    /// </summary>
+    public ImmutableArray<FunctionDeclarationSyntax> Generators { get; init; } = [];
+}
 
 /// <summary>
 /// <c>[Obsolete("Use area")]</c>: a .NET attribute, with constant <see cref="Arguments"/> for its constructor followed

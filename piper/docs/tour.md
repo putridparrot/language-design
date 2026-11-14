@@ -408,6 +408,28 @@ PASS divides with a remainder
 A failing `Assert` reports its condition (`Assertion failed: r == 2`) and the line. Tests are checked in every build
 but only compiled in by `piper test`.
 
+A test `for` some values checks something for any of them: `piper test` makes a hundred sets, and if one fails,
+shrinks it to the smallest that still fails before reporting it:
+
+```piper
+test "the remainder is never negative" for (a: int, b: int in 1..1000) {
+    let (_, r) = Divide(a, b);
+    Assert(r >= 0);
+}
+```
+
+```
+FAIL the remainder is never negative
+     Falsified after 7 cases, shrunk 428 times (seed 1135932948):
+       a = -1
+       b = 2
+     Assertion failed: r >= 0
+        at src/divide.piper:line 9
+```
+
+Here the property was wrong: as in C#, a negative `a` gives a negative remainder. `piper test src/ --seed 1135932948`
+repeats the same run.
+
 ## Modules
 
 Each file can declare a `namespace`, and `private` hides a declaration from other files. A program is all of its

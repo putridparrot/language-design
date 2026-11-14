@@ -690,6 +690,12 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportInterpolatedTestName(TextSpan span) =>
         Error("PIP0337", span, "A test's name must be a plain string, without interpolation.");
 
+    public void ReportOpenTestRange(TextSpan span) =>
+        Error("PIP0398", span, "A property test's range needs a start and an end, such as 1..100.");
+
+    public void ReportTestRangeType(TextSpan span, string parameter, TypeSymbol type) =>
+        Error("PIP0399", span, $"A range gives integers or chars, but '{parameter}' is a '{type}'; give it a collection to choose from instead.");
+
     public void ReportDuplicateTest(TextSpan span, string name) =>
         Error("PIP0338", span, $"There's already a test named \"{name}\".");
 

@@ -204,10 +204,13 @@ public static class Runner
     /// Runs the program's tests (compiled with <see cref="CompilationOptions.IncludeTests"/>) in declaration order, each
     /// whose name contains <paramref name="filter"/>, if one is given.
     /// </summary>
-    public static TestRunResult RunTests(IEnumerable<GeneratedFile> files, string? filter = null, ProgramReferences? references = null)
+    /// <param name="seed">The seed property tests generate values from; by default a new one each run.</param>
+    public static TestRunResult RunTests(IEnumerable<GeneratedFile> files, string? filter = null, ProgramReferences? references = null, int? seed = null)
     {
         var (assembly, context, name, errors) = Load(files, "PiperTests", references);
         var culture = Thread.CurrentThread.CurrentCulture;
+        var outerSeed = Piper.Runtime.PiperProperty.Seed;
+        Piper.Runtime.PiperProperty.Seed = seed;
         try
         {
             if (assembly is null)
@@ -224,6 +227,7 @@ public static class Runner
         }
         finally
         {
+            Piper.Runtime.PiperProperty.Seed = outerSeed;
             Thread.CurrentThread.CurrentCulture = culture;
             Unload(context, name);
         }
@@ -233,8 +237,21 @@ public static class Runner
     {
         try
         {
-            if (method.Invoke(null, null) is Task task)
-                task.GetAwaiter().GetResult();
+            var parameters = method.GetParameters();
+            if (parameters.Length == 0)
+            {
+                Invoke(method, null);
+            }
+            else
+            {
+                // A property test: each parameter's generator is made by the function named after its position (for
+                // an `in` range or collection), or else from its type.
+                var generators = parameters.Select((p, i) =>
+                    method.DeclaringType!.GetMethod($"{method.Name}_{i}", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static) is { } make
+                        ? (Piper.Runtime.IPiperGen)Invoke(make, null)!
+                        : Piper.Runtime.PiperGen.For(p.ParameterType)).ToList();
+                Piper.Runtime.PiperProperty.Check([.. parameters.Select(p => p.Name ?? "")], generators, values => Invoke(method, values));
+            }
             return new TestResult(name, null);
         }
         catch (TargetInvocationException ex) when (ex.InnerException is { } inner)
@@ -246,11 +263,33 @@ public static class Runner
             return new TestResult(name, Failure(ex));
         }
 
+        // Calls a test, or a generator's function, waiting for a Task, and throwing what it threw rather than a
+        // TargetInvocationException.
+        static object? Invoke(MethodInfo method, object?[]? arguments)
+        {
+            object? result;
+            try
+            {
+                result = method.Invoke(null, arguments);
+            }
+            catch (TargetInvocationException ex) when (ex.InnerException is { } inner)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(inner).Throw();
+                throw;
+            }
+            if (result is Task task)
+                task.GetAwaiter().GetResult();
+            return result;
+        }
+
         static string Failure(Exception exception)
         {
-            var message = exception is Piper.Runtime.PiperAssertionException
+            // A property test's message names the values; the stack is the smallest failing case's.
+            var message = exception is Piper.Runtime.PiperAssertionException or Piper.Runtime.PiperPropertyException
                 ? exception.Message
                 : $"Unhandled exception: {exception.GetType().FullName}: {exception.Message}";
+            if (exception is Piper.Runtime.PiperPropertyException { InnerException: { } failure })
+                exception = failure;
             // The test's own frame is named after its position; just give its line.
             var frames = new System.Diagnostics.StackTrace(exception, fNeedFileInfo: true).GetFrames()
                 .Where(f => f.GetFileName() is { } file && file.EndsWith(".piper", StringComparison.OrdinalIgnoreCase))

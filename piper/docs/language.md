@@ -39,7 +39,8 @@ declaration     = function | record | class | enum | trait | extend | typeAlias 
 typeAlias       = "type" IDENT "=" type ";" ;                 (* another name for the type; "type" is a keyword only here *)
 newtype         = "newtype" IDENT "=" type { requires } ";" ; (* a distinct type over the value; a keyword only here *)
 pluginDeclaration = KEYWORD … ;                               (* a plugin's syntax: see plugins.md *)
-test            = [ "async" ] "test" STRING block ;            (* run by piper test, left out of other builds *)
+test            = [ "async" ] "test" STRING [ "for" "(" property { "," property } ")" { requires } ] block ;   (* run by piper test, left out of other builds *)
+property        = IDENT ":" type [ "in" expression ] ;          (* a property test's input: from a range, a collection, or its type *)
 attributes      = { "[" attribute { "," attribute } [ "," ] "]" } ;
 attribute       = qualifiedName [ "(" [ expression { "," expression } [ "," ] ] ")" ] ;   (* constants, then Name = value *)
 
@@ -1585,8 +1586,54 @@ async test "waits" {
 
 - **`Assert(condition)`** fails the test when the condition is false, reporting its source text: `Assertion failed: Add(-1, 1) == 0`. `Assert(condition, message)` reports the message instead.
 - **`AssertEqual(expected, actual)`** fails unless the values are equal (by `Equals`, as `==` compares). Sequences other than strings are compared element by element, so `AssertEqual([1, 2], xs)` works on a List. They must have a common type. A failure shows both: `Expected [1, 2] but got [1, 2, 3]`.
-- **Running:** `piper test src/` runs every test in order and prints `PASS` or `FAIL` for each, with the reason and the Piper line for a failure, then a count. It exits with 1 if any failed. `--filter text` runs only the tests whose name contains `text`. An exception fails a test too.
-- **Names** are plain strings (no interpolation), unique in the program. A test can't be called, takes no parameters and returns nothing; `async test` can `await`.
+- **Running:** `piper test src/` runs every test in order and prints `PASS` or `FAIL` for each, with the reason and the Piper line for a failure, then a count. It exits with 1 if any failed. `--filter text` runs only the tests whose name contains `text`, and `--seed n` repeats a property test's failure. An exception fails a test too.
+- **Names** are plain strings (no interpolation), unique in the program. A test can't be called and returns nothing; `async test` can `await`.
+
+#### Property tests
+
+A test with `for (…)` checks something for any values: `piper test` runs it 100 times, with values made for its
+parameters, from small to large. When it fails, the values are shrunk to the smallest that still fail it, which are
+what's reported:
+
+```piper
+test "reversing twice gives the list back" for (xs: List<int>) {
+    AssertEqual(xs, xs.AsEnumerable().Reverse().Reverse().ToList());
+}
+
+test "a bid beats the last" for (pounds: int in 1..5000, bidder: string in ["ada", "bob"]) {
+    let last = Bid(bidder, pounds);
+    Assert(NextBid(last).amount > last.amount);
+}
+
+test "division" for (a: int, b: int) requires b != 0 {
+    AssertEqual(a, a / b * b + a % b);
+}
+```
+
+```
+FAIL small sums
+     Falsified after 9 cases, shrunk 384 times (seed 403656620):
+       xs = [100]
+     Assertion failed: the sum is under 100
+        at sums.piper:line 5
+```
+
+- **Values from their type:** numbers (`int`, `long`, `double`, `decimal` and C#'s others), `bool`, `char`, `string`,
+  `Guid`, dates and times; arrays, `List`, `HashSet` and `Dictionary` (and their interfaces); `T?`, `Result`, tuples;
+  and the program's records, newtypes and enums, made with generated fields. A record whose `requires` refuses the
+  fields isn't used. Values include edge cases (0, ±1, a type's minimum and maximum, empty strings and lists), but not
+  NaN or infinities. A type that can't be made (a `Stream`) fails the test, saying so.
+- **`in`** chooses from a range of integers or chars (`n: int in 1..100`, `c: char in 'a'..'z'`, with `..<` excluding
+  the end), or from a collection (`colour: Colour in Colour.Values`, `vowel: char in "aeiou"`), towards its first item
+  when shrinking. A range of another type is an error (PIP0399), as is one without both ends (PIP0398).
+- **`requires`** throws away the cases it refuses, rather than failing them. A test refusing nearly every case gives
+  up after a thousand, saying so: an `in` range is the better way to ask for values in one.
+- **Shrinking** makes lists shorter, numbers nearer 0 (or a range's start), strings shorter and simpler, and enums
+  their earlier variants, while the test still fails the same way (with the same exception type). It's done on the
+  random choices the values were made from, as Hypothesis does, so every type shrinks with no shrinker of its own.
+- **Seeds:** each run starts from a new seed, shown with a failure; `piper test --seed 403656620` repeats it.
+
+The values come from Piper.Runtime's own generator (`PiperGen`), with no other library.
 
 ### Builtins
 

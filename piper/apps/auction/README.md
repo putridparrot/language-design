@@ -59,7 +59,9 @@ last 30 seconds, when each bid keeps it open 30 seconds more.
   htmx gets fragments, from the same handlers.
 
 The tests check the rules and the state machine with a fixed clock; 400 bids at once on one lot (each taken beats the
-last, and the leader made the highest); being outbid; lots ending and refusing bids; and the app over HTTP: the list,
+last, and the leader made the highest); a property test, that whatever bids come, from any bidder, at any time and in
+any order, bids never fall, the highest leads, each refusal has its reason, and the lot sells only when the reserve
+is met; being outbid; lots ending and refusing bids; and the app over HTTP: the list,
 search, selling with errors, a bid through the form pushed to a page watching the lot, and a bid too low.
 
 It was also tried in a browser (headless Edge, driven through its DevTools port): a page showed another bidder's bid

@@ -69,7 +69,8 @@ Stop a worker with Ctrl+C mid-job and its chunk is done by another; start anothe
 history live in the coordinator's memory.
 
 **`piper test apps/grid`** tests the risk figures, the rules for handing out chunks, and a job over gRPC on three
-worker nodes, where a fourth worker takes a chunk and vanishes.
+worker nodes, where a fourth worker takes a chunk and vanishes. Some are property tests: a job's figures are the same
+for any number of chunks coming back in any order, and a sample counts every scenario, for any count and seed.
 
 ## On Docker Desktop's Kubernetes
 

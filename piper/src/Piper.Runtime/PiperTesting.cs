@@ -51,7 +51,7 @@ public static class PiperAssert
     }
 
     /// <summary>A value as Piper prints it, with strings and chars quoted and sequences listed: <c>["a", "b"]</c>.</summary>
-    private static string Format(object? value) => value switch
+    internal static string Format(object? value) => value switch
     {
         null => "null",
         string text => $"\"{text}\"",

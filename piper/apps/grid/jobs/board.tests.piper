@@ -45,22 +45,27 @@ test "a chunk not sent back within its lease goes to the next worker, and the co
     Assert(!second.running);
 }
 
-test "the last chunk in finishes the job, with the same figures whatever order they came back in" {
+/// Any order of chunks: sorted by a key each, so the order shrinks towards 0, 1, 2… as the keys do.
+test "the last chunk in finishes the job, with the same figures whatever order they came back in" for (
+    chunks: int in 1..8, keys: int[]) {
     let now = DateTime(2026, 1, 1);
-    mut board = Started(4, now);
-    for worker in ["a", "b", "c", "d"] {
+    mut board = Started(chunks, now);
+    let workers = Enumerable.Range(0, chunks).Select(id => $"w{id}").ToList();
+    for worker in workers {
         board = TakeWork(board, worker, now).board;
     }
-    for (id, worker) in [(2, "c"), (0, "a"), (3, "d"), (1, "b")] {
-        board = Complete(board, Result(board, id, worker), now.AddSeconds(5)).board;
+    let order = Enumerable.Range(0, chunks).OrderBy(id => if id < keys.Length { keys[id] } else { 0 }).ToList();
+    for id in order {
+        Assert(board.running, $"the job ended before chunk {id} came back");
+        board = Complete(board, Result(board, id, workers[id]), now.AddSeconds(5)).board;
     }
     Assert(!board.running);
     let run = board.history.Single();
-    let expected = Combine(Enumerable.Range(0, 4).Select(id => Simulate(200, ChunkSeed(9, id))));
+    let expected = Combine(Enumerable.Range(0, chunks).Select(id => Simulate(200, ChunkSeed(9, id))));
     AssertEqual(expected.var99, run.valuation.var99);
     AssertEqual(expected.mean, run.valuation.mean);
     Assert(expected.histogram.SequenceEqual(run.valuation.histogram));
-    AssertEqual(4, run.workers);
+    AssertEqual(chunks, run.workers);
     AssertEqual(5.0, run.seconds);
 }
 

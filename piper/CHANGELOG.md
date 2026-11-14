@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Property tests:** `test "name" for (xs: List<int>, n: int in 1..100, c: char in "aeiou") requires … { … }` runs
+  its body over 100 sets of generated values, and when it fails, shrinks them to the smallest that still fail, shown
+  with the seed that found them: `piper test --seed <n>` repeats it. Values are made from each parameter's type
+  (numbers, text, collections, Options, Results, tuples, and the program's records, newtypes and enums, a record's
+  `requires` refusing its own), or from an `in` range or collection; the test's `requires` throws away the cases it
+  refuses. Generating and shrinking are Piper.Runtime's own (`PiperGen`, `PiperProperty`), with no other library:
+  shrinking works on the random choices the values were made from, as Hypothesis does, so every type shrinks alike. A
+  range of a type that isn't an integer or char is an error (PIP0399), as is one missing an end (PIP0398).
+  apps/auction tests that bids never fall, whatever bids come in, and apps/grid that a job's figures don't depend on
+  the order its chunks come back in.
 - **Editor support for markup:** the VS Code grammar reads markup as markup (tags, attributes, text and entities, with
   holes as Piper, and `<script>`/`<style>` as text), where it coloured it as code. In the language server, a
   component tag is its function: coloured, hovered and gone to, and renamed in both its tags (the lexer now keeps where

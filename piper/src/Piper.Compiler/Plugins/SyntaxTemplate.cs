@@ -49,6 +49,12 @@ public sealed partial class SyntaxTemplate
     {
     }
 
+    /// <summary>
+    /// A copy of <paramref name="node"/> that the compiler wrote, at its span: bound as usual, but not there to hover,
+    /// colour or rename, so the same source can be bound twice.
+    /// </summary>
+    internal static T Generated<T>(T node) where T : SyntaxNode => (T)Rewrite(node, typeof(T), [], [], node.Span)!;
+
     public ExpressionSyntax Expression(string template, params (string Name, object Value)[] holes)
     {
         var diagnostics = new DiagnosticBag();

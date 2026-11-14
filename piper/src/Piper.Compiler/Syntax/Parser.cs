@@ -439,7 +439,10 @@ public sealed partial class Parser
         Peek(offset) is { Kind: TokenKind.Identifier, Text: "test" } &&
         Peek(offset + 1).Kind is TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral;
 
-    /// <summary>test = [ "async" ] "test" STRING block ;</summary>
+    /// <summary>
+    /// test     = [ "async" ] "test" STRING [ "for" "(" property { "," property } ")" requires ] block ;
+    /// property = IDENT ":" type [ "in" expression ] ;   (* a range, a collection, or a PiperGen *)
+    /// </summary>
     private TestDeclarationSyntax ParseTest()
     {
         var first = Current;
@@ -448,17 +451,97 @@ public sealed partial class Parser
         var name = NextToken();
         if (name.Kind == TokenKind.InterpolatedStringLiteral)
             _diagnostics.ReportInterpolatedTestName(name.Span);
+        var functionName = $"PiperTest_{name.Span.Start}";
+
+        var parameters = ImmutableArray<ParameterSyntax>.Empty;
+        var generators = ImmutableArray.CreateBuilder<FunctionDeclarationSyntax>();
+        var requires = ImmutableArray<ExpressionSyntax>.Empty;
+        if (Current.Kind == TokenKind.ForKeyword)
+        {
+            NextToken();
+            Expect(TokenKind.OpenParen);
+            var properties = ParseSeparatedList(() =>
+            {
+                var parameterName = Expect(TokenKind.Identifier);
+                Expect(TokenKind.Colon);
+                var type = ParseType();
+                ExpressionSyntax? source = null;
+                if (Current.Kind == TokenKind.InKeyword)
+                {
+                    NextToken();
+                    source = ParseBinary(0);
+                }
+                return (Parameter: new ParameterSyntax(Span(parameterName, source ?? (SyntaxNode)type), parameterName, type), Source: source);
+            }, TokenKind.CloseParen);
+            Expect(TokenKind.CloseParen);
+            parameters = [.. properties.Select(p => p.Parameter)];
+            for (int i = 0; i < properties.Length; i++)
+            {
+                if (properties[i].Source is { } source)
+                    generators.Add(GeneratorFunction($"{functionName}_{i}", properties[i].Parameter.Type, source));
+            }
+            requires = ParseRequires();
+        }
+
         var (outerAsync, outerContext) = (_inAsync, _asyncContext);
         _inAsync = @async is not null;
         _asyncContext = _inAsync ? AsyncContext.Async : AsyncContext.Sync;
         var body = ParseBlock();
         (_inAsync, _asyncContext) = (outerAsync, outerContext);
+        if (requires.Length > 0)
+        {
+            // A case its `requires` refuses is thrown away, not failed: `PiperProperty.Assume(condition);` first.
+            var assumptions = requires.Select(condition =>
+            {
+                var test = condition is ContractMessageSyntax message ? message.Condition : condition;
+                return (StatementSyntax)new ExpressionStatementSyntax(test.Span,
+                    new CallExpressionSyntax(test.Span, RuntimeMember(test.Span, "PiperProperty", "Assume"), [test]) { IsGenerated = true }) { IsGenerated = true };
+            });
+            body = body with { Statements = [.. assumptions, .. body.Statements] };
+        }
         var testName = name.Value as string ?? name.Text;
         // The body becomes a function that nothing can call, since its name isn't declared in any scope.
-        var functionName = new Token(TokenKind.Identifier, name.Span, $"PiperTest_{name.Span.Start}");
-        var function = new FunctionDeclarationSyntax(SpanFrom(first), functionName, [], null, [], null, body, null) { Async = @async };
-        return new TestDeclarationSyntax(SpanFrom(first), name, testName, function);
+        var function = new FunctionDeclarationSyntax(SpanFrom(first), new Token(TokenKind.Identifier, name.Span, functionName), [], null, parameters, null, body, null) { Async = @async };
+        return new TestDeclarationSyntax(SpanFrom(first), name, testName, function) { Generators = generators.ToImmutable() };
     }
+
+    /// <summary>
+    /// <c>fn PiperTest_40_0() =&gt; PiperGen&lt;T&gt; = PiperGen.Range&lt;T&gt;(start, end)</c> for <c>x: T in start..end</c>
+    /// (<c>RangeExclusive</c> for <c>..&lt;</c>), or <c>PiperGen.In&lt;T&gt;(source)</c> for a collection or generator.
+    /// </summary>
+    private FunctionDeclarationSyntax GeneratorFunction(string name, TypeSyntax type, ExpressionSyntax source)
+    {
+        // Everything here but the source's own expressions is the compiler's: the parameter's type is bound again in
+        // it, so it's a generated copy, which the editor doesn't count twice.
+        var span = source.Span;
+        var generatedType = SyntaxTemplate.Generated(type);
+        ExpressionSyntax call;
+        if (source is RangeExpressionSyntax range)
+        {
+            if (range.Start is null || range.End is null)
+                _diagnostics.ReportOpenTestRange(span);
+            var method = range.IsInclusive ? "Range" : "RangeExclusive";
+            call = new CallExpressionSyntax(span, RuntimeMember(span, "PiperGen", method) with { TypeArguments = [generatedType] },
+                [range.Start ?? new ErrorExpressionSyntax(span), range.End ?? new ErrorExpressionSyntax(span)]) { IsGenerated = true };
+        }
+        else
+        {
+            call = new CallExpressionSyntax(span, RuntimeMember(span, "PiperGen", "In") with { TypeArguments = [generatedType] }, [source]) { IsGenerated = true };
+        }
+        var returnType = new NamedTypeSyntax(span, [Generated(span, "Piper"), Generated(span, "Runtime")], Generated(span, "PiperGen"), [generatedType]) { IsGenerated = true };
+        return new FunctionDeclarationSyntax(span, Generated(span, name), [], null, [], returnType, null, call) { IsGenerated = true };
+    }
+
+    /// <summary><c>Piper.Runtime.Type.Member</c>, at <paramref name="span"/>, written by the compiler.</summary>
+    private static MemberAccessExpressionSyntax RuntimeMember(TextSpan span, string type, string member)
+    {
+        ExpressionSyntax target = new NameExpressionSyntax(span, Generated(span, "Piper")) { IsGenerated = true };
+        foreach (var part in new[] { "Runtime", type })
+            target = new MemberAccessExpressionSyntax(span, target, Generated(span, part)) { IsGenerated = true };
+        return new MemberAccessExpressionSyntax(span, target, Generated(span, member)) { IsGenerated = true };
+    }
+
+    private static Token Generated(TextSpan span, string text) => new(TokenKind.Identifier, span, text) { IsGenerated = true };
 
     private bool IsAsyncModifier(int offset) =>
         Peek(offset) is { Kind: TokenKind.Identifier, Text: "async" } &&

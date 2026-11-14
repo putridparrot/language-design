@@ -70,3 +70,38 @@ async test "the catalogue lists lots newest first, by words in their titles" {
     AssertEqual(["Clock key", "Blue vase", "Carriage clock"], (await auction.List(None)).Select(l => l.title).ToList());
     AssertEqual(["Clock key", "Carriage clock"], (await auction.List(Some("clock"))).Select(l => l.title).ToList());
 }
+
+/// A bid someone tries, for the property test below: from one of three bidders, some pounds above or below the
+/// starting price, some seconds after the lot opens.
+record Attempt(bidder: int, pounds: int, second: int);
+
+async test "whatever bids come, in whatever order, bids never fall and the highest leads" for (
+    start: int in 1..200, reserve: int in 0..400, attempts: List<Attempt>) {
+    let auction = Recording(ConcurrentQueue<LotChange>());
+    let reserved: decimal? = if reserve == 0 { None } else { Some(start + reserve) };
+    let id = await auction.Open(NewLot("Clock", "", "Ada", start, reserved, 5), Noon());
+    let Some(lot) = await auction.Find(id) else { Assert(false, "the lot should be there"); return; };
+
+    for attempt in attempts {
+        let amount: decimal = start + attempt.pounds % 300;
+        if amount <= 0m { continue; }
+        let at = Noon().AddSeconds((attempt.second % 400 + 400) % 400);
+        let before = await lot.Show();
+        match await lot.Bid(NewBid($"bidder{(attempt.bidder % 3 + 3) % 3}", amount), at) {
+            Ok(view) => AssertEqual(Some(amount), view.current),
+            Err(BidRefusal.TooLow(minimum)) => Assert(amount < minimum && minimum == Minimum(start, before.current)),
+            Err(BidRefusal.Ended) => Assert(at >= before.ends || before.state is LotLifeState.Sold | LotLifeState.Unsold),
+        }
+    }
+
+    let view = await lot.Show();
+    for (newer, older) in view.bids.Zip(view.bids.Skip(1)) {
+        Assert(newer.amount >= older.amount + Increment(older.amount), $"{newer.amount} after {older.amount}");
+    }
+    AssertEqual(view.bids.FirstOrDefault()?.amount, view.current);
+    AssertEqual(view.bids.FirstOrDefault()?.bidder, view.leader);
+
+    auction.Tick(view.ends);
+    let ended = (await auction.List(None)).Single();
+    AssertEqual(if ReserveMet(ended.current, reserved) { LotLifeState.Sold } else { LotLifeState.Unsold }, ended.state);
+}

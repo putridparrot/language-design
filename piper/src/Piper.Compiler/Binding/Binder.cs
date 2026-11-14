@@ -361,7 +361,7 @@ public sealed partial class Binder
             check();
 
         // Tests are functions no scope declares, so nothing can call them, marked for `piper test` to find.
-        var tests = new List<(string Name, FunctionInfo Info)>();
+        var tests = new List<(string Name, FunctionInfo Info, List<FunctionInfo> Generators)>();
         var testNames = new HashSet<string>();
         foreach (var file in _files)
         {
@@ -377,7 +377,24 @@ public sealed partial class Binder
                 [
                     new BoundAttribute(ClrTypeSymbol.For(typeof(Piper.Runtime.PiperTestAttribute)), [new BoundLiteralExpression(test.TestName, TypeSymbol.String)], []),
                 ];
-                tests.Add((test.TestName, info));
+                var generators = new List<FunctionInfo>();
+                foreach (var generator in test.Generators)
+                {
+                    // `x: T in 1..10` needs a T a range can give, said plainly rather than as PiperGen.Range's overloads.
+                    var index = int.Parse(generator.Name.Text[(generator.Name.Text.LastIndexOf('_') + 1)..]);
+                    var type = info.Symbol.Parameters[index].Type;
+                    if (generator.ExpressionBody is CallExpressionSyntax { Callee: MemberAccessExpressionSyntax { Member.Text: "Range" or "RangeExclusive" } } &&
+                        !type.IsIntegral && type != TypeSymbol.Char && type != TypeSymbol.Error)
+                    {
+                        _diagnostics.ReportTestRangeType(generator.Span, test.Function.Parameters[index].Name.Text, type);
+                        continue;
+                    }
+                    var generatorInfo = BindFunctionSignature(generator, file, file.Scope, containingType: null, thisType: null);
+                    generatorInfo.Symbol.DeclaringFile = file.Source;
+                    generatorInfo.Symbol.Namespace = file.Namespace;
+                    generators.Add(generatorInfo);
+                }
+                tests.Add((test.TestName, info, generators));
             }
         }
 
@@ -387,9 +404,9 @@ public sealed partial class Binder
 
         var boundFunctions = functions.Select(BindFunctionBody).OfType<BoundFunction>().ToImmutableArray();
         var boundMethods = methods.Select(BindFunctionBody).OfType<BoundFunction>().ToImmutableArray();
-        var boundTests = tests.Select(t => (t.Name, Function: BindFunctionBody(t.Info)))
-            .Where(t => t.Function is not null)
-            .Select(t => new BoundTest(t.Name, t.Function!))
+        var boundTests = tests.Select(t => (t.Name, Function: BindFunctionBody(t.Info), Generators: t.Generators.Select(BindFunctionBody).ToList()))
+            .Where(t => t.Function is not null && t.Generators.All(g => g is not null))
+            .Select(t => new BoundTest(t.Name, t.Function!) { Generators = [.. t.Generators.Select(g => g!)] })
             .ToImmutableArray();
 
         var mains = functions.Select(f => f.Symbol).Where(f => f.Name == "Main").ToList();

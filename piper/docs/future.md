@@ -66,11 +66,13 @@ them too.
 
 Weighed against what the apps needed (see each); in rough order of value for the cost.
 
-- **Property-based tests** (QuickCheck, Hypothesis, FsCheck): `test "name" for (a: int in 1..500, …) { … }` runs the
-  body over generated values, and shrinks a failure to the smallest input that fails. Several app tests check a
-  property with one hand-picked example (apps/grid's "the chunks cover the range" with 1000 and 7; "any order gives the
-  same figures" with one order). Piper's tests are built in, so this fits there: generators for the builtin types,
-  records and enums, with a seed printed on failure to repeat it.
+- ~~**Property-based tests**~~ (QuickCheck, Hypothesis, FsCheck), done: `test "name" for (a: int in 1..500, …) { … }`
+  runs the body over generated values and shrinks a failure to the smallest that fails, with a seed to repeat it
+  (see [Property tests](language.md#property-tests)). apps/grid's "any order gives the same figures" and "every
+  scenario is counted once" now check any order and any count, and apps/auction checks that bids never fall. Still to
+  come: writing generators in Piper (`map`, `filter` and combining them, for values a type alone doesn't describe, such
+  as a permutation), a per-test number of cases, and keeping the failures found, to try first next time (as
+  Hypothesis's database does).
 - **Structured concurrency** (Swift's `async let` and task groups, Kotlin's coroutine scopes): tasks started in a scope
   are awaited or cancelled when it ends, and their exceptions aren't lost. apps/grid and apps/stock thread
   cancellation tokens through every worker loop, pair `StartCluster` with `StopCluster` in each test, and stop with a
@@ -400,7 +402,7 @@ generated from `endpoints` can write TypeScript types too.
 **The proving app: an auction site**, built: [apps/auction](../apps/auction/README.md), with what it found. It differs
 from the plan below in places: lots open when listed (no Scheduled state), run in one process (not over pods), and
 have no newtype for money. The plan, as written, still lists what's left for it (caching, pods, persistence,
-property-based tests, messaging). As the tracker proved the API side, people list items, others browse and search,
+messaging); its property test is done. As the tracker proved the API side, people list items, others browse and search,
 then bid live as the clock runs down. Each part of it exercises one of the above:
 
 - **Listing pages and search:** server-rendered, cached (the web plugin's `cache`), with search as you type through
@@ -412,8 +414,9 @@ then bid live as the clock runs down. Each part of it exercises one of the above
   guarantee, in a UI people watch. Lots spread over pods with the remote actors plugin.
 - **The lot page, live:** the current price, a countdown, "you've been outbid" and the bids, pushed to everyone
   watching.
-- **Types and tests:** newtypes (`LotId`, `BidderId`, a `Money` requiring more than 0), and, once they exist,
-  [property-based tests](#ideas-from-other-languages) that the highest bid wins and bids never fall.
+- **Types and tests:** newtypes (`LotId`, `BidderId`, a `Money` requiring more than 0), and
+  [property tests](language.md#property-tests) that the highest bid wins and bids never fall (done: any bids, in any
+  order, against the lot's actor).
 - **Later:** telling the winner and the seller through the [messaging plugin](#a-messaging-plugin) and an outbox, and
   the bids kept by persisted actors, so a restart loses nothing.
 

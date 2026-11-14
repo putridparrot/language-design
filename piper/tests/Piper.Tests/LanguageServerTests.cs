@@ -413,6 +413,29 @@ public sealed class LanguageServerTests : IDisposable
         Assert.Equal(Program.Split("Point").Length - 1, edits.Count);
     }
 
+    /// <summary>A property test's `in` makes a generator the compiler writes, which the editor doesn't see twice.</summary>
+    [Fact]
+    public async Task A_property_tests_parameters_are_renamed_and_hovered_once()
+    {
+        const string program = """
+            newtype Price = int;
+            fn Main() {}
+            test "prices" for (price: Price in [Price(1), Price(2)], n: int in 1..5) requires n > 1 {
+                Assert(price.value > 0);
+            }
+            """;
+        var uri = await OpenAsync(program);
+        var parameters = At(uri, program, "Price = int");
+        parameters["newName"] = "Cost";
+        var edit = await _server.HandleAsync("textDocument/rename", parameters);
+        Assert.Equal(program.Split("Price").Length - 1, edit!["changes"]![uri]!.AsArray().Count);
+
+        var hover = await _server.HandleAsync("textDocument/hover", At(uri, program, "price.value"));
+        Assert.Contains("price: Price", hover!["contents"]!["value"]!.GetValue<string>());
+        hover = await _server.HandleAsync("textDocument/hover", At(uri, program, "5)"));
+        Assert.DoesNotContain("PiperGen", hover?["contents"]?["value"]?.GetValue<string>() ?? "");
+    }
+
     private const string Markup = """
         using System.Collections.Generic;
         record NewLot(title: string, startPrice: decimal);

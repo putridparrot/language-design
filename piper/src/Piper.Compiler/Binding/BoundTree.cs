@@ -54,15 +54,21 @@ public sealed class BoundProgram(
 
     /// <summary>The program with its tests added to its functions, so they're emitted (each marked with PiperTestAttribute).</summary>
     public BoundProgram WithTestsAsFunctions() =>
-        new(Files, FileNamespaces, Types, BuiltinTypes, [.. Functions, .. Tests.Select(t => t.Function)], Methods, Main)
+        new(Files, FileNamespaces, Types, BuiltinTypes, [.. Functions, .. Tests.SelectMany(t => t.Generators.Prepend(t.Function))], Methods, Main)
         {
             ExternalConformances = ExternalConformances,
             Tests = Tests,
         };
 }
 
-/// <summary>A `test "name" { … }` block, as a parameterless function.</summary>
-public sealed record BoundTest(string Name, BoundFunction Function);
+/// <summary>
+/// A `test "name" { … }` block, as a function: parameterless, or a property test's, with the functions making its
+/// <c>in</c> parameters' generators.
+/// </summary>
+public sealed record BoundTest(string Name, BoundFunction Function)
+{
+    public ImmutableArray<BoundFunction> Generators { get; init; } = [];
+}
 
 /// <summary>
 /// `extend int: Shape`, in <paramref name="File"/>. For Option or Result, <paramref name="Target"/> is the definition and
