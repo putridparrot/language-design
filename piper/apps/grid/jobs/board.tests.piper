@@ -1,7 +1,9 @@
 namespace GridApp;
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using Piper.Runtime;
 
 /// The chunk a worker was given, or -1 for none.
 fn Given(assignment: Assignment) => int = match assignment {
@@ -45,16 +47,18 @@ test "a chunk not sent back within its lease goes to the next worker, and the co
     Assert(!second.running);
 }
 
-/// Any order of chunks: sorted by a key each, so the order shrinks towards 0, 1, 2… as the keys do.
+/// Some chunks, in any order they might come back in.
+fn ChunksInAnyOrder() => PiperGen<List<int>> = PiperGen.Range(1, 8).SelectMany(chunks => PiperGen.Shuffled(Enumerable.Range(0, chunks)));
+
 test "the last chunk in finishes the job, with the same figures whatever order they came back in" for (
-    chunks: int in 1..8, keys: int[]) {
+    order: List<int> in ChunksInAnyOrder()) {
     let now = DateTime(2026, 1, 1);
+    let chunks = order.Count;
     mut board = Started(chunks, now);
     let workers = Enumerable.Range(0, chunks).Select(id => $"w{id}").ToList();
     for worker in workers {
         board = TakeWork(board, worker, now).board;
     }
-    let order = Enumerable.Range(0, chunks).OrderBy(id => if id < keys.Length { keys[id] } else { 0 }).ToList();
     for id in order {
         Assert(board.running, $"the job ended before chunk {id} came back");
         board = Complete(board, Result(board, id, workers[id]), now.AddSeconds(5)).board;

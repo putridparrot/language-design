@@ -7,6 +7,9 @@
   `<style>` as text. A component tag (`<Card>`, `</Card>`) is coloured, hovered, gone to and renamed as its function.
 - Completion in markup: HTML's elements and the components at a tag; a component's parameters, or HTML's (and
   htmx's) attributes, in a tag; and the record's fields for an input's `name` inside `<form for={NewLot}>`.
+- Closing tags as you type: `<div>` gets `</div>` after the cursor when its `>` is typed (not after a void element
+  such as `<br>`, a self-closing tag, or one already closed). Turn it off with `piper.autoClosingTags`.
+- Hover on HTML's elements and attributes in markup, and htmx's: what each is for, with a link to MDN or htmx.
 
 ## 1.0.0
 

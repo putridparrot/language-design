@@ -12,6 +12,10 @@ internal readonly record struct IssueId(int @value) : global::System.IComparable
 {
     public override string ToString() => @value.ToString() ?? "";
     public int CompareTo(IssueId other) => global::System.Collections.Generic.Comparer<int>.Default.Compare(@value, other.@value);
+    public static bool operator <(IssueId left, IssueId right) => left.CompareTo(right) < 0;
+    public static bool operator <=(IssueId left, IssueId right) => left.CompareTo(right) <= 0;
+    public static bool operator >(IssueId left, IssueId right) => left.CompareTo(right) > 0;
+    public static bool operator >=(IssueId left, IssueId right) => left.CompareTo(right) >= 0;
     public string ToString(string? format, global::System.IFormatProvider? provider) => @value.ToString(format, provider);
 
     public static bool TryParse(string? text, global::System.IFormatProvider? provider, out IssueId result)
@@ -54,6 +58,10 @@ internal readonly record struct ProjectId(int @value) : global::System.IComparab
 {
     public override string ToString() => @value.ToString() ?? "";
     public int CompareTo(ProjectId other) => global::System.Collections.Generic.Comparer<int>.Default.Compare(@value, other.@value);
+    public static bool operator <(ProjectId left, ProjectId right) => left.CompareTo(right) < 0;
+    public static bool operator <=(ProjectId left, ProjectId right) => left.CompareTo(right) <= 0;
+    public static bool operator >(ProjectId left, ProjectId right) => left.CompareTo(right) > 0;
+    public static bool operator >=(ProjectId left, ProjectId right) => left.CompareTo(right) >= 0;
     public string ToString(string? format, global::System.IFormatProvider? provider) => @value.ToString(format, provider);
 
     public static bool TryParse(string? text, global::System.IFormatProvider? provider, out ProjectId result)
@@ -103,6 +111,10 @@ internal readonly record struct Email(string @value) : global::System.IComparabl
 
     public override string ToString() => @value.ToString() ?? "";
     public int CompareTo(Email other) => global::System.Collections.Generic.Comparer<string>.Default.Compare(@value, other.@value);
+    public static bool operator <(Email left, Email right) => left.CompareTo(right) < 0;
+    public static bool operator <=(Email left, Email right) => left.CompareTo(right) <= 0;
+    public static bool operator >(Email left, Email right) => left.CompareTo(right) > 0;
+    public static bool operator >=(Email left, Email right) => left.CompareTo(right) >= 0;
 
     public static bool TryParse(string? text, global::System.IFormatProvider? provider, out Email result)
     {
@@ -153,6 +165,10 @@ internal readonly record struct Price(decimal @value) : global::System.IComparab
 {
     public override string ToString() => @value.ToString() ?? "";
     public int CompareTo(Price other) => global::System.Collections.Generic.Comparer<decimal>.Default.Compare(@value, other.@value);
+    public static bool operator <(Price left, Price right) => left.CompareTo(right) < 0;
+    public static bool operator <=(Price left, Price right) => left.CompareTo(right) <= 0;
+    public static bool operator >(Price left, Price right) => left.CompareTo(right) > 0;
+    public static bool operator >=(Price left, Price right) => left.CompareTo(right) >= 0;
     public string ToString(string? format, global::System.IFormatProvider? provider) => @value.ToString(format, provider);
 
     public static bool TryParse(string? text, global::System.IFormatProvider? provider, out Price result)
@@ -195,6 +211,10 @@ internal readonly record struct Ticket(global::System.Guid @value) : global::Sys
 {
     public override string ToString() => @value.ToString() ?? "";
     public int CompareTo(Ticket other) => global::System.Collections.Generic.Comparer<global::System.Guid>.Default.Compare(@value, other.@value);
+    public static bool operator <(Ticket left, Ticket right) => left.CompareTo(right) < 0;
+    public static bool operator <=(Ticket left, Ticket right) => left.CompareTo(right) <= 0;
+    public static bool operator >(Ticket left, Ticket right) => left.CompareTo(right) > 0;
+    public static bool operator >=(Ticket left, Ticket right) => left.CompareTo(right) >= 0;
     public string ToString(string? format, global::System.IFormatProvider? provider) => @value.ToString(format, provider);
 
     public static bool TryParse(string? text, global::System.IFormatProvider? provider, out Ticket result)
@@ -289,6 +309,8 @@ internal static class Newtypes
         {
             global::System.Console.WriteLine($"rejected: {e_1.Message}");
         }
+        global::System.Console.WriteLine(new IssueId(3) < new IssueId(10));
+        global::System.Console.WriteLine(new Email("b@x") >= new Email("a@x"));
     }
 }
 

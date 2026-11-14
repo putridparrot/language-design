@@ -59,7 +59,7 @@ fn Page(body: Html) => Html =
     </html>;
 
 /// Money, as the auction shows it.
-fn Money(amount: decimal) => string = "£" + amount.ToString("N2", CultureInfo.InvariantCulture);
+fn Pounds(amount: Money) => string = $"£{amount:N2}";
 
 /// How long until `ends`: "2h 05m", "4m 03s", "12s".
 fn TimeLeft(ends: DateTime, now: DateTime) => string {
@@ -77,20 +77,20 @@ fn TimeLeft(ends: DateTime, now: DateTime) => string {
 fn Status(lot: LotView, now: DateTime) => Html = match lot.state {
     Open => <span class="open">{TimeLeft(lot.ends, now)} left</span>,
     Closing => <span class="closing">Closing: {TimeLeft(lot.ends, now)} left</span>,
-    Sold => <span class="ended">Sold to {lot.leader ?? "?"} for {Money(lot.current ?? 0m)}</span>,
+    Sold => <span class="ended">Sold to {lot.leader ?? "?"} for {Pounds(lot.current ?? lot.startPrice)}</span>,
     Unsold => <span class="ended">Ended unsold{if lot.current is Some(_) { <> (reserve not met)</> }}</span>,
 };
 
 /// The price: the highest bid, or the starting price.
 fn Price(lot: LotView) => Html = match lot.current {
-    Some(price) => <><span class="price">{Money(price)}</span> <small class="muted">{lot.bids.Count} {if lot.bids.Count == 1 { "bid" } else { "bids" }}</small></>,
-    None => <><span class="price">{Money(lot.startPrice)}</span> <small class="muted">to start</small></>,
+    Some(price) => <><span class="price">{Pounds(price)}</span> <small class="muted">{lot.bids.Count} {if lot.bids.Count == 1 { "bid" } else { "bids" }}</small></>,
+    None => <><span class="price">{Pounds(lot.startPrice)}</span> <small class="muted">to start</small></>,
 };
 
 /// The latest bids.
 fn Bids(lot: LotView) => Html =
     <>
-        {for bid in lot.bids.Take(10) { <li><b>{Money(bid.amount)}</b> by {bid.bidder} <span class="muted">at {bid.at:HH:mm:ss}</span></li> }}
+        {for bid in lot.bids.Take(10) { <li><b>{Pounds(bid.amount)}</b> by {bid.bidder} <span class="muted">at {bid.at:HH:mm:ss}</span></li> }}
         {if lot.bids.IsEmpty { <li class="muted">No bids yet.</li> }}
     </>;
 
@@ -144,7 +144,7 @@ fn BidPanel(lot: LotView, bidder: string?, errors: FormErrors<NewBid>?, message:
             <label for="bidder">Your name</label>
             <input id="bidder" name="bidder" value={bidder ?? ""} required />
             <span class="error">{errors?.For("bidder")}</span>
-            <label for="amount">Your bid (at least {Money(Minimum(lot.startPrice, lot.current))})</label>
+            <label for="amount">Your bid (at least {Pounds(Minimum(lot.startPrice, lot.current))})</label>
             <input id="amount" name="amount" type="number" step="0.01" min={Minimum(lot.startPrice, lot.current)} required />
             <span class="error">{errors?.For("amount")}</span>
             <button>Bid</button>

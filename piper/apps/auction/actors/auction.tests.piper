@@ -12,12 +12,12 @@ fn Recording(changes: ConcurrentQueue<LotChange>) => Auctioneer = Auctioneer.Spa
 async test "bids arriving at once are taken one at a time: each beats the last, and one bidder leads" {
     let changes = ConcurrentQueue<LotChange>();
     let auction = Recording(changes);
-    let id = await auction.Open(NewLot("Clock", "", "Ada", 10m, None, 5), Noon());
+    let id = await auction.Open(NewLot("Clock", "", "Ada", Money(10m), None, 5), Noon());
     let Some(lot) = await auction.Find(id) else { Assert(false, "the lot should be there"); return; };
 
     // 400 bids at once, from four bidders, of amounts that often clash.
     let bids = await Task.WhenAll(Enumerable.Range(0, 400).Select(i =>
-        lot.Bid(NewBid($"bidder{i % 4}", 10m + (i % 50) * 3m + (i / 50)), Noon().AddSeconds(1))));
+        lot.Bid(NewBid($"bidder{i % 4}", Money(10m + (i % 50) * 3m + (i / 50))), Noon().AddSeconds(1))));
     let taken = bids.Where(b => b is Ok(_)).Count();
     let view = await lot.Show();
 
@@ -35,11 +35,11 @@ async test "bids arriving at once are taken one at a time: each beats the last, 
 async test "being outbid is told to the bidder who led, not to someone outbidding themselves" {
     let changes = ConcurrentQueue<LotChange>();
     let auction = Recording(changes);
-    let id = await auction.Open(NewLot("Vase", "", "Alan", 10m, None, 5), Noon());
+    let id = await auction.Open(NewLot("Vase", "", "Alan", Money(10m), None, 5), Noon());
     let Some(lot) = await auction.Find(id) else { Assert(false, "the lot should be there"); return; };
-    await lot.Bid(NewBid("ada", 10m), Noon());
-    await lot.Bid(NewBid("ada", 12m), Noon());
-    await lot.Bid(NewBid("grace", 15m), Noon());
+    await lot.Bid(NewBid("ada", Money(10m)), Noon());
+    await lot.Bid(NewBid("ada", Money(12m)), Noon());
+    await lot.Bid(NewBid("grace", Money(15m)), Noon());
     let outbid = changes.Select(c => match c { BidTaken(_, who) => who, Ticked(_, _) => None }).ToList();
     AssertEqual([None, None, Some("ada")], outbid);
 }
@@ -47,25 +47,25 @@ async test "being outbid is told to the bidder who led, not to someone outbiddin
 async test "time ends lots, which then refuse bids" {
     let changes = ConcurrentQueue<LotChange>();
     let auction = Recording(changes);
-    let id = await auction.Open(NewLot("Desk", "", "Grace", 100m, Some(150m), 1), Noon());
+    let id = await auction.Open(NewLot("Desk", "", "Grace", Money(100m), Some(Money(150m)), 1), Noon());
     let Some(lot) = await auction.Find(id) else { Assert(false, "the lot should be there"); return; };
-    await lot.Bid(NewBid("ada", 120m), Noon());
+    await lot.Bid(NewBid("ada", Money(120m)), Noon());
     auction.Tick(Noon().AddMinutes(2));
     // Asked through the auctioneer, which takes the tick first, and has passed it to the lot before it asks it.
     let view = (await auction.List(None)).Single();
     AssertEqual(LotLifeState.Unsold, view.state);
     Assert(changes.Any(c => c is Ticked(_, true)));
-    Assert(await lot.Bid(NewBid("alan", 500m), Noon().AddMinutes(2)) is Err(BidRefusal.Ended));
+    Assert(await lot.Bid(NewBid("alan", Money(500m)), Noon().AddMinutes(2)) is Err(BidRefusal.Ended));
     // A bid after the end is refused even before the clock has told the lot.
-    let late = await auction.Open(NewLot("Lamp", "", "Grace", 5m, None, 1), Noon());
+    let late = await auction.Open(NewLot("Lamp", "", "Grace", Money(5m), None, 1), Noon());
     let Some(lamp) = await auction.Find(late) else { Assert(false, "the lot should be there"); return; };
-    Assert(await lamp.Bid(NewBid("ada", 5m), Noon().AddMinutes(1)) is Err(BidRefusal.Ended));
+    Assert(await lamp.Bid(NewBid("ada", Money(5m)), Noon().AddMinutes(1)) is Err(BidRefusal.Ended));
 }
 
 async test "the catalogue lists lots newest first, by words in their titles" {
     let auction = Recording(ConcurrentQueue<LotChange>());
     for title in ["Carriage clock", "Blue vase", "Clock key"] {
-        await auction.Open(NewLot(title, "", "Ada", 1m, None, 5), Noon());
+        await auction.Open(NewLot(title, "", "Ada", Money(1m), None, 5), Noon());
     }
     AssertEqual(["Clock key", "Blue vase", "Carriage clock"], (await auction.List(None)).Select(l => l.title).ToList());
     AssertEqual(["Clock key", "Carriage clock"], (await auction.List(Some("clock"))).Select(l => l.title).ToList());
@@ -78,18 +78,20 @@ record Attempt(bidder: int, pounds: int, second: int);
 async test "whatever bids come, in whatever order, bids never fall and the highest leads" for (
     start: int in 1..200, reserve: int in 0..400, attempts: List<Attempt>) {
     let auction = Recording(ConcurrentQueue<LotChange>());
-    let reserved: decimal? = if reserve == 0 { None } else { Some(start + reserve) };
-    let id = await auction.Open(NewLot("Clock", "", "Ada", start, reserved, 5), Noon());
+    let startPrice = Money(start);
+    let reserved: Money? = if reserve == 0 { None } else { Some(Money(start + reserve)) };
+    let id = await auction.Open(NewLot("Clock", "", "Ada", startPrice, reserved, 5), Noon());
     let Some(lot) = await auction.Find(id) else { Assert(false, "the lot should be there"); return; };
 
     for attempt in attempts {
-        let amount: decimal = start + attempt.pounds % 300;
-        if amount <= 0m { continue; }
+        let pounds: decimal = start + attempt.pounds % 300;
+        if pounds <= 0m { continue; }
+        let amount = Money(pounds);
         let at = Noon().AddSeconds((attempt.second % 400 + 400) % 400);
         let before = await lot.Show();
         match await lot.Bid(NewBid($"bidder{(attempt.bidder % 3 + 3) % 3}", amount), at) {
             Ok(view) => AssertEqual(Some(amount), view.current),
-            Err(BidRefusal.TooLow(minimum)) => Assert(amount < minimum && minimum == Minimum(start, before.current)),
+            Err(BidRefusal.TooLow(minimum)) => Assert(amount < minimum && minimum == Minimum(startPrice, before.current)),
             Err(BidRefusal.Ended) => Assert(at >= before.ends || before.state is LotLifeState.Sold | LotLifeState.Unsold),
         }
     }

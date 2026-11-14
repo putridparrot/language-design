@@ -97,6 +97,40 @@ public class PropertyTestTests
         Assert.Contains($"\n  {smallest}\n", Failure(program));
     }
 
+    /// <summary>Generators written in Piper (LINQ's names, and a few to build with) make values, and still shrink.</summary>
+    [Fact]
+    public void Generators_written_in_piper_make_values_and_shrink()
+    {
+        var run = Run("""
+            using System.Collections.Generic;
+            using System.Linq;
+            using Piper.Runtime;
+
+            newtype LotId = int;
+
+            fn Evens() => PiperGen<int> = PiperGen.For<int>().Where(n => n % 2 == 0);
+            fn Ids() => PiperGen<LotId> = PiperGen.Range(1, 1000).Select(n => LotId(n));
+            fn Words() => PiperGen<string> = PiperGen.OneOf(PiperGen.Constant("ada"), PiperGen.In(["bob", "cy"]));
+            fn Counted() => PiperGen<List<int>> = PiperGen.Range(1, 5).SelectMany(n => PiperGen.ListOf(PiperGen.Constant(n), n, n));
+
+            test "evens" for (n: int in Evens()) { Assert(n % 2 == 0); }
+            test "words" for (w: string in Words()) { Assert(w == "ada" || w == "bob" || w == "cy"); }
+            test "counted" for (xs: List<int>, counted: List<int> in Counted()) { AssertEqual(counted.Count, counted[0]); }
+            test "a shuffle keeps its items" for (order: List<int> in PiperGen.Shuffled(Enumerable.Range(0, 8))) {
+                AssertEqual(Enumerable.Range(0, 8).ToList(), order.Order().ToList());
+            }
+            test "ids under 500" for (id: LotId in Ids()) { Assert(id.value < 500); }
+            test "shuffles stay sorted" for (order: List<int> in PiperGen.Shuffled(Enumerable.Range(0, 5))) {
+                AssertEqual(Enumerable.Range(0, 5).ToList(), order);
+            }
+            """);
+        Assert.Empty(run.Errors);
+        Assert.Equal([true, true, true, true, false, false], run.Results.Select(r => r.Passed));
+        Assert.Contains("\n  id = 500\n", run.Results[4].Failure);
+        // The smallest shuffle that isn't in order: two neighbours swapped, the first pair.
+        Assert.Contains("\n  order = [1, 0, 2, 3, 4]\n", run.Results[5].Failure);
+    }
+
     [Fact]
     public void The_same_seed_finds_the_same_failure()
     {

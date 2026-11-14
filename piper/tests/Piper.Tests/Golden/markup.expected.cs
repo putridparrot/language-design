@@ -12,6 +12,10 @@ internal readonly record struct LotId(int @value) : global::System.IComparable<L
 {
     public override string ToString() => @value.ToString() ?? "";
     public int CompareTo(LotId other) => global::System.Collections.Generic.Comparer<int>.Default.Compare(@value, other.@value);
+    public static bool operator <(LotId left, LotId right) => left.CompareTo(right) < 0;
+    public static bool operator <=(LotId left, LotId right) => left.CompareTo(right) <= 0;
+    public static bool operator >(LotId left, LotId right) => left.CompareTo(right) > 0;
+    public static bool operator >=(LotId left, LotId right) => left.CompareTo(right) >= 0;
     public string ToString(string? format, global::System.IFormatProvider? provider) => @value.ToString(format, provider);
 
     public static bool TryParse(string? text, global::System.IFormatProvider? provider, out LotId result)
@@ -115,7 +119,7 @@ internal static class Markup
 
     internal static global::Piper.Runtime.Html Table(global::System.Collections.Generic.List<Lot> lots, bool admin) => Card(title: "Lots", children: global::Piper.Runtime.PiperHtml.Concat(global::Piper.Runtime.PiperHtml.Concat(global::Piper.Runtime.PiperHtml.Trusted("<table>"), global::Piper.Runtime.PiperHtml.Each<Lot>(lots, (Lot lot) => {
         return Row(lot);
-    }), global::Piper.Runtime.PiperHtml.Trusted("</table>")), global::Piper.Runtime.PiperHtml.Hole(lots.Count == 0 ? global::Piper.Runtime.PiperHtml.Concat(global::Piper.Runtime.PiperHtml.Trusted("<p>Nothing for sale.</p>")) : global::Piper.Runtime.Html.Empty), global::Piper.Runtime.PiperHtml.Hole(admin ? global::Piper.Runtime.PiperHtml.Concat(global::Piper.Runtime.PiperHtml.Trusted("<button"), global::Piper.Runtime.PiperHtml.Attribute("disabled", lots.Count == 0), global::Piper.Runtime.PiperHtml.Trusted(">Close all</button>")) : global::Piper.Runtime.Html.Empty), global::Piper.Runtime.PiperHtml.Concat(global::Piper.Runtime.PiperHtml.Trusted("<br>")), global::Piper.Runtime.PiperHtml.Concat(global::Piper.Runtime.PiperHtml.Trusted("<input type=\"text\" name=\"q\""), global::Piper.Runtime.PiperHtml.Attribute("value", "<script>"), global::Piper.Runtime.PiperHtml.Trusted(">"))));
+    }), global::Piper.Runtime.PiperHtml.Trusted("</table>")), global::Piper.Runtime.PiperHtml.Hole(lots.Count == 0 ? global::Piper.Runtime.PiperHtml.Hole(global::Piper.Runtime.PiperHtml.Concat(global::Piper.Runtime.PiperHtml.Trusted("<p>Nothing for sale.</p>"))) : global::Piper.Runtime.Html.Empty), global::Piper.Runtime.PiperHtml.Hole(admin ? global::Piper.Runtime.PiperHtml.Hole(global::Piper.Runtime.PiperHtml.Concat(global::Piper.Runtime.PiperHtml.Trusted("<button"), global::Piper.Runtime.PiperHtml.Attribute("disabled", lots.Count == 0), global::Piper.Runtime.PiperHtml.Trusted(">Close all</button>"))) : global::Piper.Runtime.Html.Empty), global::Piper.Runtime.PiperHtml.Concat(global::Piper.Runtime.PiperHtml.Trusted("<br>")), global::Piper.Runtime.PiperHtml.Concat(global::Piper.Runtime.PiperHtml.Trusted("<input type=\"text\" name=\"q\""), global::Piper.Runtime.PiperHtml.Attribute("value", "<script>"), global::Piper.Runtime.PiperHtml.Trusted(">"))));
 
     /// <summary>
     /// A whole page: its doctype, and a style and a script, whose braces and &apos;&lt;&apos; are code, not markup.
@@ -135,6 +139,10 @@ internal static class Markup
             var (name, count) = __markupItem;
             return global::Piper.Runtime.PiperHtml.Concat(global::Piper.Runtime.PiperHtml.Trusted("<li>"), global::Piper.Runtime.PiperHtml.Hole(name), global::Piper.Runtime.PiperHtml.Trusted(": "), global::Piper.Runtime.PiperHtml.Hole<int>(count), global::Piper.Runtime.PiperHtml.Trusted("</li>"));
         }), global::Piper.Runtime.PiperHtml.Trusted("</ul>")));
+        foreach (int bids in new global::System.Collections.Generic.List<int> { 0, 1, 5 })
+        {
+            global::System.Console.WriteLine(global::Piper.Runtime.PiperHtml.Concat(global::Piper.Runtime.PiperHtml.Trusted("<p>Clock"), global::Piper.Runtime.PiperHtml.Hole(bids > 1 ? global::Piper.Runtime.PiperHtml.Hole($" ({bids} bids)") : bids == 1 ? global::Piper.Runtime.PiperHtml.Hole(global::Piper.Runtime.PiperHtml.Concat(global::Piper.Runtime.PiperHtml.Trusted("<i> (one bid)</i>"))) : global::Piper.Runtime.Html.Empty), global::Piper.Runtime.PiperHtml.Hole(bids > 0 ? global::Piper.Runtime.PiperHtml.Hole<int>(bids * 2) : global::Piper.Runtime.Html.Empty), global::Piper.Runtime.PiperHtml.Trusted("</p>")));
+        }
         global::Piper.Runtime.Html title = global::Piper.Runtime.PiperHtml.Concat(global::Piper.Runtime.PiperHtml.Trusted("<b>bold</b>"));
         global::System.Console.WriteLine(global::Piper.Runtime.PiperHtml.Concat(global::Piper.Runtime.PiperHtml.Trusted("<p>"), global::Piper.Runtime.PiperHtml.Hole(title), global::Piper.Runtime.PiperHtml.Trusted(" and "), global::Piper.Runtime.PiperHtml.Hole("<b>not bold</b>"), global::Piper.Runtime.PiperHtml.Trusted("</p>")));
         global::System.Console.WriteLine(global::Piper.Runtime.PiperHtml.Concat(global::Piper.Runtime.PiperHtml.Trusted("<p>"), global::Piper.Runtime.PiperHtml.Hole(global::Piper.Runtime.Html.Raw("<i>trusted</i>")), global::Piper.Runtime.PiperHtml.Trusted("</p>")) == global::Piper.Runtime.PiperHtml.Concat(global::Piper.Runtime.PiperHtml.Trusted("<p>"), global::Piper.Runtime.PiperHtml.Concat(global::Piper.Runtime.PiperHtml.Trusted("<i>trusted</i>")), global::Piper.Runtime.PiperHtml.Trusted("</p>")));

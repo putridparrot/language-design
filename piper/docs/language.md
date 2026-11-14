@@ -948,7 +948,8 @@ fn Table(lots: List<Lot>) => Html =
   - anything else is an error (PIP0509) that says what can go in markup: a `Task` asks whether you meant to await it,
     a `bool` suggests an `if`, a function whether you meant to call it.
 - **`for` and `if` in holes:** `{for x in xs { … }}` renders its body (a block whose value is `Html`) for each item,
-  and can deconstruct (`{for (name, count) in totals { … }}`). An `if` without an `else` renders nothing when false.
+  and can deconstruct (`{for (name, count) in totals { … }}`). An `if` without an `else` renders nothing when false,
+  and its branches can be anything a hole can hold: `{if bids > 1 { $"{bids} bids" } else if bids == 1 { <i>one</i> }}`.
   `match` and `if … else` work as anywhere, each arm giving `Html`.
 - **Attributes:** `name="text"` as written; `name={expression}` escaped, with a number or newtype in the invariant
   culture (as code reads attributes) and None leaving the attribute out; `name={flag}`, a `bool`, is HTML's boolean
@@ -1095,7 +1096,9 @@ let n: int = IssueId(5);      // error: write IssueId(5).value
   `record struct IssueId(value: int);`. So it's made as `IssueId(5)`, its value is `id.value`, and it has a record's
   equality, patterns (`IssueId(5)`), spread (`{ ...id, value: 6 }`) and `extend` methods and operators. As a struct,
   it costs nothing: no allocation, just its value.
-- **Nothing passes through implicitly:** an `IssueId` has no `+`, and isn't an `int`. Add what makes sense with
+- **Comparing:** one whose value can be compared (a number, string or char, or a .NET type implementing
+  `IComparable<T>`) has `<`, `<=`, `>` and `>=`, by its value: `price < limit` for a `newtype Money = decimal;`.
+- **Nothing else passes through implicitly:** an `IssueId` has no `+`, and isn't an `int`. Add what makes sense with
   `extend` (`operator +` on a `Price`, a `Next()` on an id).
 - **Invariants:** `requires` checks the value when one is made, as for any record: `Email("nobody")` throws an
   `ArgumentException`.
@@ -1632,6 +1635,30 @@ FAIL small sums
   their earlier variants, while the test still fails the same way (with the same exception type). It's done on the
   random choices the values were made from, as Hypothesis does, so every type shrinks with no shrinker of its own.
 - **Seeds:** each run starts from a new seed, shown with a failure; `piper test --seed 403656620` repeats it.
+- **Writing generators:** for values a type doesn't describe, `in` also takes a `PiperGen<T>` (with
+  `using Piper.Runtime;`), made by `PiperGen`'s functions and changed with LINQ's names, as C#'s generator libraries
+  do. A function returning one names it:
+
+  ```piper
+  using Piper.Runtime;
+
+  fn Evens() => PiperGen<int> = PiperGen.For<int>().Where(n => n % 2 == 0);
+  fn ChunksInAnyOrder() => PiperGen<List<int>> =
+      PiperGen.Range(1, 8).SelectMany(chunks => PiperGen.Shuffled(Enumerable.Range(0, chunks)));
+
+  test "whatever order the chunks come back in" for (order: List<int> in ChunksInAnyOrder()) { … }
+  ```
+
+  | Function | Makes |
+  |---|---|
+  | `PiperGen.For<T>()` | values of a type, as a parameter without `in` gets |
+  | `PiperGen.Range(1, 10)`, `RangeExclusive(0, 10)`, `In(items)` | what `in 1..10`, `in 0..<10` and `in items` do |
+  | `PiperGen.Constant(x)`, `OneOf(a, b, …)` | always `x`; values from one of the generators |
+  | `PiperGen.ListOf(item)`, `ListOf(item, least, most)` | lists of a generator's values, of any length or between two |
+  | `PiperGen.Shuffled(items)` | the items in any order |
+  | `g.Select(f)`, `g.Where(keep)`, `g.SelectMany(f)` | each value changed; only those `keep` accepts (tried 100 times, then the case is thrown away); a value made from another's generator |
+
+  What they make shrinks like everything else: a shuffle towards the order given, a `Select` as its source does.
 
 The values come from Piper.Runtime's own generator (`PiperGen`), with no other library.
 

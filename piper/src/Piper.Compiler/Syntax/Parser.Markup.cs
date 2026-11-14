@@ -175,6 +175,9 @@ public sealed partial class Parser
         var (span, _, format) = SplitHole(hole.Expression);
         if (HoleExpression(hole, allowFormat: true) is not { } expression)
             return null;
+        // `{if c { "text" }}`: each branch is put in markup as a hole is, so it can be text or a number, not only Html.
+        if (format is null)
+            expression = BranchesAsHoles(expression, template);
         return format is null
             ? template.Expression($"{Runtime}.Hole($value)", ("value", expression))
             : template.Expression($"{Runtime}.Hole($value, $format)", ("value", expression), ("format", Text(TextSpan.FromBounds(span.End, hole.Expression.End), format)));
@@ -228,6 +231,31 @@ public sealed partial class Parser
         IfExpressionSyntax { Else: IfExpressionSyntax next } branch => branch with { Else = OrNothing(next) },
         _ => expression,
     };
+
+    /// <summary>
+    /// An <c>if</c> that <see cref="OrNothing"/> gave an <c>else</c> (rendering nothing), with each of its other
+    /// branches through <c>Hole</c>: <c>if c { Hole({ … }) } else { Html.Empty }</c>. An <c>if</c> written with its own
+    /// last <c>else</c> is left as it is.
+    /// </summary>
+    private static ExpressionSyntax BranchesAsHoles(ExpressionSyntax expression, SyntaxTemplate template)
+    {
+        if (expression is not IfExpressionSyntax { Question: null } || !EndsInNothing(expression))
+            return expression;
+        return Wrap((IfExpressionSyntax)expression);
+
+        IfExpressionSyntax Wrap(IfExpressionSyntax branch) => branch with
+        {
+            Then = new BlockExpressionSyntax(branch.Then.Span, [], template.Expression($"{Runtime}.Hole($value)", ("value", branch.Then))) { IsGenerated = true },
+            Else = branch.Else is IfExpressionSyntax next ? Wrap(next) : branch.Else,
+        };
+
+        static bool EndsInNothing(ExpressionSyntax e) => e switch
+        {
+            IfExpressionSyntax { Else: IfExpressionSyntax next } => EndsInNothing(next),
+            IfExpressionSyntax { Else: MemberAccessExpressionSyntax { IsGenerated: true, Member.Text: "Empty" } } => true,
+            _ => false,
+        };
+    }
 
     private static LiteralExpressionSyntax Text(TextSpan span, string value) =>
         new(span, new Token(TokenKind.StringLiteral, span, value, value) { IsGenerated = true }, value);

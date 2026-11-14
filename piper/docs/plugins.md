@@ -813,6 +813,39 @@ Admin(app);
   - a declared policy no endpoint uses
   - endpoints using policy words in a program with no `policies` block at all
 
+#### Testing a web app
+
+`TestClient` (in Piper.Web) serves an app from memory for `test` blocks, with no port: requests go straight to the
+app, and responses come back as it writes them.
+
+```piper
+using Piper.Web;
+
+async test "a bid is taken" {
+    using let site = await TestClient.Start(() => BuildApp("http://localhost:5090"));
+    AssertEqual("hello Ada", await site.GetStringAsync("/hello?name=Ada"));
+    let bid = await site.PostForm(SiteRoutes.Bid(LotId(1)), ["bidder": "Ada", "amount": "40"], htmx: true);
+    Assert((await bid.Content.ReadAsStringAsync()).Contains("highest bidder"));
+    site.App.auction.Tick(DateTime.UtcNow);                // what BuildApp returned, as `App`
+}
+```
+
+- **`TestClient.Start(build)`** calls the program's own function for building its app, unchanged: whatever builds
+  one web app (`WebApplication.CreateBuilder()`, or a host builder) and returns it, alone or with what the test
+  drives directly, as `App`. While it runs, the app is given an in-memory server in place of Kestrel, so the
+  addresses it asks for aren't used. Then the app is started; disposing the client stops it.
+- **It's an `HttpClient`,** at `http://localhost/`: `GetStringAsync`, `PostAsJsonAsync` and the rest work as they do
+  against a real server. It keeps the cookies the app sets, as a browser does, and `Services` is the app's services.
+- **`PostForm(url, fields, htmx: false)`** posts the fields as a form, with the anti-forgery token the page would
+  have given it (so `Form<T>` takes it); `htmx: true` posts as htmx does, for the fragment a layout's group sends it.
+- **Live pages:** a response streams as the app writes it, so a test can read a page's server-sent events, and
+  disposing the response ends its request, as closing the page does.
+- **Errors:** an exception the app throws before answering fails the test with it (as ASP.NET Core's `TestServer`
+  does), rather than being a 500; a `BadHttpRequestException` is its status, as Kestrel answers it (a missing
+  anti-forgery token is a 400).
+- It's Piper.Web's own code: ASP.NET Core's `TestServer` would be another package for every web program to restore.
+  [apps/auction](../apps/auction/README.md) and [apps/tracker](../apps/tracker/README.md) test their HTTP this way.
+
 ### `config` (typed configuration)
 
 [Piper.Plugins.Config](../plugins/Piper.Plugins.Config/ConfigPlugin.cs) reads configuration (appsettings.json,

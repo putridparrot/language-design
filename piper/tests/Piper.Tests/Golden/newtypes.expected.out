@@ -18,3 +18,5 @@ True
 True
 True
 rejected: Invariant failed: value.Contains("@") (value = nobody)
+True
+True

@@ -7,10 +7,11 @@ using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Data.Sqlite;
+using Piper.Web;
 
-/// A running tracker for a test: the app on a free port with its own in-memory database (kept alive by `keepAlive`,
-/// as SQLite drops a shared in-memory database when its last connection closes), and a client calling it.
-record Running(app: WebApplication, client: HttpClient, keepAlive: SqliteConnection);
+/// A running tracker for a test: the app, served from memory, with its own in-memory database (kept alive by
+/// `keepAlive`, as SQLite drops a shared in-memory database when its last connection closes), and a client calling it.
+record Running(client: TestClient<WebApplication>, keepAlive: SqliteConnection);
 
 async fn StartTracker(searchesPerMinute: int) => Task<Running> {
     let connection = $"Data Source=file:tracker-{Guid.NewGuid()}?mode=memory&cache=shared";
@@ -18,17 +19,14 @@ async fn StartTracker(searchesPerMinute: int) => Task<Running> {
     await keepAlive.OpenAsync();
     let settings = Settings(connection, searchesPerMinute, None);
     await Prepare(settings);
-    let app = BuildApp(settings, FixedClock(Noon()), NoNotifier(), "http://127.0.0.1:0");
-    await app.StartAsync();
-    let client = HttpClient();
-    client.BaseAddress = Uri(app.Urls.First());
-    Running(app, client, keepAlive)
+    let client = await TestClient.Start(() => BuildApp(settings, FixedClock(Noon()), NoNotifier(), ""));
+    Running(client, keepAlive)
 }
 
-async fn Stop(running: Running) {
+/// Stops the app (disposing its client does) and closes the database.
+fn Stop(running: Running) {
     running.client.Dispose();
-    await running.app.StopAsync();
-    await running.keepAlive.DisposeAsync();
+    running.keepAlive.Dispose();
 }
 
 /// Calls the tracker as `user` (with `roles`, comma-separated), sending `json` if there is any; the status and body.
@@ -52,7 +50,7 @@ async fn AddWebProject(running: Running) {
 
 async test "the API needs a signed-in user, except for its health" {
     let running = await StartTracker(60);
-    defer { let _ = Stop(running); }
+    defer { Stop(running); }
     AssertEqual(200, (await Call(running, "GET", "/api/health", "", "", "")).Item1);
     AssertEqual(401, (await Call(running, "GET", "/api/projects", "", "", "")).Item1);
     AssertEqual(200, (await Get(running, "/api/projects")).Item1);
@@ -60,7 +58,7 @@ async test "the API needs a signed-in user, except for its health" {
 
 async test "only admins make projects, and codes are checked" {
     let running = await StartTracker(60);
-    defer { let _ = Stop(running); }
+    defer { Stop(running); }
     AssertEqual(403, (await Post(running, "/api/projects", """{"code": "WEB", "name": "Website"}""")).Item1);
     await AddWebProject(running);
     let (lower, _) = await Call(running, "POST", "/api/projects", "root", "admin", """{"code": "web", "name": "Website"}""");
@@ -72,7 +70,7 @@ async test "only admins make projects, and codes are checked" {
 
 async test "an issue moves through its workflow over HTTP" {
     let running = await StartTracker(60);
-    defer { let _ = Stop(running); }
+    defer { Stop(running); }
     await AddWebProject(running);
 
     let (created, issue) = await Post(running, "/api/projects/1/issues", """{"title": "Crash on save", "description": "", "priority": "High"}""");
@@ -95,7 +93,7 @@ async test "an issue moves through its workflow over HTTP" {
 
 async test "a request breaking an invariant is a 400" {
     let running = await StartTracker(60);
-    defer { let _ = Stop(running); }
+    defer { Stop(running); }
     await AddWebProject(running);
     AssertEqual(400, (await Post(running, "/api/projects/1/issues", """{"title": "  ", "description": "", "priority": "Low"}""")).Item1);
     AssertEqual(404, (await Post(running, "/api/projects/7/issues", """{"title": "Lost", "description": "", "priority": "Low"}""")).Item1);
@@ -103,7 +101,7 @@ async test "a request breaking an invariant is a 400" {
 
 async test "comments record who wrote them" {
     let running = await StartTracker(60);
-    defer { let _ = Stop(running); }
+    defer { Stop(running); }
     await AddWebProject(running);
     let _ = await Post(running, "/api/projects/1/issues", """{"title": "Crash on save", "description": "", "priority": "High"}""");
     AssertEqual(200, (await Call(running, "POST", "/api/issues/1/comments", "alan", "", """{"text": "Seen it too"}""")).Item1);
@@ -113,7 +111,7 @@ async test "comments record who wrote them" {
 
 async test "search filters by status, and is limited per minute" {
     let running = await StartTracker(2);
-    defer { let _ = Stop(running); }
+    defer { Stop(running); }
     await AddWebProject(running);
     for title in ["Crash on save", "Typo"] {
         let _ = await Post(running, "/api/projects/1/issues", $$"""{"title": "{{title}}", "description": "", "priority": "Normal"}""");

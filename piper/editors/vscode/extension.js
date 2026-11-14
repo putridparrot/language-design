@@ -193,6 +193,30 @@ function createClient() {
         });
 }
 
+// Closing tags as they're opened: when `>` is typed in a .piper file, the server says whether it ended a start tag in
+// markup, and if so the closing tag goes after the cursor, as VS Code's HTML support does. Only for a `>` typed alone
+// (not pasted, nor undone), and only if the document hasn't changed again while the server was asked.
+async function autoCloseTag(event) {
+    const editor = vscode.window.activeTextEditor;
+    if (!client || !editor || editor.document !== event.document || event.document.languageId !== "piper" ||
+        event.reason !== undefined || event.contentChanges.length !== 1) {
+        return;
+    }
+    const change = event.contentChanges[0];
+    if (change.text !== ">" || change.rangeLength !== 0 || !vscode.workspace.getConfiguration("piper").get("autoClosingTags", true)) {
+        return;
+    }
+    const position = change.range.start.translate(0, 1);
+    const version = event.document.version;
+    const result = await client.sendRequest("piper/autoClose", {
+        textDocument: { uri: event.document.uri.toString() },
+        position: { line: position.line, character: position.character },
+    }).catch(() => null);
+    if (result?.snippet && editor.document.version === version && editor.selection.active.isEqual(position)) {
+        await editor.insertSnippet(new vscode.SnippetString(result.snippet), position);
+    }
+}
+
 async function start() {
     client = createClient();
     if (!client) {
@@ -219,6 +243,7 @@ async function activate(context) {
         }
         await start();
     }));
+    context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(autoCloseTag));
     context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(async () => {
         if (client) {
             await client.sendNotification("piper/trust", { trusted: true });

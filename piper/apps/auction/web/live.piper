@@ -26,7 +26,7 @@ fn Broadcast(change: LotChange) {
             Live.Publish(ListTopic(), RowEvent(lot.id), RowCells(lot, now));
             if outbid is Some(who) {
                 Live.Publish(OutbidTopic(lot.id, who), "outbid",
-                    <>You've been outbid: {lot.leader ?? "someone"} bid {Money(lot.current ?? 0m)}.</>);
+                    <>You've been outbid: {lot.leader ?? "someone"} bid {Pounds(lot.current ?? lot.startPrice)}.</>);
             }
         },
         Ticked(lot, ended) => {

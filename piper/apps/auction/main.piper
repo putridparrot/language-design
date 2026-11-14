@@ -39,9 +39,9 @@ async fn KeepTime(auction: Auctioneer, stop: CancellationToken) {
 
 async fn ListDemoLots(auction: Auctioneer, now: DateTime) {
     let lots = [
-        NewLot("Brass carriage clock", "Victorian, keeps good time, with its key.", "Ada", 40m, Some(60m), 5),
-        NewLot("Pair of blue glass vases", "Hand blown, 30cm tall. Not a chip on them.", "Alan", 15m, None, 3),
-        NewLot("Oak writing desk", "Three drawers, leather top, some wear.", "Grace", 120m, Some(200m), 10),
+        NewLot("Brass carriage clock", "Victorian, keeps good time, with its key.", "Ada", Money(40m), Some(Money(60m)), 5),
+        NewLot("Pair of blue glass vases", "Hand blown, 30cm tall. Not a chip on them.", "Alan", Money(15m), None, 3),
+        NewLot("Oak writing desk", "Three drawers, leather top, some wear.", "Grace", Money(120m), Some(Money(200m)), 10),
     ];
     for lot in lots {
         await auction.Open(lot, now);

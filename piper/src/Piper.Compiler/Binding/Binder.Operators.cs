@@ -69,7 +69,9 @@ public sealed partial class Binder
             {
                 candidates.AddRange(PiperOperators(definition, type, symbol));
                 // `a < b` on a type that implements IComparable<T> for itself.
-                if (definition.CompareTo is not null && operands.Count == 2 && symbol is "<" or "<=" or ">" or ">=")
+                // And on a newtype whose value can be compared, as it passes that on.
+                if ((definition.CompareTo is not null || definition is RecordSymbol { NewtypeValue.Comparable: true }) &&
+                    operands.Count == 2 && symbol is "<" or "<=" or ">" or ">=")
                     candidates.Add(([type, type], TypeSymbol.Bool));
             }
             else if (IsClrBacked(type))

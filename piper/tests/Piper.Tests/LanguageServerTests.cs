@@ -413,6 +413,66 @@ public sealed class LanguageServerTests : IDisposable
         Assert.Equal(Program.Split("Point").Length - 1, edits.Count);
     }
 
+    /// <summary>
+    /// Typing `>` at the end of a start tag closes it (the VS Code extension asks, and inserts the snippet after the
+    /// cursor), but not after a void element, a self-closing tag, in a hole's code, or where it's closed already.
+    /// </summary>
+    [Theory]
+    [InlineData("fn F() => Html = <section><div>|</section>;", "$0</div>")]
+    [InlineData("fn F() => Html = <div class=\"a\" hx-get={Url(\"x>y\")}>|", "$0</div>")]
+    [InlineData("fn F() => Html = <Card title=\"Lots\" open>|</section>;", "$0</Card>")]
+    [InlineData("fn F() => Html = <>|", "$0</>")]
+    [InlineData("fn F() => Html = <p>Hi<br>|</p>;", null)]
+    [InlineData("fn F() => Html = <p><input name=\"x\" />|</p>;", null)]
+    [InlineData("fn F() => Html = <p>|</p>;", null)]
+    [InlineData("fn F() => Html = <p>{if a > b { \"x\" }}</p>;", null)]
+    [InlineData("fn F(a: int, b: int) => bool = a >|", null)]
+    public async Task Typing_the_end_of_a_start_tag_closes_it(string written, string? snippet)
+    {
+        var position = written.IndexOf('|');
+        if (position < 0)
+            position = written.IndexOf("a > b", StringComparison.Ordinal) + 3;
+        var text = written.Replace("|", "") + "\nfn Url(s: string) => string = s;\nfn Card(title: string, open: bool, children: Html) => Html = children;\nfn Main() {}\n";
+        var uri = await OpenAsync(text);
+        var result = await _server.HandleAsync("piper/autoClose", At(uri, text, text[..1], position));
+        Assert.Equal(snippet, result?["snippet"]?.GetValue<string>());
+    }
+
+    /// <summary>
+    /// Hover on HTML's own elements and attributes says what they're for, with a link; a component still hovers as its
+    /// function, a hole as its code, and text as nothing of HTML's.
+    /// </summary>
+    [Fact]
+    public async Task Hover_describes_html_elements_and_attributes()
+    {
+        const string program = """
+            record NewLot(title: string);
+            fn Card(title: string, children: Html) => Html = <section>{children}</section>;
+            fn Page(count: int) => Html =
+                <Card title="Lots">
+                    <form for={NewLot} method="post" hx-post="/lots"><input name="title" required /></form>
+                    <p class="note">{count} lots</p>
+                </Card>;
+            fn Main() {}
+            """;
+        var uri = await OpenAsync(program);
+        async Task<string> HoverAt(string marker, int offset = 0) =>
+            (await _server.HandleAsync("textDocument/hover", At(uri, program, marker, offset)))?["contents"]?["value"]?.GetValue<string>() ?? "";
+
+        Assert.Contains("**`<form>`** (HTML element)", await HoverAt("form for"));
+        Assert.Contains("developer.mozilla.org/docs/Web/HTML/Element/form", await HoverAt("form for", 2));
+        Assert.Contains("**`for`** (Piper)", await HoverAt("for={NewLot}"));
+        Assert.Contains("**`method`** (on `<form>`)", await HoverAt("method="));
+        Assert.Contains("**`hx-post`** (htmx)", await HoverAt("hx-post", 3));
+        Assert.Contains("**`required`** (on `<input>`)", await HoverAt("required"));
+        Assert.Contains("**`class`** (HTML attribute)", await HoverAt("class="));
+        Assert.Contains("**`<p>`** (HTML element)", await HoverAt("p class"));
+        Assert.Contains("**`<form>`**", await HoverAt("form>\n"));                 // the end tag
+        Assert.Contains("fn Card(title: string, children: Html) => Html", await HoverAt("Card title"));
+        Assert.Contains("count: int", await HoverAt("count} lots"));
+        Assert.DoesNotContain("HTML", await HoverAt("lots</p>"));
+    }
+
     /// <summary>A property test's `in` makes a generator the compiler writes, which the editor doesn't see twice.</summary>
     [Fact]
     public async Task A_property_tests_parameters_are_renamed_and_hovered_once()

@@ -158,6 +158,10 @@ public sealed class PiperLanguageServer
                 return At(parameters!, (analysis, source, position) => Rename(analysis, source, position, parameters!["newName"]!.GetValue<string>()));
             case "textDocument/completion":
                 return At(parameters!, (analysis, source, position) => Completion.Items(analysis, source, position));
+            case "piper/autoClose":
+                // Asked by the VS Code extension when `>` is typed: the closing tag to insert after the cursor, if any.
+                return At(parameters!, (_, source, position) =>
+                    MarkupCompletion.AutoClose(source, position) is { } snippet ? new JsonObject { ["snippet"] = snippet } : null);
             case "textDocument/signatureHelp":
                 return At(parameters!, SignatureHelp.Help);
             case "textDocument/inlayHint":
@@ -385,6 +389,15 @@ public sealed class PiperLanguageServer
             text = SymbolDisplay.Describe(occurrence.Symbol);
             documentation = occurrence.Symbol.Documentation;
             span = occurrence.Span;
+        }
+        else if (MarkupHover.At(source, position) is { } html)
+        {
+            // HTML's own element or attribute (a component is its function, above): what it's for, and where to read more.
+            return new JsonObject
+            {
+                ["contents"] = new JsonObject { ["kind"] = "markdown", ["value"] = html.Markdown },
+                ["range"] = Range(source, html.Span),
+            };
         }
         else if (analysis.Semantic.ExpressionAt(source, position) is { Type: var type } expression && type != TypeSymbol.Error)
         {

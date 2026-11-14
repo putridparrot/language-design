@@ -6,21 +6,21 @@ using System.Linq;
 fn Noon() => DateTime = DateTime(2026, 11, 13, 12, 0, 0);
 
 test "a bid must beat the last by its increment, or meet the starting price" {
-    AssertEqual(40m, Minimum(40m, None));
-    AssertEqual(46m, Minimum(40m, Some(45m)));
-    AssertEqual(105m, Minimum(40m, Some(100m)));
+    AssertEqual(Money(40m), Minimum(Money(40m), None));
+    AssertEqual(Money(46m), Minimum(Money(40m), Some(Money(45m))));
+    AssertEqual(Money(105m), Minimum(Money(40m), Some(Money(100m))));
 }
 
 test "a lot sells when its highest bid meets the reserve, or there's no reserve" {
-    Assert(ReserveMet(Some(60m), Some(60m)));
-    Assert(!ReserveMet(Some(59m), Some(60m)));
-    Assert(ReserveMet(Some(1m), None));
+    Assert(ReserveMet(Some(Money(60m)), Some(Money(60m))));
+    Assert(!ReserveMet(Some(Money(59m)), Some(Money(60m))));
+    Assert(ReserveMet(Some(Money(1m)), None));
     Assert(!ReserveMet(None, None));
 }
 
 test "a lot is open, then closing in its last moments, then sold or unsold" {
-    let life = LotLife(10m, Some(20m), Noon().AddMinutes(5));
-    life.Bid("ada", 10m, Noon());
+    let life = LotLife(Money(10m), Some(Money(20m)), Noon().AddMinutes(5));
+    life.Bid("ada", Money(10m), Noon());
     AssertEqual(LotLifeState.Open, life.State);
     life.Tick(Noon().AddMinutes(4));
     AssertEqual(LotLifeState.Open, life.State);
@@ -28,21 +28,21 @@ test "a lot is open, then closing in its last moments, then sold or unsold" {
     AssertEqual(LotLifeState.Closing, life.State);
     life.Tick(Noon().AddMinutes(5));
     AssertEqual(LotLifeState.Unsold, life.State);    // 10 is below the reserve of 20
-    Assert(!life.CanBid("alan", 30m, Noon().AddMinutes(5)));
+    Assert(!life.CanBid("alan", Money(30m), Noon().AddMinutes(5)));
 
-    let sold = LotLife(10m, Some(20m), Noon().AddMinutes(1));
-    sold.Bid("ada", 25m, Noon());
+    let sold = LotLife(Money(10m), Some(Money(20m)), Noon().AddMinutes(1));
+    sold.Bid("ada", Money(25m), Noon());
     sold.Tick(Noon().AddMinutes(2));
     AssertEqual(LotLifeState.Sold, sold.State);
     AssertEqual(Some("ada"), sold.leader);
 }
 
 test "a bid while closing keeps the lot open a while longer" {
-    let life = LotLife(10m, None, Noon().AddMinutes(1));
-    life.Bid("ada", 10m, Noon().AddSeconds(50));                 // 10 seconds left: now closing
+    let life = LotLife(Money(10m), None, Noon().AddMinutes(1));
+    life.Bid("ada", Money(10m), Noon().AddSeconds(50));                 // 10 seconds left: now closing
     AssertEqual(LotLifeState.Closing, life.State);
     AssertEqual(Noon().AddMinutes(1), life.closesAt);            // the bid came 10s before the end…
-    life.Bid("alan", 11m, Noon().AddSeconds(55));
+    life.Bid("alan", Money(11m), Noon().AddSeconds(55));
     AssertEqual(Noon().AddSeconds(85), life.closesAt);           // …and this one keeps it open 30s after it
     life.Tick(Noon().AddMinutes(1));
     AssertEqual(LotLifeState.Closing, life.State);
@@ -53,7 +53,7 @@ test "a bid while closing keeps the lot open a while longer" {
 
 test "what's wrong with a new lot is said for people" {
     try {
-        let _ = NewLot("Clock", "", "Ada", 50m, Some(40m), 5);
+        let _ = NewLot("Clock", "", "Ada", Money(50m), Some(Money(40m)), 5);
         Assert(false, "a reserve below the starting price should be refused");
     } catch (e: ArgumentException) {
         AssertEqual("The reserve can't be below the starting price.", e.Message);

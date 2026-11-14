@@ -70,4 +70,8 @@ fn Main() {
     } catch (e: ArgumentException) {
         Print($"rejected: {e.Message}");
     }
+
+    // One whose value compares has <, <=, > and >=, by its value.
+    Print(IssueId(3) < IssueId(10));
+    Print(Email("b@x") >= Email("a@x"));
 }

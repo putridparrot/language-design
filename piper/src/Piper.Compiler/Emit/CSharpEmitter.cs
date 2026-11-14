@@ -340,7 +340,7 @@ public sealed partial class CSharpEmitter
     {
         var partial = IsPartial(record) ? "partial " : "";
         var kind = record.IsStruct ? $"readonly {partial}record struct" : $"sealed {partial}record";
-        var value = record.IsNewtype ? NewtypeValue.Of(record.Fields[0].Type) : null;
+        var value = record.IsNewtype ? new NewtypeValue(record.NewtypeValue.Comparable, record.NewtypeValue.Formattable) : null;
         var bases = BaseList(TraitsFrom(record, file));
         if (value is not null && HomeFile(record) == file)
             bases = AddBases(bases, value.Interfaces(Escape(record.Name)));
@@ -401,21 +401,6 @@ public sealed partial class CSharpEmitter
     /// </summary>
     private sealed record NewtypeValue(bool Comparable, bool Formattable)
     {
-        public static NewtypeValue Of(TypeSymbol type)
-        {
-            if (type == TypeSymbol.String || type == TypeSymbol.Bool || type == TypeSymbol.Char)
-                return new(true, false);
-            if (type.IsNumeric)
-                return new(true, true);
-            if (type is ClrTypeSymbol { IsArray: false } clr && !clr.Type.ContainsGenericParameters)
-            {
-                var interfaces = clr.Type.GetInterfaces();
-                bool Has(string name) => interfaces.Any(i => i.IsGenericType ? i.GetGenericTypeDefinition().FullName == name && i.GetGenericArguments()[0] == clr.Type : i.FullName == name);
-                return new(Has("System.IComparable`1"), Has("System.IFormattable"));
-            }
-            return new(false, false);
-        }
-
         public IReadOnlyList<string> Interfaces(string self) =>
             [.. Comparable ? new[] { $"global::System.IComparable<{self}>" } : [], .. Formattable ? new[] { "global::System.IFormattable" } : []];
     }
@@ -432,7 +417,11 @@ public sealed partial class CSharpEmitter
         var type = TypeName(record.Fields[0].Type);
         _writer.WriteLine($"public override string ToString() => {field}.ToString() ?? \"\";");
         if (value.Comparable)
+        {
             _writer.WriteLine($"public int CompareTo({self} other) => global::System.Collections.Generic.Comparer<{type}>.Default.Compare({field}, other.{field});");
+            foreach (var op in new[] { "<", "<=", ">", ">=" })
+                _writer.WriteLine($"public static bool operator {op}({self} left, {self} right) => left.CompareTo(right) {op} 0;");
+        }
         if (value.Formattable)
             _writer.WriteLine($"public string ToString(string? format, global::System.IFormatProvider? provider) => {field}.ToString(format, provider);");
         // ASP.NET Core binds route and query values with a static TryParse; this one is Piper's Parse (which the binder

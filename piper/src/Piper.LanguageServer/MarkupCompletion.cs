@@ -17,8 +17,11 @@ public static class MarkupCompletion
     /// <summary>Where in markup a position is: what's being written there, and the elements it's inside.</summary>
     private abstract record Context(IReadOnlyList<Open> Elements);
 
-    /// <summary>An element the position is inside: its name, and the record its <c>for</c> names, if it's a form.</summary>
-    private sealed record Open(string Name, string? For);
+    /// <summary>
+    /// An element the position is inside: its name, the record its <c>for</c> names, if it's a form, and where its
+    /// start tag ends (just after its <c>&gt;</c>).
+    /// </summary>
+    private sealed record Open(string Name, string? For, int TagEnd = -1);
 
     private sealed record InText(IReadOnlyList<Open> Elements) : Context(Elements);
 
@@ -51,6 +54,52 @@ public static class MarkupCompletion
             _ => [],
         };
         return [.. items];
+    }
+
+    /// <summary>
+    /// What to put after the cursor when <c>&gt;</c> has just been typed at <paramref name="position"/>: the closing
+    /// tag, as a snippet (<c>$0&lt;/div&gt;</c>), if that <c>&gt;</c> ended a start tag in markup; null otherwise, as
+    /// after a void element (<c>&lt;br&gt;</c>), a self-closing tag, <c>&lt;script&gt;</c>, or a tag already closed.
+    /// </summary>
+    public static string? AutoClose(SourceText source, int position)
+    {
+        if (position < 2 || position > source.Length || source[position - 1] != '>')
+            return null;
+        if (Find(source, Lexer.Tokenize(source, new DiagnosticBag()), position, []) is not InText { Elements: [.., var open] } ||
+            open.TagEnd != position)
+            return null;
+        var closing = $"</{open.Name}>";
+        // Already closed, as when the start tag is being written again in front of its end tag.
+        var rest = source.ToString(TextSpan.FromBounds(position, source.Length)).TrimStart();
+        return rest.StartsWith(closing, StringComparison.Ordinal) ? null : "$0" + closing;
+    }
+
+    /// <summary>
+    /// The element or attribute name in markup at <paramref name="position"/>: an element's (in its start or end tag),
+    /// or an attribute's, with the element it's on. Null elsewhere: in text, a value, a hole's code, or outside markup.
+    /// </summary>
+    internal static (string? Element, string? Attribute, TextSpan Span)? NameAt(SourceText source, int position)
+    {
+        if (position >= source.Length)
+            return null;
+        // The whole name around the position, as the scan stops where it is.
+        int start = position, end = position;
+        while (start > 0 && (IsNameChar(source[start - 1]) || source[start - 1] == '@'))
+            start--;
+        while (end < source.Length && (IsNameChar(source[end]) || source[end] == '@'))
+            end++;
+        if (start == end)
+            return null;
+        var name = source.ToString(TextSpan.FromBounds(start, end));
+        var span = TextSpan.FromBounds(start, end);
+        // Scanned from the name's start, so it's the name being read there, not one before it.
+        return Find(source, Lexer.Tokenize(source, new DiagnosticBag()), start, []) switch
+        {
+            InTagName when start > 0 && source[start - 1] == '<' => (name, null, span),
+            InClosingTag when start > 1 && source[start - 1] == '/' && source[start - 2] == '<' => (name, null, span),
+            InAttributes attributes => (attributes.Tag, name, span),
+            _ => null,
+        };
     }
 
     /// <summary>The markup context in the markup literal among <paramref name="tokens"/> that holds the position, if any.</summary>
@@ -100,7 +149,7 @@ public static class MarkupCompletion
             }
             else if (c == '<' && At(i + 1) == '>')
             {
-                elements.Add(new Open("", null));
+                elements.Add(new Open("", null, i + 2));
                 i += 2;
             }
             else if (c == '<' && At(i + 1) == '!')
@@ -119,7 +168,7 @@ public static class MarkupCompletion
                 if (context is not null)
                     return context;
                 if (!selfClosing && !IsVoid(tag) && tag.ToLowerInvariant() is not ("script" or "style"))
-                    elements.Add(new Open(tag, @for));
+                    elements.Add(new Open(tag, @for, after));
                 i = after;
             }
             else

@@ -76,7 +76,14 @@ public static class PiperResponses
                 Request.Value = http;
                 try
                 {
-                    return await next(invocation) is { } value ? read(value, http) : null;
+                    // A request ASP.NET Core couldn't bind (a missing body, a parameter that isn't a number) never
+                    // reached the handler: its answer (a 400) is ASP.NET Core's result, which goes as it is.
+                    return await next(invocation) switch
+                    {
+                        IResult answered => answered,
+                        { } value => read(value, http),
+                        null => null,
+                    };
                 }
                 finally
                 {

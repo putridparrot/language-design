@@ -149,6 +149,11 @@
           ],
           "description": "Arguments for the server command, e.g. [\"path/to/piper.dll\", \"lsp\"] when the path is `dotnet`."
         },
+        "piper.autoClosingTags": {
+          "type": "boolean",
+          "default": true,
+          "description": "Close a markup element as its start tag's `>` is typed: `<div>` gets `</div>` after the cursor."
+        },
         "piper.trace.server": {
           "type": "string",
           "enum": [

@@ -18,6 +18,8 @@ Support for [Piper](../../README.md) `.piper` files:
   - semantic highlighting (variants, traits, parameters and so on, coloured by what they are)
   - a quick fix that adds a match's missing arms
   - an outline
+  - in markup: completion of tags, attributes and a typed form's field names; hover on HTML's elements and
+    attributes; and closing tags as you type a start tag's `>` (the `piper.autoClosingTags` setting turns it off)
 
 - **Running:** the ▶ button in the editor title bar, **Piper: Run** or Ctrl+Shift+F5 saves your files and runs the
   current file's program with `piper run`, in the terminal panel.

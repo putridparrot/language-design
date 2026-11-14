@@ -31,6 +31,124 @@ public class WebPluginTests
         Compilation.Compile([new SourceText(text, "main.piper")],
             new CompilationOptions { Plugins = Web.Value.Plugins, References = Web.Value.References });
 
+    /// <summary>
+    /// <c>TestClient</c> serves an app from memory for <c>test</c> blocks: the app as its build function makes it, with
+    /// JSON, forms (their anti-forgery token sent for them), cookies, live pages' streams, and a request ASP.NET Core
+    /// can't bind (a 400, which the response filter once broke on). An exception the app throws fails the test.
+    /// </summary>
+    [Fact]
+    public void A_test_client_serves_the_app_from_memory()
+    {
+        var result = Compilation.Compile([new SourceText(""""
+            using System;
+            using System.IO;
+            using System.Net;
+            using System.Net.Http;
+            using System.Net.Http.Json;
+            using System.Text;
+            using Microsoft.AspNetCore.Builder;
+            using Microsoft.AspNetCore.Hosting;
+            using Microsoft.AspNetCore.Http;
+            using Microsoft.Extensions.DependencyInjection;
+            using Microsoft.Extensions.Logging;
+            using Piper.Web;
+
+            record Order(id: int, note: string?) requires id > 0;
+            record NewBid(bidder: string, amount: decimal) requires amount > 0m else "Bid something.";
+            enum Refusal { Unknown }
+
+            endpoints Site {
+                get Hello "/hello" (name: string?) => $"hello {name ?? "nobody"}";
+                post Orders "/orders" (order: Order) => if order.id == 1 { Ok(order) } else { Err(Refusal.Unknown) };
+                get Visit "/visit" (http: HttpContext) => {
+                    http.Response.Cookies.Append("seen", "yes");
+                    "welcome"
+                };
+                get Back "/back" (http: HttpContext) => http.Request.Cookies["seen"] ?? "new";
+                post Bid "/bids" (form: Form<NewBid>, htmx: HtmxRequest) => match form.Result {
+                    Ok(bid) => {
+                        let _ = Live.Publish("bids", "bid", <b>{bid.amount:F2}</b>);
+                        <p>{bid.bidder}{if htmx.IsHtmx { <i>htmx</i> }}</p>
+                    },
+                    Err(errors) => <p>{errors.For("amount")}</p>,
+                };
+                get Broken "/broken" () => {
+                    let zero = 0;
+                    $"{1 / zero}"
+                };
+            }
+
+            /// The app as a program builds it, asking for a port it won't get.
+            fn BuildApp() => (app: WebApplication, name: string) {
+                let builder = WebApplication.CreateBuilder();
+                builder.Logging.ClearProviders();
+                builder.Services.AddAntiforgery();
+                let urls: string[] = ["http://127.0.0.1:1"];
+                builder.WebHost.UseUrls(urls);
+                let app = builder.Build();
+                Site(app);
+                (app, "site")
+            }
+
+            fn Main() {}
+
+            async test "json, a missing body and a refusal" {
+                using let site = await TestClient.Start(() => BuildApp());
+                AssertEqual("site", site.App.name);
+                AssertEqual("hello Ada", await site.GetStringAsync("/hello?name=Ada"));
+                let ok = await site.PostAsJsonAsync("/orders", Order(1, Some("first")));
+                AssertEqual("""{"id":1,"note":"first"}""", await ok.Content.ReadAsStringAsync());
+                AssertEqual(HttpStatusCode.BadRequest, (await site.PostAsync("/orders", None)).StatusCode);
+                AssertEqual(HttpStatusCode.BadRequest, (await site.PostAsJsonAsync("/orders", Order(2, None))).StatusCode);
+            }
+
+            async test "cookies are kept between requests" {
+                using let site = await TestClient.Start(() => BuildApp());
+                AssertEqual("new", await site.GetStringAsync("/back"));
+                await site.GetStringAsync("/visit");
+                AssertEqual("yes", await site.GetStringAsync("/back"));
+            }
+
+            async test "forms send their token, and live pages stream" {
+                using let site = await TestClient.Start(() => BuildApp());
+                using let watching = await site.GetAsync(Live.Url("bids"), HttpCompletionOption.ResponseHeadersRead);
+                using let events = StreamReader(await watching.Content.ReadAsStreamAsync());
+                AssertEqual(": connected", await events.ReadLineAsync() ?? "");
+                await events.ReadLineAsync();
+
+                let bid = await site.PostForm("/bids", ["bidder": "ada", "amount": "12"], htmx: true);
+                AssertEqual("<p>ada<i>htmx</i></p>", await bid.Content.ReadAsStringAsync());
+                AssertEqual("event: bid", await events.ReadLineAsync() ?? "");
+                AssertEqual("data: <b>12.00</b>", await events.ReadLineAsync() ?? "");
+
+                let refused = await site.PostForm("/bids", ["bidder": "ada", "amount": "0"]);
+                AssertEqual("<p>Bid something.</p>", await refused.Content.ReadAsStringAsync());
+                let forged = await site.PostAsync("/bids", FormUrlEncodedContent(["bidder": "ada", "amount": "5"]));
+                AssertEqual(HttpStatusCode.BadRequest, forged.StatusCode);
+            }
+
+            async test "an exception in the app fails the test" {
+                using let site = await TestClient.Start(() => BuildApp());
+                await site.GetStringAsync("/broken");
+            }
+
+            async test "a build function must build an app" {
+                using let site = await TestClient.Start(() => 42);
+            }
+            """", "main.piper")],
+            new CompilationOptions(LineDirectives: true, IncludeTests: true) { Plugins = Web.Value.Plugins, References = Web.Value.References });
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.RunTests(result.Files, references: result.References);
+        Assert.Empty(run.Errors);
+        Assert.Equal(
+            [("json, a missing body and a refusal", true), ("cookies are kept between requests", true), ("forms send their token, and live pages stream", true),
+             ("an exception in the app fails the test", false), ("a build function must build an app", false)],
+            run.Results.Select(r => (r.Name, r.Passed)));
+        Assert.True(run.Results.Take(3).All(r => r.Passed), string.Join("\n", run.Results.Select(r => $"{r.Name}: {r.Failure}")));
+        Assert.StartsWith("Unhandled exception: System.DivideByZeroException", run.Results[3].Failure);
+        Assert.StartsWith("Unhandled exception: System.InvalidOperationException: The function given to TestClient.Start built no web app", run.Results[4].Failure);
+    }
+
     private const string Types = """
         trait Clock { fn Now() => string; }
         record FixedClock(time: string);

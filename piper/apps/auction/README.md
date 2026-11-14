@@ -42,7 +42,8 @@ last 30 seconds, when each bid keeps it open 30 seconds more.
   £1 (£5 from £100). A lot's life is a `statemachine`: open; closing in its last 30 seconds, when each bid keeps it
   open 30 seconds longer, so no one wins by bidding in the last second; then sold, if the highest bid meets the reserve,
   or unsold. `NewLot` and `NewBid` say what's wrong with them for people (`requires … else "…"`), which the forms
-  show beside their fields.
+  show beside their fields. Prices and bids are `Money`, a newtype of `decimal` that's always more than nothing, so
+  a price can't be mixed up with any other number, and a form's "0" is refused by `Money` itself.
 - **The actors** ([actors/auction.piper](actors/auction.piper)): each lot is an actor holding its life, so bids
   arriving at once, from every page, are taken one at a time, each checked against the one before: no two people can
   lead at once, and no bid is lost. The auctioneer actor keeps the catalogue and passes the time on to the lots, once
@@ -84,6 +85,10 @@ header); and being outbid was pushed to the bidder's page.
 | A state machine's helpers | Taking a bid (three assignments) couldn't be a method of the `statemachine`, which has only data and states, so it's written in each transition that takes one. | **Plugin:** a machine can declare functions, its class's methods; `LotLife` takes a bid in `Take`. |
 | `[None, None, Some(x)]` | A list literal whose `None`s come before its `Some` doesn't take their type from it, so needs a type annotation. | **Language:** elements with no type of their own take the others'. |
 | `[NotNullIfNotNull]` | `WebUtility.HtmlDecode(text)` is a `string` for a `string`, as .NET says, but Piper makes it a `string?`. | **Language:** given a plain value, the result is one. |
+| Comparing `Money` | `amount < minimum` on a newtype of `decimal` was an error, though a newtype sorts by its value. | **Language:** a newtype whose value compares has `<`, `<=`, `>` and `>=`. |
+| A newtype in a form | A form's "0" for a `Money` field was "'0' isn't a money", hiding what `Money`'s `requires` says. | **Plugin:** a newtype field is read as its value, then made, so its `requires` message is the field's. |
+| Testing over HTTP | The test started the app on a port, and dug the anti-forgery token out of the page to post forms. | **Plugin:** `TestClient` serves the app from memory, and sends forms' tokens itself. |
+| Caching the list | Planned, but a cached page would miss bids made since, as pages hear only of later ones. | Not done: live pages aren't cached (see [future.md](../../docs/future.md#web-ui)). |
 
 Also found and fixed on the way to it (each in [CHANGELOG.md](../../CHANGELOG.md)): generic .NET methods' constraints
 weren't checked; Piper.Runtime's `Option` and `Result` from .NET weren't Piper's; `[NotNullWhen(true)] out` values

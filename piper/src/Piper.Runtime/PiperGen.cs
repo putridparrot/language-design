@@ -120,7 +120,11 @@ public interface IPiperGen
     object? GenerateObject(PiperChoices choices);
 }
 
-/// <summary>Makes values of <typeparamref name="T"/> for property tests.</summary>
+/// <summary>
+/// Makes values of <typeparamref name="T"/> for property tests. Made by <see cref="PiperGen"/>'s functions, and changed
+/// and combined as LINQ's names say: <c>PiperGen.For&lt;int&gt;().Where(n =&gt; n % 2 == 0).Select(n =&gt; n * 10)</c>.
+/// Whatever's made this way shrinks, as every value is made from the same recorded choices.
+/// </summary>
 public abstract class PiperGen<T> : IPiperGen
 {
     public Type ValueType => typeof(T);
@@ -128,6 +132,30 @@ public abstract class PiperGen<T> : IPiperGen
     public abstract T Generate(PiperChoices choices);
 
     public object? GenerateObject(PiperChoices choices) => Generate(choices);
+
+    /// <summary>Each value made into another: <c>For&lt;int&gt;().Select(n =&gt; LotId(n))</c>.</summary>
+    public PiperGen<R> Select<R>(Func<T, R> map) => new PiperGen.FuncGen<R>(c => map(Generate(c)));
+
+    /// <summary>
+    /// Only the values <paramref name="keep"/> accepts, trying again (up to 100 times) for those it doesn't, and then
+    /// throwing the case away. For rare values, make them directly instead, as with a range.
+    /// </summary>
+    public PiperGen<T> Where(Func<T, bool> keep) => new PiperGen.FuncGen<T>(c =>
+    {
+        for (int attempt = 0; attempt < 100; attempt++)
+        {
+            var value = Generate(c);
+            if (keep(value))
+                return value;
+        }
+        throw new PiperDiscardException();
+    });
+
+    /// <summary>
+    /// A value made from another's generator: <c>Range(1, 10).SelectMany(n =&gt; ListOf(For&lt;int&gt;(), n, n))</c>, a
+    /// count and then a list of that many.
+    /// </summary>
+    public PiperGen<R> SelectMany<R>(Func<T, PiperGen<R>> next) => new PiperGen.FuncGen<R>(c => next(Generate(c)).Generate(c));
 }
 
 /// <summary>The generators a property test's parameters use: by type, or from an <c>in</c> range or collection.</summary>
@@ -168,6 +196,53 @@ public static class PiperGen
 
     /// <summary><c>x: T in generator</c>: values from a generator made elsewhere.</summary>
     public static PiperGen<T> In<T>(PiperGen<T> generator) => generator;
+
+    /// <summary>Always <paramref name="value"/>.</summary>
+    public static PiperGen<T> Constant<T>(T value) => new FuncGen<T>(_ => value);
+
+    /// <summary>Values from one of the generators, shrinking towards the first.</summary>
+    public static PiperGen<T> OneOf<T>(params PiperGen<T>[] generators) =>
+        generators.Length == 0
+            ? throw new ArgumentException("OneOf needs at least one generator.")
+            : new FuncGen<T>(c => generators[c.Draw((ulong)generators.Length)].Generate(c));
+
+    /// <summary>Lists of <paramref name="item"/>'s values, as long as a list of the type would be, shrinking shorter.</summary>
+    public static PiperGen<List<T>> ListOf<T>(PiperGen<T> item) => new FuncGen<List<T>>(c => Items(item, c));
+
+    /// <summary>Lists of from <paramref name="least"/> to <paramref name="most"/> of <paramref name="item"/>'s values.</summary>
+    public static PiperGen<List<T>> ListOf<T>(PiperGen<T> item, int least, int most)
+    {
+        if (least < 0 || most < least)
+            throw new ArgumentException($"A list can't have from {least} to {most} items.");
+        return new FuncGen<List<T>>(c =>
+        {
+            var count = (int)c.Integer(least, most, c.Size);
+            var items = new List<T>(count);
+            for (int i = 0; i < count; i++)
+                items.Add(Nested(item, c));
+            return items;
+        });
+    }
+
+    /// <summary>
+    /// The items in any order, each order alike likely, shrinking towards the order given: for "in any order"
+    /// properties.
+    /// </summary>
+    public static PiperGen<List<T>> Shuffled<T>(IEnumerable<T> items)
+    {
+        var list = items.ToArray();
+        return new FuncGen<List<T>>(c =>
+        {
+            // Fisher–Yates, each choice the distance to swap with: all 0 is the order given.
+            var order = (T[])list.Clone();
+            for (int i = 0; i < order.Length - 1; i++)
+            {
+                var j = i + (int)c.Draw((ulong)(order.Length - i));
+                (order[i], order[j]) = (order[j], order[i]);
+            }
+            return [.. order];
+        });
+    }
 
     private static IPiperGen Build(Type type)
     {
@@ -340,7 +415,7 @@ public static class PiperGen
         public override T Generate(PiperChoices choices) => (T)_gen.Value.GenerateObject(choices)!;
     }
 
-    private sealed class FuncGen<T>(Func<PiperChoices, T> generate) : PiperGen<T>
+    internal sealed class FuncGen<T>(Func<PiperChoices, T> generate) : PiperGen<T>
     {
         public override T Generate(PiperChoices choices) => generate(choices);
     }

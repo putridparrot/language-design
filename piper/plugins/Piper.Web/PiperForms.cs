@@ -99,10 +99,10 @@ internal static class PiperForms
                 var inner = type.GetGenericArguments()[0];
                 if (string.IsNullOrWhiteSpace(text))
                     values[i] = Activator.CreateInstance(type);
-                else if (PiperText.TryParse(inner, text, CultureInfo.InvariantCulture, out var value))
-                    values[i] = type.GetMethod(nameof(Option<int>.Some))!.Invoke(null, [value]);
+                else if (ReadField(inner, name, text, out var value) is { } error)
+                    errors[name] = error;
                 else
-                    errors[name] = NotA(text, inner);
+                    values[i] = type.GetMethod(nameof(Option<int>.Some))!.Invoke(null, [value]);
             }
             else if (text is null || (text.Trim().Length == 0 && type != typeof(string)))
             {
@@ -111,10 +111,10 @@ internal static class PiperForms
                 else
                     errors[name] = $"{Label(name)} is required.";
             }
-            else if (PiperText.TryParse(type, text, CultureInfo.InvariantCulture, out var value))
-                values[i] = value;
+            else if (ReadField(type, name, text, out var value) is { } error)
+                errors[name] = error;
             else
-                errors[name] = NotA(text, type);
+                values[i] = value;
         }
         // The record's `requires`, each checked on its own wherever the fields it mentions were read, so a field that
         // isn't a number doesn't hide what's wrong with the others. One about a single field is that field's error
@@ -152,6 +152,32 @@ internal static class PiperForms
     /// <summary>The table the compiler gives a Piper record with <c>requires</c>; none for any other type.</summary>
     private static PiperRequirement[] FindRequirements(Type type) =>
         type.GetField("__PiperRequirements", BindingFlags.Public | BindingFlags.Static)?.GetValue(null) as PiperRequirement[] ?? [];
+
+    /// <summary>
+    /// A field's text as a <paramref name="type"/>, or what's wrong with it. A newtype is read as its value, then made,
+    /// so its own `requires` says what's wrong (<c>newtype Money = decimal requires value &gt; 0m else "…"</c>), as a
+    /// record's does, rather than its text being "not a Money".
+    /// </summary>
+    private static string? ReadField(Type type, string name, string text, out object? value)
+    {
+        value = null;
+        if (type.GetCustomAttribute<PiperNewtypeAttribute>() is not null &&
+            type.GetConstructors() is [{ } make] && make.GetParameters() is [{ ParameterType: var inner }])
+        {
+            if (ReadField(inner, name, text, out var raw) is { } error)
+                return error;
+            try
+            {
+                value = make.Invoke([raw]);
+                return null;
+            }
+            catch (TargetInvocationException e) when (e.InnerException is ArgumentException refused)
+            {
+                return refused is PiperContractException ? refused.Message : $"'{text}' isn't a valid {Words(type.Name)}.";
+            }
+        }
+        return PiperText.TryParse(type, text, CultureInfo.InvariantCulture, out value) ? null : NotA(text, type);
+    }
 
     private static string NotA(string text, Type type) => $"'{text}' isn't {Article(type.Name)} {Words(type.Name)}.";
 

@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- **Testing web apps in memory (web plugin):** `using let site = await TestClient.Start(() => BuildApp());` serves the
+  app its build function makes from memory, with no port, and is an `HttpClient` calling it: it keeps cookies,
+  `PostForm(url, fields, htmx: true)` sends a form's anti-forgery token for it, responses stream (so live pages'
+  events can be read), and `site.App` is what the function returned. The server is Piper.Web's own, swapped in while
+  the app is built (as WebApplicationFactory does), so the app's code is unchanged and no package is added.
+  apps/auction's and apps/tracker's HTTP tests use it.
+- **Fixed (web plugin):** a request ASP.NET Core couldn't bind (a missing body, say), to a handler returning an
+  Option, a Result or markup, was a 500 from Piper.Web's response filter rather than ASP.NET Core's 400.
+- **Generators written in Piper:** a property test's `in` takes a `PiperGen<T>`, made with `PiperGen.For<T>()`,
+  `Range`, `In`, `Constant`, `OneOf`, `ListOf` and `Shuffled`, and changed with `Select`, `Where` and `SelectMany`:
+  `fn Evens() => PiperGen<int> = PiperGen.For<int>().Where(n => n % 2 == 0);`. Their values shrink as any do (a
+  shuffle towards the order given). apps/grid's order test uses `Shuffled`.
+- **Editor support for markup:** typing a start tag's `>` closes the element after the cursor (the language server's
+  `piper/autoClose`, which the VS Code extension asks; `piper.autoClosingTags` turns it off), and hover on HTML's
+  elements and attributes, and htmx's, says what each is for, with a link to MDN or htmx's site.
+- **Newtypes compare as their value:** one whose value can be compared (numbers, strings, chars, and .NET types
+  implementing `IComparable<T>`) has `<`, `<=`, `>` and `>=`: `newtype Money = decimal;` gives `price < limit`.
+- **A newtype in a form (web plugin)** is read as its value and then made, so its `requires … else "…"` message is
+  the field's error, rather than "'0' isn't a money". apps/auction's prices and bids are now `Money`, always more than
+  nothing.
+- **`if` without `else` in markup takes any hole's value:** `{if bids > 1 { $"{bids} bids" }}` and
+  `{if hot { count }}` work, as text and numbers do in holes, rather than only markup.
 - **Property tests:** `test "name" for (xs: List<int>, n: int in 1..100, c: char in "aeiou") requires … { … }` runs
   its body over 100 sets of generated values, and when it fails, shrinks them to the smallest that still fail, shown
   with the seed that found them: `piper test --seed <n>` repeats it. Values are made from each parameter's type

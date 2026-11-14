@@ -9,9 +9,10 @@
   <ItemGroup>
     <!--
       What `piper new` and `piper plugin new` make (see ProjectTemplates), named by their paths: Templates/web/main.piper.
-      Not culture-specific, though `Plugin.cs.template` looks like a Czech (cs) resource to MSBuild.
+      Not culture-specific, though `Plugin.cs.template` looks like a Czech (cs) resource to MSBuild. A template's obj
+      and bin folders (from opening it in the editor, which restores its packages) aren't part of it.
     -->
-    <EmbeddedResource Include="Templates\**" WithCulture="false" LogicalName="Templates/$([System.String]::Copy('%(RecursiveDir)').Replace('\', '/'))%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Templates\**" Exclude="Templates\**\obj\**;Templates\**\bin\**" WithCulture="false" LogicalName="Templates/$([System.String]::Copy('%(RecursiveDir)').Replace('\', '/'))%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

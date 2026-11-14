@@ -166,6 +166,31 @@ public sealed class RecordSymbol : NamedTypeDefinition
     /// <summary>A `newtype`: a record struct whose one field, <c>value</c>, it stands for (in printing, JSON and parsing).</summary>
     public bool IsNewtype => Declaration.Newtype is not null;
 
+    /// <summary>
+    /// A newtype whose value can be sorted, so it can too (<c>IComparable</c>, and <c>&lt;</c>, <c>&lt;=</c>, <c>&gt;</c>
+    /// and <c>&gt;=</c>), and formatted (<c>IFormattable</c>, for <c>{id:D5}</c>): what it passes on from its value.
+    /// </summary>
+    public (bool Comparable, bool Formattable) NewtypeValue
+    {
+        get
+        {
+            if (!IsNewtype || Fields.IsEmpty)
+                return (false, false);
+            var type = Fields[0].Type;
+            if (type == String || type == Bool || type == Char)
+                return (true, false);
+            if (type.IsNumeric)
+                return (true, true);
+            if (type is ClrTypeSymbol { IsArray: false } clr && !clr.Type.ContainsGenericParameters)
+            {
+                var interfaces = clr.Type.GetInterfaces();
+                bool Has(string name) => interfaces.Any(i => i.IsGenericType ? i.GetGenericTypeDefinition().FullName == name && i.GetGenericArguments()[0] == clr.Type : i.FullName == name);
+                return (Has("System.IComparable`1"), Has("System.IFormattable"));
+            }
+            return (false, false);
+        }
+    }
+
     /// <summary>Field types are written in terms of the record's own type parameters; see <see cref="TypeSubstitution"/>.</summary>
     public ImmutableArray<FieldSymbol> Fields { get; internal set; } = [];
 

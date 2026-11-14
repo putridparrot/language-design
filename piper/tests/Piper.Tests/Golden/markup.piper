@@ -83,6 +83,11 @@ fn Main() {
     let totals = [("bids", 3), ("watchers", 12)];
     Print(<ul>{for (name, count) in totals { <li>{name}: {count}</li> }}</ul>);
 
+    // An `if` without `else` shows its branch as any hole would: text, a number or markup.
+    for bids in [0, 1, 5] {
+        Print(<p>Clock{if bids > 1 { $" ({bids} bids)" } else if bids == 1 { <i> (one bid)</i> }}{if bids > 0 { bids * 2 }}</p>);
+    }
+
     // Markup is a value: compared, and kept as it is when it goes into more markup.
     let title = <b>bold</b>;
     Print(<p>{title} and {"<b>not bold</b>"}</p>);
