@@ -7,7 +7,7 @@
   `PostForm(url, fields, htmx: true)` sends a form's anti-forgery token for it, responses stream (so live pages'
   events can be read), and `site.App` is what the function returned. The server is Piper.Web's own, swapped in while
   the app is built (as WebApplicationFactory does), so the app's code is unchanged and no package is added.
-  apps/auction's and apps/tracker's HTTP tests use it.
+  apps/auction's and apps/tracker's HTTP tests use it, as does `piper new --template web`'s program.
 - **Fixed (web plugin):** a request ASP.NET Core couldn't bind (a missing body, say), to a handler returning an
   Option, a Result or markup, was a 500 from Piper.Web's response filter rather than ASP.NET Core's 400.
 - **Generators written in Piper:** a property test's `in` takes a `PiperGen<T>`, made with `PiperGen.For<T>()`,

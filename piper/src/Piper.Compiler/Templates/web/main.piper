@@ -5,8 +5,11 @@
 //   curl http://localhost:5080/api/notes
 
 using System.Collections.Generic;
+using System.Net;
+using System.Net.Http.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Piper.Web;
 
 // What the API sends and receives. Records become JSON objects: { "id": 1, "text": "…" }.
 record Note(id: int, text: string);
@@ -51,14 +54,18 @@ args Options "__NAME__: a web API." {
     port: int = 5080 "The port to serve on";
 }
 
-async fn Main(args: string[]) {
-    let port = Options.FromArgs(args).port;
-
+// The app: its services and endpoints. `Main` serves it, and the tests call it in memory.
+fn BuildApp() => WebApplication {
     let builder = WebApplication.CreateBuilder();
     AppServices(builder.Services);
     let app = builder.Build();
     Api(app);
+    app
+}
 
+async fn Main(args: string[]) {
+    let port = Options.FromArgs(args).port;
+    let app = BuildApp();
     Print($"Serving on http://localhost:{port} (try /api/hello?name=Ada). Ctrl+C to stop.");
     await app.RunAsync($"http://localhost:{port}");
 }
@@ -68,4 +75,15 @@ test "numbers notes in order" {
     store.Add("first");
     AssertEqual(2, store.Add("second").id);
     AssertEqual(2, store.All().Count);
+}
+
+// Over HTTP, with the app served from memory: no port, and nothing to start or stop by hand.
+async test "notes are added and listed over HTTP" {
+    using let site = await TestClient.Start(() => BuildApp());
+    AssertEqual("Hello, Ada!", await site.GetStringAsync("/api/hello?name=Ada"));
+    let added = await site.PostAsJsonAsync("/api/notes", NewNote("Try Piper"));
+    AssertEqual(HttpStatusCode.Created, added.StatusCode);
+    AssertEqual(HttpStatusCode.BadRequest, (await site.PostAsJsonAsync("/api/notes", NewNote(" "))).StatusCode);
+    let notes = await site.GetFromJsonAsync<List<Note>>("/api/notes");
+    AssertEqual([Note(1, "Try Piper")], notes ?? []);
 }
