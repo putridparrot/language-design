@@ -560,6 +560,12 @@ public sealed record AssignmentExpressionSyntax(TextSpan Span, ExpressionSyntax 
 public sealed record MarkupFormSyntax(TextSpan Span, TypeSyntax Record, ImmutableArray<(string Name, TextSpan Span)> Fields, ExpressionSyntax Markup)
     : ExpressionSyntax(Span);
 
+/// <summary>
+/// <c>&lt;Card title="x"&gt;…&lt;/Card&gt;</c>: a component, which is its <see cref="Call"/>, and the name in its closing
+/// tag, which the binder records as another use of the function, so renaming it renames both tags.
+/// </summary>
+public sealed record MarkupComponentSyntax(TextSpan Span, ExpressionSyntax Call, TextSpan CloseName) : ExpressionSyntax(Span);
+
 /// <summary><c>typeof(Point)</c>: the .NET <c>System.Type</c> of a type, as in C#.</summary>
 public sealed record TypeOfExpressionSyntax(TextSpan Span, Token Keyword, TypeSyntax Type) : ExpressionSyntax(Span);
 

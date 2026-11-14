@@ -1,5 +1,6 @@
 using System.Reflection;
 using Piper.Syntax;
+using Piper.Text;
 
 namespace Piper.Binding;
 
@@ -68,6 +69,19 @@ public sealed partial class Binder
         else if (type != TypeSymbol.Error)
             _diagnostics.ReportInvalidMarkup(syntax.Record.Span, $"A form is for a record, which it's read into, and '{type}' isn't one.");
         return BindExpression(syntax.Markup);
+    }
+
+    /// <summary>
+    /// A component with a closing tag: its call, and the closing tag's name recorded as a use of the same function, so
+    /// renaming the component renames <c>&lt;/Card&gt;</c> too.
+    /// </summary>
+    private BoundExpression BindMarkupComponent(MarkupComponentSyntax syntax, TypeSymbol? expected)
+    {
+        var bound = BindExpression(syntax.Call, expected);
+        var call = bound is BoundConversionExpression conversion ? conversion.Expression : bound;
+        if (call is BoundCallExpression { Function: var function } && syntax.CloseName.Length >= function.Name.Length)
+            _semantic?.AddOccurrence(_file.Source, new TextSpan(syntax.CloseName.End - function.Name.Length, function.Name.Length), function, isDeclaration: false);
+        return bound;
     }
 
     private bool HasMember(TypeSymbol type, string name) =>

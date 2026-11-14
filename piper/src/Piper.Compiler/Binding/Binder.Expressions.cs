@@ -50,6 +50,7 @@ public sealed partial class Binder
         TypeOfExpressionSyntax s => new BoundTypeOfExpression(BindType(s.Type)),
         NameOfExpressionSyntax s => BindNameOf(s),
         MarkupFormSyntax s => BindMarkupForm(s),
+        MarkupComponentSyntax s => BindMarkupComponent(s, expected),
         AssignmentExpressionSyntax s => BindAssignment(s),
         CallExpressionSyntax s => BindCall(s, expected),
         PipeExpressionSyntax s => BindPipe(s, expected),

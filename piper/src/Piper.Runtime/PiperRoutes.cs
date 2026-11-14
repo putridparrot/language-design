@@ -23,4 +23,31 @@ public static class PiperRoutes
 
     /// <summary><c>{*path}</c>: each part escaped, the <c>/</c>s between them kept.</summary>
     public static string CatchAll(string? value) => value is null ? "" : string.Join("/", value.Split('/').Select(Uri.EscapeDataString));
+
+    /// <summary>
+    /// A path with one more query value: <c>/search?q=clock</c>, then <c>/search?q=clock&amp;page=2</c>. The value is a
+    /// <see cref="Query(string, string?)"/> pair, or null (None) for one left out.
+    /// </summary>
+    public static string WithQuery(string path, string? value) =>
+        value is null ? path : path + (path.Contains('?') ? "&" : "?") + value;
+
+    /// <summary><c>name=value</c>, both escaped; null (left out) for None.</summary>
+    public static string? Query(string name, string? value) =>
+        value is null ? null : $"{Uri.EscapeDataString(name)}={Uri.EscapeDataString(value)}";
+
+    /// <summary>A number, date, <c>Guid</c> or newtype of one, in the invariant culture, as ASP.NET Core reads it.</summary>
+    public static string? Query<T>(string name, T value) where T : IFormattable =>
+        Query(name, value.ToString(null, CultureInfo.InvariantCulture));
+
+    /// <summary>An optional number, date or id: left out for None.</summary>
+    public static string? Query<T>(string name, T? value) where T : struct, IFormattable =>
+        value is { } present ? Query(name, present) : null;
+
+    /// <summary>Anything else by its text (a <c>bool</c> as <c>true</c> or <c>false</c>); left out for None.</summary>
+    public static string? Query(string name, object? value) => value switch
+    {
+        null => null,
+        bool flag => Query(name, flag ? "true" : "false"),
+        _ => Query(name, value.ToString()),
+    };
 }

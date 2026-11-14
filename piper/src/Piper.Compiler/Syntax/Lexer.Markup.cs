@@ -80,6 +80,7 @@ public sealed partial class Lexer
         var content = _source.ToString(TextSpan.FromBounds(start, _position));
         if (IsAtEnd)
         {
+            _closeNameSpan = null;
             _diagnostics.ReportInvalidMarkup(nameSpan, $"<{name}> isn't closed: expected </{name}>.");
             return content.Length > 0 ? [new MarkupText(TextSpan.FromBounds(start, _position), content)] : [];
         }
@@ -137,8 +138,10 @@ public sealed partial class Lexer
 
         if (VoidElements.Contains(name))
             return new MarkupElement(TextSpan.FromBounds(start, _position), name, nameSpan, attributes.ToImmutable(), []);
+        _closeNameSpan = null;
         var children = name.ToLowerInvariant() is "script" or "style" ? ScanRawText(name, nameSpan) : ScanChildren(start, name, nameSpan);
-        return new MarkupElement(TextSpan.FromBounds(start, _position), name, nameSpan, attributes.ToImmutable(), children);
+        var closeNameSpan = _closeNameSpan;
+        return new MarkupElement(TextSpan.FromBounds(start, _position), name, nameSpan, attributes.ToImmutable(), children) { CloseNameSpan = closeNameSpan };
     }
 
     /// <summary>An element's contents, up to and including its closing tag (<c>&lt;/name&gt;</c>, or <c>&lt;/&gt;</c> for a fragment).</summary>
@@ -154,6 +157,9 @@ public sealed partial class Lexer
             _openTags.RemoveAt(_openTags.Count - 1);
         }
     }
+
+    /// <summary>Where the closing tag just read names its element (<c>Card</c> in <c>&lt;/Card&gt;</c>); null if it didn't.</summary>
+    private TextSpan? _closeNameSpan;
 
     /// <summary>The elements being read, outermost first, so a closing tag of an enclosing one ends an unclosed child.</summary>
     private readonly List<string> _openTags = [];
@@ -184,6 +190,7 @@ public sealed partial class Lexer
             if (IsAtEnd)
             {
                 Flush();
+                _closeNameSpan = null;
                 _diagnostics.ReportInvalidMarkup(nameSpan, $"<{name}> isn't closed: expected </{name}>.");
                 return children.ToImmutable();
             }
@@ -199,6 +206,7 @@ public sealed partial class Lexer
                 // </div> while reading a <p> inside a <div>: the <p> wasn't closed, and the </div> is the div's.
                 if (closeName != name && _openTags.Take(_openTags.Count - 1).Contains(closeName))
                 {
+                    _closeNameSpan = null;
                     _diagnostics.ReportInvalidMarkup(nameSpan, $"<{name}> isn't closed: expected </{name}> before </{closeName}>.");
                     _position = closeStart;
                     ReportStrays();
@@ -209,6 +217,7 @@ public sealed partial class Lexer
                     _position++;
                 else
                     _diagnostics.ReportInvalidMarkup(TextSpan.FromBounds(closeStart, _position), $"The closing tag </{closeName}> isn't finished: expected '>'.");
+                _closeNameSpan = closeName == name ? TextSpan.FromBounds(closeNameStart, closeNameStart + closeName.Length) : null;
                 if (closeName != name)
                     _diagnostics.ReportInvalidMarkup(TextSpan.FromBounds(closeStart, _position), $"</{closeName}> doesn't close <{name}>: expected </{name}>.");
                 ReportStrays();

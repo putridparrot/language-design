@@ -54,9 +54,8 @@ them too.
   synchronization context. To decide: allow it for event handlers only, as C# guidance suggests, perhaps with exceptions
   reported rather than lost.
 - **Found by apps/auction:**
-  - ~~**Helper methods in a `statemachine`**~~, done: a machine can declare `fn`s, which are its class's methods.
-    **Still to come for an `actor`:** its state is local to the loop `Spawn` starts (and, for remote actors, to the
-    Proto.Actor actor), so its functions would be local functions there, able to change that state.
+  - ~~**Helper methods in a `statemachine`** (and an `actor`)~~, done: a machine can declare `fn`s, its class's methods.
+    And in an `actor`, as local functions where its loop starts, beside its state.
   - ~~**A list literal's `None`s typed by a later `Some`**~~, done: elements with no type of their own take the others'.
   - ~~**`[NotNullIfNotNull]` results**~~, done: given a plain value, the result is one.
 - **Newtypes, later:** a newtype with type parameters, for phantom-typed ids (`newtype Id<T> = Guid;`, so an
@@ -328,15 +327,16 @@ change), and a page should be able to start as one and gain parts of the other.
 1. **Typed HTML.** Done: markup literals ([Markup](language.md#markup)), with escaping by type, components, `for` and
    `if` in holes, and pages from web handlers; typed links (`SiteRoutes.Lot(id)`) and forms read into records
    (`Form<T>`, with anti-forgery tokens), in the [web plugin](plugins.md). Still to come:
-   - **Editor support:** the VS Code grammar colours markup as code, and the language server doesn't yet colour or
-     complete inside it.
+   - ~~**Editor support**~~, done: the grammar reads markup as markup (tags, attributes, text, holes as code), a
+     component is its function for the editor (colour, hover, go to definition, rename in both tags), and completion
+     offers tags, attributes and an input's fields in markup. Still to come: completion of the closing tag as `>` is
+     typed, and hover on HTML's elements and attributes.
    - ~~**Messages for `requires`**~~, done: `requires … else "message"`, shown beside the field it's about.
    - ~~**All of a form's errors at once**~~, done: each `requires` is checked wherever the fields it mentions were read.
    - ~~**Typed forms in markup**~~, done: `<form for={NewLot}>` checks its inputs' names against the record's fields.
-     Still strings, and unchecked: `errors.For("title")` and `form.Text("title")`, which a typed field reference
-     (`errors.For(NewLot.title)`, or a `FormErrors<T>`) would check too; and inputs made by components or holes, which
-     is also why a field with no input isn't reported.
-   - **Query values in route functions:** they take the route's values only.
+     Field names given to `errors.For(…)` and `form.Text(…)` are checked too (`FormErrors<T>`). Inputs made by
+     components or holes aren't seen, which is also why a field with no input isn't reported.
+   - ~~**Query values in route functions**~~, done: a handler's simple or optional parameters outside the route.
    Markup literals in expressions (as JSX, or Scala's XML), compiled to an `Html` value:
 
    ```piper

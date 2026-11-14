@@ -348,7 +348,7 @@ public class WebPluginTests
                 requires title.Trim().Length > 0 else "Give the lot a title."
                 requires (reserve ?? startPrice) >= startPrice else "The reserve can't be below the starting price.";
 
-            fn NewLotPage(form: Form<NewLot>?, errors: FormErrors?) => Html =
+            fn NewLotPage(form: Form<NewLot>?, errors: FormErrors<NewLot>?) => Html =
                 <form for={NewLot} method="post" action={SiteRoutes.Create()}>
                     <input name="title" value={form?.Text("title")} />
                     <span class="error">{errors?.For("title")}</span>
@@ -359,6 +359,7 @@ public class WebPluginTests
             endpoints Site {
                 get Lot "/lots/{id:int}" (id: LotId) => <a href={SiteRoutes.Lot(id)}>lot {id}</a>;
                 get Files "/files/{*path}" (path: string) => <p>{path}</p>;
+                get Search "/search/{group}" (group: string, q: string?, page: int?, exact: bool, featured: LotId?) => <p>{q ?? ""}</p>;
                 get NewLot "/lots/new" () => NewLotPage(None, None);
                 post Create "/lots" (form: Form<NewLot>) => match form.Result {
                     Ok(lot) => <p>Listed {lot.title}: {lot.category.Name}, from {lot.startPrice:F2}{if lot.featured { <b> (featured)</b> }}</p>,
@@ -370,6 +371,8 @@ public class WebPluginTests
                 Print(SiteRoutes.Lot(LotId(7)));
                 Print(SiteRoutes.Files("photos/a b.jpg"));
                 Print(SiteRoutes.Create());
+                Print(SiteRoutes.Search("art", false));
+                Print(SiteRoutes.Search("clocks", true, q: "a&b c", page: 2, featured: LotId(7)));
 
                 let builder = WebApplication.CreateBuilder();
                 builder.Logging.ClearProviders();
@@ -400,6 +403,7 @@ public class WebPluginTests
                 Print(await Post($"__RequestVerificationToken={token}&title=+&startPrice=40&reserve=10&category=Art"));
                 Print((await Post("title=Clock&startPrice=1&category=Art")).Split(' ')[0]);
                 Print(await client.GetStringAsync(SiteRoutes.Lot(LotId(3))));
+                Print(await client.GetStringAsync(SiteRoutes.Search("clocks", true, q: "a&b c")));
                 await app.StopAsync();
             }
             """");
@@ -410,6 +414,8 @@ public class WebPluginTests
             /lots/7
             /files/photos/a%20b.jpg
             /lots
+            /search/art?exact=false
+            /search/clocks?exact=true&q=a%26b%20c&page=2&featured=7
             True
             200 <p>Listed Clock: Clocks, from 12.50<b> (featured)</b></p>
             200 <form method="post" action="/lots"><input name="title" value=""><span class="error">Give the lot a title.</span><span class="error">&#39;lots&#39; isn&#39;t a number.</span><p class="error"></p></form>
@@ -418,6 +424,7 @@ public class WebPluginTests
             200 <form method="post" action="/lots"><input name="title" value=" "><span class="error">Give the lot a title.</span><span class="error"></span><p class="error">The reserve can&#39;t be below the starting price.</p></form>
             400
             <a href="/lots/3">lot 3</a>
+            <p>a&amp;b c</p>
 
             """, run.Output.Replace("\r\n", "\n"));
     }
@@ -574,7 +581,7 @@ public class WebPluginTests
                 Print(await reader.ReadLineAsync() ?? "");   // ": connected": the page is watching
                 await reader.ReadLineAsync();
 
-                let posted = await client.PostAsync($"{SiteRoutes.Bid(7)}?amount=12.5", StringContent(""));
+                let posted = await client.PostAsync(SiteRoutes.Bid(7, 12.5m), StringContent(""));
                 Print(await posted.Content.ReadAsStringAsync());
                 mut line = await reader.ReadLineAsync() ?? "";
                 while line != "" {
@@ -642,6 +649,37 @@ public class WebPluginTests
             },
             e => Assert.Contains("'notes' isn't a field of NewLot", e.Message),
             e => Assert.Equal("A form is for a record, which it's read into, and 'int' isn't one.", e.Message));
+    }
+
+    /// <summary>The fields named to a form's errors and text are checked against its record, when they're constants.</summary>
+    [Fact]
+    public void Field_names_given_to_a_forms_errors_and_text_are_checked()
+    {
+        const string text = """
+            using Piper.Web;
+
+            record NewLot(title: string, startPrice: decimal);
+
+            fn Page(form: Form<NewLot>?, errors: FormErrors<NewLot>?) => Html =
+                <form for={NewLot} method="post">
+                    <input name="title" value={form?.Text("title")} />
+                    <span>{errors?.For("title")}</span>
+                    <input name="startPrice" value={form?.Text("price")} />
+                    <span>{errors?.For(field: "start")}</span>
+                    <span>{errors?.For("start" + "Price")}</span>
+                </form>;
+
+            fn Main() {}
+            """;
+        var errors = Compile(text).Diagnostics.OrderBy(d => d.Span.Start).ToList();
+        Assert.Collection(errors,
+            e =>
+            {
+                Assert.Equal("PIP0511", e.Code);
+                Assert.Equal("'price' isn't a field of NewLot; its fields are 'title', 'startPrice'.", e.Message);
+                Assert.Equal(text.IndexOf("\"price\"", StringComparison.Ordinal), e.Span.Start);
+            },
+            e => Assert.Equal("'start' isn't a field of NewLot; its fields are 'title', 'startPrice'.", e.Message));
     }
 
     [Fact]

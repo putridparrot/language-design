@@ -75,6 +75,35 @@ public class RemoteActorPluginTests
         Assert.Equal("15\n0\nfault: no\n", run.Output.Replace("\r\n", "\n"));
     }
 
+    /// <summary>A remote actor's own functions, shared by its handlers, as a local actor's are.</summary>
+    [Fact]
+    public void A_remote_actor_can_have_functions_its_handlers_share()
+    {
+        var result = Compile(Node + """
+            actor Ledger(limit: int) {
+                mut balance = 0;
+                fn Fits(amount: int) => bool = balance + amount <= limit;
+                fn Move(amount: int) { balance += amount; }
+                on Deposit(amount: int) => bool { if Fits(amount) { Move(amount); true } else { false } }
+                on Balance() => int { balance }
+            }
+            async fn Main() {
+                let host = await StartNode();
+                let ledger = Ledger.Spawn(host, "ledger", 100);
+                Print(await ledger.Deposit(70));
+                Print(await ledger.Deposit(50));
+                Print(await ledger.Balance());
+                await ledger.Stop();
+                await host.Remote().ShutdownAsync(true);
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Empty(result.Diagnostics);
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("True\nFalse\n70\n", run.Output.Replace("\r\n", "\n"));
+    }
+
     [Fact]
     public void A_slow_ask_times_out_and_a_missing_actor_fails_at_once()
     {

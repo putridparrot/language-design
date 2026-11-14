@@ -27,6 +27,9 @@ public sealed record MarkupElement(
 {
     public bool IsFragment => Name.Length == 0;
 
+    /// <summary>Where its closing tag names it (<c>Card</c> in <c>&lt;/Card&gt;</c>); null for none, or one that doesn't match.</summary>
+    public TextSpan? CloseNameSpan { get; init; }
+
     public bool IsComponent => Name.Length > 0 && (char.IsUpper(Name[0]) || Name.Contains('.'));
 }
 

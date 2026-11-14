@@ -319,6 +319,7 @@ public sealed partial class Binder
 
         var chosen = resolved.Candidate;
         CheckClrObsolete(nameSpan ?? span, chosen.Member);
+        CheckFieldNames(chosen, argumentSyntax, leadingArguments.Length);
         var call = new BoundClrInvocationExpression(
             receiver, chosen.Container, chosen.Member, resolved.Arguments,
             BoundaryInnerType((chosen.ReturnType, chosen.ReturnBoundary)), chosen.TypeArguments)
@@ -333,6 +334,30 @@ public sealed partial class Binder
         if (chosen.ReturnBoundary == ClrBoundary.NullableReference && NotNullForArguments(chosen, resolved.Arguments, resolved.Names))
             return call;
         return FromClrBoundary(call, (chosen.ReturnType, chosen.ReturnBoundary));
+    }
+
+    /// <summary>
+    /// A constant string given to a parameter marked <c>[PiperFieldName]</c> (Piper.Runtime) must name a field of the
+    /// record it's about, a type argument of the method's type: <c>errors.For("title")</c> on a
+    /// <c>FormErrors&lt;NewLot&gt;</c>. Strings made at run time aren't checked.
+    /// </summary>
+    private void CheckFieldNames(ClrCandidate chosen, ImmutableArray<ExpressionSyntax> argumentSyntax, int leading)
+    {
+        var parameters = chosen.Member.GetParameters();
+        for (int i = 0; i < argumentSyntax.Length; i++)
+        {
+            var (name, written) = argumentSyntax[i] is NamedArgumentSyntax named ? (named.Name.Text, named.Value) : (null, argumentSyntax[i]);
+            var index = name is null ? leading + i : Array.FindIndex(parameters, p => p.Name == name);
+            if (written is not LiteralExpressionSyntax { Value: string field } || index < 0 || index >= parameters.Length ||
+                parameters[index].CustomAttributes.FirstOrDefault(a => a.AttributeType.FullName == "Piper.Runtime.PiperFieldNameAttribute") is not { } attribute)
+                continue;
+            var argument = attribute.ConstructorArguments is [{ Value: int n }] ? n : 0;
+            if (chosen.Container.TypeArguments.ElementAtOrDefault(argument)?.OriginalDefinition is not RecordSymbol record)
+                continue;
+            var fields = record.Fields.Select(f => f.Name).ToList();
+            if (!fields.Contains(field))
+                _diagnostics.ReportNotAField(written.Span, field, record.Name, fields);
+        }
     }
 
     /// <summary>

@@ -159,6 +159,9 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportNotAFormField(TextSpan span, string name, string record, IReadOnlyList<string> fields) =>
         Error("PIP0510", span, $"'{name}' isn't a field of {record}, which this form is read into; its fields are {string.Join(", ", fields.Select(f => $"'{f}'"))}.");
 
+    public void ReportNotAField(TextSpan span, string name, string record, IReadOnlyList<string> fields) =>
+        Error("PIP0511", span, $"'{name}' isn't a field of {record}; its fields are {string.Join(", ", fields.Select(f => $"'{f}'"))}.");
+
     public void ReportNotMarkup(TextSpan span, TypeSymbol type, bool attribute)
     {
         bool function = type is ClrTypeSymbol { Type.FullName: "System.Delegate" } or ClrTypeSymbol { Type.BaseType.FullName: "System.MulticastDelegate" };

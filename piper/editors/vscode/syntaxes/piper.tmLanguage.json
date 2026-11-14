@@ -4,6 +4,7 @@
   "scopeName": "source.piper",
   "patterns": [
     { "include": "#comments" },
+    { "include": "#markup" },
     { "include": "#declarations" },
     { "include": "#strings" },
     { "include": "#chars" },
@@ -14,6 +15,115 @@
     { "include": "#operators" }
   ],
   "repository": {
+    "markup": {
+      "comment": "A markup literal, where the compiler reads one: a `<` and a letter (or `<>`) after = => ( [ { , : ? ?? |> == != or return, or starting a line. So `a < b` and `List<int>` aren't markup.",
+      "begin": "(?:(?<=[=(\\[{,:?>]|return)|^)\\s*(?=<(?:[A-Za-z]|>|!(?i:doctype)))",
+      "end": "(?<=>)",
+      "patterns": [{ "include": "#markup-node" }]
+    },
+    "markup-node": {
+      "patterns": [
+        { "include": "#markup-doctype" },
+        { "include": "#markup-fragment" },
+        { "include": "#markup-raw" },
+        { "include": "#markup-void" },
+        { "include": "#markup-element" }
+      ]
+    },
+    "markup-doctype": {
+      "name": "meta.tag.sgml.doctype.piper",
+      "match": "<!(?i:doctype)[^>]*>"
+    },
+    "markup-fragment": {
+      "name": "meta.tag.fragment.piper",
+      "begin": "(<)(>)",
+      "end": "(</)(>)",
+      "beginCaptures": { "1": { "name": "punctuation.definition.tag.begin.piper" }, "2": { "name": "punctuation.definition.tag.end.piper" } },
+      "endCaptures": { "1": { "name": "punctuation.definition.tag.begin.piper" }, "2": { "name": "punctuation.definition.tag.end.piper" } },
+      "patterns": [{ "include": "#markup-children" }]
+    },
+    "markup-void": {
+      "comment": "HTML's void elements, which have no closing tag: <br>, <input …>.",
+      "name": "meta.tag.void.piper",
+      "begin": "(<)((?i:area|base|br|col|embed|hr|img|input|link|meta|source|track|wbr))(?=[\\s/>])",
+      "end": "(/?>)",
+      "beginCaptures": { "1": { "name": "punctuation.definition.tag.begin.piper" }, "2": { "name": "entity.name.tag.piper" } },
+      "endCaptures": { "1": { "name": "punctuation.definition.tag.end.piper" } },
+      "patterns": [{ "include": "#markup-attributes" }]
+    },
+    "markup-raw": {
+      "comment": "<script> and <style> hold code, read as text: no holes in them.",
+      "begin": "(<)((?i:script|style))(?=[\\s>])",
+      "end": "(</)((?i:script|style))\\s*(>)",
+      "beginCaptures": { "1": { "name": "punctuation.definition.tag.begin.piper" }, "2": { "name": "entity.name.tag.piper" } },
+      "endCaptures": { "1": { "name": "punctuation.definition.tag.begin.piper" }, "2": { "name": "entity.name.tag.piper" }, "3": { "name": "punctuation.definition.tag.end.piper" } },
+      "patterns": [
+        {
+          "begin": "\\G",
+          "end": "(>)",
+          "endCaptures": { "1": { "name": "punctuation.definition.tag.end.piper" } },
+          "patterns": [{ "include": "#markup-attributes" }]
+        }
+      ]
+    },
+    "markup-element": {
+      "comment": "An element: its attributes up to its tag's > (or />), then its children up to its closing tag. A capitalised or dotted name is a component.",
+      "begin": "(<)(?:([A-Z][\\w]*(?:\\.[A-Za-z_]\\w*)*|[a-z]\\w*\\.[\\w.]+)|([a-z][\\w:-]*))(?=[\\s/>])",
+      "end": "(/>)|(</)(?:([A-Z][\\w]*(?:\\.[A-Za-z_]\\w*)*|[a-z]\\w*\\.[\\w.]+)|([\\w:-]*))\\s*(>)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.piper" },
+        "2": { "name": "support.class.component.piper" },
+        "3": { "name": "entity.name.tag.piper" }
+      },
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.end.piper" },
+        "2": { "name": "punctuation.definition.tag.begin.piper" },
+        "3": { "name": "support.class.component.piper" },
+        "4": { "name": "entity.name.tag.piper" },
+        "5": { "name": "punctuation.definition.tag.end.piper" }
+      },
+      "patterns": [
+        {
+          "begin": "\\G",
+          "end": "(?=/>)|(>)",
+          "endCaptures": { "1": { "name": "punctuation.definition.tag.end.piper" } },
+          "patterns": [{ "include": "#markup-attributes" }]
+        },
+        { "include": "#markup-children" }
+      ]
+    },
+    "markup-attributes": {
+      "patterns": [
+        { "include": "#markup-hole" },
+        {
+          "match": "([A-Za-z_@:][\\w:.@-]*)(?:\\s*(=))?",
+          "captures": { "1": { "name": "entity.other.attribute-name.piper" }, "2": { "name": "punctuation.separator.key-value.piper" } }
+        },
+        { "name": "string.quoted.double.piper", "begin": "\"", "end": "\"" },
+        { "include": "#comments" }
+      ]
+    },
+    "markup-children": {
+      "patterns": [
+        { "include": "#markup-hole" },
+        { "include": "#markup-node" },
+        { "name": "constant.character.entity.piper", "match": "&(?:[A-Za-z][A-Za-z0-9]*|#[0-9]+|#[xX][0-9A-Fa-f]+);" }
+      ]
+    },
+    "markup-hole": {
+      "comment": "{expression}: Piper again, its own braces balanced, as in {for x in xs { … }}.",
+      "name": "meta.embedded.expression.piper",
+      "begin": "\\{",
+      "end": "\\}",
+      "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.piper" } },
+      "endCaptures": { "0": { "name": "punctuation.section.embedded.end.piper" } },
+      "patterns": [{ "include": "#braces" }, { "include": "$self" }]
+    },
+    "braces": {
+      "begin": "\\{",
+      "end": "\\}",
+      "patterns": [{ "include": "#braces" }, { "include": "$self" }]
+    },
     "comments": {
       "patterns": [
         { "name": "comment.line.double-slash.piper", "match": "//.*$" },

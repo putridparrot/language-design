@@ -70,6 +70,58 @@ public class ActorPluginTests
         Assert.Equal("15\nnow: 2\n", output);
     }
 
+    /// <summary>An actor's own functions: what its handlers share, reading and changing its state.</summary>
+    [Fact]
+    public void An_actor_can_have_functions_its_handlers_share()
+    {
+        var output = Run("""
+            using System.Threading.Tasks;
+            actor Ledger(limit: int) {
+                mut balance = 0;
+                mut moves = 0;
+
+                fn Move(amount: int) {
+                    balance += amount;
+                    moves += 1;
+                }
+
+                fn Fits(amount: int) => bool = balance + amount <= limit;
+
+                async fn Audit() => Task<string> {
+                    await Task.Yield();
+                    $"{balance} after {moves}"
+                }
+
+                on Deposit(amount: int) => bool {
+                    if Fits(amount) { Move(amount); true } else { false }
+                }
+                on Withdraw(amount: int) { Move(-amount); }
+                on Report() => string { await Audit() }
+            }
+            async fn Main() {
+                await using let ledger = Ledger.Spawn(100);
+                Print(await ledger.Deposit(70));
+                Print(await ledger.Deposit(50));
+                ledger.Withdraw(20);
+                Print(await ledger.Report());
+            }
+            """);
+        Assert.Equal("True\nFalse\n50 after 2\n", output);
+    }
+
+    [Fact]
+    public void An_actors_functions_are_its_own()
+    {
+        AssertPluginError("""
+            actor Counter {
+                mut count = 0;
+                private fn Bump() { count += 1; }
+                on Increment() { Bump(); }
+            }
+            fn Main() {}
+            """, "private fn Bump", "An actor's functions are its own, used by its handlers: write 'fn', without 'private' or 'static'.");
+    }
+
     [Fact]
     public void Concurrent_tells_are_all_handled()
     {

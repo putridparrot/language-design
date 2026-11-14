@@ -413,6 +413,95 @@ public sealed class LanguageServerTests : IDisposable
         Assert.Equal(Program.Split("Point").Length - 1, edits.Count);
     }
 
+    private const string Markup = """
+        using System.Collections.Generic;
+        record NewLot(title: string, startPrice: decimal);
+        fn Card(title: string, open: bool = false, children: Html) => Html = <section>{children}</section>;
+        fn Page(lots: List<NewLot>) => Html =
+            <Card title="Lots" open>
+                <ul>{for lot in lots { <li>{lot.title}</li> }}</ul>
+            </Card>;
+        fn Main() {}
+        """;
+
+    /// <summary>A component is the function it calls: coloured, hovered and gone to as one, in both its tags.</summary>
+    [Fact]
+    public async Task A_component_tag_is_its_function_for_the_editor()
+    {
+        var uri = await OpenAsync(Markup);
+        var tokens = (await _server.HandleAsync("textDocument/semanticTokens/full", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = uri } }))!["data"]!
+            .AsArray().Select(n => n!.GetValue<int>()).ToArray();
+        var lines = Markup.Split('\n');
+        var found = new List<string>();
+        for (int i = 0, line = 0, column = 0; i < tokens.Length; i += 5)
+        {
+            line += tokens[i];
+            column = tokens[i] == 0 ? column + tokens[i + 1] : tokens[i + 1];
+            if (line >= 4)
+                found.Add($"{line}:{lines[line].Substring(column, tokens[i + 2])}:{SemanticTokens.TokenTypes[tokens[i + 3]]}");
+        }
+        Assert.Equal(["4:Card:function", "5:lot:parameter", "5:lots:parameter", "5:lot:parameter", "5:title:property", "6:Card:function", "7:Main:function"], found);
+
+        var hover = await _server.HandleAsync("textDocument/hover", At(uri, Markup, "Card title", 1));
+        Assert.Contains("fn Card(title: string, open: bool = false, children: Html) => Html", hover!["contents"]!["value"]!.GetValue<string>());
+        var definition = await _server.HandleAsync("textDocument/definition", At(uri, Markup, "</Card>", 3));
+        Assert.Equal(2, definition!["range"]!["start"]!["line"]!.GetValue<int>());
+
+        // Renaming it renames both tags.
+        var parameters = At(uri, Markup, "fn Card", 3);
+        parameters["newName"] = "Panel";
+        var edit = await _server.HandleAsync("textDocument/rename", parameters);
+        Assert.Equal(3, edit!["changes"]![uri]!.AsArray().Count);
+    }
+
+    private async Task<List<string>> LabelsAsync(string text, string marker, int offset)
+    {
+        var uri = await OpenAsync(text);
+        var items = await _server.HandleAsync("textDocument/completion", At(uri, text, marker, offset));
+        return [.. items!.AsArray().Select(i => i!["label"]!.GetValue<string>())];
+    }
+
+    /// <summary>In markup, completion offers tags, attributes and values; in a hole, code's, as anywhere else.</summary>
+    [Fact]
+    public async Task Completion_in_markup_offers_tags_attributes_and_fields()
+    {
+        // A tag: HTML's elements and the components, not code's names.
+        var text = Markup.Replace("<ul>", "<ul><");
+        var tags = await LabelsAsync(text, "<ul><", 5);
+        Assert.Contains("li", tags);
+        Assert.Contains("Card", tags);
+        Assert.DoesNotContain("Page", tags.Where(t => t == "Main"));
+        Assert.DoesNotContain("let", tags);
+
+        // Inside a hole's own markup, too.
+        tags = await LabelsAsync(Markup.Replace("{ <li>", "{ <l"), "{ <l", 4);
+        Assert.Contains("li", tags);
+
+        // A component's attributes are the parameters not yet given.
+        var attributes = await LabelsAsync(Markup.Replace("<Card title=\"Lots\" open>", "<Card open >"), "<Card open ", 11);
+        Assert.Equal(["title"], attributes);
+
+        // An HTML element's are HTML's (and htmx's).
+        attributes = await LabelsAsync(Markup.Replace("<ul>", "<ul cl>"), "<ul cl", 6);
+        Assert.Contains("class", attributes);
+        Assert.Contains("hx-get", attributes);
+
+        // An input's name in a form for a record: the record's fields.
+        var form = """
+            record NewLot(title: string, startPrice: decimal);
+            fn Page() => Html =
+                <form for={NewLot} method="post">
+                    <input name="" />
+                </form>;
+            fn Main() {}
+            """;
+        Assert.Equal(["title", "startPrice"], await LabelsAsync(form, "name=\"\"", 6));
+
+        // Text has nothing to offer; a hole is code.
+        Assert.Empty(await LabelsAsync(Markup.Replace("<section>", "<section>Hi "), "Hi ", 3));
+        Assert.Contains("startPrice", await LabelsAsync(Markup.Replace("{lot.title}", "{lot.}"), "{lot.}", 5));
+    }
+
     /// <summary>`nameof(total)` names the variable, so renaming the variable renames it there too.</summary>
     [Fact]
     public async Task Renaming_reaches_into_nameof()

@@ -3,6 +3,10 @@
 ## Unreleased
 
 - Highlighting for `not` and `and` in patterns, and for loop labels (`outer: for …`, `break outer;`).
+- Markup: tags, attributes, text and entities highlighted as HTML, with holes (`{…}`) as Piper; `<script>` and
+  `<style>` as text. A component tag (`<Card>`, `</Card>`) is coloured, hovered, gone to and renamed as its function.
+- Completion in markup: HTML's elements and the components at a tag; a component's parameters, or HTML's (and
+  htmx's) attributes, in a tag; and the record's fields for an input's `name` inside `<form for={NewLot}>`.
 
 ## 1.0.0
 

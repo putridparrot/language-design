@@ -138,7 +138,7 @@ fn LotPage(lot: LotView, now: DateTime) => Html =
 
 /// The bidding form, which a bid replaces with how it went. Once someone has bid, it also watches for their being
 /// outbid, which is pushed to them alone.
-fn BidPanel(lot: LotView, bidder: string?, errors: FormErrors?, message: string?) => Html =
+fn BidPanel(lot: LotView, bidder: string?, errors: FormErrors<NewBid>?, message: string?) => Html =
     <div id="bid-panel">
         <form for={NewBid} method="post" action={SiteRoutes.Bid(lot.id)} hx-post={SiteRoutes.Bid(lot.id)} hx-target="#bid-panel" hx-swap="outerHTML">
             <label for="bidder">Your name</label>
@@ -158,7 +158,7 @@ fn BidPanel(lot: LotView, bidder: string?, errors: FormErrors?, message: string?
     </div>;
 
 /// Selling something: the form, shown again with what's wrong until it's right.
-fn NewLotForm(form: Form<NewLot>?, errors: FormErrors?) => Html =
+fn NewLotForm(form: Form<NewLot>?, errors: FormErrors<NewLot>?) => Html =
     <form for={NewLot} id="new-lot" class="card" method="post" action={SiteRoutes.CreateLot()}
           hx-post={SiteRoutes.CreateLot()} hx-target="#new-lot" hx-swap="outerHTML">
         <h1>Sell something</h1>

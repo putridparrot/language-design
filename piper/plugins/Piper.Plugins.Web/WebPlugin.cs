@@ -230,8 +230,40 @@ public sealed partial class WebPlugin : IPiperPlugin
         }
         if (at < path.Length || pieces.Count == 0)
             pieces.Add(Hole(Text(at < path.Length ? path[at..] : "/")));
-        return $"static fn {Hole(name)}({string.Join(", ", parameters)}) => string = Piper.Runtime.PiperRoutes.Path({string.Join(", ", pieces)});";
+        var body = $"Piper.Runtime.PiperRoutes.Path({string.Join(", ", pieces)})";
+
+        // The handler's query values (`get Search "/search" (q: string?, page: int?, …)`) follow the route's, required
+        // ones first, then optional ones, which default to None and are left out of the link.
+        var query = handler.Parameters
+            .Where(p => p.Type is { } type && !taken.Contains(p.Name.Text) && IsQueryValue(type))
+            .OrderBy(p => p.Type is OptionalTypeSyntax)
+            .ToList();
+        if (query.Count > 0)
+        {
+            foreach (var parameter in query)
+            {
+                var reference = Hole(parameter.Name);
+                parameters.Add($"{reference}: {Hole(parameter.Type!)}{(parameter.Type is OptionalTypeSyntax ? " = None" : "")}");
+                body = $"Piper.Runtime.PiperRoutes.WithQuery({body}, Piper.Runtime.PiperRoutes.Query({Hole(Text(parameter.Name.Text))}, {reference}))";
+            }
+        }
+        return $"static fn {Hole(name)}({string.Join(", ", parameters)}) => string = {body};";
     }
+
+    private static readonly HashSet<string> SimpleTypes =
+    [
+        "string", "int", "long", "short", "byte", "sbyte", "uint", "ulong", "ushort", "decimal", "double", "float", "bool",
+        "char", "DateTime", "DateTimeOffset", "DateOnly", "TimeOnly", "TimeSpan", "Guid",
+    ];
+
+    /// <summary>
+    /// Whether a handler parameter that isn't a route value is a query value, as ASP.NET Core binds it, judged from its
+    /// type as written (the plugin runs before types are known): a simple builtin type, or anything optional, as
+    /// services aren't. A required query value of the program's own type (a newtype, an enum) isn't seen.
+    /// </summary>
+    private static bool IsQueryValue(TypeSyntax type) =>
+        type is OptionalTypeSyntax ||
+        type is NamedTypeSyntax { Qualifier.IsEmpty: true, TypeArguments.IsEmpty: true, Name.Text: var name } && SimpleTypes.Contains(name);
 
     /// <summary>
     /// A handler: <c>(id: int) => users.Find(id);</c>, <c>async (id: int) => { … }</c>. Its parameters need types, since

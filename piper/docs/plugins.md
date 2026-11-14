@@ -596,6 +596,20 @@ A program calls them as `AppServices(builder.Services)` and `Api(app)`.
 
   Each value is escaped for the path (a catch-all, `{*path}`, keeping its `/`s), and numbers, dates and ids are written
   in the invariant culture, as ASP.NET Core reads them. The group's prefix is included.
+
+  **Query values** are parameters too, after the route's: those the handler takes that aren't in the route and are of a
+  simple type (`string`, a number, `bool`, a date, `Guid`) or optional. Required ones come first; optional ones default
+  to None, and are left out of the link when they are:
+
+  ```piper
+  get Search "/search" (q: string?, page: int?, auction: Auctioneer) => …;   // `auction`, a service, isn't one
+
+  SiteRoutes.Search()                         // "/search"
+  SiteRoutes.Search(q: "a&b", page: 2)        // "/search?q=a%26b&page=2"
+  ```
+
+  The plugin judges them from the types as written, before types are known, so a required query value of the
+  program's own type (`page: PageNumber`) isn't seen; make it optional, or a builtin type.
 - **Forms:** a handler taking a `Form<T>` (from Piper.Web) gets a posted HTML form read into the record `T`:
 
   ```piper
@@ -611,9 +625,13 @@ A program calls them as `AppServices(builder.Services)` and `Api(app)`.
   - Each field is read from the form field of its name, by its type: text as it is; numbers (in the invariant culture,
     as browsers send them), dates, `Guid`s, enums and newtypes by parsing; a `bool` from a checkbox; and an optional
     field is None when empty.
-  - `form.Result` is `Ok(record)`, or `Err(errors)`: a `FormErrors`, with `errors.For("startPrice")` the message for a
-    field that's missing or isn't a value of its type ("'lots' isn't a number."), `errors.Form` the message for the
-    whole form, and `errors.All` every message. `form.Text("title")` is what was sent, to fill the form in again.
+  - `form.Result` is `Ok(record)`, or `Err(errors)`: a `FormErrors<NewLot>`, with `errors.For("startPrice")` the
+    message for a field that's missing or isn't a value of its type ("'lots' isn't a number."), `errors.Form` the
+    message for the whole form, and `errors.All` every message. `form.Text("title")` is what was sent, to fill the form
+    in again. The field names given to `For` and `Text` are checked against the record's fields when they're
+    constants: `errors.For("price")` is an error (PIP0511) listing them. (Any .NET method can ask for the same check,
+    by marking a parameter `[PiperFieldName]`, from Piper.Runtime: its string names a field of a type argument of the
+    method's type.)
   - **Every mistake at once:** each of the record's `requires` is checked wherever the fields it mentions were read, so
     a start price that isn't a number doesn't hide an empty title. Give each a message for people
     ([`else "…"`](language.md#preconditions-and-invariants)): one whose condition mentions a single field
@@ -931,6 +949,18 @@ actor Account(owner: string, opening: decimal) {
 await using let account = Account.Spawn("Ada", 100m);
 account.Deposit(5m);
 Print(await account.Balance());
+```
+
+An actor can also have functions, for what its handlers share. They can read and change its state, and are only
+ever run by its handlers, so one message at a time. They're the actor's own, so they're written `fn` (or `async fn`),
+not `private fn`; the remote actors plugin takes them too:
+
+```piper
+actor Ledger(limit: int) {
+    mut balance = 0;
+    fn Fits(amount: int) => bool = balance + amount <= limit;
+    on Deposit(amount: int) => bool { if Fits(amount) { balance += amount; true } else { false } }
+}
 ```
 
 It becomes ordinary Piper, on .NET's `System.Threading.Channels`:

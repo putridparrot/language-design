@@ -39,8 +39,10 @@ internal static class ActorSyntax
     ];
 
     /// <summary>
-    /// actor   = "actor" IDENT [ "(" parameters ")" ] "{" { ( "let" | "mut" ) variableDeclaration | handler } "}" ;
+    /// actor   = "actor" IDENT [ "(" parameters ")" ] "{" { ( "let" | "mut" ) variableDeclaration | function | handler } "}" ;
     /// handler = "on" IDENT "(" [ parameters ] ")" [ "=>" type ] block ;
+    /// A function is the actor's own, for what its handlers share: it's a local function after the state, where the
+    /// actor's loop starts, so it can read and change the state (only ever from a handler, one message at a time).
     /// Null after errors in its shape, as generating the actor would only add confusing errors about the generated code.
     /// <paramref name="generatedNames"/> are the methods every actor gets, which handlers can't be called.
     /// </summary>
@@ -53,11 +55,27 @@ internal static class ActorSyntax
 
         var state = new List<StatementSyntax>();
         var handlers = new List<ActorHandler>();
+        var functions = new List<StatementSyntax>();
         while (p.Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
         {
             if (p.Current.Kind is TokenKind.LetKeyword or TokenKind.MutKeyword)
             {
                 state.Add(p.ParseVariableDeclaration());
+            }
+            else if (p.Current.Kind is TokenKind.FnKeyword or TokenKind.PrivateKeyword or TokenKind.StaticKeyword or TokenKind.OpenBracket ||
+                     (p.AtWord("async") && p.Peek(1).Kind == TokenKind.FnKeyword))
+            {
+                var declaration = p.ParseDeclaration();
+                if (declaration is FunctionDeclarationSyntax { Private: null, Static: null } function)
+                {
+                    functions.Add(new LocalFunctionStatementSyntax(function.Span, function));
+                }
+                else
+                {
+                    if (declaration is not null)
+                        p.Report((declaration.Private ?? (declaration as FunctionDeclarationSyntax)?.Static)?.Span ?? declaration.Span, "An actor's functions are its own, used by its handlers: write 'fn', without 'private' or 'static'.");
+                    valid = false;
+                }
             }
             else if (p.AtWord("on"))
             {
@@ -66,7 +84,7 @@ internal static class ActorSyntax
             }
             else
             {
-                p.Report(p.Current.Span, "Expected the actor's state ('let' or 'mut') or a handler ('on Name(…) { … }').");
+                p.Report(p.Current.Span, "Expected the actor's state ('let' or 'mut'), a function ('fn') or a handler ('on Name(…) { … }').");
                 valid = false;
                 p.NextToken();
             }
@@ -98,6 +116,8 @@ internal static class ActorSyntax
                 valid = false;
             }
         }
+        // After all the state, which they may use.
+        state.AddRange(functions);
         return valid ? new ActorDeclaration(name, parameters, state, handlers) : null;
     }
 

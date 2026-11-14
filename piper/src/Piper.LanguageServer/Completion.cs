@@ -26,6 +26,9 @@ public static class Completion
 
     public static JsonNode Items(AnalysisResult analysis, SourceText source, int position)
     {
+        // In markup (but not a hole's code), tags, attributes and their values instead.
+        if (MarkupCompletion.Items(analysis, source, position) is { } markup)
+            return markup;
         // Back over the identifier being typed, to a dot if there is one.
         int start = position;
         while (start > 0 && (char.IsLetterOrDigit(source[start - 1]) || source[start - 1] == '_'))

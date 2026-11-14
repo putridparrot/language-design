@@ -28,17 +28,17 @@ public sealed class Form<T>
 {
     private readonly IFormCollection _fields;
 
-    private Form(IFormCollection fields, Result<T, FormErrors> result)
+    private Form(IFormCollection fields, Result<T, FormErrors<T>> result)
     {
         _fields = fields;
         Result = result;
     }
 
     /// <summary>The record, or what's wrong with the form.</summary>
-    public Result<T, FormErrors> Result { get; }
+    public Result<T, FormErrors<T>> Result { get; }
 
     /// <summary>What was sent for <paramref name="field"/>, to show the form again as it was filled in.</summary>
-    public string Text(string field) => _fields.TryGetValue(field, out var value) ? value.ToString() : "";
+    public string Text([PiperFieldName] string field) => _fields.TryGetValue(field, out var value) ? value.ToString() : "";
 
     /// <summary>How ASP.NET Core binds a handler's <c>Form&lt;T&gt;</c> parameter.</summary>
     public static async ValueTask<Form<T>?> BindAsync(HttpContext context)
@@ -54,11 +54,14 @@ public sealed class Form<T>
     }
 }
 
-/// <summary>What's wrong with a form: messages for its fields, and for the form as a whole.</summary>
-public sealed class FormErrors(IReadOnlyDictionary<string, string> fields, IReadOnlyList<string> form)
+/// <summary>
+/// What's wrong with a form read into a <typeparamref name="T"/>: messages for its fields, and for the form as a whole.
+/// The fields are named as strings, which the compiler checks against T's fields: <c>errors.For("title")</c>.
+/// </summary>
+public sealed class FormErrors<T>(IReadOnlyDictionary<string, string> fields, IReadOnlyList<string> form)
 {
     /// <summary>The message for <paramref name="field"/>, if it has one: <c>{errors.For("title")}</c> beside its input.</summary>
-    public string? For(string field) => fields.TryGetValue(field, out var message) ? message : null;
+    public string? For([PiperFieldName] string field) => fields.TryGetValue(field, out var message) ? message : null;
 
     /// <summary>
     /// The form's own message (the <c>requires</c> of its record that failed and are about more than one field), if
@@ -76,7 +79,7 @@ internal static class PiperForms
 {
     private static readonly ConcurrentDictionary<Type, ConstructorInfo> Constructors = new();
 
-    public static Result<T, FormErrors> Read<T>(IFormCollection form)
+    public static Result<T, FormErrors<T>> Read<T>(IFormCollection form)
     {
         var constructor = Constructors.GetOrAdd(typeof(T), type =>
             type.GetConstructors().OrderByDescending(c => c.GetParameters().Length).FirstOrDefault()
@@ -127,20 +130,20 @@ internal static class PiperForms
                 formErrors.Add(message);
         }
         if (errors.Count > 0 || formErrors.Count > 0)
-            return Result<T, FormErrors>.Err(new FormErrors(errors, formErrors));
+            return Result<T, FormErrors<T>>.Err(new FormErrors<T>(errors, formErrors));
         try
         {
-            return Result<T, FormErrors>.Ok((T)constructor.Invoke(values));
+            return Result<T, FormErrors<T>>.Ok((T)constructor.Invoke(values));
         }
         // A `requires … else "message"` about one field is that field's error; any other, the form's.
         catch (TargetInvocationException e) when (e.InnerException is PiperContractException { Field: { } field } failed &&
                                                     parameters.Any(p => p.Name == field))
         {
-            return Result<T, FormErrors>.Err(new FormErrors(new Dictionary<string, string> { [field] = failed.Message }, []));
+            return Result<T, FormErrors<T>>.Err(new FormErrors<T>(new Dictionary<string, string> { [field] = failed.Message }, []));
         }
         catch (TargetInvocationException e) when (e.InnerException is ArgumentException invalid)
         {
-            return Result<T, FormErrors>.Err(new FormErrors(errors, [invalid.Message]));
+            return Result<T, FormErrors<T>>.Err(new FormErrors<T>(errors, [invalid.Message]));
         }
     }
 

@@ -135,8 +135,10 @@ public sealed partial class Parser
     /// <summary><c>&lt;Countdown until={ends} /&gt;</c> is <c>Countdown(until: ends)</c>; its children, if any, are a <c>children</c> argument.</summary>
     private ExpressionSyntax Component(MarkupElement element, SyntaxTemplate template)
     {
-        var arguments = new List<string>();
-        var holes = new List<(string, object)>();
+        // The call is built from the tag's own tokens, where they're written, so the editor colours, hovers and goes to
+        // the component, and an error in an attribute is reported at it.
+        var callee = HoleParser(Lexer.Tokenize(_source, _diagnostics, element.NameSpan)).ParseStandaloneExpression();
+        var arguments = ImmutableArray.CreateBuilder<ExpressionSyntax>();
         foreach (var attribute in element.Attributes)
         {
             if (!IsParameterName(attribute.Name))
@@ -144,22 +146,21 @@ public sealed partial class Parser
                 _diagnostics.ReportInvalidMarkup(attribute.NameSpan, $"'{attribute.Name}' isn't a parameter name, which a component's attributes are: <{element.Name} {Camel(attribute.Name)}=…>.");
                 continue;
             }
-            object? value = attribute.Hole is { } hole ? HoleExpression(hole, allowFormat: false)
+            var value = attribute.Hole is { } hole ? HoleExpression(hole, allowFormat: false)
                 : attribute.Text is { } text ? Text(attribute.Span, text)
                 : template.Expression("true");
             if (value is null)
                 continue;
-            var name = $"a{holes.Count}";
-            arguments.Add($"{attribute.Name}: ${name}");
-            holes.Add((name, value));
+            arguments.Add(new NamedArgumentSyntax(attribute.Span, new Token(TokenKind.Identifier, attribute.NameSpan, attribute.Name), value));
         }
         if (!element.Children.IsEmpty)
         {
             var fragment = element with { Name = "", Attributes = [] };
-            arguments.Add("children: $children");
-            holes.Add(("children", Markup(fragment)));
+            var children = new Token(TokenKind.Identifier, element.NameSpan, "children") { IsGenerated = true };
+            arguments.Add(new NamedArgumentSyntax(element.Span, children, Markup(fragment)));
         }
-        return template.Expression($"{element.Name}({string.Join(", ", arguments)})", [.. holes]);
+        var call = new CallExpressionSyntax(element.Span, callee, arguments.ToImmutable());
+        return element.CloseNameSpan is { } close ? new MarkupComponentSyntax(element.Span, call, close) : call;
     }
 
     /// <summary>A child hole: <c>{expression}</c> through <c>Hole</c>, or <c>{for x in xs { … }}</c> through <c>Each</c>.</summary>

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **Editor support for markup:** the VS Code grammar reads markup as markup (tags, attributes, text and entities, with
+  holes as Piper, and `<script>`/`<style>` as text), where it coloured it as code. In the language server, a
+  component tag is its function: coloured, hovered and gone to, and renamed in both its tags (the lexer now keeps where
+  a closing tag names its element). An error in a component's attribute is reported at the attribute. Completion in
+  markup offers tags (HTML's elements and the components), attributes (a component's parameters, HTML's and htmx's),
+  and some values: the record's fields for an input's `name` inside `<form for={NewLot}>`, an input's `type`, a form's
+  `method`, `hx-swap`. Text offers nothing, and a hole is code, as elsewhere.
+- **Checked field names (web plugin):** `FormErrors` is now `FormErrors<T>`, and a constant field name given to
+  `errors.For("…")` or `form.Text("…")` must be one of the record's fields (PIP0511). Any .NET method can ask for the
+  check by marking a string parameter `[PiperFieldName]` (Piper.Runtime). Programs naming the type write
+  `FormErrors<NewLot>` instead of `FormErrors`.
+- **Functions in an `actor`** (both actor plugins): `fn` and `async fn` beside its state and handlers, for what its
+  handlers share; they can change its state, and run only from its handlers.
+- **Query values in route functions (web plugin):** a handler's parameters outside its route, of a simple type or
+  optional, are parameters of its route function too, after the route's: `SiteRoutes.Search(q: "clock", page: 2)` is
+  `/search?q=clock&page=2`, and optional ones default to None and are left out. A required one of the program's own
+  type isn't seen, as the plugin judges by the type as written.
+
 - **A form's every mistake at once (web plugin):** each of a record's `requires` is checked wherever the fields it
   mentions were read, so a field that isn't a number no longer hides what's wrong with the others, and several failed
   conditions are all reported. For it, the compiler gives each record with `requires` a static `__PiperRequirements`
