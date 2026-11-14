@@ -435,7 +435,21 @@ public sealed partial class Binder
             elementType = collection.TypeArguments[0];
         }
 
-        var elements = syntax.Elements.Select(e => BindCollectionElement(e, elementType)).ToList();
+        // Elements that can't be typed on their own (None, null, Ok(…) and Err(…), lambdas, []) take their type from the
+        // others, as an annotation would give it: [None, None, Some("ada")] is a List<string?>.
+        var bound = new BoundExpression?[syntax.Elements.Length];
+        if (elementType is null && syntax.Elements.Any(NeedsContext) && !syntax.Elements.All(NeedsContext))
+        {
+            for (int i = 0; i < bound.Length; i++)
+            {
+                if (!NeedsContext(syntax.Elements[i]))
+                    bound[i] = BindCollectionElement(syntax.Elements[i], null);
+            }
+            var typed = bound.OfType<BoundExpression>().Where(e => e.Type != TypeSymbol.Error).Select(SpreadItemType).ToList();
+            if (typed.Count > 0 && CommonType(typed, null, out _) is { } common)
+                elementType = common;
+        }
+        var elements = syntax.Elements.Select((e, i) => bound[i] ?? BindCollectionElement(e, elementType)).ToList();
         if (elementType is null)
         {
             if (elements.Count == 0)
@@ -584,6 +598,19 @@ public sealed partial class Binder
         }
         return new BoundSpreadElement(source);
     }
+
+    /// <summary>Whether a collection's element needs its type from its context, having none of its own.</summary>
+    private static bool NeedsContext(ExpressionSyntax syntax) => syntax switch
+    {
+        NameExpressionSyntax { Identifier.Text: "None" } => true,
+        MemberAccessExpressionSyntax { Target: NameExpressionSyntax { Identifier.Text: "Option" }, Member.Text: "None" } => true,
+        CallExpressionSyntax { Callee: NameExpressionSyntax { Identifier.Text: "Ok" or "Err" } } => true,
+        NullLiteralExpressionSyntax => true,
+        // `x => x * 2` needs its parameter's type; `(x: int) => x + 1` has it.
+        LambdaExpressionSyntax lambda => lambda.Parameters.Any(p => p.Type is null),
+        CollectionExpressionSyntax { Elements.IsEmpty: true } => true,
+        _ => false,
+    };
 
     private TypeSymbol SpreadItemType(BoundExpression element) =>
         element is BoundSpreadElement spread ? ElementTypeOf(spread.Type)! : element.Type;

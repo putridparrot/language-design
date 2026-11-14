@@ -94,6 +94,13 @@ internal readonly record struct Email(string @value) : global::System.IComparabl
 {
     public string @value { get; init; } = global::Piper.Runtime.PiperContract.Invariant(@value, @value.Contains("@"), "value.Contains(\"@\")", $"value = {@value}");
 
+    private static string? __PiperRequirement0(string @value) => global::Piper.Runtime.PiperContract.Failure(@value.Contains("@"), "value.Contains(\"@\")", $"value = {@value}");
+    [global::System.ComponentModel.EditorBrowsable(global::System.ComponentModel.EditorBrowsableState.Never)]
+    public static readonly global::Piper.Runtime.PiperRequirement[] __PiperRequirements =
+    [
+        new(["value"], __values => __PiperRequirement0(global::Piper.Runtime.PiperRequirement.Value<string>(__values, 0))),
+    ];
+
     public override string ToString() => @value.ToString() ?? "";
     public int CompareTo(Email other) => global::System.Collections.Generic.Comparer<string>.Default.Compare(@value, other.@value);
 

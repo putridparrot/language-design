@@ -7,10 +7,10 @@ using System.Collections.Generic;
 
 record Point(x: int, y: int);
 
-fn Describe(path: string) => string {
-    // Path.GetExtension is annotated as possibly returning null, so it comes back as string?.
+fn Describe(path: string?) => string {
+    // Path.GetExtension returns null for a null path ([NotNullIfNotNull]), so given a string? it gives a string?.
     let extension = System.IO.Path.GetExtension(path);
-    $"{path}: {extension ?? "no extension"}"
+    $"{path ?? "?"}: {extension ?? "no extension"}"
 }
 
 fn Main() {

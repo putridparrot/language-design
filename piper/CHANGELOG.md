@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **A form's every mistake at once (web plugin):** each of a record's `requires` is checked wherever the fields it
+  mentions were read, so a field that isn't a number no longer hides what's wrong with the others, and several failed
+  conditions are all reported. For it, the compiler gives each record with `requires` a static `__PiperRequirements`
+  table (Piper.Runtime's `PiperRequirement`): the fields each condition mentions, and a check giving its message.
+  `FormErrors.Form` puts several form-wide messages together. A `requires` without `else` that mentions one field is
+  now that field's error, as one with `else` was.
+- **Typed forms:** `<form for={NewLot}>` checks the name of each `input`, `select` and `textarea` written in it against
+  the record's fields (PIP0510, listing them); `for` isn't written out. apps/auction's forms use it.
+- **List literals type `None`s from their other elements:** `[None, None, Some("ada")]` is a `List<string?>`, `[[1], []]`
+  a `List<List<int>>`; `null`, `Ok(…)`, `Err(…)` and untyped lambdas likewise, with no annotation.
+- **`[return: NotNullIfNotNull]`:** `WebUtility.HtmlDecode(text)`, `Path.GetFileName(path)` and the like give a plain
+  value for a plain argument, rather than an Option. Code that wrote `?? fallback` after such a call is now an error
+  (PIP0261, as `??` needs an optional), and can drop it: the samples' `interop.piper` did.
+- **Functions in a `statemachine`:** `private fn Take(…) { … }` beside the machine's data and states, for what its
+  transitions share; they're its class's methods. apps/auction's `LotLife` takes a bid in one.
+
 - **apps/auction:** an auction site proving Piper's web UI: markup pages, typed links, forms read into records with
   `requires` messages, htmx, and live pages (each bid, and each lot's countdown, pushed to every page watching it). Each
   lot is an actor taking its bids one at a time, and its life a state machine. Tried in a browser as well as tested.

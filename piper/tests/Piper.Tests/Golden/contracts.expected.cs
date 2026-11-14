@@ -11,6 +11,13 @@ internal sealed record Percentage(int @value)
 {
     public int @value { get; init; } = global::Piper.Runtime.PiperContract.Invariant(@value, @value >= 0 && @value <= 100, "value >= 0 && value <= 100", $"value = {@value}");
 
+    private static string? __PiperRequirement0(int @value) => global::Piper.Runtime.PiperContract.Failure(@value >= 0 && @value <= 100, "value >= 0 && value <= 100", $"value = {@value}");
+    [global::System.ComponentModel.EditorBrowsable(global::System.ComponentModel.EditorBrowsableState.Never)]
+    public static readonly global::Piper.Runtime.PiperRequirement[] __PiperRequirements =
+    [
+        new(["value"], __values => __PiperRequirement0(global::Piper.Runtime.PiperRequirement.Value<int>(__values, 0))),
+    ];
+
     private sealed record PiperJsonShape(int @value);
 
     public sealed class PiperJsonConverter : global::System.Text.Json.Serialization.JsonConverter<Percentage>
@@ -39,6 +46,13 @@ internal sealed record Range(int low, int high)
 {
     public int low { get; init; } = global::Piper.Runtime.PiperContract.Invariant(low, low <= high, "low <= high", $"low = {low}, high = {high}");
     public int high { get; init; } = high;
+
+    private static string? __PiperRequirement0(int low, int high) => global::Piper.Runtime.PiperContract.Failure(low <= high, "low <= high", $"low = {low}, high = {high}");
+    [global::System.ComponentModel.EditorBrowsable(global::System.ComponentModel.EditorBrowsableState.Never)]
+    public static readonly global::Piper.Runtime.PiperRequirement[] __PiperRequirements =
+    [
+        new(["low", "high"], __values => __PiperRequirement0(global::Piper.Runtime.PiperRequirement.Value<int>(__values, 0), global::Piper.Runtime.PiperRequirement.Value<int>(__values, 1))),
+    ];
 
     private sealed record PiperJsonShape(int low, int high);
 

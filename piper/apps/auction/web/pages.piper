@@ -140,7 +140,7 @@ fn LotPage(lot: LotView, now: DateTime) => Html =
 /// outbid, which is pushed to them alone.
 fn BidPanel(lot: LotView, bidder: string?, errors: FormErrors?, message: string?) => Html =
     <div id="bid-panel">
-        <form method="post" action={SiteRoutes.Bid(lot.id)} hx-post={SiteRoutes.Bid(lot.id)} hx-target="#bid-panel" hx-swap="outerHTML">
+        <form for={NewBid} method="post" action={SiteRoutes.Bid(lot.id)} hx-post={SiteRoutes.Bid(lot.id)} hx-target="#bid-panel" hx-swap="outerHTML">
             <label for="bidder">Your name</label>
             <input id="bidder" name="bidder" value={bidder ?? ""} required />
             <span class="error">{errors?.For("bidder")}</span>
@@ -159,7 +159,7 @@ fn BidPanel(lot: LotView, bidder: string?, errors: FormErrors?, message: string?
 
 /// Selling something: the form, shown again with what's wrong until it's right.
 fn NewLotForm(form: Form<NewLot>?, errors: FormErrors?) => Html =
-    <form id="new-lot" class="card" method="post" action={SiteRoutes.CreateLot()}
+    <form for={NewLot} id="new-lot" class="card" method="post" action={SiteRoutes.CreateLot()}
           hx-post={SiteRoutes.CreateLot()} hx-target="#new-lot" hx-swap="outerHTML">
         <h1>Sell something</h1>
         <p class="error">{errors?.Form}</p>

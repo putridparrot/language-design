@@ -12,6 +12,15 @@ internal sealed record Bid(int lot, decimal amount)
     public int lot { get; init; } = global::Piper.Runtime.PiperContract.Invariant(global::Piper.Runtime.PiperContract.Invariant(lot, amount > 0m, "amount > 0m", $"amount = {amount}", "amount", () => "Bid something."), lot > 0 && amount < 1000000m, "lot > 0 && amount < 1_000_000m", $"lot = {lot}, amount = {amount}", "", () => $"A bid on lot {lot} can't be {amount}.");
     public decimal amount { get; init; } = amount;
 
+    private static string? __PiperRequirement0(int lot, decimal amount) => global::Piper.Runtime.PiperContract.Failure(amount > 0m, "amount > 0m", $"amount = {amount}", "amount", () => "Bid something.");
+    private static string? __PiperRequirement1(int lot, decimal amount) => global::Piper.Runtime.PiperContract.Failure(lot > 0 && amount < 1000000m, "lot > 0 && amount < 1_000_000m", $"lot = {lot}, amount = {amount}", "", () => $"A bid on lot {lot} can't be {amount}.");
+    [global::System.ComponentModel.EditorBrowsable(global::System.ComponentModel.EditorBrowsableState.Never)]
+    public static readonly global::Piper.Runtime.PiperRequirement[] __PiperRequirements =
+    [
+        new(["amount"], __values => __PiperRequirement0(global::Piper.Runtime.PiperRequirement.Value<int>(__values, 0), global::Piper.Runtime.PiperRequirement.Value<decimal>(__values, 1))),
+        new(["lot", "amount"], __values => __PiperRequirement1(global::Piper.Runtime.PiperRequirement.Value<int>(__values, 0), global::Piper.Runtime.PiperRequirement.Value<decimal>(__values, 1))),
+    ];
+
     private sealed record PiperJsonShape(int lot, decimal amount);
 
     public sealed class PiperJsonConverter : global::System.Text.Json.Serialization.JsonConverter<Bid>
@@ -39,6 +48,13 @@ internal sealed record Bid(int lot, decimal amount)
 internal readonly record struct Percent(int @value)
 {
     public int @value { get; init; } = global::Piper.Runtime.PiperContract.Invariant(@value, @value >= 0 && @value <= 100, "value >= 0 && value <= 100", $"value = {@value}", "value", () => "A percentage is from 0 to 100.");
+
+    private static string? __PiperRequirement0(int @value) => global::Piper.Runtime.PiperContract.Failure(@value >= 0 && @value <= 100, "value >= 0 && value <= 100", $"value = {@value}", "value", () => "A percentage is from 0 to 100.");
+    [global::System.ComponentModel.EditorBrowsable(global::System.ComponentModel.EditorBrowsableState.Never)]
+    public static readonly global::Piper.Runtime.PiperRequirement[] __PiperRequirements =
+    [
+        new(["value"], __values => __PiperRequirement0(global::Piper.Runtime.PiperRequirement.Value<int>(__values, 0))),
+    ];
 
     private sealed record PiperJsonShape(int @value);
 
@@ -75,6 +91,13 @@ internal partial class Auction(string title, decimal reserve)
 internal sealed record Plain(int count)
 {
     public int count { get; init; } = global::Piper.Runtime.PiperContract.Invariant(count, count >= 0, "count >= 0", $"count = {count}");
+
+    private static string? __PiperRequirement0(int count) => global::Piper.Runtime.PiperContract.Failure(count >= 0, "count >= 0", $"count = {count}");
+    [global::System.ComponentModel.EditorBrowsable(global::System.ComponentModel.EditorBrowsableState.Never)]
+    public static readonly global::Piper.Runtime.PiperRequirement[] __PiperRequirements =
+    [
+        new(["count"], __values => __PiperRequirement0(global::Piper.Runtime.PiperRequirement.Value<int>(__values, 0))),
+    ];
 
     private sealed record PiperJsonShape(int count);
 

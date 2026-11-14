@@ -22,8 +22,7 @@ async fn PostForm(client: HttpClient, url: string, token: (header: string, value
 /// The token a page gives htmx (see Htmx.Script), from its meta tag.
 fn TokenOf(page: string) => (header: string, value: string) {
     let found = Regex.Match(page, "name=\"piper-antiforgery\" data-header=\"([^\"]+)\" content=\"([^\"]+)\"");
-    // `?? ""`: HtmlDecode gives a string for a string ([NotNullIfNotNull]), which Piper doesn't read yet.
-    (found.Groups[1].Value, WebUtility.HtmlDecode(found.Groups[2].Value) ?? "")
+    (found.Groups[1].Value, WebUtility.HtmlDecode(found.Groups[2].Value))
 }
 
 async test "lots are listed, sold, bid on and pushed to the pages watching them, over HTTP" {

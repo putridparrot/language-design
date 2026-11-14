@@ -96,6 +96,7 @@ public sealed partial class Binder
             {
                 Message = message,
                 Subject = variables.Where(Mentions).ToList() is [var only] ? only.Name : null,
+                Uses = [.. variables.Where(Mentions).Select(v => v.Name)],
             });
         }
         _scope = outer;

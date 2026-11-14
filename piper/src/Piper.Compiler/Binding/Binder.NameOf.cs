@@ -51,6 +51,25 @@ public sealed partial class Binder
                HasMember(type, access.Member.Text);
     }
 
+    /// <summary>
+    /// <c>&lt;form for={NewLot}&gt;</c>: its markup, once the names of the inputs in it are checked against the record's
+    /// fields, which a <c>Form&lt;NewLot&gt;</c> reads them into, so a misspelt input is found here rather than as a
+    /// field the form says is missing.
+    /// </summary>
+    private BoundExpression BindMarkupForm(MarkupFormSyntax syntax)
+    {
+        var type = BindType(syntax.Record);
+        if (type.OriginalDefinition is RecordSymbol record)
+        {
+            var fields = record.Fields.Select(f => f.Name).ToList();
+            foreach (var (name, span) in syntax.Fields.Where(f => !fields.Contains(f.Name)))
+                _diagnostics.ReportNotAFormField(span, name, record.Name, fields);
+        }
+        else if (type != TypeSymbol.Error)
+            _diagnostics.ReportInvalidMarkup(syntax.Record.Span, $"A form is for a record, which it's read into, and '{type}' isn't one.");
+        return BindExpression(syntax.Markup);
+    }
+
     private bool HasMember(TypeSymbol type, string name) =>
         FindField(type, name) is not null ||
         FindMethod(type, name) is not null ||

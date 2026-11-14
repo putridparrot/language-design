@@ -1,0 +1,26 @@
+// A list literal's elements that can't be typed on their own (None, null, Ok(…) and Err(…), lambdas, []) take their
+// type from the others, as an annotation would give it. `[None]` alone still needs one.
+using System.IO;
+using System.Linq;
+using System.Net;
+
+fn Main() {
+    let names = [None, None, Some("ada")];
+    for name in names {
+        Print(name ?? "nobody");
+    }
+    let counts = [[1, 2], [], [3]];
+    Print(counts.Select(c => c.Count).Sum());
+    let parsed: Result<int, string> = Ok(1);
+    let results = [Err("no"), parsed, Ok(3)];
+    Print(results.Count(r => r is Ok(_)));
+    let steps = [(x: int) => x + 1, x => x * 2];
+    Print(steps.Aggregate(5, (total, step) => step(total)));
+
+    // `[return: NotNullIfNotNull]`: given a value, .NET returns one, so these are plain strings, not Options.
+    let decoded: string = WebUtility.HtmlDecode("fish &amp; chips");
+    let file: string = Path.GetFileName("photos/clock.jpg");
+    Print($"{decoded}, {file}");
+    let missing: string? = None;
+    Print(WebUtility.HtmlDecode(missing) ?? "none");
+}

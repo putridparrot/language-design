@@ -54,12 +54,11 @@ them too.
   synchronization context. To decide: allow it for event handlers only, as C# guidance suggests, perhaps with exceptions
   reported rather than lost.
 - **Found by apps/auction:**
-  - **Helper methods in a `statemachine`** (and an `actor`): a machine has only data and states, so an action shared
-    by transitions (taking a bid) is written in each of them.
-  - **A list literal's `None`s typed by a later `Some`:** `[None, None, Some("ada")]` needs a type annotation, as each
-    element is typed on its own; the elements' common type should give the `None`s theirs.
-  - **`[NotNullIfNotNull]` results:** `WebUtility.HtmlDecode(text)` and others return non-null for a non-null argument,
-    as .NET says, but Piper reads their `string?` as optional.
+  - ~~**Helper methods in a `statemachine`**~~, done: a machine can declare `fn`s, which are its class's methods.
+    **Still to come for an `actor`:** its state is local to the loop `Spawn` starts (and, for remote actors, to the
+    Proto.Actor actor), so its functions would be local functions there, able to change that state.
+  - ~~**A list literal's `None`s typed by a later `Some`**~~, done: elements with no type of their own take the others'.
+  - ~~**`[NotNullIfNotNull]` results**~~, done: given a plain value, the result is one.
 - **Newtypes, later:** a newtype with type parameters, for phantom-typed ids (`newtype Id<T> = Guid;`, so an
   `Id<Issue>` isn't an `Id<Project>`); and newtypes as JSON dictionary keys (`Dictionary<IssueId, …>` written as an
   object, which needs the converter's property-name methods).
@@ -332,10 +331,11 @@ change), and a page should be able to start as one and gain parts of the other.
    - **Editor support:** the VS Code grammar colours markup as code, and the language server doesn't yet colour or
      complete inside it.
    - ~~**Messages for `requires`**~~, done: `requires … else "message"`, shown beside the field it's about.
-   - **All of a form's errors at once:** a record's `requires` are checked only once every field has been read, so a
-     form with a field that doesn't parse doesn't also say what's wrong with the others.
-   - **Typed forms in markup:** `<form for={NewLot}>` checking its inputs' names against the record's fields; today
-     they're strings (`errors.For("title")`).
+   - ~~**All of a form's errors at once**~~, done: each `requires` is checked wherever the fields it mentions were read.
+   - ~~**Typed forms in markup**~~, done: `<form for={NewLot}>` checks its inputs' names against the record's fields.
+     Still strings, and unchecked: `errors.For("title")` and `form.Text("title")`, which a typed field reference
+     (`errors.For(NewLot.title)`, or a `FormErrors<T>`) would check too; and inputs made by components or holes, which
+     is also why a field with no input isn't reported.
    - **Query values in route functions:** they take the route's values only.
    Markup literals in expressions (as JSX, or Scala's XML), compiled to an `Html` value:
 

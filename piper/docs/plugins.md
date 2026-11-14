@@ -614,10 +614,16 @@ A program calls them as `AppServices(builder.Services)` and `Api(app)`.
   - `form.Result` is `Ok(record)`, or `Err(errors)`: a `FormErrors`, with `errors.For("startPrice")` the message for a
     field that's missing or isn't a value of its type ("'lots' isn't a number."), `errors.Form` the message for the
     whole form, and `errors.All` every message. `form.Text("title")` is what was sent, to fill the form in again.
-  - The record's `requires` are checked once every field has been read. Give each a message for people
+  - **Every mistake at once:** each of the record's `requires` is checked wherever the fields it mentions were read, so
+    a start price that isn't a number doesn't hide an empty title. Give each a message for people
     ([`else "…"`](language.md#preconditions-and-invariants)): one whose condition mentions a single field
-    (`requires title.Trim().Length > 0 else "Give the lot a title."`) is that field's error, and any other the form's.
-    Without a message, the condition itself is shown, which suits only a developer.
+    (`requires title.Trim().Length > 0 else "Give the lot a title."`) is that field's error (unless the field has one
+    already), and any other the form's (several are put together, as sentences). Without a message, the condition
+    itself is shown, which suits only a developer. (The compiler gives each record with `requires` a table of them,
+    `__PiperRequirements`, which is how the form checks them one by one.)
+  - **Typed forms:** `<form for={NewLot} method="post" …>` says which record the form is read into, and the name of each
+    `input`, `select` and `textarea` written in it is checked against the record's fields: `name="startprice"` is an
+    error (PIP0510) listing them. `for` isn't sent to the browser. Inputs a component or a hole makes aren't seen.
   - **Anti-forgery:** every `<form method="post">` in markup gets a hidden anti-forgery field, made for the request its
     page answers, and a `Form<T>` checks it before reading the form: a post without a valid one (a forged one, from
     another site) is a 400. It needs ASP.NET Core's antiforgery: `builder.Services.AddAntiforgery()`.
@@ -1063,6 +1069,27 @@ Print($"{order.State}: {string.Join(", ", order.Events)}");   // Paid: Ship
 
 A transition is `on Event(parameters) => Target`, with an optional `if` guard and an optional block, its action. The
 guard comes after the target, as a `match` arm's does.
+
+A machine can also have functions, for what its transitions share. They're methods of its class, as a class's are:
+public unless `private`, and able to read and change the machine's data:
+
+```piper
+statemachine LotLife(ends: DateTime) {
+    public mut leader: string? = None;
+    public mut bids = 0;
+
+    private fn Take(bidder: string) {    // what every transition taking a bid does
+        leader = Some(bidder);
+        bids += 1;
+    }
+
+    state Open {
+        on Bid(bidder: string, at: DateTime) => Closing if ends - at < TimeSpan.FromMinutes(1) { Take(bidder); }
+        on Bid(bidder: string, at: DateTime) => Open { Take(bidder); }
+    }
+    state Closing { … }
+}
+```
 
 The plugin generates:
 

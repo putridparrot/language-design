@@ -869,6 +869,7 @@ points.Add(Point(1, 2));                   // and can hold Piper values
 - **Null at the boundary:**
   - .NET members whose results are annotated as possibly null, and `Nullable<T>` values, come back as `T?`, with `null` becoming `None`. For example, `Environment.GetEnvironmentVariable(name) ?? "unset"`.
   - Where .NET accepts null, you can pass a `T?`, and `None` becomes `null`.
+  - A result marked `[return: NotNullIfNotNull("text")]` isn't null when that argument isn't, so given a plain value it's a plain value: `WebUtility.HtmlDecode(text)` and `Path.GetFileName(path)` are `string`s for a `string`, and `string?`s for a `string?`.
   - Piper's records, enums and traits are C# classes and interfaces, so a generic .NET result that may be null is optional for them too: `people.FirstOrDefault()` on a `List<Person>` is a `Person?`.
 - **`extend` on .NET types:** a non-generic .NET type can be extended like a builtin, e.g. `extend StringBuilder { fn Line(s: string) { this.AppendLine(s); } }`, but not with a member name it already has.
 - **Generic and extension methods:** type arguments are inferred from the arguments, including lambdas, and extension methods from imported namespaces apply, so LINQ works: `numbers.Where(n => n > 2).Select(n => n * 10).ToList()`.
@@ -955,7 +956,9 @@ fn Table(lots: List<Lot>) => Html =
   `<Ui.Card>`): `<Badge text="x" />` is `Badge(text: "x")`, with the attributes as named arguments (so their defaults
   apply), and the children, if any, as a `children: Html` argument.
 - **Forms:** a `<form method="post">` gets a hidden anti-forgery field when a web handler renders it, which the web
-  plugin's `Form<T>` checks (see the web plugin).
+  plugin's `Form<T>` checks (see the web plugin). `<form for={NewLot}>` names the record the form is read into, and the
+  name of each `input`, `select` and `textarea` written in it must be one of the record's fields (PIP0510); `for` isn't
+  written out.
 - **Elements:** HTML's void elements (`<br>`, `<img …>`, `<input …>`) need no closing tag. Any other element written
   `<div />` is written out as `<div></div>`, as HTML has no self-closing tags. `<script>` and `<style>` hold code, read
   as written up to their closing tag, braces and all. A literal can start with `<!doctype html>`, for a whole page.
@@ -1216,7 +1219,7 @@ keyword is still an ordinary name wherever its construct can't start. See [plugi
 
 ### Collections
 
-- **Literals:** `[1, 2, 3]` is a `List<int>`. The element type comes from the expected type (`List<T>`, `IEnumerable<T>`, `IReadOnlyList<T>`, … or a .NET array) or else the elements' common type. `[]` needs an expected type.
+- **Literals:** `[1, 2, 3]` is a `List<int>`. The element type comes from the expected type (`List<T>`, `IEnumerable<T>`, `IReadOnlyList<T>`, … or a .NET array) or else the elements' common type. `[]` needs an expected type. Elements that have no type of their own (`None`, `null`, `Ok(…)` and `Err(…)`, `[]`, a lambda with untyped parameters) take the others' common type, as if it were written: `[None, None, Some("ada")]` is a `List<string?>`, and `[[1], []]` a `List<List<int>>`. With nothing else to go on (`[None]`), it needs an annotation.
 - **Spread:** `[0, ...xs, 4]` puts every item of a sequence (a list, array, string, LINQ result or iterator: anything that is an `IEnumerable<T>`) into the literal, in order, as C#'s `[0, ..xs, 4]`. Its items count towards the common element type, and widen as C# allows (`let ys: long[] = [...ints];`), but not to an optional or a tuple of other element types.
 - **Dictionaries:** `["Ada": 36, "Alan": 41]` is a `Dictionary<string, int>`, as Swift writes one (C# has no dictionary literal; this is its `new() { ["Ada"] = 36, … }`).
   - **When a literal is one:** when it has a `key: value` entry, or a `Dictionary`, `IDictionary` or `IReadOnlyDictionary` is expected, so `let none: Dictionary<string, int> = [];` is an empty one. Every element is then an entry or a spread (PIP0396).

@@ -66,6 +66,61 @@ public class StateMachinePluginTests
 
         """;
 
+    /// <summary>A machine's own functions: what its transitions share, and (public ones) methods of the machine.</summary>
+    [Fact]
+    public void A_machine_can_have_functions_its_transitions_share()
+    {
+        var output = Run("""
+            statemachine Account(limit: decimal) {
+                public mut balance = 0m;
+                mut moves = 0;
+
+                private fn Move(amount: decimal) {
+                    balance += amount;
+                    moves += 1;
+                }
+
+                /// Public, as a class's methods are.
+                fn Summary() => string = $"{balance} after {moves}";
+
+                state Open {
+                    on Pay(amount: decimal) => Open if Fits(-amount) { Move(-amount); }
+                    on Pay(amount: decimal) => Frozen { Move(-amount); }
+                    on Deposit(amount: decimal) => Open { Move(amount); }
+                }
+                state Frozen {
+                    on Deposit(amount: decimal) => Open if balance + amount >= -limit { Move(amount); }
+                }
+
+                private fn Fits(change: decimal) => bool = balance + change >= -limit;
+            }
+
+            fn Main() {
+                let account = Account(10m);
+                account.Deposit(5m);
+                account.Pay(12m);
+                Print($"{account.State}: {account.Summary()}");
+                account.Pay(20m);
+                Print($"{account.State}: {account.Summary()}");
+                account.Deposit(30m);
+                Print($"{account.State}: {account.Summary()}");
+            }
+            """);
+        Assert.Equal("Open: -7 after 2\nFrozen: -27 after 3\nOpen: 3 after 4\n", output);
+    }
+
+    [Fact]
+    public void A_machine_declares_functions_but_not_other_types()
+    {
+        AssertPluginError("""
+            statemachine Light {
+                record Colour(name: string);
+                state Off;
+            }
+            fn Main() {}
+            """, "record Colour", "A state machine can declare functions ('fn' or 'private fn'), but not other types.");
+    }
+
     [Fact]
     public void A_transition_runs_exit_then_its_action_then_enter_but_only_when_the_state_changes()
     {

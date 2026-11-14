@@ -836,6 +836,35 @@ public sealed partial class CSharpEmitter
             var initializer = field == first ? value : Escape(field.Name);
             _writer.WriteLine($"{attributes}public {TypeName(field.Type)} {Escape(field.Name)} {{ get; init; }} = {initializer};");
         }
+        EmitRequirements(record);
+    }
+
+    /// <summary>
+    /// A record's conditions checkable one by one, before it's made: a static method per condition, giving its message
+    /// if it fails, and a table of them naming the fields each mentions. A form read into the record checks every
+    /// condition whose fields were read, so it says everything that's wrong at once (see Piper.Runtime's PiperRequirement).
+    /// </summary>
+    private void EmitRequirements(RecordSymbol record)
+    {
+        var parameters = string.Join(", ", record.Fields.Select(f => $"{TypeName(f.Type)} {Escape(f.Name)}"));
+        var arguments = string.Join(", ", record.Fields.Select((f, i) => $"global::Piper.Runtime.PiperRequirement.Value<{TypeName(f.Type)}>(__values, {i})"));
+        _writer.WriteLine();
+        for (int i = 0; i < record.Invariants.Length; i++)
+        {
+            var contract = record.Invariants[i];
+            var values = Expr(Piper.Binding.Binder.ContractValues(contract), AssignmentPrecedence);
+            _writer.WriteLine($"private static string? __PiperRequirement{i}({parameters}) => " +
+                              $"global::Piper.Runtime.PiperContract.Failure({Expr(contract.Condition, AssignmentPrecedence)}, {Literal(contract.Text)}, {values}{ContractMessage(contract)});");
+        }
+        _writer.WriteLine("[global::System.ComponentModel.EditorBrowsable(global::System.ComponentModel.EditorBrowsableState.Never)]");
+        _writer.WriteLine("public static readonly global::Piper.Runtime.PiperRequirement[] __PiperRequirements =");
+        _writer.WriteLine("[");
+        for (int i = 0; i < record.Invariants.Length; i++)
+        {
+            var fields = string.Join(", ", record.Invariants[i].Uses.Select(Literal));
+            _writer.WriteLine($"    new([{fields}], __values => __PiperRequirement{i}({arguments})),");
+        }
+        _writer.WriteLine("];");
     }
 
     /// <summary>

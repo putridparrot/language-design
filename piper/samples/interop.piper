@@ -65,7 +65,7 @@ fn Main() {
         let size = File.ReadAllText(Path.Combine(Path.GetTempPath(), "no-such-piper-file.txt")).Length;
         Print($"{size} bytes");
     } catch (e: FileNotFoundException) {
-        // .NET says GetFileName may return null, so its result is optional too.
-        Print($"not found: {Path.GetFileName(e.FileName ?? "?") ?? "?"}");
+        // FileName may be null, and GetFileName gives null for null ([NotNullIfNotNull]), so its result is optional too.
+        Print($"not found: {Path.GetFileName(e.FileName) ?? "?"}");
     }
 }

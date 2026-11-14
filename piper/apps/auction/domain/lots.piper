@@ -63,18 +63,18 @@ statemachine LotLife(startPrice: decimal, reserve: decimal?, ends: DateTime) {
     public mut closesAt = ends;
     public mut bids: ImmutableList<BidView> = ImmutableList.Create<BidView>();
 
-    // A machine can't have methods of its own, so taking a bid is written in each transition that does.
+    /// Takes a bid: what every transition taking one does.
+    private fn Take(bidder: string, amount: decimal, at: DateTime) {
+        current = Some(amount);
+        leader = Some(bidder);
+        bids = bids.Insert(0, BidView(bidder, amount, at));
+    }
+
     state Open {
         on Bid(bidder: string, amount: decimal, at: DateTime) => Closing if closesAt - at <= ClosingWindow() {
-            current = Some(amount);
-            leader = Some(bidder);
-            bids = bids.Insert(0, BidView(bidder, amount, at));
+            Take(bidder, amount, at);
         }
-        on Bid(bidder: string, amount: decimal, at: DateTime) => Open {
-            current = Some(amount);
-            leader = Some(bidder);
-            bids = bids.Insert(0, BidView(bidder, amount, at));
-        }
+        on Bid(bidder: string, amount: decimal, at: DateTime) => Open { Take(bidder, amount, at); }
         on Tick(at: DateTime) => Sold if at >= closesAt && ReserveMet(current, reserve);
         on Tick(at: DateTime) => Unsold if at >= closesAt;
         on Tick(at: DateTime) => Closing if closesAt - at <= ClosingWindow();
@@ -82,9 +82,7 @@ statemachine LotLife(startPrice: decimal, reserve: decimal?, ends: DateTime) {
     }
     state Closing {
         on Bid(bidder: string, amount: decimal, at: DateTime) => Closing {
-            current = Some(amount);
-            leader = Some(bidder);
-            bids = bids.Insert(0, BidView(bidder, amount, at));
+            Take(bidder, amount, at);
             if closesAt - at < ClosingWindow() {
                 closesAt = at + ClosingWindow();
             }

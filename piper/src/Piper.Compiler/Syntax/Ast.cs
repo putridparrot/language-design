@@ -553,6 +553,13 @@ public sealed record RangeExpressionSyntax(TextSpan Span, ExpressionSyntax? Star
 public sealed record AssignmentExpressionSyntax(TextSpan Span, ExpressionSyntax Target, Token Operator, ExpressionSyntax Value)
     : ExpressionSyntax(Span);
 
+/// <summary>
+/// <c>&lt;form for={NewLot}&gt;…&lt;/form&gt;</c>: a form for a record, whose <see cref="Markup"/> is checked like any
+/// other, and whose inputs' names (<see cref="Fields"/>, each with where it's written) must be the record's fields.
+/// </summary>
+public sealed record MarkupFormSyntax(TextSpan Span, TypeSyntax Record, ImmutableArray<(string Name, TextSpan Span)> Fields, ExpressionSyntax Markup)
+    : ExpressionSyntax(Span);
+
 /// <summary><c>typeof(Point)</c>: the .NET <c>System.Type</c> of a type, as in C#.</summary>
 public sealed record TypeOfExpressionSyntax(TextSpan Span, Token Keyword, TypeSyntax Type) : ExpressionSyntax(Span);
 

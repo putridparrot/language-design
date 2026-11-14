@@ -41,9 +41,7 @@ async test "being outbid is told to the bidder who led, not to someone outbiddin
     await lot.Bid(NewBid("ada", 12m), Noon());
     await lot.Bid(NewBid("grace", 15m), Noon());
     let outbid = changes.Select(c => match c { BidTaken(_, who) => who, Ticked(_, _) => None }).ToList();
-    // Annotated: a list literal's leading None doesn't take its type from a later Some.
-    let expected: List<string?> = [None, None, Some("ada")];
-    AssertEqual(expected, outbid);
+    AssertEqual([None, None, Some("ada")], outbid);
 }
 
 async test "time ends lots, which then refuse bids" {

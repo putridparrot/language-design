@@ -50,7 +50,8 @@ last 30 seconds, when each bid keeps it open 30 seconds more.
   about the web.
 - **The pages** ([web/pages.piper](web/pages.piper)): markup, in components (`Price`, `Status`, `Bids`, `BidPanel`)
   used both to draw a page and to push its parts. Links are typed routes (`SiteRoutes.Lot(id)`), the forms are read
-  into records (`Form<NewLot>`), and the lot list searches as you type (`hx-get`).
+  into records (`Form<NewLot>`, their inputs checked against the record by `<form for={NewLot}>`), and the lot list
+  searches as you type (`hx-get`).
 - **Live** ([web/live.piper](web/live.piper)): `Broadcast` turns each change into pushed fragments: to the lot's
   page (its price, bids and status), to the lot list (its row), and to the bidder who was outbid (on a topic of their
   own, which their bid panel starts watching once they bid).
@@ -78,9 +79,9 @@ header); and being outbid was pushed to the bidder's page.
 | Gap | What happened | Fixed |
 |---|---|---|
 | An actor's result type | `on Bid(…) => Result<LotView, BidRefusal> { if … { Err(…) } else { Ok(view) } }` didn't compile: `Err` and `Ok` couldn't infer their other type argument, as the handler's declared result didn't reach its body (it does a function's). | **Plugins:** the actors and remote actors plugins bind the body as the declared result, so `Ok`, `Err` and `None` infer from it. |
-| A state machine's helpers | Taking a bid (three assignments) couldn't be a method of the `statemachine`, which has only data and states, so it's written in each transition that takes one. | **Recorded** in [docs/future.md](../../docs/future.md). |
-| `[None, None, Some(x)]` | A list literal whose `None`s come before its `Some` doesn't take their type from it, so needs a type annotation. | **Recorded.** |
-| `[NotNullIfNotNull]` | `WebUtility.HtmlDecode(text)` is a `string` for a `string`, as .NET says, but Piper makes it a `string?`. | **Recorded.** |
+| A state machine's helpers | Taking a bid (three assignments) couldn't be a method of the `statemachine`, which has only data and states, so it's written in each transition that takes one. | **Plugin:** a machine can declare functions, its class's methods; `LotLife` takes a bid in `Take`. |
+| `[None, None, Some(x)]` | A list literal whose `None`s come before its `Some` doesn't take their type from it, so needs a type annotation. | **Language:** elements with no type of their own take the others'. |
+| `[NotNullIfNotNull]` | `WebUtility.HtmlDecode(text)` is a `string` for a `string`, as .NET says, but Piper makes it a `string?`. | **Language:** given a plain value, the result is one. |
 
 Also found and fixed on the way to it (each in [CHANGELOG.md](../../CHANGELOG.md)): generic .NET methods' constraints
 weren't checked; Piper.Runtime's `Option` and `Result` from .NET weren't Piper's; `[NotNullWhen(true)] out` values

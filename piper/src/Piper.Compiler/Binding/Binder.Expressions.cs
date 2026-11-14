@@ -49,6 +49,7 @@ public sealed partial class Binder
         RangeExpressionSyntax s => BindRange(s),
         TypeOfExpressionSyntax s => new BoundTypeOfExpression(BindType(s.Type)),
         NameOfExpressionSyntax s => BindNameOf(s),
+        MarkupFormSyntax s => BindMarkupForm(s),
         AssignmentExpressionSyntax s => BindAssignment(s),
         CallExpressionSyntax s => BindCall(s, expected),
         PipeExpressionSyntax s => BindPipe(s, expected),

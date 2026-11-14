@@ -17,7 +17,9 @@ internal sealed record State(Token Name, BlockExpressionSyntax? Enter, BlockExpr
 /// <summary>A `let` or `mut` in the machine, which becomes a field of its class: private unless <see cref="Public"/>.</summary>
 internal sealed record Data(Token? Public, VariableDeclarationSyntax Declaration);
 
-internal sealed record StateMachineDeclaration(Token Name, ImmutableArray<ParameterSyntax> Parameters, List<Data> Data, List<State> States);
+/// <param name="Functions">The machine's own methods (<c>fn</c>, or <c>private fn</c>), for what its transitions share.</param>
+internal sealed record StateMachineDeclaration(
+    Token Name, ImmutableArray<ParameterSyntax> Parameters, List<Data> Data, List<State> States, List<FunctionDeclarationSyntax> Functions);
 
 /// <summary>
 /// Adds <c>statemachine</c> declarations: objects that move between named states as events happen to them, such as an
@@ -100,7 +102,7 @@ public sealed class StateMachinePlugin : IPiperPlugin
     }
 
     /// <summary>
-    /// statemachine = "statemachine" IDENT [ "(" parameters ")" ] "{" { [ "public" ] ( "let" | "mut" ) variableDeclaration | state } "}" ;
+    /// statemachine = "statemachine" IDENT [ "(" parameters ")" ] "{" { [ "public" ] ( "let" | "mut" ) variableDeclaration | function | state } "}" ;
     /// state        = "state" IDENT ( ";" | "{" { "enter" block | "exit" block | transition } "}" ) ;
     /// transition   = "on" IDENT "(" [ parameters ] ")" "=>" IDENT [ "if" expression ] ( ";" | block ) ;
     /// Null after errors in its shape, as generating the machine would only add confusing errors about the generated code.
@@ -114,9 +116,24 @@ public sealed class StateMachinePlugin : IPiperPlugin
 
         var data = new List<Data>();
         var states = new List<State>();
+        var functions = new List<FunctionDeclarationSyntax>();
         while (p.Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
         {
-            if (p.Current.Kind is TokenKind.LetKeyword or TokenKind.MutKeyword ||
+            if (StartsFunction(p))
+            {
+                var declaration = p.ParseDeclaration();
+                if (declaration is FunctionDeclarationSyntax function)
+                {
+                    functions.Add(function);
+                }
+                else
+                {
+                    if (declaration is not null)
+                        p.Report(declaration.Span, "A state machine can declare functions ('fn' or 'private fn'), but not other types.");
+                    valid = false;
+                }
+            }
+            else if (p.Current.Kind is TokenKind.LetKeyword or TokenKind.MutKeyword ||
                 (p.AtWord("public") && p.Peek(1).Kind is TokenKind.LetKeyword or TokenKind.MutKeyword))
             {
                 var @public = p.AtWord("public") ? p.ReadWord() : null;
@@ -138,7 +155,7 @@ public sealed class StateMachinePlugin : IPiperPlugin
             }
             else
             {
-                p.Report(p.Current.Span, "Expected the machine's data ('let' or 'mut') or a state ('state Name { … }').");
+                p.Report(p.Current.Span, "Expected the machine's data ('let' or 'mut'), a function ('fn') or a state ('state Name { … }').");
                 valid = false;
                 p.NextToken();
             }
@@ -150,8 +167,19 @@ public sealed class StateMachinePlugin : IPiperPlugin
             p.Report(name.Span, $"State machine '{name.Text}' has no states; add one, such as 'state Idle {{ on Start() => Running; }}'.");
             return null;
         }
-        return valid && Check(p, name, states) ? new StateMachineDeclaration(name, parameters, data, states) : null;
+        return valid && Check(p, name, states) ? new StateMachineDeclaration(name, parameters, data, states, functions) : null;
     }
+
+    /// <summary>
+    /// At a function: <c>fn</c>, <c>private fn</c>, <c>async fn</c>, <c>static fn</c>, or attributes before one. Other
+    /// declarations are read too, to be reported as such.
+    /// </summary>
+    private static bool StartsFunction(PluginParser p) =>
+        p.Current.Kind is TokenKind.FnKeyword or TokenKind.StaticKeyword or TokenKind.OpenBracket or
+            TokenKind.RecordKeyword or TokenKind.EnumKeyword or TokenKind.TraitKeyword or TokenKind.ExtendKeyword ||
+        (p.Current.Kind == TokenKind.PrivateKeyword && p.Peek(1).Kind is TokenKind.FnKeyword or TokenKind.StaticKeyword) ||
+        (p.Current.Kind == TokenKind.PrivateKeyword && p.Peek(1) is { Kind: TokenKind.Identifier, Text: "async" }) ||
+        (p.AtWord("async") && p.Peek(1).Kind == TokenKind.FnKeyword);
 
     private static State? ParseState(PluginParser p, ref bool valid)
     {
@@ -511,9 +539,17 @@ public sealed class StateMachinePlugin : IPiperPlugin
             }
             """;
         var result = p.Template.Declarations(template, hole.All);
+        // The machine's own functions are its class's methods, as written.
+        var @class = result.OfType<ClassDeclarationSyntax>().Single();
+        if (declaration.Functions.Count > 0)
+        {
+            var withFunctions = @class with { Methods = @class.Methods.AddRange(declaration.Functions) };
+            result = result.Replace(@class, withFunctions);
+            @class = withFunctions;
+        }
         var unreachable = UnreachableStates(states);
         if (unreachable.Count > 0)
-            Unreachable.AddOrUpdate(result.OfType<ClassDeclarationSyntax>().Single(), unreachable);
+            Unreachable.AddOrUpdate(@class, unreachable);
         return result;
     }
 }

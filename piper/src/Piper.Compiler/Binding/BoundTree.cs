@@ -1048,6 +1048,9 @@ public sealed record BoundContract(BoundExpression Condition, string Text, Immut
 
     /// <summary>The parameter or field the condition is about: the one it mentions, if it mentions just one.</summary>
     public string? Subject { get; init; }
+
+    /// <summary>Every parameter or field it mentions, by name, in declaration order.</summary>
+    public ImmutableArray<string> Uses { get; init; } = [];
 }
 
 /// <summary>A hole of an interpolated string with C#'s alignment and format: <c>{price,10:C}</c>.</summary>

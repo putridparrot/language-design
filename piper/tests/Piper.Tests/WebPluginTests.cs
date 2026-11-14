@@ -349,7 +349,7 @@ public class WebPluginTests
                 requires (reserve ?? startPrice) >= startPrice else "The reserve can't be below the starting price.";
 
             fn NewLotPage(form: Form<NewLot>?, errors: FormErrors?) => Html =
-                <form method="post" action={SiteRoutes.Create()}>
+                <form for={NewLot} method="post" action={SiteRoutes.Create()}>
                     <input name="title" value={form?.Text("title")} />
                     <span class="error">{errors?.For("title")}</span>
                     <span class="error">{errors?.For("startPrice")}</span>
@@ -397,6 +397,7 @@ public class WebPluginTests
                 Print(await Post($"__RequestVerificationToken={token}&title=&startPrice=lots&category=Art"));
                 Print(await Post($"__RequestVerificationToken={token}&title=Vase&startPrice=40&reserve=10&category=Art"));
                 Print(await Post($"__RequestVerificationToken={token}&title=+&startPrice=40&category=Art"));
+                Print(await Post($"__RequestVerificationToken={token}&title=+&startPrice=40&reserve=10&category=Art"));
                 Print((await Post("title=Clock&startPrice=1&category=Art")).Split(' ')[0]);
                 Print(await client.GetStringAsync(SiteRoutes.Lot(LotId(3))));
                 await app.StopAsync();
@@ -411,9 +412,10 @@ public class WebPluginTests
             /lots
             True
             200 <p>Listed Clock: Clocks, from 12.50<b> (featured)</b></p>
-            200 <form method="post" action="/lots"><input name="title" value=""><span class="error"></span><span class="error">&#39;lots&#39; isn&#39;t a number.</span><p class="error"></p></form>
+            200 <form method="post" action="/lots"><input name="title" value=""><span class="error">Give the lot a title.</span><span class="error">&#39;lots&#39; isn&#39;t a number.</span><p class="error"></p></form>
             200 <form method="post" action="/lots"><input name="title" value="Vase"><span class="error"></span><span class="error"></span><p class="error">The reserve can&#39;t be below the starting price.</p></form>
             200 <form method="post" action="/lots"><input name="title" value=" "><span class="error">Give the lot a title.</span><span class="error"></span><p class="error"></p></form>
+            200 <form method="post" action="/lots"><input name="title" value=" "><span class="error">Give the lot a title.</span><span class="error"></span><p class="error">The reserve can&#39;t be below the starting price.</p></form>
             400
             <a href="/lots/3">lot 3</a>
 
@@ -609,6 +611,37 @@ public class WebPluginTests
             0
 
             """, run.Output.Replace("\r\n", "\n"));
+    }
+
+    /// <summary><c>&lt;form for={NewLot}&gt;</c>: its inputs' names are checked against the record's fields.</summary>
+    [Fact]
+    public void A_forms_inputs_are_checked_against_its_record()
+    {
+        const string text = """
+            record NewLot(title: string, startPrice: decimal);
+
+            fn Page() => Html =
+                <form for={NewLot} method="post">
+                    <label>Title <input name="title" /></label>
+                    <div><input name="startprice" /></div>
+                    <textarea name="notes"></textarea>
+                    <input type="submit" name="go" value="List it" />
+                </form>;
+
+            fn NotARecord() => Html = <form for={int}></form>;
+
+            fn Main() {}
+            """;
+        var errors = Compile(text).Diagnostics.OrderBy(d => d.Span.Start).ToList();
+        Assert.Collection(errors,
+            e =>
+            {
+                Assert.Equal("PIP0510", e.Code);
+                Assert.Equal("'startprice' isn't a field of NewLot, which this form is read into; its fields are 'title', 'startPrice'.", e.Message);
+                Assert.Equal(text.IndexOf("name=\"startprice\"", StringComparison.Ordinal), e.Span.Start);
+            },
+            e => Assert.Contains("'notes' isn't a field of NewLot", e.Message),
+            e => Assert.Equal("A form is for a record, which it's read into, and 'int' isn't one.", e.Message));
     }
 
     [Fact]

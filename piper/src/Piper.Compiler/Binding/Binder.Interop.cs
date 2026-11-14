@@ -328,7 +328,34 @@ public sealed partial class Binder
         // `await db.Users.FirstOrDefaultAsync(…)`: a task of a possibly-null result is a task of an Option.
         if (chosen.ReturnBoundary == ClrBoundary.None && NullableTaskResult(chosen) is { } optionTask)
             return new BoundNullableBoundaryExpression(call, NullableBoundaryKind.FromNullableTask, optionTask);
+        // `[return: NotNullIfNotNull("text")]` (WebUtility.HtmlDecode, Path.GetFileName): given a value, not an Option,
+        // it returns one too.
+        if (chosen.ReturnBoundary == ClrBoundary.NullableReference && NotNullForArguments(chosen, resolved.Arguments, resolved.Names))
+            return call;
         return FromClrBoundary(call, (chosen.ReturnType, chosen.ReturnBoundary));
+    }
+
+    /// <summary>
+    /// Whether the method's result is <c>[NotNullIfNotNull]</c> a parameter given a value that can't be null: one
+    /// that isn't an Option (Piper's other values never are) nor converted from one.
+    /// </summary>
+    private static bool NotNullForArguments(ClrCandidate chosen, ImmutableArray<BoundExpression> arguments, ImmutableArray<string?> names)
+    {
+        if (chosen.Member is not MethodInfo method)
+            return false;
+        var parameters = method.GetParameters();
+        foreach (var attribute in method.ReturnParameter.CustomAttributes.Where(a => a.AttributeType.Name == "NotNullIfNotNullAttribute"))
+        {
+            if (attribute.ConstructorArguments is not [{ Value: string parameter }] ||
+                Array.FindIndex(parameters, p => p.Name == parameter) is var index && index < 0)
+                continue;
+            // An argument is its parameter's by name if it has one, otherwise by position (an extension's receiver first).
+            var position = names.IsDefaultOrEmpty ? index : names.IndexOf(parameter) is >= 0 and var named ? named : index;
+            if (position < arguments.Length && (names.IsDefaultOrEmpty || names[position] is null || names[position] == parameter) &&
+                arguments[position] is not BoundNullableBoundaryExpression and { Type: var type } && !type.IsOption && type != TypeSymbol.Error)
+                return true;
+        }
+        return false;
     }
 
     /// <summary>

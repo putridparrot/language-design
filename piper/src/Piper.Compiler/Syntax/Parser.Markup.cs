@@ -33,6 +33,8 @@ public sealed partial class Parser
         var template = new SyntaxTemplate(element.Span);
         if (element.IsComponent)
             return Component(element, template);
+        if (FormFor(element) is { } @for)
+            return Form(element, @for);
 
         // Trusted markup, and expressions, in order; adjacent markup joined.
         var parts = new List<object>();
@@ -88,6 +90,46 @@ public sealed partial class Parser
         return arguments.Count == 0
             ? template.Expression($"{Runtime}.Trusted(\"\")")
             : template.Expression($"{Runtime}.Concat($parts)", ("parts", arguments));
+    }
+
+    /// <summary>A form's <c>for={Record}</c> attribute, which names the record the form is read into.</summary>
+    private static MarkupAttribute? FormFor(MarkupElement element) =>
+        element.Name.Equals("form", StringComparison.OrdinalIgnoreCase)
+            ? element.Attributes.FirstOrDefault(a => a.Name.Equals("for", StringComparison.OrdinalIgnoreCase))
+            : null;
+
+    /// <summary>
+    /// <c>&lt;form for={NewLot}&gt;</c>: the form without its <c>for</c>, which isn't HTML's, and the names of the inputs
+    /// written in it, which the binder checks against the record's fields. Those in components or holes aren't seen.
+    /// </summary>
+    private ExpressionSyntax Form(MarkupElement element, MarkupAttribute @for)
+    {
+        var markup = Markup(element with { Attributes = element.Attributes.Remove(@for) });
+        if (@for.Hole is not { } hole)
+        {
+            _diagnostics.ReportInvalidMarkup(@for.Span, "A form's 'for' names the record it's read into: <form for={NewLot}>.");
+            return markup;
+        }
+        var parser = HoleParser(Lexer.Tokenize(_source, _diagnostics, hole.Expression));
+        var record = parser.ParseType();
+        if (parser.Current.Kind != TokenKind.EndOfFile)
+        {
+            _diagnostics.ReportInvalidMarkup(parser.Current.Span, "A form's 'for' is a record type: <form for={NewLot}>.");
+            return markup;
+        }
+        var fields = ImmutableArray.CreateBuilder<(string, TextSpan)>();
+        void Collect(MarkupElement node)
+        {
+            if (node.Name.ToLowerInvariant() is "input" or "select" or "textarea" &&
+                !node.Attributes.Any(a => a.Name.Equals("type", StringComparison.OrdinalIgnoreCase) &&
+                                          a.Text?.ToLowerInvariant() is "submit" or "button" or "reset" or "image") &&
+                node.Attributes.FirstOrDefault(a => a.Name.Equals("name", StringComparison.OrdinalIgnoreCase)) is { Text: { } name } attribute)
+                fields.Add((name, attribute.Span));
+            foreach (var child in node.Children.OfType<MarkupElement>())
+                Collect(child);
+        }
+        Collect(element);
+        return new MarkupFormSyntax(element.Span, record, fields.ToImmutable(), markup);
     }
 
     /// <summary><c>&lt;Countdown until={ends} /&gt;</c> is <c>Countdown(until: ends)</c>; its children, if any, are a <c>children</c> argument.</summary>

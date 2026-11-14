@@ -10,10 +10,10 @@ internal sealed record Point(int x, int y);
 
 internal static class Interop
 {
-    internal static string Describe(string path)
+    internal static string Describe(Option<string> path)
     {
-        Option<string> extension = global::Piper.Runtime.PiperInterop.FromNullableReference(global::System.IO.Path.GetExtension(path));
-        return $"{path}: {(extension.IsSome ? extension.Value : "no extension")}";
+        Option<string> extension = global::Piper.Runtime.PiperInterop.FromNullableReference(global::System.IO.Path.GetExtension(global::Piper.Runtime.PiperInterop.ToNullableReference(path)));
+        return $"{(path.IsSome ? path.Value : "?")}: {(extension.IsSome ? extension.Value : "no extension")}";
     }
 
     internal static void Main()
@@ -53,7 +53,7 @@ internal static class Interop
         global::System.Collections.Generic.Dictionary<string, int> ages = new global::System.Collections.Generic.Dictionary<string, int>();
         ages.Add("Ada", 36);
         global::System.Console.WriteLine(ages.ContainsKey("Ada"));
-        global::System.Console.WriteLine(Describe("notes.txt"));
+        global::System.Console.WriteLine(Describe(Option<string>.Some("notes.txt")));
         Option<string> temp = global::Piper.Runtime.PiperInterop.FromNullableReference(global::System.Environment.GetEnvironmentVariable("PIPER_SURELY_UNSET_VARIABLE"));
         global::System.Console.WriteLine(temp.IsSome ? temp.Value : "unset");
         Option<string> missing = Option<string>.None;

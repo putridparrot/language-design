@@ -47,6 +47,15 @@ internal readonly record struct Size(double w, double h) : Shape
     public double w { get; init; } = global::Piper.Runtime.PiperContract.Invariant(global::Piper.Runtime.PiperContract.Invariant(w, w >= 0.0, "w >= 0.0", $"w = {w}"), h >= 0.0, "h >= 0.0", $"h = {h}");
     public double h { get; init; } = h;
 
+    private static string? __PiperRequirement0(double w, double h) => global::Piper.Runtime.PiperContract.Failure(w >= 0.0, "w >= 0.0", $"w = {w}");
+    private static string? __PiperRequirement1(double w, double h) => global::Piper.Runtime.PiperContract.Failure(h >= 0.0, "h >= 0.0", $"h = {h}");
+    [global::System.ComponentModel.EditorBrowsable(global::System.ComponentModel.EditorBrowsableState.Never)]
+    public static readonly global::Piper.Runtime.PiperRequirement[] __PiperRequirements =
+    [
+        new(["w"], __values => __PiperRequirement0(global::Piper.Runtime.PiperRequirement.Value<double>(__values, 0), global::Piper.Runtime.PiperRequirement.Value<double>(__values, 1))),
+        new(["h"], __values => __PiperRequirement1(global::Piper.Runtime.PiperRequirement.Value<double>(__values, 0), global::Piper.Runtime.PiperRequirement.Value<double>(__values, 1))),
+    ];
+
     private sealed record PiperJsonShape(double w, double h);
 
     public sealed class PiperJsonConverter : global::System.Text.Json.Serialization.JsonConverter<Size>

@@ -15,8 +15,9 @@ namespace Piper.Web;
 /// Each of the record's fields is read from the form field of its name, by its type: text as it is; a number, date,
 /// <c>Guid</c>, enum or newtype by parsing it (numbers in the invariant culture, as browsers send them); a <c>bool</c>
 /// from a checkbox (present, or "true", is true); and an optional field is None when empty. A required field that's
-/// missing or empty, or text that isn't a value of its type, is an error for that field; the record's own
-/// <c>requires</c>, checked once every field is read, an error for the whole form.
+/// missing or empty, or text that isn't a value of its type, is an error for that field. Each of the record's own
+/// <c>requires</c> is checked wherever the fields it mentions were read, so every mistake is shown at once: one about a
+/// single field is that field's error, and any other the whole form's.
 /// </para>
 /// <para>
 /// The form's anti-forgery token is checked first (every <c>&lt;form method="post"&gt;</c> in markup has one), and a
@@ -54,16 +55,19 @@ public sealed class Form<T>
 }
 
 /// <summary>What's wrong with a form: messages for its fields, and for the form as a whole.</summary>
-public sealed class FormErrors(IReadOnlyDictionary<string, string> fields, string? form)
+public sealed class FormErrors(IReadOnlyDictionary<string, string> fields, IReadOnlyList<string> form)
 {
     /// <summary>The message for <paramref name="field"/>, if it has one: <c>{errors.For("title")}</c> beside its input.</summary>
     public string? For(string field) => fields.TryGetValue(field, out var message) ? message : null;
 
-    /// <summary>The form's own message (a <c>requires</c> of its record that failed), if it has one.</summary>
-    public string? Form { get; } = form;
+    /// <summary>
+    /// The form's own message (the <c>requires</c> of its record that failed and are about more than one field), if
+    /// it has one; several are put together, as sentences.
+    /// </summary>
+    public string? Form { get; } = form.Count == 0 ? null : string.Join(" ", form);
 
     /// <summary>Every message: the form's, then the fields'.</summary>
-    public IReadOnlyList<string> All => [.. (Form is null ? [] : new[] { Form }), .. fields.Values];
+    public IReadOnlyList<string> All => [.. form, .. fields.Values];
 
     public override string ToString() => string.Join("; ", All);
 }
@@ -109,8 +113,21 @@ internal static class PiperForms
             else
                 errors[name] = NotA(text, type);
         }
-        if (errors.Count > 0)
-            return Result<T, FormErrors>.Err(new FormErrors(errors, null));
+        // The record's `requires`, each checked on its own wherever the fields it mentions were read, so a field that
+        // isn't a number doesn't hide what's wrong with the others. One about a single field is that field's error
+        // (unless it has one already); any other, the form's.
+        var formErrors = new List<string>();
+        foreach (var requirement in Requirements.GetOrAdd(typeof(T), FindRequirements))
+        {
+            if (requirement.Fields.Any(errors.ContainsKey) || requirement.Check(values) is not { } message)
+                continue;
+            if (requirement.Field is { } field && parameters.Any(p => p.Name == field))
+                errors[field] = message;
+            else
+                formErrors.Add(message);
+        }
+        if (errors.Count > 0 || formErrors.Count > 0)
+            return Result<T, FormErrors>.Err(new FormErrors(errors, formErrors));
         try
         {
             return Result<T, FormErrors>.Ok((T)constructor.Invoke(values));
@@ -119,13 +136,19 @@ internal static class PiperForms
         catch (TargetInvocationException e) when (e.InnerException is PiperContractException { Field: { } field } failed &&
                                                     parameters.Any(p => p.Name == field))
         {
-            return Result<T, FormErrors>.Err(new FormErrors(new Dictionary<string, string> { [field] = failed.Message }, null));
+            return Result<T, FormErrors>.Err(new FormErrors(new Dictionary<string, string> { [field] = failed.Message }, []));
         }
         catch (TargetInvocationException e) when (e.InnerException is ArgumentException invalid)
         {
-            return Result<T, FormErrors>.Err(new FormErrors(errors, invalid.Message));
+            return Result<T, FormErrors>.Err(new FormErrors(errors, [invalid.Message]));
         }
     }
+
+    private static readonly ConcurrentDictionary<Type, PiperRequirement[]> Requirements = new();
+
+    /// <summary>The table the compiler gives a Piper record with <c>requires</c>; none for any other type.</summary>
+    private static PiperRequirement[] FindRequirements(Type type) =>
+        type.GetField("__PiperRequirements", BindingFlags.Public | BindingFlags.Static)?.GetValue(null) as PiperRequirement[] ?? [];
 
     private static string NotA(string text, Type type) => $"'{text}' isn't {Article(type.Name)} {Words(type.Name)}.";
 

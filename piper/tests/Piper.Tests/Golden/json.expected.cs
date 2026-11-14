@@ -73,6 +73,13 @@ internal sealed record Quantity(int amount)
 {
     public int amount { get; init; } = global::Piper.Runtime.PiperContract.Invariant(amount, amount > 0, "amount > 0", $"amount = {amount}");
 
+    private static string? __PiperRequirement0(int amount) => global::Piper.Runtime.PiperContract.Failure(amount > 0, "amount > 0", $"amount = {amount}");
+    [global::System.ComponentModel.EditorBrowsable(global::System.ComponentModel.EditorBrowsableState.Never)]
+    public static readonly global::Piper.Runtime.PiperRequirement[] __PiperRequirements =
+    [
+        new(["amount"], __values => __PiperRequirement0(global::Piper.Runtime.PiperRequirement.Value<int>(__values, 0))),
+    ];
+
     private sealed record PiperJsonShape(int amount);
 
     public sealed class PiperJsonConverter : global::System.Text.Json.Serialization.JsonConverter<Quantity>
@@ -102,6 +109,13 @@ internal sealed record Line(string code, int quantity = 1, string note = "")
     [global::System.Text.Json.Serialization.JsonPropertyNameAttribute("sku")] public string code { get; init; } = global::Piper.Runtime.PiperContract.Invariant(code, quantity > 0, "quantity > 0", $"quantity = {quantity}");
     public int quantity { get; init; } = quantity;
     [global::System.Text.Json.Serialization.JsonIgnoreAttribute] public string note { get; init; } = note;
+
+    private static string? __PiperRequirement0(string code, int quantity, string note) => global::Piper.Runtime.PiperContract.Failure(quantity > 0, "quantity > 0", $"quantity = {quantity}");
+    [global::System.ComponentModel.EditorBrowsable(global::System.ComponentModel.EditorBrowsableState.Never)]
+    public static readonly global::Piper.Runtime.PiperRequirement[] __PiperRequirements =
+    [
+        new(["quantity"], __values => __PiperRequirement0(global::Piper.Runtime.PiperRequirement.Value<string>(__values, 0), global::Piper.Runtime.PiperRequirement.Value<int>(__values, 1), global::Piper.Runtime.PiperRequirement.Value<string>(__values, 2))),
+    ];
 
     private sealed record PiperJsonShape([property: global::System.Text.Json.Serialization.JsonPropertyNameAttribute("sku")] string code, int quantity = 1, [property: global::System.Text.Json.Serialization.JsonIgnoreAttribute] string note = "");
 
@@ -190,6 +204,13 @@ internal sealed record Range<T>(T low, T high, int steps)
     public T low { get; init; } = global::Piper.Runtime.PiperContract.Invariant(low, steps > 0, "steps > 0", $"steps = {steps}");
     public T high { get; init; } = high;
     public int steps { get; init; } = steps;
+
+    private static string? __PiperRequirement0(T low, T high, int steps) => global::Piper.Runtime.PiperContract.Failure(steps > 0, "steps > 0", $"steps = {steps}");
+    [global::System.ComponentModel.EditorBrowsable(global::System.ComponentModel.EditorBrowsableState.Never)]
+    public static readonly global::Piper.Runtime.PiperRequirement[] __PiperRequirements =
+    [
+        new(["steps"], __values => __PiperRequirement0(global::Piper.Runtime.PiperRequirement.Value<T>(__values, 0), global::Piper.Runtime.PiperRequirement.Value<T>(__values, 1), global::Piper.Runtime.PiperRequirement.Value<int>(__values, 2))),
+    ];
 
     private sealed record PiperJsonShape(T low, T high, int steps);
 
