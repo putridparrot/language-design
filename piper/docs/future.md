@@ -68,8 +68,9 @@ them too.
   these where it's wanted, and a library adds a kind with `[InterpolationKind]` (see
   [SQL strings](language.md#sql-strings), [URL strings](language.md#url-strings) and
   [shell strings](language.md#shell-strings)). Still to come: kinds declared in Piper (they're .NET types today),
-  enums in holes, a newtype inside an Option or list in a hole (only a newtype itself goes in as its value), and an
-  unclosed quote in a `shell$` literal reported by the compiler rather than when the command is made. And `Url` overloads for the web plugin's `htmx.Redirect`, `PushUrl` and `ReplaceUrl`, which
+  enums in holes, a newtype inside an Option or list in a `sql$` hole (`url$` and `shell$` take them, as formattable
+  values; `sql$` needs the value itself, so the binder would have to unwrap it), and an unclosed quote in a `shell$`
+  literal reported by the compiler rather than when the command is made. And `Url` overloads for the web plugin's `htmx.Redirect`, `PushUrl` and `ReplaceUrl`, which
   take strings: adding them beside the string ones would make each `$"…"` given to them a warning (PIP0406), so they'd
   need to replace them, or the warning to know when a hole can't do harm.
 - **Typestate from `statemachine`.** A machine's state as part of its type: `Order<Unpaid>`, `Order<Paid>`, where

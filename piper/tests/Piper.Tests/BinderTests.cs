@@ -342,6 +342,25 @@ public class BinderTests
     }
 
     [Fact]
+    public void A_dotnet_generic_taking_an_Option_infers_from_a_Piper_optional()
+    {
+        // ToNullableValue<T>(Option<T>): T is inferred from the `int?`, as .NET's Option<T> is Piper's.
+        var result = Compilation.Compile("""
+            using System; using Piper.Runtime;
+            fn Main() {
+                let some: int? = Some(3);
+                let none: int? = None;
+                Console.WriteLine(PiperInterop.ToNullableValue(some) ?? -1);
+                Console.WriteLine(PiperInterop.ToNullableValue(none) ?? -1);
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        var run = Runner.Run(result.Files);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("3\n-1\n", run.Output.ReplaceLineEndings("\n"));
+    }
+
+    [Fact]
     public void A_url_goes_in_markup_as_itself()
     {
         var result = Compilation.Compile("using System; fn Main() { let u = url$\"/lots/{\"a b\"}?x={1}\"; Console.WriteLine(<a href={u}>{u}</a>); }");

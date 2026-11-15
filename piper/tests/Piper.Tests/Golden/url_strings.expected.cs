@@ -54,7 +54,7 @@ internal static class Url_strings
 {
     internal static global::Piper.Runtime.Url Lot(LotId id) => global::Piper.Runtime.Url.Builder().Text("/lots/").Hole<int>(id.@value).Build();
 
-    internal static global::Piper.Runtime.Url Search(string text, Option<int> page, global::System.Collections.Generic.List<string> tags) => global::Piper.Runtime.Url.Builder().Text("/search?q=").Hole(text).Text("&page=").Hole(page).Text("&tag=").Hole(tags).Build();
+    internal static global::Piper.Runtime.Url Search(string text, Option<int> page, global::System.Collections.Generic.List<string> tags) => global::Piper.Runtime.Url.Builder().Text("/search?q=").Hole(text).Text("&page=").Hole<int>(page).Text("&tag=").Hole(tags).Build();
 
     internal static void Main()
     {
@@ -72,6 +72,11 @@ internal static class Url_strings
         global::System.Console.WriteLine(global::Piper.Runtime.Url.Builder().Text("/login?returnUrl=").Hole(here).Build());
         global::System.Console.WriteLine(global::Piper.Runtime.Url.Builder().Text("/files/").Hole(new global::System.Collections.Generic.List<string> { "a b", "c" }).Build());
         global::System.Console.WriteLine(global::Piper.Runtime.Url.Builder().Text("/report?from=").Hole(new global::System.DateOnly(2026, 11, 15)).Text("&price=").Hole<double>(1234.5, "F2").Text("&open=").Hole(true).Text("#").Hole("top section").Build());
+        Option<LotId> lot = Option<LotId>.Some(new LotId(9));
+        Option<LotId> noLot = Option<LotId>.None;
+        Option<decimal> price = Option<decimal>.Some(12.5m);
+        global::System.Console.WriteLine(global::Piper.Runtime.Url.Builder().Text("/bids?lot=").Hole<LotId>(lot).Text("&other=").Hole<LotId>(noLot).Text("&max=").Hole<decimal>(price).Text("&id=").Hole<LotId>(new global::System.Collections.Generic.List<LotId> { new LotId(1), new LotId(2) }).Build());
+        global::System.Console.WriteLine(global::Piper.Runtime.Url.Builder().Text("/lots/").Hole<LotId>(new global::System.Collections.Generic.List<LotId> { new LotId(3), new LotId(4) }).Build());
         global::Piper.Runtime.Url typed = global::Piper.Runtime.Url.Builder().Text("/users/").Hole("ann marie").Build();
         global::System.Console.WriteLine(typed);
         global::System.Console.WriteLine(typed.ToUri().IsAbsoluteUri);

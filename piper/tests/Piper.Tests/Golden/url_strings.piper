@@ -33,6 +33,13 @@ fn Main() {
     Console.WriteLine(url$"/files/{["a b", "c"]}");
     Console.WriteLine(url$"/report?from={DateOnly(2026, 11, 15)}&price={1234.5:F2}&open={true}#{"top section"}");
 
+    // Newtypes inside an Option or a list go in as their values.
+    let lot: LotId? = Some(LotId(9));
+    let noLot: LotId? = None;
+    let price: decimal? = Some(12.5m);
+    Console.WriteLine(url$"/bids?lot={lot}&other={noLot}&max={price}&id={[LotId(1), LotId(2)]}");
+    Console.WriteLine(url$"/lots/{[LotId(3), LotId(4)]}");
+
     // A plain $"…" given where a Url is wanted is one.
     let typed: Url = $"/users/{"ann marie"}";
     Console.WriteLine(typed);

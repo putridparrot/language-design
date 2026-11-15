@@ -1289,9 +1289,18 @@ public sealed partial class Binder
         if (!parameter.IsGenericType)
             return;
 
-        // IEnumerable<TSource> against List<Point>: find the matching interface among the argument's base types.
         var definition = parameter.GetGenericTypeDefinition();
         var parameterArguments = parameter.GetGenericArguments();
+        // Piper.Runtime's Option<T> and Result<T, E> against Piper's own: `Hole<T>(Option<T> value)` given an `int?`.
+        if ((definition.FullName == "Piper.Runtime.Option`1" && argument.IsOption) ||
+            (definition.FullName == "Piper.Runtime.Result`2" && argument.IsResult))
+        {
+            for (int i = 0; i < parameterArguments.Length && i < argument.TypeArguments.Length; i++)
+                InferClr(parameterArguments[i], argument.TypeArguments[i], result, generics);
+            return;
+        }
+
+        // IEnumerable<TSource> against List<Point>: find the matching interface among the argument's base types.
         var match = SelfAndBaseTypes(argument)
             .OfType<ClrTypeSymbol>()
             .FirstOrDefault(t => t.Definition.Type == definition && t.TypeArguments.Length == parameterArguments.Length);

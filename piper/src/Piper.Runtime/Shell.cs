@@ -149,17 +149,13 @@ public sealed class ShellBuilder
     /// <summary><c>{size:F1}</c>: formatted, in the invariant culture.</summary>
     public ShellBuilder Hole<T>(T value, string format) where T : IFormattable => Hole(value.ToString(format, CultureInfo.InvariantCulture));
 
-    // Options, each its own overload, as Piper reads `int?` as Option<int> itself.
     public ShellBuilder Hole(Option<string> value) => value.IsSome ? Hole(value.Value) : Drop();
     public ShellBuilder Hole(Option<bool> value) => value.IsSome ? Hole(value.Value) : Drop();
-    public ShellBuilder Hole(Option<int> value) => value.IsSome ? Hole(value.Value) : Drop();
-    public ShellBuilder Hole(Option<long> value) => value.IsSome ? Hole(value.Value) : Drop();
-    public ShellBuilder Hole(Option<double> value) => value.IsSome ? Hole(value.Value) : Drop();
-    public ShellBuilder Hole(Option<decimal> value) => value.IsSome ? Hole(value.Value) : Drop();
-    public ShellBuilder Hole(Option<Guid> value) => value.IsSome ? Hole(value.Value) : Drop();
     public ShellBuilder Hole(Option<DateTime> value) => value.IsSome ? Hole(value.Value) : Drop();
     public ShellBuilder Hole(Option<DateOnly> value) => value.IsSome ? Hole(value.Value) : Drop();
-    public ShellBuilder Hole(Option<TimeSpan> value) => value.IsSome ? Hole(value.Value) : Drop();
+
+    /// <summary>An optional number, Guid, newtype or other formattable value.</summary>
+    public ShellBuilder Hole<T>(Option<T> value) where T : IFormattable => value.IsSome ? Hole(value.Value) : Drop();
 
     public ShellBuilder Hole(IEnumerable<string> values) => Several([.. values]);
 

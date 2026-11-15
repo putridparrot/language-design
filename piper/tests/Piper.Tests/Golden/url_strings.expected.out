@@ -8,5 +8,7 @@ https://example.com/shop/lots/7?tab=bids
 /login?returnUrl=https%3A%2F%2Fexample.com%2Fshop%2Flots%2F7%3Ftab%3Dbids
 /files/a%20b/c
 /report?from=2026-11-15&price=1234.50&open=true#top%20section
+/bids?lot=9&max=12.5&id=1&id=2
+/lots/3/4
 /users/ann%20marie
 False

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Fixed: a .NET generic taking Piper.Runtime's `Option<T>` or `Result<T, E>`** (a library written for Piper) now
+  infers `T` from a Piper optional or Result: `Hole<T>(Option<T> value) where T : IFormattable` is given an `int?`.
+  Before, it was passed over, so such libraries needed an overload for each type. `url$` and `shell$` now take any
+  optional formattable value through one, newtypes included (`{lot}`, a `LotId?`).
+
 - **Shell strings:** `shell$"git log {branch} --author={author} -- {paths}"` is a `Shell` (Piper.Runtime): a program and
   its arguments, run without a shell, each hole one argument (or part of the one it's written against), so a hole
   can't add an argument, a pipe or a command. Quotes in the literal group words, None leaves out its argument, a list

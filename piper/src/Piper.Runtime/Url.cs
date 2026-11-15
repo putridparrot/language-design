@@ -113,20 +113,8 @@ public sealed partial class UrlBuilder
 
     public UrlBuilder Hole(Option<TimeOnly> value) => value.IsSome ? Hole(value.Value) : Missing();
 
-    // Options of formattable values, each its own overload, as Piper reads `int?` as Option<int> itself.
-    public UrlBuilder Hole(Option<int> value) => Formattable(value);
-    public UrlBuilder Hole(Option<long> value) => Formattable(value);
-    public UrlBuilder Hole(Option<short> value) => Formattable(value);
-    public UrlBuilder Hole(Option<byte> value) => Formattable(value);
-    public UrlBuilder Hole(Option<uint> value) => Formattable(value);
-    public UrlBuilder Hole(Option<ulong> value) => Formattable(value);
-    public UrlBuilder Hole(Option<float> value) => Formattable(value);
-    public UrlBuilder Hole(Option<double> value) => Formattable(value);
-    public UrlBuilder Hole(Option<decimal> value) => Formattable(value);
-    public UrlBuilder Hole(Option<Guid> value) => Formattable(value);
-    public UrlBuilder Hole(Option<TimeSpan> value) => Formattable(value);
-
-    private UrlBuilder Formattable<T>(Option<T> value) where T : IFormattable => value.IsSome ? Hole(value.Value) : Missing();
+    /// <summary>An optional number, Guid, newtype or other formattable value.</summary>
+    public UrlBuilder Hole<T>(Option<T> value) where T : IFormattable => value.IsSome ? Hole(value.Value) : Missing();
 
     public UrlBuilder Hole(IEnumerable<string> values) => Each(values);
 
