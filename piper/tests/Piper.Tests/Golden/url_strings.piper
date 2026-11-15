@@ -1,0 +1,40 @@
+// url$"…" makes a Url, each hole encoded for the part of the URL it's in: a path segment, a query value or the fragment.
+using System;
+using System.Collections.Generic;
+
+newtype LotId = int;
+
+fn Lot(id: LotId) => Url = $"/lots/{id}";
+
+fn Search(text: string, page: int?, tags: List<string>) => Url = url$"/search?q={text}&page={page}&tag={tags}";
+
+fn Main() {
+    // A hole in the path is one segment: its '/' and '?' are encoded.
+    let title = "lamps/shades? 50% off";
+    Console.WriteLine(url$"/lots/{title}/bids");
+    Console.WriteLine(Lot(LotId(42)));
+
+    // In the query, '&' and '=' can't add a parameter.
+    Console.WriteLine(url$"/search?q={"a&admin=true"}");
+
+    // None leaves its parameter out; a list repeats it.
+    Console.WriteLine(Search("lamp", Some(2), ["old", "brass"]));
+    Console.WriteLine(Search("lamp", None, []));
+    let noText: string? = None;
+    Console.WriteLine(url$"/search?q={noText}&page={3}");
+
+    // A Url in the path goes in as it is; in the query, it's a value.
+    let site = Url.Raw("https://example.com/shop");
+    let here = url$"{site}/lots/{7}?tab=bids";
+    Console.WriteLine(here);
+    Console.WriteLine(url$"/login?returnUrl={here}");
+
+    // A list in the path is a segment each; values are written as code reads them.
+    Console.WriteLine(url$"/files/{["a b", "c"]}");
+    Console.WriteLine(url$"/report?from={DateOnly(2026, 11, 15)}&price={1234.5:F2}&open={true}#{"top section"}");
+
+    // A plain $"…" given where a Url is wanted is one.
+    let typed: Url = $"/users/{"ann marie"}";
+    Console.WriteLine(typed);
+    Console.WriteLine(typed.ToUri().IsAbsoluteUri);
+}

@@ -29,16 +29,13 @@ class TrackerClient(http: HttpClient, user: string) {
     let json = JsonSerializerOptions(JsonSerializerDefaults.Web);
 
     async fn Projects() => Task<Result<List<Project>, ApiError>> {
-        let content = (await Send(HttpMethod.Get, "/api/projects", None))?;
+        let content = (await Send(HttpMethod.Get, url$"/api/projects", None))?;
         Parsed(JsonSerializer.Deserialize<List<Project>>(content, json))
     }
 
     async fn Issues(projectId: int, status: string?, text: string?) => Task<Result<List<IssueView>, ApiError>> {
-        let query: List<string> = [];
-        if status is Some(s) { query.Add($"status={Uri.EscapeDataString(s)}"); }
-        if text is Some(t) { query.Add($"q={Uri.EscapeDataString(t)}"); }
-        let path = $"/api/projects/{projectId}/issues" + (if query.Count == 0 { "" } else { "?" + string.Join("&", query) });
-        let content = (await Send(HttpMethod.Get, path, None))?;
+        // Each value is encoded for the query, and one that's None leaves its parameter out.
+        let content = (await Send(HttpMethod.Get, url$"/api/projects/{projectId}/issues?status={status}&q={text}", None))?;
         Parsed(JsonSerializer.Deserialize<List<IssueView>>(content, json))
     }
 
@@ -68,8 +65,8 @@ class TrackerClient(http: HttpClient, user: string) {
     /// Sends a request as the user; the body of a successful answer. It gives text, not a deserialized `T`: .NET's
     /// `Deserialize<T>` can give null for any T, which Piper can't see through a type parameter, so each caller
     /// deserializes to its own type, whose result Piper knows is optional.
-    private async fn Send(method: HttpMethod, path: string, body: string?) => Task<Result<string, ApiError>> {
-        let request = HttpRequestMessage(method, path);
+    private async fn Send(method: HttpMethod, path: Url, body: string?) => Task<Result<string, ApiError>> {
+        let request = HttpRequestMessage(method, path.ToUri());
         request.Headers.Add("X-User", user);
         if body is Some(text) {
             request.Content = StringContent(text, System.Text.Encoding.UTF8, "application/json");

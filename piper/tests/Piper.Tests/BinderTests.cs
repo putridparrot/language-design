@@ -150,6 +150,12 @@ public class BinderTests
     [InlineData("PIP0402", "record R(x: int); fn Main() { let q: Sql = $\"select {R(1)}\"; }")]
     [InlineData("PIP0403", "fn Main() { let q = sql$\"select {1.5:N2}\"; }")]
     [InlineData("PIP0403", "fn Main() { let q = sql$\"select {1,5}\"; }")]
+    [InlineData("PIP0402", "record R(x: int); fn Main() { let u = url$\"/lots/{R(1)}\"; }")]
+    [InlineData("PIP0402", "fn Main() { let u = url$\"/lots/{<b>x</b>}\"; }")]
+    [InlineData("PIP0402", "fn Main() { let u: Url = $\"/lots/{() => 1}\"; }")]
+    [InlineData("PIP0402", "record R(x: int); fn Main() { let c = shell$\"git log {R(1)}\"; }")]
+    [InlineData("PIP0402", "fn Main() { let c: Shell = $\"git log {<b>x</b>}\"; }")]
+    [InlineData("PIP0403", "fn Main() { let c = shell$\"ls {\"a\",5}\"; }")]
     [InlineData("PIP0202", "newtype IssueId = int; newtype ProjectId = int; fn F(id: IssueId) { } fn Main() { F(ProjectId(1)); }")]
     [InlineData("PIP0202", "newtype IssueId = int; fn F(id: IssueId) { } fn Main() { F(1); }")]
     [InlineData("PIP0202", "newtype IssueId = int; fn Main() { let n: int = IssueId(1); }")]
@@ -301,6 +307,48 @@ public class BinderTests
         Assert.Equal(2, errors.Count);
         Assert.Equal("R(1)", source.Substring(errors[0].Span.Start, errors[0].Span.Length));
         Assert.Equal("R(3)", source.Substring(errors[1].Span.Start, errors[1].Span.Length));
+    }
+
+    [Fact]
+    public void A_programs_own_Sql_or_Url_type_hides_the_builtin_one()
+    {
+        // `$"…"` given to them is text, as they aren't kinds; and sql$/url$ still make Piper.Runtime's.
+        const string source = """
+            using System;
+            record Sql(text: string);
+            record Url(text: string);
+            fn Main() {
+                Console.WriteLine(Sql($"a {1}").text);
+                Console.WriteLine(Url($"b {2}").text);
+                Console.WriteLine(sql$"c {3}".Text);
+                Console.WriteLine(url$"/d/{"e f"}");
+            }
+            """;
+        var result = Compilation.Compile(source);
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        var run = Runner.Run(result.Files);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("a 1\nb 2\nc @p0\n/d/e%20f\n", run.Output.ReplaceLineEndings("\n"));
+    }
+
+    [Fact]
+    public void A_shell_command_with_an_unclosed_quote_fails_when_made()
+    {
+        var result = Compilation.Compile("using System; fn Main() { try { let c = shell$\"git commit -m \\\"oops {1}\"; } catch (e: FormatException) { Console.WriteLine(e.Message); } }");
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        var run = Runner.Run(result.Files);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("A \" in the command isn't closed.", run.Output.Trim());
+    }
+
+    [Fact]
+    public void A_url_goes_in_markup_as_itself()
+    {
+        var result = Compilation.Compile("using System; fn Main() { let u = url$\"/lots/{\"a b\"}?x={1}\"; Console.WriteLine(<a href={u}>{u}</a>); }");
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        var run = Runner.Run(result.Files);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("<a href=\"/lots/a%20b?x=1\">/lots/a%20b?x=1</a>", run.Output.Trim());
     }
 
     [Fact]

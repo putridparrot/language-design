@@ -1,0 +1,34 @@
+git
+  [log]
+  [main; rm -rf /]
+  [--oneline]
+git
+  [commit]
+  [-m]
+  [fix: the parser]
+  [--author=Ada L]
+git
+  [log]
+  [dev]
+  [--oneline]
+  [--]
+  [src/a.cs]
+  [my file.cs]
+git
+  [log]
+  [dev]
+  [--oneline]
+  [--author=ann]
+  [--]
+tool
+  []
+  [--size=1.50]
+  [--on=2026-11-15]
+  [--dry=true]
+dotnet
+  [test]
+  [--no-build]
+  [--filter]
+  [Name~sql]
+dotnet test --no-build --filter Name~sql
+True

@@ -1007,6 +1007,55 @@ query.Parameters  // [1, 2, "ann"]
   `Text(string)`, `Hole` overloads (what a hole can hold), and `Build()`. `ldap$"…"` is then found by a `using` of
   the type's namespace, and its holes are checked against the `Hole` overloads.
 
+### URL strings
+
+`url$"…"` is a `Url` whose holes are encoded for the part of the URL they're in, so text can't add a path segment, a
+query parameter or a fragment by accident:
+
+```piper
+url$"/lots/{title}/bids"                          // /lots/lamps%2Fshades%3F/bids: a hole is one segment
+url$"/search?q={text}&page={page}&tag={tags}"     // /search?q=lamp&tag=old&tag=brass when page is None
+url$"{site}/lots/{id}"                            // a Url in the path goes in as it is
+url$"/login?returnUrl={here}"                     // in the query, it's a value: encoded
+```
+
+- **In the path,** a hole is one segment (its `/` and `?` encoded), a list is a segment for each item, and a `Url`
+  (or `Uri`) goes in as it is, for a site's address: `url$"{site}/lots"`.
+- **In the query and the fragment,** every hole is a value, encoded, a `Url` too. After `name=`, a list repeats the
+  parameter for each item (`tag=a&tag=b`), and None, or an empty list, leaves the parameter out.
+- **Values** are written as code reads them, whatever the culture: numbers invariantly, bools as `true` and
+  `false`, dates and times in ISO 8601 (`2026-11-15`). A format works as in `$"…"`: `{price:F2}`. Newtypes go in as
+  their value. Anything else (a record, `Html`) is an error at the hole (PIP0402).
+- **The value:** `Url.Raw(text)` is one from a string, for one from somewhere trusted, such as configuration.
+  `url.ToString()` is the text and `url.ToUri()` a `Uri`. It's formattable, so markup takes it in an attribute
+  (`<a href={url}>`). As with `Sql`, a plain `$"…"` is a `Url` where one is wanted: `fn Lot(id: LotId) => Url =
+  $"/lots/{id}";`.
+
+### Shell strings
+
+`shell$"…"` is a `Shell`: a program and its arguments, each hole one argument. No shell reads it; the program is
+started with its arguments as a list, so a hole can't add an argument, a pipe or another command:
+
+```piper
+let result = await shell$"git log {branch} --oneline --author={author} -- {paths}".RunAsync();
+if result.Succeeded { Print(result.output); } else { Print(result.error); }
+```
+
+- **Words:** the literal's text is split into arguments at spaces, and quotes in it group words:
+  `shell$"git commit -m \"fix: {summary}\""` is `git`, `commit`, `-m` and one message.
+- **Holes:** a hole is an argument of its own, even when it's empty or has spaces, semicolons or quotes in it, or
+  part of the argument it's written against (`--author={name}`). None leaves out the argument it's in, so an
+  optional flag is `--author={author}`. A list on its own is an argument for each item, and a `Shell` on its own is
+  its words: `shell$"{tests} --filter {name}"`. Values are written invariantly, dates in ISO 8601, and a format works
+  (`--size={size:F1}`). Anything else is an error at the hole (PIP0402).
+- **The value:** `Program` and `Arguments`; `RunAsync()` (or `Run()`) runs it to the end, giving a `ShellResult` with
+  its `exitCode`, `output`, `error` and `Succeeded`; `ToStartInfo()` is a `ProcessStartInfo`, for running it some other
+  way. `ToString()` shows it as it might be typed, for logs. `Shell.Of(program, arguments…)` makes one from strings.
+  As with `Sql`, a plain `$"…"` is a `Shell` where one is wanted.
+- **Mistakes:** a quote the literal opens and doesn't close is a `FormatException` when the command is made.
+- **On Windows,** a `.bat` or `.cmd` program is run by `cmd.exe`, which reads its arguments its own way, so for those
+  a hole's text can still reach a shell. Run programs, not scripts, with arguments from outside.
+
 ### Attributes
 
 .NET attributes go before a declaration, field or parameter, as in C#:

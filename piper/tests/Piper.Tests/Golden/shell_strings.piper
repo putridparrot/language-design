@@ -1,0 +1,35 @@
+// shell$"…" makes a Shell: a program and its arguments, each hole one argument, run without a shell, so a hole can't
+// add an argument, a pipe or another command.
+using System;
+using System.Collections.Generic;
+
+fn Show(command: Shell) {
+    Console.WriteLine(command.Program);
+    for argument in command.Arguments { Console.WriteLine($"  [{argument}]"); }
+}
+
+fn Log(branch: string, author: string?, paths: List<string>) => Shell =
+    $"git log {branch} --oneline --author={author} -- {paths}";
+
+async fn Main() {
+    // A hole is one argument, spaces, semicolons and all.
+    let branch = "main; rm -rf /";
+    Show(shell$"git log {branch} --oneline");
+
+    // Written against text, it's part of that argument; quotes in the literal group words.
+    Show(shell$"git commit -m \"fix: {"the parser"}\" --author={"Ada L"}");
+
+    // None leaves out its argument; a list on its own is an argument each; an empty hole is still an argument.
+    Show(Log("dev", None, ["src/a.cs", "my file.cs"]));
+    Show(Log("dev", Some("ann"), []));
+    Show(shell$"tool {""} --size={1.5:F2} --on={DateOnly(2026, 11, 15)} --dry={true}");
+
+    // A Shell on its own goes in as its words.
+    let tests = shell$"dotnet test --no-build";
+    Show(shell$"{tests} --filter {"Name~sql"}");
+    Console.WriteLine(shell$"{tests} --filter {"Name~sql"}");
+
+    // It runs the program directly.
+    let result = await shell$"dotnet --version".RunAsync();
+    Console.WriteLine(result.Succeeded && result.output.Trim().Length > 0);
+}

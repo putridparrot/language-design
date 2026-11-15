@@ -182,6 +182,10 @@ public sealed partial class Binder
         _builtins.TryDeclare("Html", ClrTypeSymbol.For(typeof(Piper.Runtime.Html)));
         // What sql$"…" makes: SQL whose holes are parameters.
         _builtins.TryDeclare("Sql", ClrTypeSymbol.For(typeof(Piper.Runtime.Sql)));
+        // What url$"…" makes: a URL whose holes are encoded for where they are.
+        _builtins.TryDeclare("Url", ClrTypeSymbol.For(typeof(Piper.Runtime.Url)));
+        // What shell$"…" makes: a program and its arguments, run without a shell.
+        _builtins.TryDeclare("Shell", ClrTypeSymbol.For(typeof(Piper.Runtime.Shell)));
         foreach (var function in BuiltinFunctions.All)
             _builtins.TryDeclare(function);
 

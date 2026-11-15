@@ -63,11 +63,15 @@ them too.
   object, which needs the converter's property-name methods).
 - **Interpolation that escapes for where it's going.** Markup escapes its holes by type, so cross-site scripting can't
   be written by accident; the same for the other places text goes would do that for injection generally.
-  ~~`sql$"…"`~~ is done: its holes are parameters, a plain `$"…"` is one where an `Sql` is wanted, and a library adds
-  a kind with `[InterpolationKind]` (see [SQL strings](language.md#sql-strings)). Still to come: `url$"/search?q={text}"`,
-  encoding each hole for its part of the URL, and `shell$"git log {branch}"`, passing each hole as one argument. Also:
-  kinds declared in Piper (they're .NET types today), enums in `sql$` holes, and a `sql$` hole's newtype inside an
-  Option or list (only a newtype itself goes in as its value).
+  ~~`sql$"…"`~~, ~~`url$"…"`~~ and ~~`shell$"…"`~~ are done: `sql$`'s holes are parameters, `url$`'s are encoded for
+  their part of the URL, `shell$`'s are each one argument of a program run without a shell, a plain `$"…"` is one of
+  these where it's wanted, and a library adds a kind with `[InterpolationKind]` (see
+  [SQL strings](language.md#sql-strings), [URL strings](language.md#url-strings) and
+  [shell strings](language.md#shell-strings)). Still to come: kinds declared in Piper (they're .NET types today),
+  enums in holes, a newtype inside an Option or list in a hole (only a newtype itself goes in as its value), and an
+  unclosed quote in a `shell$` literal reported by the compiler rather than when the command is made. And `Url` overloads for the web plugin's `htmx.Redirect`, `PushUrl` and `ReplaceUrl`, which
+  take strings: adding them beside the string ones would make each `$"…"` given to them a warning (PIP0406), so they'd
+  need to replace them, or the warning to know when a hole can't do harm.
 - **Typestate from `statemachine`.** A machine's state as part of its type: `Order<Unpaid>`, `Order<Paid>`, where
   `order.Ship()` on an unpaid one is a compile error rather than a refused transition at run time, and each
   transition returns the machine in its next state. Protocols (pay, then pack, then ship; open before send) checked

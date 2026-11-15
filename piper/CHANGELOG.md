@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Shell strings:** `shell$"git log {branch} --author={author} -- {paths}"` is a `Shell` (Piper.Runtime): a program and
+  its arguments, run without a shell, each hole one argument (or part of the one it's written against), so a hole
+  can't add an argument, a pipe or a command. Quotes in the literal group words, None leaves out its argument, a list
+  on its own is an argument each, and a Shell on its own its words. `await command.RunAsync()` gives its exit code and
+  output (see [Shell strings](docs/language.md#shell-strings)).
+
+- **URL strings:** `url$"/lots/{title}?q={text}&page={page}"` is a `Url` (Piper.Runtime), each hole encoded for the
+  part it's in: a path segment (its `/` encoded), a query value or the fragment. A list is a segment each in the path
+  and repeats its parameter in the query, None leaves its parameter out, and a `Url` goes in as it is in the path
+  (`url$"{site}/lots"`) and as a value in the query (`?returnUrl={here}`). Values are written invariantly, dates in
+  ISO 8601. A plain `$"…"` is a `Url` where one is wanted, and markup takes one in an attribute (see
+  [URL strings](docs/language.md#url-strings)). apps/tracker-desktop's API client builds its URLs with it, rather than
+  escaping each value and joining the query by hand.
+
 - **SQL strings:** `sql$"select * from lots where id = {id}"` is an `Sql` (Piper.Runtime) whose holes are parameters
   (`@p0`, …), never text: numbers, text, dates, Guids, newtypes, Options (None is NULL), lists (for `in (…)`), and
   other `Sql`s, spliced in. Anything else is an error at the hole (PIP0402), and `Sql.Raw(…)` is the one way to put
