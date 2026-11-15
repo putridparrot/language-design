@@ -2942,7 +2942,7 @@ public sealed partial class Parser
                 }
             }
         }
-        return new InterpolatedStringExpressionSyntax(token.Span, parts.ToImmutable());
+        return new InterpolatedStringExpressionSyntax(token.Span, parts.ToImmutable()) { Prefix = token.Prefix, PrefixSpan = token.PrefixSpan };
     }
 
     /// <summary>

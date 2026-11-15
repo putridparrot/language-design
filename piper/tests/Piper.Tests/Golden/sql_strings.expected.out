@@ -1,0 +1,16 @@
+select * from lots where id = @p0 and title = @p1
+7, Robert'); drop table lots;--
+select * from lots where title = @p0
+lamp
+delete from bids where lot = @p0
+7
+select * from lots where id in (@p0, @p1, @p2) and reserve = @p3 and seller = @p4
+1, 2, 3, , ann
+select * from lots where id in (NULL)
+
+select * from lots where state = @p0 and current < @p1 order by ends
+open, 10
+select count(*) from lots
+
+True
+select {0}

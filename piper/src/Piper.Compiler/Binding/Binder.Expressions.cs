@@ -24,7 +24,7 @@ public sealed partial class Binder
     private BoundExpression BindExpressionCore(ExpressionSyntax syntax, TypeSymbol? expected) => syntax switch
     {
         LiteralExpressionSyntax s => BindLiteral(s),
-        InterpolatedStringExpressionSyntax s => BindInterpolatedString(s),
+        InterpolatedStringExpressionSyntax s => BindInterpolatedString(s, expected),
         NullLiteralExpressionSyntax s => BindNull(s, expected),
         NamedArgumentSyntax s => BindMisplacedNamedArgument(s, expected),
         NameExpressionSyntax s => BindName(s, expected),
@@ -77,18 +77,6 @@ public sealed partial class Binder
         bool value => new BoundLiteralExpression(value, TypeSymbol.Bool),
         _ => new BoundErrorExpression(),
     };
-
-    private BoundExpression BindInterpolatedString(InterpolatedStringExpressionSyntax syntax)
-    {
-        var parts = syntax.Parts.Select(part => part switch
-        {
-            InterpolatedTextSyntax text => new BoundLiteralExpression(text.Text, TypeSymbol.String),
-            InterpolationSyntax { Alignment: null, Format: null } hole => RequireValue(BindExpression(hole.Expression), hole.Expression.Span),
-            InterpolationSyntax hole => new BoundFormattedExpression(RequireValue(BindExpression(hole.Expression), hole.Expression.Span), hole.Alignment, hole.Format),
-            _ => throw new InvalidOperationException(),
-        });
-        return new BoundInterpolatedStringExpression([.. parts]);
-    }
 
     private BoundExpression BindName(NameExpressionSyntax syntax, TypeSymbol? expected = null)
     {

@@ -545,6 +545,7 @@ public sealed partial class Binder
                 : ConvertClrArgument(argument.Bound!, parameter);
         }).ToImmutableArray();
         var names = arguments.Any(a => a.Name is not null) ? arguments.Select(a => a.Name).ToImmutableArray() : [];
+        CheckInterpolatedSql(chosen.Member, members, [.. arguments.Select(a => a.Bound ?? new BoundErrorExpression())], chosenPositions);
         return new ResolvedClrCall(chosen, converted, names);
     }
 
@@ -1063,6 +1064,9 @@ public sealed partial class Binder
         // An argument that never completes (`{ throw … }`) fits any parameter.
         if (argument == target || argument == TypeSymbol.Never)
             return 0;
+        // `db.Lots.FromSql($"… {id}")`: a $"…" given for a FormattableString or an Sql, as C# converts one.
+        if (InterpolatedArgumentScore(bound, target) is { } interpolated)
+            return interpolated;
         // A function named as a value fits any delegate type with its signature, as a C# method group does:
         // `numbers.ConvertAll(Square)` (a Converter), `words.Sort(ByLength)` (a Comparison). Its own Func type wins.
         if (bound is BoundFunctionReferenceExpression && FitsDelegate(argument, target))
@@ -1128,6 +1132,8 @@ public sealed partial class Binder
 
     private BoundExpression ConvertClrArgument(BoundExpression argument, ClrParameter parameter)
     {
+        if (ConvertInterpolatedArgument(argument, parameter.Type) is { } kind)
+            return kind;
         // A function named as a value becomes the delegate type the method takes; C# converts the method group too.
         if (argument is BoundFunctionReferenceExpression reference && argument.Type != parameter.Type && FitsDelegate(argument.Type, parameter.Type))
             return new BoundFunctionReferenceExpression(reference.Function, reference.TypeArguments, parameter.Type);

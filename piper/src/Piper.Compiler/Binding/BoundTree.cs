@@ -986,6 +986,9 @@ public sealed class BoundInterpolatedStringExpression(ImmutableArray<BoundExpres
 {
     public ImmutableArray<BoundExpression> Parts { get; } = parts;
 
+    /// <summary>The literal it was bound from, if any, so it can still become a kind (an Sql) once its target is known.</summary>
+    public Piper.Syntax.InterpolatedStringExpressionSyntax? Syntax { get; init; }
+
     public override TypeSymbol Type => TypeSymbol.String;
 }
 

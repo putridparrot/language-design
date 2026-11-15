@@ -1,0 +1,41 @@
+// Strings of a kind: sql$"…" makes an Sql, whose holes are parameters rather than text, so SQL can't be injected by
+// accident. A plain $"…" given where an Sql is wanted is one too, as C# target-types an interpolated string.
+using System;
+using System.Collections.Generic;
+
+newtype LotId = int;
+
+fn Show(sql: Sql) {
+    Console.WriteLine(sql.Text);
+    Console.WriteLine(string.Join(", ", sql.Parameters));
+}
+
+fn ByTitle(title: string) => Sql = $"select * from lots where title = {title}";
+
+fn Main() {
+    let id = LotId(7);
+    let title = "Robert'); drop table lots;--";
+    Show(sql$"select * from lots where id = {id} and title = {title}");
+
+    // A plain $"…" where an Sql is wanted.
+    Show(ByTitle("lamp"));
+    let typed: Sql = $"delete from bids where lot = {id}";
+    Show(typed);
+
+    // Lists for `in (…)`, Options as NULL, and Sql spliced in with its parameters renumbered.
+    let ids = [1, 2, 3];
+    let none: int? = None;
+    let seller: string? = Some("ann");
+    Show(sql$"select * from lots where id in ({ids}) and reserve = {none} and seller = {seller}");
+    let empty: List<int> = [];
+    Show(sql$"select * from lots where id in ({empty})");
+
+    let open = sql$"state = {"open"}";
+    let cheap = sql$"current < {10m}";
+    Show(sql$"select * from lots where {Sql.Join(" and ", [open, cheap])} order by {Sql.Raw("ends")}");
+
+    // No holes is still an Sql; braces in the text are SQL's.
+    Show(sql$"select count(*) from lots");
+    Console.WriteLine(sql$"select {1}" == sql$"select {1}");
+    Console.WriteLine(sql$"select {1}".ToFormattableString().Format);
+}

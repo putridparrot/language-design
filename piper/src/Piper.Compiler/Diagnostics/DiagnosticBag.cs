@@ -178,6 +178,34 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0509", span, $"A {shown} can't be put in markup. {what}; a list of Html, or {{for x in xs {{ … }}}}, for several.{hint}");
     }
 
+    public void ReportUnknownInterpolationKind(TextSpan span, string prefix) =>
+        Error("PIP0400", span, $"No kind of string is written '{prefix}$\"…\"'. sql$\"…\" makes an Sql; a library's kind is found by a 'using' of its namespace.");
+
+    public void ReportAmbiguousInterpolationKind(TextSpan span, string prefix, IEnumerable<string> types) =>
+        Error("PIP0401", span, $"'{prefix}$\"…\"' could make any of {string.Join(", ", types.Select(t => $"'{t}'"))}; leave out the 'using' of all but one.");
+
+    public void ReportNotInInterpolationKind(TextSpan span, TypeSymbol type, string prefix, string? holds)
+    {
+        var what = holds is null ? "" : $" Its holes can be {holds}.";
+        Error("PIP0402", span, $"A '{type}' can't go in a hole of {prefix}$\"…\".{what}");
+    }
+
+    public void ReportInterpolationKindFormat(TextSpan span, string prefix, bool alignment) =>
+        Error("PIP0403", span, alignment
+            ? $"A hole of {prefix}$\"…\" can't have an alignment."
+            : $"A hole of {prefix}$\"…\" can't have a format; format the value first: {{value.ToString(\"N2\")}}.");
+
+    public void ReportInvalidInterpolationKind(TextSpan span, TypeSymbol type, string missing) =>
+        Error("PIP0404", span, $"'{type}' is marked [InterpolationKind] but has no {missing}, so it can't be made from a string.");
+
+    public void ReportInterpolatedRawSql(TextSpan span, string method, string safe) =>
+        Warning("PIP0405", span, $"This interpolated string's holes go into the SQL as text, so '{method}' can be given SQL by whoever supplies them. Use {safe}, whose holes are parameters.");
+
+    public void ReportStringOverloadChosen(TextSpan span, string method, string saferType, string? prefix) =>
+        Warning("PIP0406", span, $"'{method}' has an overload taking a {saferType} here, which would check this string's holes, " +
+                                 $"but a $\"…\" picks the one taking a string, as in C#. " +
+                                 (prefix is null ? $"Make it a {saferType} first to choose it." : $"Write {prefix}$\"…\" to choose it."));
+
     public void ReportGenericNewtype(TextSpan span) =>
         Error("PIP0113", span, "A newtype can't have type parameters; for one with them, declare a record struct: 'record struct Id<T>(value: Guid);'.");
 

@@ -144,6 +144,12 @@ public class BinderTests
     [InlineData("PIP0509", "fn Main() { let h = <p>{() => 1}</p>; }")]
     [InlineData("PIP0509", "using System.Threading.Tasks; fn Main() { let h = <p>{Task.FromResult(1)}</p>; }")]
     [InlineData("PIP0509", "record R(x: int); fn Main() { let h = <p title={R(1)}></p>; }")]
+    [InlineData("PIP0400", "fn Main() { let q = nosuch$\"select {1}\"; }")]
+    [InlineData("PIP0402", "fn Main() { let q = sql$\"select {<p>x</p>}\"; }")]
+    [InlineData("PIP0402", "record R(x: int); fn Main() { let q = sql$\"select {R(1)}\"; }")]
+    [InlineData("PIP0402", "record R(x: int); fn Main() { let q: Sql = $\"select {R(1)}\"; }")]
+    [InlineData("PIP0403", "fn Main() { let q = sql$\"select {1.5:N2}\"; }")]
+    [InlineData("PIP0403", "fn Main() { let q = sql$\"select {1,5}\"; }")]
     [InlineData("PIP0202", "newtype IssueId = int; newtype ProjectId = int; fn F(id: IssueId) { } fn Main() { F(ProjectId(1)); }")]
     [InlineData("PIP0202", "newtype IssueId = int; fn F(id: IssueId) { } fn Main() { F(1); }")]
     [InlineData("PIP0202", "newtype IssueId = int; fn Main() { let n: int = IssueId(1); }")]
@@ -286,7 +292,30 @@ public class BinderTests
         Assert.Equal(("PIP0231", Diagnostics.DiagnosticSeverity.Warning), (warning.Code, warning.Severity));
     }
 
-    private const string Races = "using System.Collections.Generic; using System.Threading; using System.Threading.Tasks; ";
+    [Fact]
+    public void Every_hole_that_cant_go_in_sql_is_reported_where_it_is()
+    {
+        const string source = "record R(x: int); fn Main() { let q = sql$\"select {R(1)}, {2}, {true}, {R(3)}\"; }";
+        var result = Compilation.Compile(source);
+        var errors = result.Diagnostics.Where(d => d.Code == "PIP0402").ToList();
+        Assert.Equal(2, errors.Count);
+        Assert.Equal("R(1)", source.Substring(errors[0].Span.Start, errors[0].Span.Length));
+        Assert.Equal("R(3)", source.Substring(errors[1].Span.Start, errors[1].Span.Length));
+    }
+
+    [Fact]
+    public void An_interpolated_string_can_be_a_formattable_string()
+    {
+        // As in C#: FormattableString.Invariant($"…") formats its holes in the invariant culture.
+        var result = Compilation.Compile("using System; fn Main() { let n = 1234.5; Console.WriteLine(FormattableString.Invariant($\"{n:N1}\")); }");
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        Assert.Empty(result.Diagnostics);
+        var run = Runner.Run(result.Files);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("1,234.5", run.Output.Trim());
+    }
+
+    private const string Races ="using System.Collections.Generic; using System.Threading; using System.Threading.Tasks; ";
 
     /// <summary>
     /// Changing what code on other threads also uses, without a lock, is warned about: in a parallel loop's body,

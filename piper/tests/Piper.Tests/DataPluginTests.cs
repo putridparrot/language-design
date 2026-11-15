@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Runtime.CompilerServices;
+using Piper.Diagnostics;
 using Piper.Plugins;
 using Piper.Text;
 
@@ -27,11 +28,11 @@ public class DataPluginTests
     private static string PluginsDirectory([CallerFilePath] string thisFile = "") =>
         Path.GetFullPath(Path.Combine(Path.GetDirectoryName(thisFile)!, "..", "..", "plugins"));
 
-    private static CompilationResult Compile(string text) =>
+    internal static CompilationResult Compile(string text) =>
         Compilation.Compile([new SourceText(text, "main.piper")],
             new CompilationOptions { Plugins = Data.Value.Plugins, References = Data.Value.References });
 
-    private static string Run(string text)
+    internal static string Run(string text)
     {
         var result = Compile(text);
         Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
@@ -41,7 +42,7 @@ public class DataPluginTests
         return run.Output.Replace("\r\n", "\n");
     }
 
-    private const string Shop = """
+    internal const string Shop = """
         using System;
         using System.Linq;
         using System.Threading.Tasks;
@@ -271,5 +272,47 @@ public class DataPluginTests
             """;
         var error = Assert.Single(Compile(text).Diagnostics);
         Assert.Contains("There's already a table 'Orders'", error.Message);
+    }
+}
+
+public class DataPluginSqlTests
+{
+    [Fact]
+    public void Raw_sql_takes_its_holes_as_parameters()
+    {
+        var output = DataPluginTests.Run(DataPluginTests.Shop + """
+            async fn Main() {
+                using let shop = await Open();
+                let customer = 1;
+                let name = "Ada' or '1'='1";
+                for o in await shop.Orders.Query(sql$"select * from Orders where customerId = {customer}").ToListAsync() { Print(o.id); }
+                // EF Core's own FromSql($"…"), whose holes are parameters too.
+                Print(await shop.Customers.FromSql($"select * from Customers where name = {name}").CountAsync());
+                let ids = [1, 2];
+                let none: string? = None;
+                Print(await shop.Orders.Query(sql$"select * from Orders where id in ({ids}) and note is not {none}").CountAsync());
+                Print(await shop.Query<string>(sql$"select name as Value from Customers where id = {2}").SingleAsync());
+                Print(await shop.ExecuteAsync(sql$"update Customers set name = {"Grace"} where id = {1}"));
+                Print(await shop.Customers.Where(c => c.id == 1).Select(c => c.name).SingleAsync());
+            }
+            """);
+        Assert.Equal("1\n0\n1\nAlan\n1\nGrace\n", output);
+    }
+
+    [Theory]
+    [InlineData("shop.Orders.FromSqlRaw($\"select * from Orders where id = {id}\")")]
+    [InlineData("shop.Database.ExecuteSqlRaw($\"delete from Orders where id = {id}\")")]
+    public void An_interpolated_string_given_to_a_raw_sql_method_is_a_warning(string call)
+    {
+        var result = DataPluginTests.Compile(DataPluginTests.Shop + $$"""
+            async fn Main() {
+                using let shop = await Open();
+                let id = 1;
+                let q = {{call}};
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        var warning = Assert.Single(result.Diagnostics);
+        Assert.Equal(("PIP0405", DiagnosticSeverity.Warning), (warning.Code, warning.Severity));
     }
 }

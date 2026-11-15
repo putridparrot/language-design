@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **SQL strings:** `sql$"select * from lots where id = {id}"` is an `Sql` (Piper.Runtime) whose holes are parameters
+  (`@p0`, …), never text: numbers, text, dates, Guids, newtypes, Options (None is NULL), lists (for `in (…)`), and
+  other `Sql`s, spliced in. Anything else is an error at the hole (PIP0402), and `Sql.Raw(…)` is the one way to put
+  text in the SQL. A plain `$"…"` is an `Sql` where one is wanted, as C# target-types it, and a `FormattableString`
+  where a .NET method takes one (EF Core's `FromSql($"…")`). `ToCommand(connection)` makes an ADO.NET command. A
+  library can add its own kind of string with `[InterpolationKind("…")]` (see [SQL strings](docs/language.md#sql-strings)).
+- **Raw SQL in the data plugin:** `shop.Orders.Query(sql$"…")`, `shop.Query<T>(sql$"…")` and
+  `shop.ExecuteAsync(sql$"…")`. An interpolated string given to EF Core's `FromSqlRaw`, `SqlQueryRaw` or
+  `ExecuteSqlRaw` is a warning (PIP0405), as its holes would go into the SQL as text; so is a `$"…"` given to a
+  method's string overload where another takes a `FormattableString` or `Sql` (PIP0406).
+
 - **Testing web apps in memory (web plugin):** `using let site = await TestClient.Start(() => BuildApp());` serves the
   app its build function makes from memory, with no port, and is an `HttpClient` calling it: it keeps cookies,
   `PostForm(url, fields, htmx: true)` sends a form's anti-forgery token for it, responses stream (so live pages'

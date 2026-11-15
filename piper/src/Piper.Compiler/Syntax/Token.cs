@@ -11,6 +11,12 @@ public sealed record Token(TokenKind Kind, TextSpan Span, string Text, object? V
 {
     public ImmutableArray<InterpolationPart> Parts { get; init; } = [];
 
+    /// <summary>The kind an interpolated string is written with, <c>sql</c> for <c>sql$"…"</c>; null for a plain <c>$"…"</c>.</summary>
+    public string? Prefix { get; init; }
+
+    /// <summary>Where <see cref="Prefix"/> is written.</summary>
+    public TextSpan PrefixSpan { get; init; }
+
     /// <summary>True for tokens the parser synthesized during error recovery.</summary>
     public bool IsMissing { get; init; }
 

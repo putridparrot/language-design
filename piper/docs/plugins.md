@@ -911,6 +911,11 @@ let big = await shop.Orders.Where(o => o.total > 100m).OrderBy(o => o.placed).To
   an int column, and an optional one is nullable. A key that's a newtype of `int` or `long` is numbered by the
   database, as an `int` key is: add a row with `IssueId(0)` and it's given the next number. Queries compare them in SQL
   (`i.projectId == projectId`). [apps/tracker](../apps/tracker/README.md) keys its issues, projects and comments this way.
+- **Raw SQL** is written [`sql$"…"`](language.md#sql-strings), whose holes are parameters:
+  `shop.Orders.Query(sql$"select * from Orders where customerId = {id}")` is a query LINQ can go on with,
+  `shop.Query<string>(sql$"select name as Value from …")` selects values, and `await shop.ExecuteAsync(sql$"update …")`
+  runs a command, giving the rows it changed. EF Core's `FromSql($"…")` works too. Its `FromSqlRaw` and
+  `ExecuteSqlRaw`, given an interpolated string, are a warning (PIP0405), as they'd put its holes in the SQL as text.
 - **Packages:** the plugin brings EF Core. The program's piper.json adds its database's provider, such as
   `"packages": { "Microsoft.EntityFrameworkCore.Sqlite": "10.0.14" }`.
 - **Checked:** a `key` or `index` naming a field its type doesn't have (a class's must be public, as EF Core maps

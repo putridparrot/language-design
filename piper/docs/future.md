@@ -62,11 +62,12 @@ them too.
   `Id<Issue>` isn't an `Id<Project>`); and newtypes as JSON dictionary keys (`Dictionary<IssueId, …>` written as an
   object, which needs the converter's property-name methods).
 - **Interpolation that escapes for where it's going.** Markup escapes its holes by type, so cross-site scripting can't
-  be written by accident; the same for the other places text goes would do that for injection generally:
-  `sql$"select * from lots where id = {id}"` is a parameterized query (each hole a parameter, never text),
-  `url$"/search?q={text}"` encodes each hole for its part of the URL, and `shell$"git log {branch}"` passes each hole
-  as one argument. A raw piece takes `Sql.Raw(…)`, as markup's does `Html.Raw(…)`. Each kind is a type with its own
-  holes' rules, so a plugin could add one (`ldap$`, `regex$`). The data plugin's raw SQL would take `sql$` only.
+  be written by accident; the same for the other places text goes would do that for injection generally.
+  ~~`sql$"…"`~~ is done: its holes are parameters, a plain `$"…"` is one where an `Sql` is wanted, and a library adds
+  a kind with `[InterpolationKind]` (see [SQL strings](language.md#sql-strings)). Still to come: `url$"/search?q={text}"`,
+  encoding each hole for its part of the URL, and `shell$"git log {branch}"`, passing each hole as one argument. Also:
+  kinds declared in Piper (they're .NET types today), enums in `sql$` holes, and a `sql$` hole's newtype inside an
+  Option or list (only a newtype itself goes in as its value).
 - **Typestate from `statemachine`.** A machine's state as part of its type: `Order<Unpaid>`, `Order<Paid>`, where
   `order.Ship()` on an unpaid one is a compile error rather than a refused transition at run time, and each
   transition returns the machine in its next state. Protocols (pay, then pack, then ship; open before send) checked

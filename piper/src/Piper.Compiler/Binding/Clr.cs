@@ -53,6 +53,10 @@ public sealed class ClrTypeIndex
     public IReadOnlyList<Type> FindTypes(string @namespace, string name) =>
         _index.Value.Types.TryGetValue($"{@namespace}.{name}", out var types) ? types : [];
 
+    /// <summary>The public top-level types in <paramref name="namespace"/>.</summary>
+    public IReadOnlyList<Type> TypesIn(string @namespace) =>
+        _index.Value.TypesByNamespace.TryGetValue(@namespace, out var types) ? types : [];
+
     /// <summary>Extension methods called <paramref name="name"/> declared by static classes in <paramref name="namespace"/> (e.g. LINQ's Where in System.Linq).</summary>
     public IReadOnlyList<MethodInfo> ExtensionMethods(string @namespace, string name) =>
         _extensionMethods.GetOrAdd((@namespace, name), key =>

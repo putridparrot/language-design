@@ -974,6 +974,39 @@ fn Table(lots: List<Lot>) => Html =
   their markup is. A web handler returning `Html` (or an Option or Result of it) answers with a page (see the web
   plugin).
 
+### SQL strings
+
+`sql$"…"` is SQL whose holes are parameters, never text, so SQL can't be injected by accident, as markup can't:
+
+```piper
+fn ByTitle(title: string) => Sql = sql$"select * from lots where title = {title}";
+
+let query = sql$"select * from lots where id in ({ids}) and seller = {seller} order by {Sql.Raw(column)}";
+query.Text        // "select * from lots where id in (@p0, @p1) and seller = @p2 order by ends"
+query.Parameters  // [1, 2, "ann"]
+```
+
+- **Holes** are parameters (`@p0`, `@p1`, …): numbers, text, chars, bools, dates and times, Guids, bytes, and
+  newtypes of them (as their value). An optional one is NULL for None; a list is a parameter for each item, for
+  `in ({ids})` (an empty one is `NULL`, which nothing is in). Another `Sql` goes in as SQL, with its parameters, so
+  queries can be built in pieces: `Sql.Join(" and ", conditions)`.
+- **Anything else** is an error at the hole (PIP0402), such as a record or `Html`; so is a format or an alignment
+  (PIP0403), as parameters aren't text. `Sql.Raw(text)` is the one way to put text in the SQL itself, for what
+  can't be a parameter (a table's or column's name the program chose).
+- **A plain `$"…"`** becomes an `Sql` where one is wanted, as C# target-types an interpolated string: a parameter, a
+  variable's type, a function's result (`fn ByTitle(…) => Sql = $"…"`). Given to a .NET `FormattableString`
+  parameter, it's one, as in C#, so EF Core's `FromSql($"…")` makes its holes parameters too.
+- **Running it:** `sql.ToCommand(connection)` is an ADO.NET command with the text and parameters;
+  `sql.ToFormattableString()` is what EF Core takes. The data plugin runs it on a database (see
+  [plugins](plugins.md#data-ef-core-databases)). `@` parameters suit SQL Server, SQLite, PostgreSQL and MySQL.
+- **Warnings:** an interpolated string given to EF Core's `FromSqlRaw`, `SqlQueryRaw` or `ExecuteSqlRaw` puts its
+  holes in the SQL as text (PIP0405). As in C#, a method with overloads taking a string and a `FormattableString`
+  (or an `Sql`) takes a `$"…"` as the string; that's a warning too (PIP0406).
+- **Other kinds:** `sql$` is one kind of string. A library adds another by marking a .NET type
+  `[InterpolationKind("ldap")]` (Piper.Runtime) and giving it a static `Builder()`, whose builder has
+  `Text(string)`, `Hole` overloads (what a hole can hold), and `Build()`. `ldap$"…"` is then found by a `using` of
+  the type's namespace, and its holes are checked against the `Hole` overloads.
+
 ### Attributes
 
 .NET attributes go before a declaration, field or parameter, as in C#:

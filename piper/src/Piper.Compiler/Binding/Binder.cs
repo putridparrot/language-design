@@ -180,6 +180,8 @@ public sealed partial class Binder
         _builtins.TryDeclare("object", ClrTypeSymbol.For(typeof(object)));
         // What markup literals make (`<p>{name}</p>`): markup, as opposed to a string of text.
         _builtins.TryDeclare("Html", ClrTypeSymbol.For(typeof(Piper.Runtime.Html)));
+        // What sql$"…" makes: SQL whose holes are parameters.
+        _builtins.TryDeclare("Sql", ClrTypeSymbol.For(typeof(Piper.Runtime.Sql)));
         foreach (var function in BuiltinFunctions.All)
             _builtins.TryDeclare(function);
 

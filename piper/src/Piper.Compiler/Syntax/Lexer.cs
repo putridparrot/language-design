@@ -242,7 +242,31 @@ public sealed partial class Lexer
 
         var span = TextSpan.FromBounds(start, _position);
         var text = _source.ToString(span);
-        return new Token(SyntaxFacts.GetKeywordKind(text) ?? TokenKind.Identifier, span, text);
+        var keyword = SyntaxFacts.GetKeywordKind(text);
+        if (keyword is null && Current == '$' && (Peek(1) == '"' || (Peek(1) == '$' && DollarsThenString())))
+            return ScanPrefixedString(start, text);
+        return new Token(keyword ?? TokenKind.Identifier, span, text);
+    }
+
+    /// <summary>
+    /// prefixedString = identifier string ;  with no space between: <c>sql$"select * from lots where id = {id}"</c>,
+    /// whose prefix names the kind of value it makes (an <c>[InterpolationKind("sql")]</c> type), which the binder finds.
+    /// It's always an InterpolatedStringLiteral, holes or not, since the kind makes it.
+    /// </summary>
+    private Token ScanPrefixedString(int start, string prefix)
+    {
+        var prefixSpan = TextSpan.FromBounds(start, _position);
+        var literal = ScanString();
+        var span = TextSpan.FromBounds(start, literal.Span.End);
+        var parts = literal.Kind == TokenKind.InterpolatedStringLiteral
+            ? literal.Parts
+            : [new InterpolationText(literal.Span, (string?)literal.Value ?? "")];
+        return new Token(TokenKind.InterpolatedStringLiteral, span, _source.ToString(span))
+        {
+            Parts = parts,
+            Prefix = prefix,
+            PrefixSpan = prefixSpan,
+        };
     }
 
     /// <summary>

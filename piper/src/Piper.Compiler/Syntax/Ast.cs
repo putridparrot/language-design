@@ -515,8 +515,17 @@ public sealed record ContractMessageSyntax(TextSpan Span, ExpressionSyntax Condi
 
 public sealed record LiteralExpressionSyntax(TextSpan Span, Token Literal, object? Value) : ExpressionSyntax(Span);
 
+/// <summary>
+/// <c>$"…"</c>, or with a <see cref="Prefix"/>, <c>sql$"…"</c>: the kind of value it makes (see
+/// <c>Piper.Runtime.InterpolationKindAttribute</c>), whose holes that kind checks.
+/// </summary>
 public sealed record InterpolatedStringExpressionSyntax(TextSpan Span, ImmutableArray<InterpolatedStringPartSyntax> Parts)
-    : ExpressionSyntax(Span);
+    : ExpressionSyntax(Span)
+{
+    public string? Prefix { get; init; }
+
+    public TextSpan PrefixSpan { get; init; }
+}
 
 public abstract record InterpolatedStringPartSyntax(TextSpan Span) : SyntaxNode(Span);
 
