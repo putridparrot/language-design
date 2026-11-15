@@ -378,6 +378,85 @@ public class WebPluginTests
             """, run.Output.Replace("\r\n", "\n"));
     }
 
+    /// <summary>
+    /// What each endpoint answers, as OpenAPI generators read it (ASP.NET Core's API explorer), follows from its handler's
+    /// type as it's answered: an Option is its value or 404, a Result its value or a ProblemDetails for each status its
+    /// error's [Status]es give, markup is text/html. Other handlers are described as ASP.NET Core describes them.
+    /// </summary>
+    [Fact]
+    public void What_an_endpoint_answers_is_described_for_OpenAPI()
+    {
+        var result = Compile(""""
+            using System;
+            using System.Linq;
+            using System.Threading.Tasks;
+            using Microsoft.AspNetCore.Builder;
+            using Microsoft.AspNetCore.Hosting;
+            using Microsoft.AspNetCore.Http;
+            using Microsoft.AspNetCore.Mvc.ApiExplorer;
+            using Microsoft.Extensions.DependencyInjection;
+            using Microsoft.Extensions.Logging;
+            using Piper.Web;
+
+            record Book(code: string, title: string);
+
+            [Status(409)]
+            enum LoanError {
+                [Status(404)] UnknownBook(code: string),
+                OutOnLoan(code: string, until: string),
+                Closed,
+            }
+
+            fn Find(code: string) => Book? = None;
+            fn Lend(code: string) => Result<Book, LoanError> = Err(LoanError.Closed);
+            fn Check(n: int) => Result<int, string> = Ok(n);
+
+            endpoints Api "/api" {
+                get "/books/{code}" (code: string) => Find(code);
+                get "/later/{code}" async (code: string) => { await Task.Yield(); Find(code) }
+                post "/loans/{code}" (code: string) => Lend(code);
+                get "/check/{n:int}" (n: int) => Check(n);
+                get "/page" () => <p>hi</p>;
+                get "/plain" () => 42;
+                get "/result" () => Results.Ok(1);
+            }
+
+            async fn Main() {
+                let builder = WebApplication.CreateBuilder();
+                builder.Logging.ClearProviders();
+                builder.Services.AddEndpointsApiExplorer();
+                let urls: string[] = ["http://127.0.0.1:0"];
+                builder.WebHost.UseUrls(urls);
+                let app = builder.Build();
+                Api(app);
+                await app.StartAsync();
+                let explorer = app.Services.GetRequiredService<IApiDescriptionGroupCollectionProvider>();
+                for group in explorer.ApiDescriptionGroups.Items {
+                    for api in group.Items.OrderBy(a => a.RelativePath ?? "") {
+                        let responses = api.SupportedResponseTypes
+                            .OrderBy(r => r.StatusCode)
+                            .Select(r => $"{r.StatusCode} {r.Type?.Name ?? "-"} {string.Join(",", r.ApiResponseFormats.Select(f => f.MediaType))}".TrimEnd());
+                        Print($"{api.HttpMethod ?? ""} {api.RelativePath ?? ""}: {string.Join("; ", responses)}");
+                    }
+                }
+                await app.StopAsync();
+            }
+            """");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("""
+            GET api/books/{code}: 200 Book application/json; 404 Void
+            GET api/check/{n:int}: 200 Int32 application/json; 400 ProblemDetails application/problem+json
+            GET api/later/{code}: 200 Book application/json; 404 Void
+            POST api/loans/{code}: 200 Book application/json; 404 ProblemDetails application/problem+json; 409 ProblemDetails application/problem+json
+            GET api/page: 200 String text/html
+            GET api/plain: 200 Int32 application/json
+            GET api/result: 200 Void
+
+            """, run.Output.Replace("\r\n", "\n"));
+    }
+
     /// <summary>A handler's markup is a page: text/html, alone or in an Option (None is 404) or a Result.</summary>
     [Fact]
     public void Markup_is_answered_as_a_page()

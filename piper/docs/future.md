@@ -58,6 +58,10 @@ them too.
     And in an `actor`, as local functions where its loop starts, beside its state.
   - ~~**A list literal's `None`s typed by a later `Some`**~~, done: elements with no type of their own take the others'.
   - ~~**`[NotNullIfNotNull]` results**~~, done: given a plain value, the result is one.
+- **Sorting by an optional key** (found writing the OpenAPI test): `items.OrderBy(a => a.RelativePath)`, where .NET's
+  `string?` is read as `string?` (an Option), compiles, but throws when it runs ("Failed to compare two elements"), as
+  `Option<T>` isn't comparable. Either Option should compare as C#'s nullable does (None first), or the compiler should
+  report a key that can't be compared. `?? ""` works around it.
 - **Newtypes, later:** a newtype with type parameters, for phantom-typed ids (`newtype Id<T> = Guid;`, so an
   `Id<Issue>` isn't an `Id<Project>`); and newtypes as JSON dictionary keys (`Dictionary<IssueId, …>` written as an
   object, which needs the converter's property-name methods).
@@ -137,10 +141,12 @@ Results answered as 200, 404 or ProblemDetails (see [JSON](language.md#json) and
    blocks, keeping cookies and sending forms' anti-forgery tokens (see [plugins](plugins.md#testing-a-web-app)). It
    found that a request ASP.NET Core couldn't bind broke the response filter (a 500, not a 400), now fixed.
 2. **Endpoint metadata.** Authorization, anonymous access, rate limiting, CORS and output caching are done (`authorize`,
-   `anonymous`, `ratelimit`, `cors` and `cache` on groups and endpoints, defined by a `policies` declaration). Still to
-   come: OpenAPI tags, and OpenAPI response types (`.Produces<T>(200)`, `.Produces(404)`) inferred from each handler's
-   type-checked result, which C# writes by hand and lets drift. Also per-user rate limits, partitioned by the signed-in
-   user or the client's address rather than shared by everyone.
+   `anonymous`, `ratelimit`, `cors` and `cache` on groups and endpoints, defined by a `policies` declaration), and so
+   are ~~OpenAPI response types~~, from each handler's type (200 with its value, 404 for an Option, ProblemDetails with
+   each status an error's `[Status]`es give). Still to come: OpenAPI tags; OpenAPI schemas for Piper's types (an
+   Option field is written as its value or null, and a variant as its `kind` and fields, which a schema generator
+   reading .NET types doesn't know); and per-user rate limits, partitioned by the signed-in user or the client's
+   address rather than shared by everyone.
 3. **Hosting and operations.** A `server` declaration replacing the builder code in `Main`: services and endpoints,
    configuration bound to records (`appsettings.json`, environment), health checks, ProblemDetails error handling,
    HTTPS and graceful shutdown. Publishing a self-contained build or a container image (`piper build --publish`).

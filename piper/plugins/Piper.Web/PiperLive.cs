@@ -67,7 +67,7 @@ public static class Live
     }
 
     internal static void Map(IEndpointRouteBuilder app) =>
-        app.MapGet(Path, (Delegate)Stream);
+        app.MapGet(Path, (Delegate)Stream).ExcludeFromDescription();
 
     /// <summary>A page's connection: its topics' events as they're published, and a comment now and then to keep it open.</summary>
     private static async Task Stream(HttpContext http, string[] topic)

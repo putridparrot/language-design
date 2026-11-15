@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Json;
+using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Piper.Runtime;
@@ -33,14 +34,87 @@ public static class PiperResponses
 
     private static readonly ConcurrentDictionary<Type, Func<object, HttpContext, object?>?> Readers = new();
 
-    public static RouteHandlerBuilder Answer(RouteHandlerBuilder endpoint) => endpoint.AddEndpointFilterFactory((context, next) => Filter(context, next, null));
+    public static RouteHandlerBuilder Answer(RouteHandlerBuilder endpoint) =>
+        Describe(endpoint.AddEndpointFilterFactory((context, next) => Filter(context, next, null)));
 
     /// <summary>
     /// An endpoint of a group with a <c>layout</c>: its markup is put in the layout, <c>Page(body)</c>, unless htmx asked
     /// for just the fragment (see <see cref="Htmx.WantsFragment"/>). So a handler is written once, for both.
     /// </summary>
     public static RouteHandlerBuilder Answer(RouteHandlerBuilder endpoint, Func<Html, Html> layout) =>
-        endpoint.AddEndpointFilterFactory((context, next) => Filter(context, next, layout));
+        Describe(endpoint.AddEndpointFilterFactory((context, next) => Filter(context, next, layout)));
+
+    /// <summary>
+    /// Says what the endpoint answers, for OpenAPI and other readers of its metadata, from its handler's return type, as
+    /// <see cref="Filter"/> answers it: an Option is 200 with its value or 404; a Result is 200 with its value or a
+    /// ProblemDetails with each status its error's <see cref="StatusAttribute"/>s give (400 without one); markup is
+    /// <c>text/html</c>. ASP.NET Core would describe the handler's Option or Result itself as the 200's JSON. C# writes
+    /// these by hand (<c>.Produces&lt;Lot&gt;(200).Produces(404)</c>), where they can drift from what the handler does.
+    /// </summary>
+    private static RouteHandlerBuilder Describe(RouteHandlerBuilder endpoint)
+    {
+        ((IEndpointConventionBuilder)endpoint).Finally(builder =>
+        {
+            if (builder.Metadata.OfType<MethodInfo>().FirstOrDefault() is not { } handler)
+                return;
+            var returned = Awaited(handler.ReturnType);
+            if (Reader(returned) is null)
+                return;
+            // ASP.NET Core's own guess: the Option or Result as JSON.
+            foreach (var guessed in builder.Metadata.OfType<IProducesResponseTypeMetadata>().Where(m => m.Type == returned).ToList())
+                builder.Metadata.Remove(guessed);
+            foreach (var (status, type, contentType) in Responses(returned).DistinctBy(r => (r.Status, r.ContentType)))
+                builder.Metadata.Add(new ProducesResponseTypeMetadata(status, type, contentType is null ? [] : [contentType]));
+        });
+        return endpoint;
+    }
+
+    /// <summary>What a handler's value of <paramref name="type"/> is answered with: statuses, the body's type, and its content type.</summary>
+    private static IEnumerable<(int Status, Type? Type, string? ContentType)> Responses(Type type)
+    {
+        if (type == typeof(Html))
+        {
+            yield return (StatusCodes.Status200OK, typeof(string), "text/html");
+            yield break;
+        }
+        if (type == typeof(string))
+        {
+            yield return (StatusCodes.Status200OK, typeof(string), "text/plain");
+            yield break;
+        }
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Option<>))
+        {
+            foreach (var response in Responses(type.GetGenericArguments()[0]))
+                yield return response;
+            yield return (StatusCodes.Status404NotFound, typeof(void), null);
+            yield break;
+        }
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Result<,>))
+        {
+            foreach (var response in Responses(type.GetGenericArguments()[0]))
+                yield return response;
+            foreach (var status in ErrorStatuses(type.GetGenericArguments()[1]).Order())
+                yield return (status, typeof(Microsoft.AspNetCore.Mvc.ProblemDetails), "application/problem+json");
+            yield break;
+        }
+        if (typeof(IResult).IsAssignableFrom(type))
+            yield break;
+        yield return (StatusCodes.Status200OK, type, "application/json");
+    }
+
+    /// <summary>
+    /// The statuses an error of <paramref name="error"/> can be answered with: each variant's <see cref="StatusAttribute"/>
+    /// (a Piper enum's variants are records nested in it, deriving from it), or the type's own, or 400.
+    /// </summary>
+    private static IEnumerable<int> ErrorStatuses(Type error)
+    {
+        int Own(Type type, int fallback) => type.GetCustomAttribute<StatusAttribute>(inherit: false)?.Code ?? fallback;
+        int whole = error.GetCustomAttribute<StatusAttribute>(inherit: true)?.Code ?? StatusCodes.Status400BadRequest;
+        var variants = error.IsAbstract
+            ? error.GetNestedTypes().Where(t => t.IsSubclassOf(error) && !t.IsAbstract).ToList()
+            : [];
+        return variants.Count == 0 ? [whole] : variants.Select(v => Own(v, whole)).Distinct();
+    }
 
     private static readonly AsyncLocal<HttpContext?> Request = new();
 

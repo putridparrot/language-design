@@ -47,8 +47,9 @@ public static class Htmx
                 return;
             Mapped.Add(app, new object());
         }
-        app.MapGet(ScriptPath, (HttpContext http) => Script(http, Code.Value));
-        app.MapGet(SsePath, (HttpContext http) => Script(http, SseCode.Value));
+        // Piper.Web's own routes, not the app's API: left out of OpenAPI.
+        app.MapGet(ScriptPath, (HttpContext http) => Script(http, Code.Value)).ExcludeFromDescription();
+        app.MapGet(SsePath, (HttpContext http) => Script(http, SseCode.Value)).ExcludeFromDescription();
         Live.Map(app);
     }
 

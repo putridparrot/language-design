@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **OpenAPI response types (web plugin):** each endpoint's metadata says what it answers, from its handler's type: an
+  Option is 200 with its value or 404, a Result 200 with its value or a ProblemDetails for each status its error's
+  `[Status]`es give (400 without), and markup 200 `text/html`. ASP.NET Core described the Option or Result itself as
+  the 200's JSON. C# writes these by hand (`.Produces<Book>(200).Produces(404)`).
+- **Fixed (web plugin):** htmx's script and live pages' stream, which Piper.Web maps for every app, were described as
+  the app's API, so they appeared in its OpenAPI document.
+
 - **Fixed: a .NET generic taking Piper.Runtime's `Option<T>` or `Result<T, E>`** (a library written for Piper) now
   infers `T` from a Piper optional or Result: `Hole<T>(Option<T> value) where T : IFormattable` is given an `int?`.
   Before, it was passed over, so such libraries needed an overload for each type. `url$` and `shell$` now take any

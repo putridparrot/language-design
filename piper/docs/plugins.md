@@ -728,6 +728,12 @@ A program calls them as `AppServices(builder.Services)` and `Api(app)`.
     string error is the `detail`. Without `[Status]` on the variant or its enum (or record), an error is a 400.
   - That's done at run time by Piper.Web, which comes with the plugin: each endpoint gets an ASP.NET Core endpoint
     filter, but only if its handler returns an Option or Result, so other handlers cost nothing and answer as before.
+  - **OpenAPI** (and anything else reading an endpoint's metadata, such as Swashbuckle or
+    Microsoft.AspNetCore.OpenApi) is told what each endpoint answers, from its handler's type, as it's answered: the
+    library's `/books/{code}` is 200 with a `Book`, or 404; `/loans/{code}` is 200 with a `Loan`, or a ProblemDetails
+    with 404 or 409, the statuses `LoanError`'s `[Status]`es give. Markup is 200 `text/html`. In C#, these are
+    `.Produces<Book>(200).Produces(404)`, written by hand beside the handler, where they can come to disagree with
+    it. Piper.Web's own routes (htmx's script, live pages' stream) are left out of the description.
 - **Checks** report at the clause what ASP.NET Core would only find when the program runs, or not at all:
   - a service registered twice (the later would silently replace the earlier)
   - a route mapped twice with the same verb
