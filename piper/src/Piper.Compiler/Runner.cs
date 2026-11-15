@@ -250,7 +250,8 @@ public static class Runner
                     method.DeclaringType!.GetMethod($"{method.Name}_{i}", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static) is { } make
                         ? (Piper.Runtime.IPiperGen)Invoke(make, null)!
                         : Piper.Runtime.PiperGen.For(p.ParameterType)).ToList();
-                Piper.Runtime.PiperProperty.Check([.. parameters.Select(p => p.Name ?? "")], generators, values => Invoke(method, values));
+                var runs = method.GetCustomAttribute<Piper.Runtime.PiperTestAttribute>()?.Runs is > 0 and var own ? own : Piper.Runtime.PiperProperty.Runs;
+                Piper.Runtime.PiperProperty.Check([.. parameters.Select(p => p.Name ?? "")], generators, values => Invoke(method, values), runs);
             }
             return new TestResult(name, null);
         }

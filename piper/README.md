@@ -57,9 +57,10 @@ follows (flags override it):
   `Microsoft.Extensions.DependencyInjection` and the other `Microsoft.Extensions` libraries are part of ASP.NET Core's.
 - **`references`** are .NET assemblies, with paths relative to the folder.
 - **`plugins`** add keywords to the language (see [docs/plugins.md](docs/plugins.md)). Those that come with piper are
-  named: `services` (dependency injection), `web` (ASP.NET Core endpoints), `args` (command-line options), `actors`,
-  `remote-actors`, `parallel` and `state-machines`. Any other is the path of its assembly, relative to the folder, or a
-  name given with `piper plugin add <folder>`, which copies it to `~/.piper/plugins`.
+  named: `services` (dependency injection), `web` (ASP.NET Core endpoints), `openapi` (OpenAPI documents for them),
+  `args` (command-line options), `actors`, `remote-actors`, `parallel` and `state-machines`. Any other is the path of
+  its assembly, relative to the folder, or a name given with `piper plugin add <folder>`, which copies it to
+  `~/.piper/plugins`.
 
 Every key is optional; an empty file is fine. Any other key is an error, so future versions can add keys without
 changing what today's files mean. `piper run`, `piper test` and the editor use the packages, frameworks and references

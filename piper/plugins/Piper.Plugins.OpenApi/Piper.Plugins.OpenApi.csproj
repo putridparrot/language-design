@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The openapi plugin: no syntax of its own, it brings Microsoft.AspNetCore.OpenApi and Piper.Web.OpenApi, whose
+    schemas describe Piper's types as they're written in JSON. It's listed in a program's piper.json
+    ("plugins": ["web", "openapi"]) and loaded by the compiler, which never references it.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!-- One place whatever the configuration, so piper.json files can point at it. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\plugin\</OutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The compiler loads the plugin, so it provides Piper.Compiler; don't copy it next to the plugin. -->
+    <ProjectReference Include="..\..\src\Piper.Compiler\Piper.Compiler.csproj" Private="false" ExcludeAssets="runtime" />
+    <!-- What a program using the plugin calls (IPiperPlugin.References): built first, and copied beside the plugin. -->
+    <ProjectReference Include="..\Piper.Web.OpenApi\Piper.Web.OpenApi.csproj" ReferenceOutputAssembly="false" />
+    <None Include="..\Piper.Web.OpenApi\bin\runtime\Piper.Web.OpenApi.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+</Project>

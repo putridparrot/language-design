@@ -379,6 +379,62 @@ public class WebPluginTests
     }
 
     /// <summary>
+    /// An endpoint's OpenAPI tags are its own `tags`, or its group's, or else its declaration's name; `tags` is no
+    /// policy, so it needs no `policies` block (which would be warned about for a policy word).
+    /// </summary>
+    [Fact]
+    public void Endpoints_are_tagged_for_OpenAPI()
+    {
+        var result = Compile(""""
+            using System;
+            using System.Linq;
+            using Microsoft.AspNetCore.Builder;
+            using Microsoft.AspNetCore.Hosting;
+            using Microsoft.AspNetCore.Http.Metadata;
+            using Microsoft.AspNetCore.Mvc.ApiExplorer;
+            using Microsoft.Extensions.DependencyInjection;
+            using Microsoft.Extensions.Logging;
+
+            endpoints Library "/books" tags "Books" {
+                get "/" () => "all";
+                post "/{code}/loans" tags "Loans", "Admin" (code: string) => code;
+            }
+
+            endpoints Health {
+                get "/health" () => "ok";
+            }
+
+            async fn Main() {
+                let builder = WebApplication.CreateBuilder();
+                builder.Logging.ClearProviders();
+                builder.Services.AddEndpointsApiExplorer();
+                let urls: string[] = ["http://127.0.0.1:0"];
+                builder.WebHost.UseUrls(urls);
+                let app = builder.Build();
+                Library(app);
+                Health(app);
+                await app.StartAsync();
+                let explorer = app.Services.GetRequiredService<IApiDescriptionGroupCollectionProvider>();
+                for api in explorer.ApiDescriptionGroups.Items.SelectMany(g => g.Items).OrderBy(a => a.RelativePath) {
+                    let tags = api.ActionDescriptor.EndpointMetadata.OfType<ITagsMetadata>().SelectMany(t => t.Tags);
+                    Print($"{api.HttpMethod ?? ""} {api.RelativePath ?? ""}: {string.Join(", ", tags)}");
+                }
+                await app.StopAsync();
+            }
+            """");
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Empty(result.Diagnostics);
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("""
+            GET books/: Books
+            POST books/{code}/loans: Loans, Admin
+            GET health: Health
+
+            """, run.Output.Replace("\r\n", "\n"));
+    }
+
+    /// <summary>
     /// What each endpoint answers, as OpenAPI generators read it (ASP.NET Core's API explorer), follows from its handler's
     /// type as it's answered: an Option is its value or 404, a Result its value or a ProblemDetails for each status its
     /// error's [Status]es give, markup is text/html. Other handlers are described as ASP.NET Core describes them.

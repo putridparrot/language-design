@@ -15,6 +15,7 @@ public sealed partial class WebPlugin
     private const string RateLimitConventions = "Microsoft.AspNetCore.Builder.RateLimiterEndpointConventionBuilderExtensions";
     private const string CorsConventions = "Microsoft.AspNetCore.Builder.CorsEndpointConventionBuilderExtensions";
     private const string CacheConventions = "Microsoft.Extensions.DependencyInjection.OutputCacheConventionBuilderExtensions";
+    private const string OpenApiConventions = "Microsoft.AspNetCore.Http.OpenApiRouteHandlerBuilderExtensions";
 
     /// <summary>What a policy word decides. An endpoint's word replaces its group's for the same concern.</summary>
     private enum Concern
@@ -23,6 +24,9 @@ public sealed partial class WebPlugin
         RateLimit,
         Cors,
         Cache,
+
+        /// <summary>OpenAPI's tags: not a policy, so no `policies` block declares them and they need no middleware.</summary>
+        Tags,
     }
 
     private static readonly Dictionary<string, Concern> PolicyWords = new()
@@ -32,6 +36,7 @@ public sealed partial class WebPlugin
         ["ratelimit"] = Concern.RateLimit,
         ["cors"] = Concern.Cors,
         ["cache"] = Concern.Cache,
+        ["tags"] = Concern.Tags,
     };
 
     /// <summary>How each concern's policies are described in messages.</summary>
@@ -41,6 +46,7 @@ public sealed partial class WebPlugin
         [Concern.RateLimit] = "rate limit",
         [Concern.Cors] = "CORS",
         [Concern.Cache] = "output cache",
+        [Concern.Tags] = "OpenAPI tag",
     };
 
     /// <summary>A policy word and the policy names after it: <c>authorize "admin", "owner"</c>, or <c>ratelimit off</c>.</summary>
@@ -57,7 +63,8 @@ public sealed partial class WebPlugin
 
     /// <summary>
     /// policies = { policyWord } ;
-    /// policyWord = "authorize" [ STRING { "," STRING } ] | "anonymous" | "ratelimit" ( STRING | "off" ) | "cors" STRING | "cache" [ STRING ] ;
+    /// policyWord = "authorize" [ STRING { "," STRING } ] | "anonymous" | "ratelimit" ( STRING | "off" ) | "cors" STRING | "cache" [ STRING ]
+    ///            | "tags" STRING { "," STRING } ;
     /// Two words for one concern are reported: `authorize` with `anonymous` contradict, and a word given twice is a mistake.
     /// </summary>
     private static Dictionary<Concern, PolicyWord> ReadPolicyWords(PluginParser p)
@@ -76,18 +83,21 @@ public sealed partial class WebPlugin
             else if (word.Text != "anonymous" && p.Current.Kind is TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral)
             {
                 names.Add(PolicyNameLiteral(p));
-                while (word.Text == "authorize" && p.Current.Kind == TokenKind.Comma)
+                while (word.Text is "authorize" or "tags" && p.Current.Kind == TokenKind.Comma)
                 {
                     p.NextToken();
                     names.Add(PolicyNameLiteral(p));
                 }
             }
-            else if (word.Text is "ratelimit" or "cors")
+            else if (word.Text is "ratelimit" or "cors" or "tags")
             {
                 // Reported, and left out, as mapping it without a name would only add a confusing error.
-                p.Report(p.Current.Span, word.Text == "ratelimit"
-                    ? "Expected the rate limit policy's name, such as ratelimit \"api\", or ratelimit off."
-                    : "Expected the CORS policy's name, such as cors \"partners\".");
+                p.Report(p.Current.Span, word.Text switch
+                {
+                    "ratelimit" => "Expected the rate limit policy's name, such as ratelimit \"api\", or ratelimit off.",
+                    "cors" => "Expected the CORS policy's name, such as cors \"partners\".",
+                    _ => "Expected the OpenAPI tags, such as tags \"Lots\", \"Bids\".",
+                });
                 continue;
             }
 
@@ -139,6 +149,7 @@ public sealed partial class WebPlugin
                 "ratelimit" when word.Off => $"{RateLimitConventions}.DisableRateLimiting",
                 "ratelimit" => $"{RateLimitConventions}.RequireRateLimiting",
                 "cors" => $"{CorsConventions}.RequireCors",
+                "tags" => $"{OpenApiConventions}.WithTags",
                 _ => $"{CacheConventions}.CacheOutput",
             };
             endpoint = p.Template.Expression($"{call}($arguments)", ("arguments", new List<ExpressionSyntax> { endpoint }.Concat(word.Names).ToList()));
@@ -148,7 +159,7 @@ public sealed partial class WebPlugin
 
     /// <summary>The named policies <paramref name="words"/> use, for the analysis.</summary>
     private static IEnumerable<PolicyName> NamesUsed(IEnumerable<PolicyWord> words) =>
-        words.SelectMany(w => w.Names.Select(n => new PolicyName(w.Concern, (string)n.Value!, n.Literal)));
+        words.Where(w => w.Concern != Concern.Tags).SelectMany(w => w.Names.Select(n => new PolicyName(w.Concern, (string)n.Value!, n.Literal)));
 
     /// <summary>
     /// policies   = "policies" IDENT "{" { policy } "}" ;

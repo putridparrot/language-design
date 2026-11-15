@@ -11,6 +11,7 @@ namespace Piper.Tests;
 /// EF Core and its SQLite provider are restored as a program's packages would be (from the NuGet cache when they're
 /// there), with SQLite's native library loaded for the run.
 /// </summary>
+[Collection("data plugin")]
 public class DataPluginTests
 {
     private static readonly Lazy<(ImmutableArray<IPiperPlugin> Plugins, ProgramReferences References)> Data = new(() =>
@@ -275,6 +276,8 @@ public class DataPluginTests
     }
 }
 
+// In the same collection as DataPluginTests, so the two don't run SQLite programs at once.
+[Collection("data plugin")]
 public class DataPluginSqlTests
 {
     [Fact]

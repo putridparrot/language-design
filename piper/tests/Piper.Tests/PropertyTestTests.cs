@@ -104,7 +104,6 @@ public class PropertyTestTests
         var run = Run("""
             using System.Collections.Generic;
             using System.Linq;
-            using Piper.Runtime;
 
             newtype LotId = int;
 
@@ -129,6 +128,33 @@ public class PropertyTestTests
         Assert.Contains("\n  id = 500\n", run.Results[4].Failure);
         // The smallest shuffle that isn't in order: two neighbours swapped, the first pair.
         Assert.Contains("\n  order = [1, 0, 2, 3, 4]\n", run.Results[5].Failure);
+    }
+
+    /// <summary>
+    /// `runs 5` is how many cases must pass. A test whose `requires` refuses every case gives up after ten times that,
+    /// so the count shows in its message; 100 is the default.
+    /// </summary>
+    [Fact]
+    public void A_property_test_says_how_many_cases_must_pass()
+    {
+        var run = Run("""
+            test "few" for (n: int) runs 5 requires n == 123456789 { }
+            test "default" for (n: int) requires n == 123456789 { }
+            test "many" for (n: int in 1..10) runs 2000 { Assert(n >= 1); }
+            """);
+        Assert.Empty(run.Errors);
+        Assert.Contains("51 were discarded", run.Results[0].Failure);
+        Assert.Contains("1001 were discarded", run.Results[1].Failure);
+        Assert.True(run.Results[2].Passed);
+    }
+
+    [Theory]
+    [InlineData("test \"t\" for (n: int) runs 0 { }")]
+    [InlineData("test \"t\" for (n: int) runs many { }")]
+    public void Runs_must_be_a_whole_number_above_zero(string program)
+    {
+        var result = Compilation.Compile(program, "props.piper", new CompilationOptions(IncludeTests: true));
+        Assert.Contains(result.Diagnostics, d => d.Code == "PIP0115");
     }
 
     [Fact]

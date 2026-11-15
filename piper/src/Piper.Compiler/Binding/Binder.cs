@@ -381,7 +381,8 @@ public sealed partial class Binder
                 info.Symbol.Namespace = file.Namespace;
                 info.Symbol.Attributes =
                 [
-                    new BoundAttribute(ClrTypeSymbol.For(typeof(Piper.Runtime.PiperTestAttribute)), [new BoundLiteralExpression(test.TestName, TypeSymbol.String)], []),
+                    new BoundAttribute(ClrTypeSymbol.For(typeof(Piper.Runtime.PiperTestAttribute)), [new BoundLiteralExpression(test.TestName, TypeSymbol.String)],
+                        test.Runs is { } runs ? [("Runs", new BoundLiteralExpression(runs, TypeSymbol.Int))] : []),
                 ];
                 var generators = new List<FunctionInfo>();
                 foreach (var generator in test.Generators)
@@ -512,11 +513,23 @@ public sealed partial class Binder
 
         return found.Count switch
         {
-            0 => null,
+            0 => ImplicitRuntimeNames.Contains(name) ? RuntimeNamespace()?.LookupMember(name, _option, NewMembers) : null,
             1 => found[0].Symbol,
             _ => new AmbiguousSymbol(name, [.. found.Select(f => f.From.FullName)]),
         };
     }
+
+    /// <summary>
+    /// Piper.Runtime's names a program uses without `using Piper.Runtime;`: <c>PiperGen</c> and <c>PiperGen&lt;T&gt;</c>, for
+    /// property tests' generators. Only these, so the rest of Piper.Runtime (the compiler's helpers) stays out of sight.
+    /// </summary>
+    private static readonly HashSet<string> ImplicitRuntimeNames = ["PiperGen"];
+
+    private NamespaceSymbol? RuntimeNamespace() =>
+        _globalNamespace.LookupMember("Piper", _option, NewMembers) is NamespaceSymbol piper &&
+        piper.LookupMember("Runtime", _option, NewMembers) is NamespaceSymbol runtime
+            ? runtime
+            : null;
 
     /// <summary>A member of <paramref name="namespace"/>, including this file's private declarations if it's the file's own namespace.</summary>
     private Symbol? MemberOf(NamespaceSymbol @namespace, string name)

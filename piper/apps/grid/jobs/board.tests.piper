@@ -3,7 +3,6 @@ namespace GridApp;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Piper.Runtime;
 
 /// The chunk a worker was given, or -1 for none.
 fn Given(assignment: Assignment) => int = match assignment {

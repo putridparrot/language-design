@@ -715,6 +715,9 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportInvalidOperator(TextSpan span, string problem) =>
         Error("PIP0339", span, problem);
 
+    public void ReportInvalidTestRuns(TextSpan span) =>
+        Error("PIP0115", span, "A property test's 'runs' is how many cases must pass, a whole number above 0: runs 500.");
+
     public void ReportInterpolatedTestName(TextSpan span) =>
         Error("PIP0337", span, "A test's name must be a plain string, without interpolation.");
 

@@ -8,6 +8,9 @@ namespace Piper.Runtime;
 public sealed class PiperTestAttribute(string name) : Attribute
 {
     public string Name { get; } = name;
+
+    /// <summary>A property test's <c>runs 500</c>: how many cases must pass; 0 for the default (<see cref="PiperProperty.Runs"/>).</summary>
+    public int Runs { get; set; }
 }
 
 /// <summary>Thrown when a Piper <c>Assert</c> or <c>AssertEqual</c> fails.</summary>

@@ -1720,14 +1720,14 @@ FAIL small sums
 - **Shrinking** makes lists shorter, numbers nearer 0 (or a range's start), strings shorter and simpler, and enums
   their earlier variants, while the test still fails the same way (with the same exception type). It's done on the
   random choices the values were made from, as Hypothesis does, so every type shrinks with no shrinker of its own.
+- **How many:** 100 cases must pass, or as many as `runs` says, after the parameters:
+  `test "bids never fall" for (bids: List<int>) runs 1000 { … }`. It's a whole number above 0 (PIP0115).
 - **Seeds:** each run starts from a new seed, shown with a failure; `piper test --seed 403656620` repeats it.
-- **Writing generators:** for values a type doesn't describe, `in` also takes a `PiperGen<T>` (with
-  `using Piper.Runtime;`), made by `PiperGen`'s functions and changed with LINQ's names, as C#'s generator libraries
+- **Writing generators:** for values a type doesn't describe, `in` also takes a `PiperGen<T>` (no `using` is needed),
+  made by `PiperGen`'s functions and changed with LINQ's names, as C#'s generator libraries
   do. A function returning one names it:
 
   ```piper
-  using Piper.Runtime;
-
   fn Evens() => PiperGen<int> = PiperGen.For<int>().Where(n => n % 2 == 0);
   fn ChunksInAnyOrder() => PiperGen<List<int>> =
       PiperGen.Range(1, 8).SelectMany(chunks => PiperGen.Shuffled(Enumerable.Range(0, chunks)));

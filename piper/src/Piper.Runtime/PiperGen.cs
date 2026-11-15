@@ -594,14 +594,18 @@ public static class PiperProperty
     /// Runs <paramref name="test"/> on values from <paramref name="generators"/> until <see cref="Runs"/> cases pass,
     /// or throws a <see cref="PiperPropertyException"/> naming the smallest failing values.
     /// </summary>
-    public static void Check(IReadOnlyList<string> names, IReadOnlyList<IPiperGen> generators, Action<object?[]> test)
+    public static void Check(IReadOnlyList<string> names, IReadOnlyList<IPiperGen> generators, Action<object?[]> test) =>
+        Check(names, generators, test, Runs);
+
+    /// <summary>As <see cref="Check(IReadOnlyList{string}, IReadOnlyList{IPiperGen}, Action{object?[]})"/>, until <paramref name="runs"/> cases pass.</summary>
+    public static void Check(IReadOnlyList<string> names, IReadOnlyList<IPiperGen> generators, Action<object?[]> test, int runs)
     {
         var seed = Seed ?? Random.Shared.Next();
         var random = new Random(seed);
         int passed = 0, discarded = 0;
-        while (passed < Runs)
+        while (passed < runs)
         {
-            if (discarded > Runs * 10)
+            if (discarded > runs * 10)
                 throw new PiperPropertyException(
                     $"Gave up after {passed} passing cases: {discarded} were discarded by a `requires` (seed {seed}).", null);
             var size = Math.Min(passed, 99) + 1;

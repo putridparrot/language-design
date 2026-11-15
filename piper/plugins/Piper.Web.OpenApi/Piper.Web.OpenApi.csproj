@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    OpenAPI schemas for Piper's types, for Microsoft.AspNetCore.OpenApi: what the openapi plugin
+    (plugins/Piper.Plugins.OpenApi) brings, so a web program opts in to the package ("plugins": ["web", "openapi"]) and
+    others don't carry it. It comes with the plugin, beside its assembly (IPiperPlugin.References).
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Piper.Web.OpenApi</RootNamespace>
+    <!-- One place whatever the configuration, so the plugin can copy it beside itself. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\runtime\</OutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <!-- The program restores the package itself (the plugin's Packages), so it isn't copied here. -->
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.13" PrivateAssets="all" ExcludeAssets="runtime" />
+    <!-- A program has its own Piper.Runtime; this must use that one, not a copy. -->
+    <ProjectReference Include="..\..\src\Piper.Runtime\Piper.Runtime.csproj" Private="false" />
+  </ItemGroup>
+
+</Project>

@@ -58,6 +58,7 @@ public sealed partial class WebPlugin : IPiperPlugin
                 ["off"] = "No rate limiting here, whatever the group says: `DisableRateLimiting`.",
                 ["cors"] = "Browsers on other sites may call it as the CORS policy named allows: `RequireCors`.",
                 ["cache"] = "Responses are cached, by the output cache policy named or the default one: `CacheOutput`.",
+                ["tags"] = "The endpoint's OpenAPI tags, which group it in API documentation: `WithTags`. Without them, it's tagged with the declaration's name. After the group's route it applies to every endpoint.",
             },
         },
         new DeclarationKeyword("policies", Policies)
@@ -109,7 +110,10 @@ public sealed partial class WebPlugin : IPiperPlugin
         var groupWords = ReadPolicyWords(p);
         layout ??= ReadLayout();
         var policyUses = new List<PolicyName>(NamesUsed(groupWords.Values));
-        var policyWords = groupWords.Values.Select(w => w.Word).ToList();
+        var policyWords = groupWords.Values.Where(w => w.Concern != Concern.Tags).Select(w => w.Word).ToList();
+        // Without `tags`, an endpoint's OpenAPI tag is its declaration's name (ASP.NET Core's is the application's, for all).
+        var defaultTags = new PolicyWord(new Token(TokenKind.Identifier, name.Span, "tags") { IsGenerated = true }, Concern.Tags,
+            [new LiteralExpressionSyntax(name.Span, new Token(TokenKind.StringLiteral, name.Span, $"\"{name.Text}\"", name.Text) { IsGenerated = true }, name.Text)], false);
         p.Expect(TokenKind.OpenBrace);
 
         var router = prefix is null ? null : p.FreshName("group");
@@ -147,9 +151,10 @@ public sealed partial class WebPlugin : IPiperPlugin
             // The endpoint's own words replace the group's for the same concern.
             var words = ReadPolicyWords(p);
             policyUses.AddRange(NamesUsed(words.Values));
-            policyWords.AddRange(words.Values.Select(w => w.Word));
+            policyWords.AddRange(words.Values.Where(w => w.Concern != Concern.Tags).Select(w => w.Word));
             foreach (var (concern, word) in groupWords)
                 words.TryAdd(concern, word);
+            words.TryAdd(Concern.Tags, defaultTags);
 
             var handler = Handler(p);
             if (handler is null)

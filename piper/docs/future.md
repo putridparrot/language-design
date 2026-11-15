@@ -100,8 +100,9 @@ Weighed against what the apps needed (see each); in rough order of value for the
   (see [Property tests](language.md#property-tests)). apps/grid's "any order gives the same figures" and "every
   scenario is counted once" now check any order and any count, and apps/auction checks that bids never fall. Writing
   generators in Piper is done too (`PiperGen`'s `Select`, `Where`, `SelectMany`, `OneOf`, `ListOf` and `Shuffled`;
-  the grid's order test uses `Shuffled`). Still to come: a per-test number of cases, keeping the failures found, to
-  try first next time (as Hypothesis's database does), and `PiperGen` without `using Piper.Runtime;`.
+  the grid's order test uses `Shuffled`), as are ~~a per-test number of cases~~ (`runs 1000`) and ~~`PiperGen` without
+  `using Piper.Runtime;`~~. Still to come: keeping the failures found, to try first next time (as Hypothesis's
+  database does): each failure's shrunk choices kept in a file in the project, and replayed before new cases.
 - **Structured concurrency** (Swift's `async let` and task groups, Kotlin's coroutine scopes): tasks started in a scope
   are awaited or cancelled when it ends, and their exceptions aren't lost. apps/grid and apps/stock thread
   cancellation tokens through every worker loop, pair `StartCluster` with `StopCluster` in each test, and stop with a
@@ -139,9 +140,10 @@ Results answered as 200, 404 or ProblemDetails (see [JSON](language.md#json) and
 2. **Endpoint metadata.** Authorization, anonymous access, rate limiting, CORS and output caching are done (`authorize`,
    `anonymous`, `ratelimit`, `cors` and `cache` on groups and endpoints, defined by a `policies` declaration), and so
    are ~~OpenAPI response types~~, from each handler's type (200 with its value, 404 for an Option, ProblemDetails with
-   each status an error's `[Status]`es give). Still to come: OpenAPI tags; OpenAPI schemas for Piper's types (an
-   Option field is written as its value or null, and a variant as its `kind` and fields, which a schema generator
-   reading .NET types doesn't know); and per-user rate limits, partitioned by the signed-in user or the client's
+   each status an error's `[Status]`es give), and ~~OpenAPI tags~~ (`tags "Books"`, or the declaration's name).
+   ~~OpenAPI schemas for Piper's types~~ are done too, opted in to with the `openapi` plugin (Options as their value or
+   null, newtypes as their value, enums as their variants), for Microsoft.AspNetCore.OpenApi; Swashbuckle would need
+   a schema filter of its own. Still to come: per-user rate limits, partitioned by the signed-in user or the client's
    address rather than shared by everyone.
 3. **Hosting and operations.** A `server` declaration replacing the builder code in `Main`: services and endpoints,
    configuration bound to records (`appsettings.json`, environment), health checks, ProblemDetails error handling,

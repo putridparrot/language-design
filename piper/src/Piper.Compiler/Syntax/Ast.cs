@@ -74,6 +74,9 @@ public sealed record TestDeclarationSyntax(TextSpan Span, Token Name, string Tes
     /// <c>PiperTest_40_0</c>. The others are generated from their types.
     /// </summary>
     public ImmutableArray<FunctionDeclarationSyntax> Generators { get; init; } = [];
+
+    /// <summary>A property test's <c>runs 500</c>: how many cases must pass, or null for the default.</summary>
+    public int? Runs { get; init; }
 }
 
 /// <summary>

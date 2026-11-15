@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Property tests:** `test "…" for (bids: List<int>) runs 1000 { … }` says how many cases must pass (100 without it;
+  PIP0115 for one that isn't a whole number above 0). `PiperGen` and `PiperGen<T>` need no `using Piper.Runtime;`,
+  as only those of Piper.Runtime's names are seen without it.
+
+- **The `openapi` plugin:** `"plugins": ["web", "openapi"]` brings Microsoft.AspNetCore.OpenApi and Piper.Web.OpenApi;
+  `builder.Services.AddPiperOpenApi()` and `app.MapOpenApi()` serve an OpenAPI document whose schemas describe Piper's
+  types as they're written in JSON: an Option as its value or null (and not required), a newtype as its value, an
+  enum as its variants (a fieldless one its name, one with fields an object with `kind`), and a record with
+  invariants as its fields. Without it, their converters hid them, so they were described as anything. A plugin of
+  its own, so programs not using OpenAPI don't carry the package.
+
+- **OpenAPI tags (web plugin):** `endpoints Library "/books" tags "Books" { … }` tags each endpoint, and an endpoint's
+  own `tags "Loans", "Admin"` replace its group's (`WithTags`). Without them, an endpoint is tagged with its
+  declaration's name, where ASP.NET Core tagged every endpoint with the application's.
+
 - **Fixed: sorting by an optional key** (`items.OrderBy(a => a.RelativePath)`, a .NET `string?`) compiled but threw
   when it ran, as Options couldn't be compared. They now order as C#'s nullables do: None first, then the values as
   their type orders them.

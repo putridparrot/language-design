@@ -65,7 +65,7 @@ syntax**, which then goes through the binder, lowering and C# emitter like anyth
 ### Using a plugin
 
 List the plugin in the program folder's `piper.json`. The plugins in this repository's [plugins](../plugins) folder
-come with piper (in a `plugins` folder beside it), and are named: `actors`, `args`, `aspects`, `config`, `data`, `remote-actors`, `parallel`,
+come with piper (in a `plugins` folder beside it), and are named: `actors`, `args`, `aspects`, `config`, `data`, `openapi`, `remote-actors`, `parallel`,
 `services`, `state-machines` and `web`. Any other is given as the path of its assembly, relative to the folder:
 
 ```json
@@ -734,6 +734,10 @@ A program calls them as `AppServices(builder.Services)` and `Api(app)`.
     with 404 or 409, the statuses `LoanError`'s `[Status]`es give. Markup is 200 `text/html`. In C#, these are
     `.Produces<Book>(200).Produces(404)`, written by hand beside the handler, where they can come to disagree with
     it. Piper.Web's own routes (htmx's script, live pages' stream) are left out of the description.
+  - **OpenAPI tags** group endpoints in API documentation: `tags "Books"` after a group's route tags each of its
+    endpoints, and an endpoint's own (`post "/{code}/loans" tags "Loans", "Admin" (…) => …;`) replace the group's.
+    Without them, an endpoint is tagged with its declaration's name (`Library`), rather than ASP.NET Core's default,
+    the application's name for every endpoint. Tags aren't policies, so they need no `policies` block.
 - **Checks** report at the clause what ASP.NET Core would only find when the program runs, or not at all:
   - a service registered twice (the later would silently replace the earlier)
   - a route mapped twice with the same verb
@@ -851,6 +855,32 @@ async test "a bid is taken" {
   anti-forgery token is a 400).
 - It's Piper.Web's own code: ASP.NET Core's `TestServer` would be another package for every web program to restore.
   [apps/auction](../apps/auction/README.md) and [apps/tracker](../apps/tracker/README.md) test their HTTP this way.
+
+### `openapi` (OpenAPI documents)
+
+[plugins/Piper.Plugins.OpenApi](../plugins/Piper.Plugins.OpenApi) adds no syntax. It brings Microsoft.AspNetCore.OpenApi,
+and [Piper.Web.OpenApi](../plugins/Piper.Web.OpenApi/PiperOpenApi.cs), whose schemas describe Piper's types as Piper
+writes them in JSON. It's a plugin of its own so that only programs wanting OpenAPI carry the package:
+
+```piper
+// piper.json: { "plugins": ["web", "openapi"] }
+using Piper.Web.OpenApi;
+
+builder.Services.AddPiperOpenApi();     // or AddOpenApi(o => o.AddPiperSchemas()), for a document set up otherwise
+let app = builder.Build();
+app.MapOpenApi();                       // /openapi/v1.json
+```
+
+- **Why it's needed:** Piper's types each have a JSON converter, which the OpenAPI generator can't see through, so
+  without this they're described as anything at all.
+- **What's described:**
+  - An Option is its value or `null`, and an optional field isn't required.
+  - A newtype is its value: an `IssueId` (`newtype IssueId = int;`) is an integer.
+  - An enum of fieldless variants is one of their names, a string. One with fields is one of its variants: a
+    fieldless variant is its name, and one with fields is an object with `kind` (its name) and its fields.
+  - A record with invariants is an object of its fields.
+- **With the web plugin's metadata,** each operation has its responses (200 with its value, 404 for an Option,
+  ProblemDetails with each status an error's `[Status]`es give) and its tags. Piper.Web's own routes aren't in it.
 
 ### `config` (typed configuration)
 
