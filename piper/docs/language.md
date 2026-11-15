@@ -771,6 +771,10 @@ enum Option<T> { Some(value: T), None }      // built in; Some(…) and None can
 
 - **Inference through `T?`:** `fn F<T>(v: T?)` can be called as `F(5)`, which infers `T = int` and wraps the argument in `Some`.
 - **`is` patterns elsewhere:** outside a condition, an `is` pattern can test but not bind, e.g. `let ok = x is Some(_);`.
+- **Ordering:** as C# orders nullables, None comes before any value, and values order as their type does, so a list
+  sorts by an optional key: `lots.OrderBy(l => l.reserve)`, `reserves.Sort()`. As in C#, `Sum`, `Min`, `Max` and
+  `Average` over optional numbers skip None (`[Some(3m), None, Some(1m)].Min()` is `Some(1m)`), and are None if
+  there's nothing else.
 
 ### Errors as values: `Result`
 

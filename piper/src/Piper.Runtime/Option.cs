@@ -6,8 +6,28 @@ namespace Piper.Runtime;
 /// <c>{ IsSome: true, Value: var v }</c>.
 /// </summary>
 [System.Text.Json.Serialization.JsonConverter(typeof(OptionJsonConverterFactory))]
-public readonly record struct Option<T>
+public readonly record struct Option<T> : IComparable<Option<T>>, IComparable
 {
+    /// <summary>
+    /// Orders as C# orders a nullable: None before any value, and values as <typeparamref name="T"/> orders them, so
+    /// <c>items.OrderBy(i =&gt; i.name)</c> works with an optional key. A T that can't be compared throws, as in C#.
+    /// </summary>
+    public int CompareTo(Option<T> other) =>
+        (IsSome, other.IsSome) switch
+        {
+            (false, false) => 0,
+            (false, true) => -1,
+            (true, false) => 1,
+            _ => Comparer<T>.Default.Compare(Value, other.Value),
+        };
+
+    int IComparable.CompareTo(object? obj) => obj switch
+    {
+        null => 1,
+        Option<T> other => CompareTo(other),
+        _ => throw new ArgumentException($"Can't compare an Option<{typeof(T).Name}> with a {obj.GetType().Name}.", nameof(obj)),
+    };
+
     private Option(T value)
     {
         IsSome = true;

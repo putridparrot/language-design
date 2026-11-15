@@ -1,0 +1,9 @@
+desk, vase, rug, lamp
+desk, lamp, rug, vase
+3
+1
+4
+2
+-1
+None, Some(1), Some(3)
+a, b.txt, c.cs

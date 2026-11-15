@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Fixed: sorting by an optional key** (`items.OrderBy(a => a.RelativePath)`, a .NET `string?`) compiled but threw
+  when it ran, as Options couldn't be compared. They now order as C#'s nullables do: None first, then the values as
+  their type orders them.
+- **Fixed: `Sum`, `Min`, `Max` and `Average` over optional numbers** (`List<decimal?>`) were an internal compiler
+  error. Piper read .NET's `IEnumerable<decimal?>` as its own sequence of Options, which it isn't; such a sequence is
+  now converted on the way, so they skip None as C#'s do. A .NET parameter holding `Nullable` some other way (a
+  `List<int?>`, an `int?[]`) no longer takes a Piper value, rather than making C# that doesn't compile.
+
 - **OpenAPI response types (web plugin):** each endpoint's metadata says what it answers, from its handler's type: an
   Option is 200 with its value or 404, a Result 200 with its value or a ProblemDetails for each status its error's
   `[Status]`es give (400 without), and markup 200 `text/html`. ASP.NET Core described the Option or Result itself as

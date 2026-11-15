@@ -23,6 +23,13 @@ public static class PiperInterop
 
     public static T? ToNullableValue<T>(Option<T> value) where T : struct => value.IsSome ? value.Value : null;
 
+    /// <summary>
+    /// Options passed where .NET takes a sequence of nullable values (<c>Enumerable.Sum(IEnumerable&lt;decimal?&gt;)</c>),
+    /// each None a null, as they're read: so Sum, Min, Max and Average skip None as C#'s skip null.
+    /// </summary>
+    public static IEnumerable<T?> ToNullableValues<T>(IEnumerable<Option<T>> values) where T : struct =>
+        values.Select(v => v.IsSome ? (T?)v.Value : null);
+
     /// <summary>An Option of a value type (or a type parameter) passed as <c>object?</c>: its value boxed, or null.</summary>
     public static object? ToNullableObject<T>(Option<T> value) => value.IsSome ? value.Value : null;
 

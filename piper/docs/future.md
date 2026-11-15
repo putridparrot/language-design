@@ -58,10 +58,6 @@ them too.
     And in an `actor`, as local functions where its loop starts, beside its state.
   - ~~**A list literal's `None`s typed by a later `Some`**~~, done: elements with no type of their own take the others'.
   - ~~**`[NotNullIfNotNull]` results**~~, done: given a plain value, the result is one.
-- **Sorting by an optional key** (found writing the OpenAPI test): `items.OrderBy(a => a.RelativePath)`, where .NET's
-  `string?` is read as `string?` (an Option), compiles, but throws when it runs ("Failed to compare two elements"), as
-  `Option<T>` isn't comparable. Either Option should compare as C#'s nullable does (None first), or the compiler should
-  report a key that can't be compared. `?? ""` works around it.
 - **Newtypes, later:** a newtype with type parameters, for phantom-typed ids (`newtype Id<T> = Guid;`, so an
   `Id<Issue>` isn't an `Id<Project>`); and newtypes as JSON dictionary keys (`Dictionary<IssueId, …>` written as an
   object, which needs the converter's property-name methods).

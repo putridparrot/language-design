@@ -432,7 +432,7 @@ public class WebPluginTests
                 await app.StartAsync();
                 let explorer = app.Services.GetRequiredService<IApiDescriptionGroupCollectionProvider>();
                 for group in explorer.ApiDescriptionGroups.Items {
-                    for api in group.Items.OrderBy(a => a.RelativePath ?? "") {
+                    for api in group.Items.OrderBy(a => a.RelativePath) {
                         let responses = api.SupportedResponseTypes
                             .OrderBy(r => r.StatusCode)
                             .Select(r => $"{r.StatusCode} {r.Type?.Name ?? "-"} {string.Join(",", r.ApiResponseFormats.Select(f => f.MediaType))}".TrimEnd());

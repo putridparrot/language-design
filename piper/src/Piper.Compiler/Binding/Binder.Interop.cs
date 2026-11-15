@@ -540,8 +540,10 @@ public sealed partial class Binder
                 var optional = parameter.Type.IsOption ? parameter.Type : _option.Construct([parameter.Type]);
                 return ConvertClrArgument(BindExpression(none, optional), parameter);
             }
-            return argument.Lambda is { } lambda
-                ? BindLambda(lambda, parameter.Type)
+            if (argument.Lambda is { } lambda)
+                return BindLambda(lambda, parameter.Type);
+            return IsNullableSequence(ClrParameterType(chosen, chosenPositions?[i] ?? i, isExpanded))
+                ? ToNullableSequence(argument.Bound!, parameter.Type)
                 : ConvertClrArgument(argument.Bound!, parameter);
         }).ToImmutableArray();
         var names = arguments.Any(a => a.Name is not null) ? arguments.Select(a => a.Name).ToImmutableArray() : [];
@@ -1005,6 +1007,11 @@ public sealed partial class Binder
                 { None: not null } => TakesNone(parameter) ? 0 : null,
                 { Lambda: { } lambda } when lambdaShapesOnly => FitsShape(lambda, parameter.Type) ? 0 : null,
                 { Lambda: { } lambda } => LambdaScore(lambda, parameter.Type),
+                // `IEnumerable<decimal?>` (Enumerable.Sum's): Piper reads it as a sequence of Options, but a Piper list
+                // of them holds Option<decimal>, not Nullable<decimal>. A sequence is converted on the way (see
+                // ToNullableValues); anything else holding a Nullable (a List<int?>, an int?[]) can't be given one.
+                var argument when ClrParameterType(candidate, positions?[i] ?? i, expanded) is var clr && HoldsNullable(clr) =>
+                    IsNullableSequence(clr) ? ConversionScore(argument.Bound!, parameter) : null,
                 var argument => ConversionScore(argument.Bound!, parameter),
             };
             if (score is not { } value)
@@ -1056,6 +1063,42 @@ public sealed partial class Binder
     private static bool TakesAnyDelegate(TypeSymbol type, LambdaExpressionSyntax lambda) =>
         ClrTypes.ToClr(type) is { } clr && (clr == typeof(Delegate) || clr == typeof(MulticastDelegate)) &&
         lambda.Parameters.All(p => p.Type is not null);
+
+    /// <summary>The .NET type of a candidate's parameter <paramref name="index"/>: for an expanded <c>params</c>, its element type.</summary>
+    private static Type? ClrParameterType(ClrCandidate candidate, int index, bool expanded)
+    {
+        var parameters = candidate.Member.GetParameters();
+        if (expanded && index >= parameters.Length - 1)
+            return parameters[^1].ParameterType.GetElementType();
+        return index < parameters.Length ? parameters[index].ParameterType : null;
+    }
+
+    /// <summary>
+    /// Whether a .NET type has a <c>Nullable&lt;T&gt;</c> inside it (<c>IEnumerable&lt;int?&gt;</c>, <c>int?[]</c>), as
+    /// opposed to being one, which an Option crosses to and from. No Piper value is such a type.
+    /// </summary>
+    private static bool HoldsNullable(Type? type)
+    {
+        if (type is null || type.IsGenericParameter)
+            return false;
+        if (type.IsByRef || type.IsArray)
+            return type.GetElementType() is { } element && (Nullable.GetUnderlyingType(element) is not null || HoldsNullable(element));
+        if (Nullable.GetUnderlyingType(type) is { } underlying)
+            return HoldsNullable(underlying);
+        return type.IsGenericType && type.GetGenericArguments().Any(a => Nullable.GetUnderlyingType(a) is not null || HoldsNullable(a));
+    }
+
+    /// <summary><c>IEnumerable&lt;T?&gt;</c> of a value type, which Piper's sequences of Options are converted to.</summary>
+    private static bool IsNullableSequence(Type? type) =>
+        type is { IsGenericType: true } && type.GetGenericTypeDefinition() == typeof(IEnumerable<>) &&
+        Nullable.GetUnderlyingType(type.GetGenericArguments()[0]) is { } underlying && !HoldsNullable(underlying);
+
+    /// <summary>A sequence of Options, given as .NET's <c>IEnumerable&lt;T?&gt;</c>: <c>PiperInterop.ToNullableValues(xs)</c>.</summary>
+    private static BoundExpression ToNullableSequence(BoundExpression argument, TypeSymbol parameter) =>
+        new BoundClrInvocationExpression(
+            null, ClrTypeSymbol.For(typeof(Piper.Runtime.PiperInterop)),
+            typeof(Piper.Runtime.PiperInterop).GetMethod(nameof(Piper.Runtime.PiperInterop.ToNullableValues))!,
+            [argument], parameter, [parameter.TypeArguments[0].TypeArguments[0]]);
 
     private int? ConversionScore(BoundExpression bound, ClrParameter parameter)
     {

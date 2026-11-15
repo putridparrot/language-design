@@ -1,0 +1,34 @@
+// Options order as C# orders nullables: None before any value, and values as their type orders them, so a list can be
+// sorted by an optional key.
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+
+record Lot(title: string, reserve: decimal?, seller: string?);
+
+fn Main() {
+    let lots = [
+        Lot("lamp", Some(20m), Some("ann")),
+        Lot("desk", None, Some("bob")),
+        Lot("rug", Some(5m), None),
+        Lot("vase", None, None),
+    ];
+    Console.WriteLine(string.Join(", ", lots.OrderBy(l => l.reserve).Select(l => l.title)));
+    Console.WriteLine(string.Join(", ", lots.OrderByDescending(l => l.seller).ThenBy(l => l.title).Select(l => l.title)));
+
+    // As C#'s Sum, Min, Max and Average over nullables, they skip None.
+    let reserves: List<decimal?> = [Some(3m), None, Some(1m)];
+    Console.WriteLine(reserves.Max());
+    Console.WriteLine(reserves.Min());
+    Console.WriteLine(reserves.Sum());
+    Console.WriteLine(reserves.Average());
+    let nothing: List<int?> = [None];
+    Console.WriteLine(nothing.Max() ?? -1);
+    reserves.Sort();
+    Console.WriteLine(string.Join(", ", reserves));
+
+    // A .NET `string?`, read as an Option: Path.GetExtension gives one.
+    let files = ["b.txt", "a", "c.cs"];
+    Console.WriteLine(string.Join(", ", files.OrderBy(f => Path.GetDirectoryName(f)).ThenBy(f => f)));
+}
