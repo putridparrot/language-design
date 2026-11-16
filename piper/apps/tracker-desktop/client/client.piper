@@ -28,44 +28,32 @@ record ApiError(status: int, message: string);
 class TrackerClient(http: HttpClient, user: string) {
     let json = JsonSerializerOptions(JsonSerializerDefaults.Web);
 
-    async fn Projects() => Task<Result<List<Project>, ApiError>> {
-        let content = (await Send(HttpMethod.Get, url$"/api/projects", None))?;
-        Parsed(JsonSerializer.Deserialize<List<Project>>(content, json))
-    }
+    async fn Projects() => Task<Result<List<Project>, ApiError>> =
+        await Send<List<Project>>(HttpMethod.Get, url$"/api/projects", None);
 
-    async fn Issues(projectId: int, status: string?, text: string?) => Task<Result<List<IssueView>, ApiError>> {
+    async fn Issues(projectId: int, status: string?, text: string?) => Task<Result<List<IssueView>, ApiError>> =
         // Each value is encoded for the query, and one that's None leaves its parameter out.
-        let content = (await Send(HttpMethod.Get, url$"/api/projects/{projectId}/issues?status={status}&q={text}", None))?;
-        Parsed(JsonSerializer.Deserialize<List<IssueView>>(content, json))
-    }
+        await Send<List<IssueView>>(HttpMethod.Get, url$"/api/projects/{projectId}/issues?status={status}&q={text}", None);
 
-    async fn AddIssue(projectId: int, issue: NewIssue) => Task<Result<IssueView, ApiError>> {
-        let content = (await Send(HttpMethod.Post, $"/api/projects/{projectId}/issues", Some(JsonSerializer.Serialize(issue, json))))?;
-        Parsed(JsonSerializer.Deserialize<IssueView>(content, json))
-    }
+    async fn AddIssue(projectId: int, issue: NewIssue) => Task<Result<IssueView, ApiError>> =
+        await Send<IssueView>(HttpMethod.Post, $"/api/projects/{projectId}/issues", Some(JsonSerializer.Serialize(issue, json)));
 
     /// Moves an issue through its workflow: `action` is the event's kind ("Start"), with its fields in `fields`.
     async fn Act(issueId: int, action: string, fields: Dictionary<string, string>) => Task<Result<IssueView, ApiError>> {
         let body: Dictionary<string, string> = ["kind": action, ...fields];
-        let content = (await Send(HttpMethod.Post, $"/api/issues/{issueId}/events", Some(JsonSerializer.Serialize(body, json))))?;
-        Parsed(JsonSerializer.Deserialize<IssueView>(content, json))
+        await Send<IssueView>(HttpMethod.Post, $"/api/issues/{issueId}/events", Some(JsonSerializer.Serialize(body, json)))
     }
 
     /// An issue's comments, oldest first.
-    async fn Comments(issueId: int) => Task<Result<List<CommentView>, ApiError>> {
-        let content = (await Send(HttpMethod.Get, $"/api/issues/{issueId}/comments", None))?;
-        Parsed(JsonSerializer.Deserialize<List<CommentView>>(content, json))
-    }
+    async fn Comments(issueId: int) => Task<Result<List<CommentView>, ApiError>> =
+        await Send<List<CommentView>>(HttpMethod.Get, $"/api/issues/{issueId}/comments", None);
 
-    async fn AddComment(issueId: int, text: string) => Task<Result<CommentView, ApiError>> {
-        let content = (await Send(HttpMethod.Post, $"/api/issues/{issueId}/comments", Some(JsonSerializer.Serialize(NewComment(text), json))))?;
-        Parsed(JsonSerializer.Deserialize<CommentView>(content, json))
-    }
+    async fn AddComment(issueId: int, text: string) => Task<Result<CommentView, ApiError>> =
+        await Send<CommentView>(HttpMethod.Post, $"/api/issues/{issueId}/comments", Some(JsonSerializer.Serialize(NewComment(text), json)));
 
-    /// Sends a request as the user; the body of a successful answer. It gives text, not a deserialized `T`: .NET's
-    /// `Deserialize<T>` can give null for any T, which Piper can't see through a type parameter, so each caller
-    /// deserializes to its own type, whose result Piper knows is optional.
-    private async fn Send(method: HttpMethod, path: Url, body: string?) => Task<Result<string, ApiError>> {
+    /// Sends a request as the user; the successful answer's body as a `T`, or why there's none. .NET's
+    /// `Deserialize<T>` gives null for a JSON `null`, which Piper sees as None, so that's an error too.
+    private async fn Send<T>(method: HttpMethod, path: Url, body: string?) => Task<Result<T, ApiError>> {
         let request = HttpRequestMessage(method, path.ToUri());
         request.Headers.Add("X-User", user);
         if body is Some(text) {
@@ -77,17 +65,14 @@ class TrackerClient(http: HttpClient, user: string) {
             if !response.IsSuccessStatusCode {
                 return Err(ApiError((int)response.StatusCode, Problem(content) ?? response.ReasonPhrase ?? "failed"));
             }
-            return Ok(content);
+            return match JsonSerializer.Deserialize<T>(content, json) {
+                Some(value) => Ok(value),
+                None => Err(ApiError(200, "The API answered with nothing.")),
+            };
         } catch (e: HttpRequestException) {
             return Err(ApiError(0, $"Can't reach the API: {e.Message}"));
         }
     }
-
-    /// A deserialized answer, or an error if the API answered with nothing (JSON `null`).
-    private fn Parsed<T>(value: T?) => Result<T, ApiError> = match value {
-        Some(v) => Ok(v),
-        None => Err(ApiError(200, "The API answered with nothing.")),
-    };
 
     /// What a ProblemDetails answer says: its detail, or its title.
     private fn Problem(content: string) => string? {

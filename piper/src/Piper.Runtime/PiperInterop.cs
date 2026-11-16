@@ -3,7 +3,11 @@ namespace Piper.Runtime;
 /// <summary>Where .NET's null meets Piper's Option: compiled code calls these at the boundary.</summary>
 public static class PiperInterop
 {
-    public static Option<T> FromNullableReference<T>(T? value) where T : class =>
+    /// <summary>
+    /// A .NET value that may be null, as an Option. Unconstrained, so it serves a type parameter too (<c>Deserialize&lt;T&gt;</c>
+    /// in a generic Piper function): for a value-type T, .NET's <c>T?</c> is T itself, never null, so it's always Some.
+    /// </summary>
+    public static Option<T> FromNullableReference<T>(T? value) =>
         value is null ? Option<T>.None : Option<T>.Some(value);
 
     public static Option<T> FromNullableValue<T>(T? value) where T : struct =>
@@ -13,13 +17,14 @@ public static class PiperInterop
     /// A .NET task whose result may be null (<c>FirstOrDefaultAsync</c>, <c>ReadLineAsync</c>), as one whose result is an
     /// Option: <c>await</c> gives None for null.
     /// </summary>
-    public static async Task<Option<T>> FromNullableTask<T>(Task<T?> task) where T : class =>
+    public static async Task<Option<T>> FromNullableTask<T>(Task<T?> task) =>
         FromNullableReference(await task.ConfigureAwait(false));
 
-    public static async ValueTask<Option<T>> FromNullableTask<T>(ValueTask<T?> task) where T : class =>
+    public static async ValueTask<Option<T>> FromNullableTask<T>(ValueTask<T?> task) =>
         FromNullableReference(await task.ConfigureAwait(false));
 
-    public static T? ToNullableReference<T>(Option<T> value) where T : class => value.IsSome ? value.Value : null;
+    /// <summary>An Option passed where .NET accepts null: None as null (<c>default</c> for a value-type T, as C#'s <c>T?</c> is).</summary>
+    public static T? ToNullableReference<T>(Option<T> value) => value.IsSome ? value.Value : default;
 
     public static T? ToNullableValue<T>(Option<T> value) where T : struct => value.IsSome ? value.Value : null;
 
@@ -37,7 +42,7 @@ public static class PiperInterop
     /// For <c>out let v</c> where .NET may write null: the call's own result passes through, and <paramref name="converted"/>
     /// gets the written value as an Option (<c>AfterOutReference(d.TryGetValue(k, out var t), t, out v)</c>).
     /// </summary>
-    public static TResult AfterOutReference<TResult, T>(TResult result, T? value, out Option<T> converted) where T : class
+    public static TResult AfterOutReference<TResult, T>(TResult result, T? value, out Option<T> converted)
     {
         converted = FromNullableReference(value);
         return result;

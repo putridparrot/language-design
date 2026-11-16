@@ -26,7 +26,9 @@ record ChunkResult(id: int, primes: long, worker: string);
 /// Splits `2..<limit` into `count` chunks, which between them cover every number once.
 fn Chunks(limit: long, count: int) => List<Chunk> {
     let size = (limit - 2 + count - 1) / count;
-    [...Enumerable.Range(0, count).Select(i => Chunk(i, 2 + i * size, System.Math.Min(limit, 2 + (i + 1) * size)))]
+    // Both ends stop at the limit: with more chunks than numbers (`Chunks(3, 3)`), the last are empty, rather than
+    // starting past the limit and running backwards. The property test below found that.
+    [...Enumerable.Range(0, count).Select(i => Chunk(i, System.Math.Min(limit, 2 + i * size), System.Math.Min(limit, 2 + (i + 1) * size)))]
 }
 
 fn IsPrime(n: long) => bool {
@@ -168,10 +170,12 @@ async fn Main(args: string[]) {
     }
 }
 
-test "the chunks cover the range once, with no gaps" {
-    let chunks = Chunks(1000L, 7);
+// A property test: any range split among any number of workers, not just one chosen case.
+test "the chunks cover the range once, with no gaps" for (limit: long in 3..100_000, count: int in 1..64) runs 500 {
+    let chunks = Chunks(limit, count);
+    AssertEqual(count, chunks.Count);
     AssertEqual(2L, chunks[0].from);
-    AssertEqual(1000L, chunks[chunks.Count - 1].to);
+    AssertEqual(limit, chunks[chunks.Count - 1].to);
     for i in 1..<chunks.Count {
         AssertEqual(chunks[i - 1].to, chunks[i].from);
     }
@@ -179,5 +183,8 @@ test "the chunks cover the range once, with no gaps" {
 
 test "counting primes" {
     AssertEqual(25L, CountPrimes(2L, 100L));
-    AssertEqual(CountPrimes(2L, 1000L), Chunks(1000L, 7).Sum(c => CountPrimes(c.from, c.to)));
+}
+
+test "counting in chunks gives the same count" for (limit: long in 3..2_000, count: int in 1..16) {
+    AssertEqual(CountPrimes(2L, limit), Chunks(limit, count).Sum(c => CountPrimes(c.from, c.to)));
 }

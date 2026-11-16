@@ -889,7 +889,7 @@ public sealed partial class Binder
         if (SyntaxFacts.GetCompoundAssignmentOperator(syntax.Operator.Kind) is not { } compound)
         {
             // None assigned to a .NET property that accepts null.
-            if (value.Type.IsOption && value.Type.TypeArguments[0] == target.Type && ClrTypes.IsReferenceType(target.Type) &&
+            if (value.Type.IsOption && value.Type.TypeArguments[0] == target.Type && ClrTypes.IsNullableAtBoundary(target.Type) &&
                 target is not BoundIndexExpression { PiperIndexer: not null })
                 return new BoundClrAssignmentExpression(target, null, new BoundNullableBoundaryExpression(value, NullableBoundaryKind.ToNullableReference, target.Type));
             var converted = Convert(value, target.Type, syntax.Value.Span);

@@ -56,7 +56,7 @@ public sealed partial class WebPlugin
     private sealed record PolicyName(Concern Concern, string Name, Token Token);
 
     /// <summary>What an <c>endpoints</c> block noted for the analysis: the named policies it uses, and its policy words.</summary>
-    private sealed record EndpointsData(ImmutableArray<PolicyName> Uses, ImmutableArray<Token> Words);
+    private sealed record EndpointsData(Token Name, ImmutableArray<PolicyName> Uses, ImmutableArray<Token> Words, ImmutableArray<LambdaExpressionSyntax> Handlers);
 
     /// <summary>What a <c>policies</c> block noted for the analysis: the policies it declares.</summary>
     private sealed record PoliciesData(ImmutableArray<PolicyName> Declared);
@@ -414,6 +414,8 @@ public sealed partial class WebPlugin
     {
         WarnAboutStatusFields(analysis);
         AnalyzePolicies(analysis);
+        AnalyzeServers(analysis);
+        AnalyzeServerServices(analysis);
     }
 
     /// <summary>

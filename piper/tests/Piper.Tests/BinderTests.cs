@@ -342,6 +342,95 @@ public class BinderTests
     }
 
     [Fact]
+    public void An_argument_without_a_type_takes_it_from_the_others()
+    {
+        // None, Ok(…), [] alone can't say their type; a generic call's other arguments do, whichever comes first.
+        var result = Compilation.Compile("""
+            using System; using System.Collections.Generic;
+            fn Parse(text: string) => Result<int, string> = int.TryParse(text, out let n) ? Ok(n) : Err("no");
+            fn Same<T>(a: T, b: T) => bool = EqualityComparer<T>.Default.Equals(a, b);
+            fn Pick<T>(a: T, b: T) => T = a;
+            fn Main() {
+                Console.WriteLine(Same(Ok(1), Parse("1")));
+                Console.WriteLine(Same(None, Some(3)));
+                Console.WriteLine(Same(Err("no"), Parse("x")));
+                Console.WriteLine(Pick([], [1, 2]).Count);
+                let none: int? = None;
+                AssertEqual(Ok(1), Parse("1"));
+                AssertEqual(None, none);
+                AssertEqual(none, None);
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        var run = Runner.Run(result.Files);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("True\nFalse\nTrue\n0\n", run.Output.ReplaceLineEndings("\n"));
+    }
+
+    [Fact]
+    public void A_dotnet_null_through_a_type_parameter_is_None()
+    {
+        // .NET's T? for a Piper type parameter: null for any reference T, so Piper reads it as an Option.
+        var result = Compilation.Compile("""
+            using System; using System.Collections.Generic; using System.Linq; using System.Text.Json;
+            record Book(title: string);
+            fn Read<T>(json: string) => T? = JsonSerializer.Deserialize<T>(json);
+            fn Head<T>(xs: List<T>) => T? = xs.FirstOrDefault();
+            fn Main() {
+                Console.WriteLine(Read<Book>("null") is None);
+                Console.WriteLine(Read<Book>("{\"title\":\"Dune\"}")?.title ?? "none");
+                Console.WriteLine(Head(List<string>()) ?? "empty");
+                Console.WriteLine(Head(["a", "b"]) ?? "empty");
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        var run = Runner.Run(result.Files);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("True\nDune\nempty\na\n", run.Output.ReplaceLineEndings("\n"));
+    }
+
+    [Fact]
+    public void A_Piper_optional_type_parameter_passes_to_dotnet_as_null()
+    {
+        // EqualityComparer<T>.Equals(T? x, T? y): None goes as null (default for a value type, as in C#).
+        var result = Compilation.Compile("""
+            using System; using System.Collections.Generic;
+            fn Same<T>(a: T?, b: T?) => bool = EqualityComparer<T>.Default.Equals(a, b);
+            fn Main() {
+                let none: string? = None;
+                Console.WriteLine(Same(none, none));
+                Console.WriteLine(Same(Some("x"), none));
+                Console.WriteLine(Same(Some("x"), Some("x")));
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        var run = Runner.Run(result.Files);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("True\nFalse\nTrue\n", run.Output.ReplaceLineEndings("\n"));
+    }
+
+    [Fact]
+    public void A_dotnet_task_of_null_through_a_type_parameter_gives_None()
+    {
+        var result = Compilation.Compile("""
+            using System; using System.IO; using System.Text; using System.Text.Json; using System.Threading.Tasks;
+            record Book(title: string);
+            async fn Read<T>(json: string) => Task<T?> {
+                let stream = MemoryStream(Encoding.UTF8.GetBytes(json));
+                await JsonSerializer.DeserializeAsync<T>(stream)
+            }
+            async fn Main() => Task {
+                Console.WriteLine((await Read<Book>("null")) is None);
+                Console.WriteLine((await Read<Book>("{\"title\":\"Dune\"}"))?.title ?? "none");
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        var run = Runner.Run(result.Files);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("True\nDune\n", run.Output.ReplaceLineEndings("\n"));
+    }
+
+    [Fact]
     public void A_dotnet_generic_taking_an_Option_infers_from_a_Piper_optional()
     {
         // ToNullableValue<T>(Option<T>): T is inferred from the `int?`, as .NET's Option<T> is Piper's.

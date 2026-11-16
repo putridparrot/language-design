@@ -66,6 +66,7 @@ public class OpenApiPluginTests
             post "/loans" (loan: Loan) => Lend(loan);
             get "/placements/{id:int}" (id: BookId) => Place(id);
             get "/errors/last" () => LastError();
+            get "/books" (page: int?, shelf: Shelf?, after: BookId, by: string?) => Place(after);
         }
 
         async fn Main() {
@@ -157,6 +158,29 @@ public class OpenApiPluginTests
         Assert.Equal("string", Types(shelf));
         Assert.Equal(["Fiction", "Science"], shelf.GetProperty("enum").EnumerateArray().Select(v => v.GetString()!));
     }
+
+    [Fact]
+    public void A_query_parameter_is_described_as_the_value_it_takes()
+    {
+        // Options and newtypes are bound by their TryParse, which ASP.NET Core describes as a string.
+        var parameters = Generated.Value.GetProperty("paths").GetProperty("/api/books").GetProperty("get").GetProperty("parameters")
+            .EnumerateArray().ToDictionary(p => p.GetProperty("name").GetString()!);
+        bool Required(string name) => parameters[name].TryGetProperty("required", out var r) && r.GetBoolean();
+
+        Assert.Equal("integer", Types(parameters["page"].GetProperty("schema")));
+        Assert.False(Required("page"));
+        Assert.Equal("string", Types(parameters["shelf"].GetProperty("schema")));
+        Assert.Equal(["Fiction", "Science"], ResolvedEnum(parameters["shelf"].GetProperty("schema")));
+        Assert.False(Required("shelf"));
+        Assert.Equal("integer", Types(parameters["after"].GetProperty("schema")));
+        Assert.True(Required("after"));
+        Assert.Equal("string", Types(parameters["by"].GetProperty("schema")));
+        Assert.False(Required("by"));
+    }
+
+    private static List<string> ResolvedEnum(JsonElement schema) =>
+        (schema.TryGetProperty("$ref", out var reference) ? Schema(reference.GetString()!.Split('/')[^1]) : schema)
+            .GetProperty("enum").EnumerateArray().Select(v => v.GetString()!).ToList();
 
     [Fact]
     public void An_optional_result_is_its_value_and_a_404()

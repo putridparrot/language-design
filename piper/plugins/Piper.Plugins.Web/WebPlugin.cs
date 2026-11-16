@@ -85,6 +85,7 @@ public sealed partial class WebPlugin : IPiperPlugin
                 ["expire"] = "How long a cached response is used: `expire 30 seconds`.",
             },
         },
+        ServerKeyword(),
     ];
 
     /// <summary>
@@ -118,6 +119,8 @@ public sealed partial class WebPlugin : IPiperPlugin
 
         var router = prefix is null ? null : p.FreshName("group");
         var mappings = new List<StatementSyntax>();
+        // Each mapped handler, in order, for the servers' checks of what they take (WebServer.cs).
+        var handlers = new List<LambdaExpressionSyntax>();
         var mapped = new HashSet<string>();
         var routeNames = new HashSet<string>();
         var routeFunctions = new List<string>();
@@ -166,6 +169,7 @@ public sealed partial class WebPlugin : IPiperPlugin
             if (handler.Parameters.Any(parameter => parameter.Type is null))
                 continue;
             CheckRoute(p, routeToken, (string)route.Value!, handler);
+            handlers.Add(handler);
             if (endpointName is not null)
                 routeFunctions.Add(RouteFunction(endpointName, (string?)prefix?.Value + (string)route.Value!, routeToken.Span, handler, routeHoles));
 
@@ -178,7 +182,7 @@ public sealed partial class WebPlugin : IPiperPlugin
             mappings.Add(new ExpressionStatementSyntax(endpoint.Span, ApplyPolicies(p, endpoint, words.Values)));
         }
         p.Expect(TokenKind.CloseBrace);
-        p.Data = new EndpointsData([.. policyUses], [.. policyWords]);
+        p.Data = new EndpointsData(name, [.. policyUses], [.. policyWords], [.. handlers]);
 
         if (router is not null)
             mappings.Insert(0, p.Template.Statement($"let $group = {Routing}.MapGroup(app, $prefix);", ("group", router), ("prefix", prefix!)));

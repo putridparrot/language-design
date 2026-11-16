@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.Builder;
 
 async test "the load run through every node's API reserves each unit exactly once" {
     let cluster = await StartCluster();
-    let apps = cluster.Select(shards => BuildApi(shards, "http://127.0.0.1:0")).ToList();
+    let apps = cluster.Select(shards => StockServer(shards, "http://127.0.0.1:0")).ToList();
     for app in apps { await app.StartAsync(); }
     let urls: List<string> = [...apps.Select(app => app.Urls.First())];
 
@@ -23,6 +23,12 @@ async test "the load run through every node's API reserves each unit exactly onc
     using let http = HttpClient();
     let bad = await http.PostAsync($"{urls[0]}/stock/gear/reserve?quantity=0", None);
     AssertEqual(HttpStatusCode.BadRequest, bad.StatusCode);
+
+    // Each node is live, and ready once its warehouse answers.
+    for url in urls {
+        AssertEqual("Healthy", await http.GetStringAsync($"{url}/healthz"));
+        AssertEqual("Healthy", await http.GetStringAsync($"{url}/ready"));
+    }
 
     for app in apps { await app.StopAsync(); }
     await StopCluster(cluster);

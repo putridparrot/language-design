@@ -1,7 +1,7 @@
 # Samples
 
 Small, runnable programs, one per area of the language. Each runs with `piper run samples/<name>`. The tests in
-`testing.piper` and `library/` run with `piper test samples/<name>`. The test suite runs every sample, so they stay
+`testing.piper`, `library/`, `todo-api/` and `grid/` run with `piper test samples/<name>`. The test suite runs every sample, so they stay
 correct.
 
 | Sample | What it shows |
@@ -17,17 +17,17 @@ correct.
 | [contracts.piper](contracts.piper) | `requires`: preconditions on functions and invariants on records, checked on every call and copy, and at compile time for constant arguments |
 | [classes.piper](classes.piper) | Classes: a primary constructor, private and public fields, a property, private methods, identity, an `Exception` subclass, abstract and virtual methods with overrides and `base` calls, type patterns (`c: Circle`) and casts, overriding a protected .NET method, a generic class |
 | [operators.piper](operators.piper) | Arithmetic operators on records, including unary minus and a static operator for `2 * v`, and `+=` |
-| [testing.piper](testing.piper) | `test` blocks, `Assert` and `AssertEqual`, next to the code they test |
+| [testing.piper](testing.piper) | `test` blocks, `Assert` and `AssertEqual`, next to the code they test; property tests over generated values (`for (age: int in 0..1_000_000) runs 1000`, `requires`), with a generator written in Piper (`PiperGen`) |
 | [library/](library) | A program of several files with a `piper.json`: namespaces, `using` and qualified names, `private` functions, types and methods (and what a public signature can't expose), extending a type from another file, and tests |
 | [web/](web) | ASP.NET Core from `piper.json`'s `"frameworks"`: a minimal API with dependency injection, which serves on a free port, calls itself and stops |
 | [services/](services) | Dependency injection in a console program, with the services plugin's `services { }` and no web framework (build `plugins/Piper.Plugins.Services` first) |
 | [webapp/](webapp) | The same kind of web API declared with the services plugin's `services { }` and the web plugin's `endpoints { }` (build both plugins first), whose piper.json lists only the plugins; with a `policies` block, an admin group needing a role, an `anonymous` endpoint and a rate-limited search |
-| [todo-api/](todo-api) | A to-do REST server with DI services and endpoints: JSON in and out, route, query and body parameters, 201/204/400/404 responses. `piper run samples/todo-api --serve` serves on localhost:5080 (see its [README](todo-api/README.md)) |
+| [todo-api/](todo-api) | A to-do REST server declared with `server` (services, endpoints, ProblemDetails, OpenAPI, health and readiness checks): JSON in and out, route, query and body parameters, a newtype id, 201/400/404 responses, an OpenAPI document made from the handlers' types (the openapi plugin, with tags), and tests calling it from memory with `TestClient`. `piper run samples/todo-api --serve` serves on localhost:5080 (see its [README](todo-api/README.md)) |
 | [actors/](actors) | Actors from the actors plugin (build `plugins/Piper.Plugins.Actors` first): an account with private state, which a hundred tasks deposit into at once, with tells, asks, an async handler and a refused withdrawal |
 | [remote-actors/](remote-actors) | Actors across processes and machines, with the remote actors plugin (build `plugins/Piper.Plugins.Actors.Remote` first): run with no arguments for two nodes in one process, or `-- host 8000` and `-- client 8001 127.0.0.1:8000` in two terminals |
-| [grid/](grid) | Grid computing on the remote actors plugin: a coordinator splits a job into chunks for workers on many nodes, which take the next chunk when they're free, and a failed or unreachable node's chunks go to the others. Run with no arguments for worker nodes in one process, or `-- worker 8001` on each machine and then `-- coordinator 8000 <host:port>…` |
+| [grid/](grid) | Grid computing on the remote actors plugin: a coordinator splits a job into chunks for workers on many nodes, which take the next chunk when they're free, and a failed or unreachable node's chunks go to the others. Its property tests split any range among any number of workers (and found chunks that ran backwards). Run with no arguments for worker nodes in one process, or `-- worker 8001` on each machine and then `-- coordinator 8000 <host:port>…` |
 | [state-machines/](state-machines) | State machines from the state machines plugin: an order whose `Pay`, `Ship` and `Cancel` events move it between states, with `if` guards choosing between transitions, `enter` actions, a refused event, and stored events replayed with `Fire`; and a turnstile |
-| [data/](data) | A small shop in SQLite: typed settings from the config plugin's `config`, and an EF Core database from the data plugin's `database`, queried with LINQ translated to SQL (shown with `ToQueryString`), optional columns as NULL |
+| [data/](data) | A small shop in SQLite: typed settings from the config plugin's `config`, and an EF Core database from the data plugin's `database`, queried with LINQ translated to SQL (shown with `ToQueryString`), raw SQL whose holes are parameters (`sql$"…"`), optional columns as NULL |
 | [aspects/](aspects) | Decorators from the aspects plugin: `[Trace]`, `[Timed]` and `[Retry(3, 10)]` on a flaky service's methods, sync and async, rewritten at compile time (a broken precondition isn't retried); and `[Notify]` giving a view model `INotifyPropertyChanged` and a `[Command]` |
 | [plugins/](plugins) | Extending the language without changing the compiler: `parallel for` and `concurrency { }` from a compiler plugin listed in `piper.json` (build `plugins/Piper.Plugins.Parallel` first), and a trailing closure (`Retry(3) { … }`) |
 

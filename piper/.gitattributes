@@ -1,0 +1,9 @@
+# Text files are LF in the repository and in every checkout, whatever core.autocrlf says: tests embed Piper source in
+# raw strings and find markers like "form>\n" in it, which a CRLF checkout breaks.
+* text=auto eol=lf
+
+*.db binary
+*.dll binary
+*.exe binary
+*.png binary
+*.ico binary

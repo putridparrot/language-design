@@ -1,0 +1,81 @@
+// The API's tests: `piper test samples/todo-api`. TestClient (from the web plugin's Piper.Web) serves the app TodoServer
+// makes from memory, with no port, and is an HttpClient calling it; disposing it stops the app.
+
+using System.Collections.Generic;
+using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text;
+using System.Text.Json;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Builder;
+using Piper.Web;
+
+async fn Started() => Task<TestClient<WebApplication>> = await TestClient.Start(() => TodoServer([], quiet: true));
+
+async test "a to-do is added, found, done and removed" {
+    using let api = await Started();
+    let created = await api.PostAsJsonAsync("/api/todos", NewTodo("Write tests", Some(Priority.High), None));
+    AssertEqual(HttpStatusCode.Created, created.StatusCode);
+    // ReadFromJsonAsync gives None for a JSON null, so the test says what it expected instead.
+    let Some(todo) = await created.Content.ReadFromJsonAsync<Todo>() else { Assert(false, "no to-do came back"); return; };
+    AssertEqual(TodoId(1), todo.id);
+    AssertEqual(Priority.High, todo.priority);
+    AssertEqual("/api/todos/1", created.Headers.Location?.ToString() ?? "");
+
+    AssertEqual(HttpStatusCode.OK, (await api.PutAsync("/api/todos/1/done", None)).StatusCode);
+    let done = await api.GetFromJsonAsync<List<Todo>>("/api/todos?done=true") ?? [];
+    AssertEqual([TodoId(1)], done.Select(t => t.id).ToList());
+
+    AssertEqual(HttpStatusCode.OK, (await api.DeleteAsync("/api/todos/1")).StatusCode);
+    AssertEqual(HttpStatusCode.NotFound, (await api.GetAsync("/api/todos/1")).StatusCode);
+    AssertEqual(HttpStatusCode.NotFound, (await api.DeleteAsync("/api/todos/1")).StatusCode);
+}
+
+async test "a blank title is refused before the handler runs" {
+    using let api = await Started();
+    let blank = StringContent("""{"title": "  "}""", Encoding.UTF8, "application/json");
+    AssertEqual(HttpStatusCode.BadRequest, (await api.PostAsync("/api/todos", blank)).StatusCode);
+    AssertEqual("[]", await api.GetStringAsync("/api/todos"));
+}
+
+async test "the OpenAPI document describes the endpoints as they answer, and the types as they're written in JSON" {
+    using let api = await Started();
+    using let document = JsonDocument.Parse(await api.GetStringAsync("/openapi/v1.json"));
+    let root = document.RootElement;
+
+    let paths = root.GetProperty("paths");
+    fn Statuses(path: string, verb: string) => List<string> =
+        paths.GetProperty(path).GetProperty(verb).GetProperty("responses").EnumerateObject().Select(r => r.Name).ToList();
+
+    // Find and Remove answer an Option: 200 with the to-do, or 404. Add answers TypedResults.Created: 201.
+    AssertEqual(["200", "404"], Statuses("/api/todos/{id}", "get"));
+    AssertEqual(["200", "404"], Statuses("/api/todos/{id}", "delete"));
+    AssertEqual(["201"], Statuses("/api/todos", "post"));
+
+    // An optional query value is described as what it's read as (a bool), and may be left out.
+    let done = paths.GetProperty("/api/todos").GetProperty("get").GetProperty("parameters")[0];
+    AssertEqual("boolean", done.GetProperty("schema").GetProperty("type").GetString() ?? "");
+    Assert(!done.TryGetProperty("required", out let _));
+
+    // Each endpoint has its group's tag, or its own.
+    AssertEqual("Todos", paths.GetProperty("/api/todos/{id}").GetProperty("get").GetProperty("tags")[0].GetString() ?? "");
+    AssertEqual("Greetings", paths.GetProperty("/api/hello").GetProperty("get").GetProperty("tags")[0].GetString() ?? "");
+
+    // A TodoId is an integer, not {"value": …}; the optional note isn't required.
+    let schemas = root.GetProperty("components").GetProperty("schemas");
+    Assert(schemas.GetProperty("TodoId").GetProperty("type").ToString().Contains("integer"));
+    let required = schemas.GetProperty("Todo").GetProperty("required").EnumerateArray().Select(r => r.GetString() ?? "").ToList();
+    Assert(required.Contains("title") && !required.Contains("note"));
+}
+
+async test "health and readiness answer while the app runs, and errors are ProblemDetails" {
+    using let api = await Started();
+    AssertEqual("Healthy", await api.GetStringAsync("/healthz"));
+    AssertEqual("Healthy", await api.GetStringAsync("/ready"));
+    // A route nothing maps: a 404 with a ProblemDetails body, from `problems`.
+    let missing = await api.GetAsync("/nowhere");
+    AssertEqual(HttpStatusCode.NotFound, missing.StatusCode);
+    AssertEqual("application/problem+json", missing.Content.Headers.ContentType?.MediaType ?? "");
+}

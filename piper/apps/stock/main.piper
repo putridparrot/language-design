@@ -44,7 +44,7 @@ async fn Serve(options: Options) => Task<int> {
     }
     let local = options.host == "127.0.0.1" || options.host == "localhost";
     let url = if local { $"http://127.0.0.1:{options.http}" } else { $"http://*:{options.http}" };
-    let app = BuildApi(Shards(node, nodes), url);
+    let app = StockServer(Shards(node, nodes), url);
     Print($"Node {node.Address} (node {nodes.IndexOf(node.Address) + 1} of {nodes.Count}), HTTP on {url}");
     await app.RunAsync();
     await node.Remote().ShutdownAsync(true);

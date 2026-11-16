@@ -28,7 +28,9 @@ public static class AssemblyWriter
     /// What the program references beyond the platform: package and other assemblies are copied next to it, and an
     /// executable's runtimeconfig.json names the shared frameworks.
     /// </param>
-    public static AssemblyOutput Write(IEnumerable<GeneratedFile> files, string directory, string name, bool executable, ProgramReferences? references = null)
+    /// <param name="launcher">For an executable, whether to make a native launcher for this machine (not for a container).</param>
+    public static AssemblyOutput Write(
+        IEnumerable<GeneratedFile> files, string directory, string name, bool executable, ProgramReferences? references = null, bool launcher = true)
     {
         references ??= ProgramReferences.None;
         var build = Runner.Build(files, name, executable, references);
@@ -63,10 +65,47 @@ public static class AssemblyWriter
             return new AssemblyOutput([.. written], null, []);
 
         Write(name + ".runtimeconfig.json", Encoding.UTF8.GetBytes(RuntimeConfig(references.Frameworks)));
-        var launcher = WriteLauncher(directory, name);
-        if (launcher is not null)
-            written.Add(launcher);
-        return new AssemblyOutput([.. written], launcher, []);
+        var made = launcher ? WriteLauncher(directory, name) : null;
+        if (made is not null)
+            written.Add(made);
+        return new AssemblyOutput([.. written], made, []);
+    }
+
+    /// <summary>
+    /// <c>piper build --publish</c>: the executable, ready to run on .NET's container image, and a Dockerfile building
+    /// that image from the folder, so <c>docker build</c> needs neither the SDK nor the program's source. It's
+    /// framework-dependent, on <c>mcr.microsoft.com/dotnet/aspnet</c> when the program uses ASP.NET Core and
+    /// <c>…/runtime</c> otherwise, of this .NET's version. There's no native launcher (the image runs
+    /// <c>dotnet name.dll</c>); <paramref name="references"/>' native libraries should be the container's platform's
+    /// (resolved for <c>linux-x64</c>, say).
+    /// </summary>
+    public static AssemblyOutput Publish(IEnumerable<GeneratedFile> files, string directory, string name, ProgramReferences references)
+    {
+        if (references.Frameworks.Any(f => f.Name == "Microsoft.WindowsDesktop.App"))
+            return new AssemblyOutput([], null, ["A desktop program (Microsoft.WindowsDesktop.App) can't run in a Linux container; build it with --exe instead."]);
+        var output = Write(files, directory, name, executable: true, references, launcher: false);
+        if (!output.Success)
+            return output;
+
+        var version = $"{Environment.Version.Major}.{Environment.Version.Minor}";
+        var image = references.Frameworks.Any(f => f.Name == "Microsoft.AspNetCore.App") ? "aspnet" : "runtime";
+        var dockerfile = Path.Combine(directory, "Dockerfile");
+        File.WriteAllText(dockerfile, $$"""
+            # Made by `piper build --publish`: {{name}}, compiled, on .NET {{version}}'s {{image}} image. From this folder:
+            #
+            #   docker build -t {{name.ToLowerInvariant()}} .
+            #   docker run --rm {{name.ToLowerInvariant()}}
+            #
+            # Arguments after the image name go to the program's Main. A web app listens where its server's `urls` says,
+            # which must be on every interface ("http://*:8080") to be reached from outside the container: publish the
+            # port with -p 8080:8080.
+            FROM mcr.microsoft.com/dotnet/{{image}}:{{version}}
+            WORKDIR /app
+            COPY . .
+            ENTRYPOINT ["dotnet", "{{name}}.dll"]
+
+            """.ReplaceLineEndings("\n"));
+        return output with { Files = output.Files.Add(dockerfile) };
     }
 
     /// <summary>

@@ -391,7 +391,7 @@ public sealed partial class Binder
     {
         if (chosen.Member is not MethodInfo method || !method.ReturnType.IsGenericType ||
             method.ReturnType.GetGenericTypeDefinition() is var task && task != typeof(Task<>) && task != typeof(ValueTask<>) ||
-            chosen.ReturnType is not ClrTypeSymbol { TypeArguments: [var result] } returned || !ClrTypes.IsReferenceType(result) || result.IsOption)
+            chosen.ReturnType is not ClrTypeSymbol { TypeArguments: [var result] } returned || !ClrTypes.IsNullableAtBoundary(result) || result.IsOption)
         {
             return null;
         }
@@ -1492,7 +1492,7 @@ public sealed partial class Binder
             return null;
         if (Nullable.GetUnderlyingType(type) is not null)
             return (mapped, ClrBoundary.NullableValue);
-        if (state == NullabilityState.Nullable && ClrTypes.IsReferenceType(mapped))
+        if (state == NullabilityState.Nullable && ClrTypes.IsNullableAtBoundary(mapped))
             return (_option.Construct([mapped]), ClrBoundary.NullableReference);
         return (mapped, ClrBoundary.None);
     }

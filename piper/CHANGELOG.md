@@ -2,6 +2,56 @@
 
 ## Unreleased
 
+- **`piper build --publish`:** compiles a program for a container image, into `bin/publish`: the executable (without a
+  native launcher), its packages' assemblies with their native libraries for Linux (`linux-x64`, or `--runtime
+  linux-arm64`), and a `Dockerfile` on .NET's `aspnet` image for a web program, or `runtime` otherwise. `docker build`
+  then needs neither the SDK nor the source. Packages' native libraries can be resolved for another platform than the
+  machine's (`ProgramReferences.Resolve(…, runtime)`), each remembered separately in `obj/piper`.
+
+- **Every app is a `server`:** apps/stock and apps/grid map their routes in `endpoints` blocks (taking their `Shards`
+  and `Jobs` as services), and their `/healthz`, which said "ok" whatever the node's state, is now liveness, with
+  `/ready` asking the node's own actor; their Kubernetes readiness probes use it. apps/auction's server takes the
+  auctioneer that Main and its tests make.
+
+- **`config` in a server (web plugin):** `config Smtp;` reads a `config` record as the app is built, so a missing or
+  invalid value stops it at startup, listing every problem, and registers it (and as `IOptions<Smtp>`). `config smtp:
+  Smtp;` names it for the clauses after: `urls smtp.url;`.
+
+- **A server's services are checked (web plugin):** a handler, health check or `stopping` hook taking a service of
+  the program's own that nothing in the server registers is an error at the parameter, as is a class DI makes needing
+  one, a singleton taking a scoped service (a captive dependency), and `authorize` in a server with no authentication
+  scheme: what ASP.NET Core would only find at the first request. They're warnings where a registration could be out
+  of sight. See [plugins](docs/plugins.md#a-server).
+- **Fixed: tests running at once disturbed each other.** A captured program's output is now its own (a writer routing
+  to the run it comes from), not whatever was on the console meanwhile, such as another app's log; and a property
+  test's seed is its run's own. `.gitattributes` keeps text files LF in every checkout, as tests embed source and find
+  markers in it. A golden file now says `Infinity`, as the program prints, rather than `∞`, which the old capture's
+  culture gave.
+
+- **`server` (web plugin):** `server Shop(settings: Settings) { urls …; services AppServices; policies Security;
+  problems; openapi; endpoints Api; health "/healthz" ready "/ready" { check "db" (db: Db) => …; } stopping … ;
+  shutdown 30 seconds; }` says what a web app is made of, and becomes `fn Shop(settings) => WebApplication`, with its
+  middleware in the order ASP.NET Core needs (the policies' before the endpoints, ProblemDetails first). Health checks,
+  readiness and stopping hooks are handlers whose parameters are services. `configure { … }` and `use { … }` take
+  anything else. samples/todo-api and apps/tracker are built with one. See [plugins](docs/plugins.md#a-server).
+
+- **Fixed: an argument with no type of its own, before the one that gives it.** In a generic call, `None`, `Ok(…)`,
+  `Err(…)`, `null` and `[]` now take their type from the other arguments wherever they come: `Same(None, Some(3))`,
+  `Pick([], [1, 2])` and `AssertEqual(Ok(42), Parse("42"))` were errors (PIP0240), as each argument was bound in turn.
+  They're now bound after the arguments that have a type, and before lambdas.
+
+- **Fixed (openapi plugin): optional and newtype parameters.** A query, route or header parameter that's an Option or
+  a newtype (`done: bool?`, `after: BookId`) was described as a string, as ASP.NET Core binds it with its `TryParse`.
+  It's now described as the value it's read as (a boolean, an integer, an enum's names), and an optional one as not
+  required. Found by samples/todo-api, which now has an OpenAPI document, tests through `TestClient` and a newtype id.
+
+- **Fixed: .NET's null through a type parameter.** In `fn Read<T>(…) => T? = JsonSerializer.Deserialize<T>(…)`, a
+  result .NET may make null was read as a plain `T`, as Piper couldn't tell `T` would be a reference type, so JSON's
+  `null` came back as `Some(null)`. It's now a `T?`, with null as None, for results, properties, `out` parameters and
+  tasks; and a `T?` passes to .NET's `T?` parameters (`EqualityComparer<T>.Default.Equals(a, b)`), which it didn't.
+  Generic code that took such a result as a plain `T` must now handle None. PiperInterop's `FromNullableReference`,
+  `ToNullableReference`, `FromNullableTask` and `AfterOutReference` are no longer constrained to classes.
+
 - **Property tests:** `test "…" for (bids: List<int>) runs 1000 { … }` says how many cases must pass (100 without it;
   PIP0115 for one that isn't a whole number above 0). `PiperGen` and `PiperGen<T>` need no `using Piper.Runtime;`,
   as only those of Piper.Runtime's names are seen without it.

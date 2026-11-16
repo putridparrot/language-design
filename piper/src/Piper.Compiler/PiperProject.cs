@@ -173,7 +173,8 @@ public sealed record LoadedProject(PiperProject Project, ImmutableArray<IPiperPl
     /// code from the folder, so only what can't is loaded: the plugins that come with piper or were added with
     /// <c>piper plugin add</c>, and shared frameworks. The rest is left out and reported as a warning.
     /// </param>
-    public static (LoadedProject? Project, ImmutableArray<Diagnostic> Errors) Load(string directory, bool trusted = true)
+    /// <param name="runtime">The platform native libraries are for (<c>linux-x64</c>), when it isn't this machine: publishing for a container.</param>
+    public static (LoadedProject? Project, ImmutableArray<Diagnostic> Errors) Load(string directory, bool trusted = true, string? runtime = null)
     {
         var path = Path.Combine(directory, PiperProject.FileName);
         var source = new SourceText(File.ReadAllText(path), path);
@@ -203,7 +204,7 @@ public sealed record LoadedProject(PiperProject Project, ImmutableArray<IPiperPl
             packages.Clear();
         }
 
-        var (references, referenceErrors) = ProgramReferences.Resolve(directory, packages, frameworks, assemblies, source);
+        var (references, referenceErrors) = ProgramReferences.Resolve(directory, packages, frameworks, assemblies, source, runtime);
         if (!referenceErrors.IsEmpty)
             return (null, referenceErrors);
         ImmutableArray<Diagnostic> warnings = skipped.Count == 0 ? [] :

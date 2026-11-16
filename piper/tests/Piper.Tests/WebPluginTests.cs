@@ -149,6 +149,299 @@ public class WebPluginTests
         Assert.StartsWith("Unhandled exception: System.InvalidOperationException: The function given to TestClient.Start built no web app", run.Results[4].Failure);
     }
 
+    /// <summary>
+    /// A <c>server</c> builds its app as one function: its services (a block, and inline ones from its parameters),
+    /// middleware in order (problems, the app's own, the policies'), endpoints, health checks, and a hook run as it
+    /// stops. TestClient serves it as it would a hand-written build function.
+    /// </summary>
+    [Fact]
+    public void A_server_builds_the_app_with_its_middleware_in_order()
+    {
+        var result = Compilation.Compile([new SourceText(""""
+            using System;
+            using System.Collections.Generic;
+            using System.Net;
+            using System.Net.Http;
+            using Microsoft.AspNetCore.Builder;
+            using Microsoft.AspNetCore.Http;
+            using Microsoft.Extensions.DependencyInjection;
+            using Microsoft.Extensions.Primitives;
+            using Piper.Web;
+
+            trait Clock { fn Now() => string; }
+            record FixedClock(time: string);
+            extend FixedClock: Clock { fn Now() => string = this.time; }
+            class Log { public mut lines: List<string> = []; }
+            class Store { public mut up = true; }
+            class Greeting { fn Text() => string = "hi"; }
+
+            services AppServices {
+                transient Greeting;
+            }
+
+            policies Security {
+                authorize "admin" roles "Admin";
+            }
+
+            endpoints Api "/api" {
+                get "/time" (clock: Clock) => clock.Now();
+                get "/hi" (greeting: Greeting) => greeting.Text();
+                get "/admin" authorize "admin" () => "secret";
+                get "/broken" () => {
+                    let zero = 0;
+                    $"{1 / zero}"
+                };
+            }
+
+            server Shop(clock: Clock, log: Log, store: Store) {
+                urls "http://127.0.0.1:0";
+                logging off;
+                services AppServices;
+                singleton Clock = clock;
+                singleton Store = store;
+                singleton Log = log;
+                policies Security;
+                configure {
+                    builder.Services.AddAuthentication("Cookies").AddCookie("Cookies");
+                }
+                problems;
+                use {
+                    app.Use(async (context: HttpContext, next: RequestDelegate) => {
+                        context.Response.Headers["X-Shop"] = StringValues("yes");
+                        await next(context);
+                    });
+                }
+                endpoints Api;
+                health "/healthz" ready "/ready" {
+                    check "store" (store: Store) => store.up;
+                }
+                stopping (log: Log) => log.lines.Add("stopped");
+                shutdown 5 seconds;
+            }
+
+            fn Main() {}
+
+            async test "the server's parts work together" {
+                using let shop = await TestClient.Start(() => Shop(FixedClock("noon"), Log(), Store()));
+                let time = await shop.GetAsync("/api/time");
+                AssertEqual("noon", await time.Content.ReadAsStringAsync());
+                AssertEqual("yes", string.Join(",", time.Headers.GetValues("X-Shop")));
+                AssertEqual("hi", await shop.GetStringAsync("/api/hi"));
+                AssertEqual(HttpStatusCode.Redirect, (await shop.GetAsync("/api/admin")).StatusCode);
+
+                let broken = await shop.GetAsync("/api/broken");
+                AssertEqual(HttpStatusCode.InternalServerError, broken.StatusCode);
+                AssertEqual("application/problem+json", broken.Content.Headers.ContentType?.MediaType ?? "");
+
+                AssertEqual("Healthy", await shop.GetStringAsync("/healthz"));
+                AssertEqual("Healthy", await shop.GetStringAsync("/ready"));
+            }
+
+            async test "readiness fails while a check does, liveness doesn't, and stopping runs its hook" {
+                let log = Log();
+                let store = Store();
+                store.up = false;
+                using let shop = await TestClient.Start(() => Shop(FixedClock("noon"), log, store));
+                AssertEqual(HttpStatusCode.OK, (await shop.GetAsync("/healthz")).StatusCode);
+                AssertEqual(HttpStatusCode.ServiceUnavailable, (await shop.GetAsync("/ready")).StatusCode);
+                shop.Dispose();
+                AssertEqual(["stopped"], log.lines);
+            }
+            """", "main.piper")],
+            new CompilationOptions(LineDirectives: true, IncludeTests: true) { Plugins = Web.Value.Plugins, References = Web.Value.References });
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.RunTests(result.Files, references: result.References);
+        Assert.Empty(run.Errors);
+        Assert.True(run.Results.All(r => r.Passed), string.Join("\n", run.Results.Select(r => $"{r.Name}: {r.Failure}")));
+        Assert.Equal(2, run.Results.Length);
+    }
+
+    [Theory]
+    [InlineData("server S { endpoints Api; colour red; }", "colour", "'colour' isn't a server clause")]
+    [InlineData("server S { urls \"a\"; urls \"b\"; endpoints Api; }", "urls \"b\"", "'urls' is already given for S")]
+    [InlineData("server S { urls \"a\"; }", "S", "S maps no endpoints")]
+    [InlineData("server S { endpoints Api, Api; }", "Api;", "'Api' is already mapped by S")]
+    [InlineData("server S { endpoints Api; health \"/h\" { check \"a\" () => true; check \"a\" () => true; } }", "\"a\" () => true; }", "There's already a check named \"a\"")]
+    [InlineData("server S(port) { endpoints Api; }", "port", "Give 'port' a type")]
+    public void Mistakes_in_a_server_are_reported(string server, string at, string message)
+    {
+        var text = "endpoints Api { get \"/\" () => \"hi\"; }\nfn Main() {}\n" + server;
+        var errors = Compile(text).Diagnostics.Where(d => d.Code == "PIP0503").ToList();
+        var error = Assert.Single(errors);
+        Assert.Contains(message, error.Message);
+        Assert.Equal(text.LastIndexOf(at, StringComparison.Ordinal), error.Span.Start);
+    }
+
+    private static readonly Lazy<(ImmutableArray<IPiperPlugin> Plugins, ProgramReferences References)> WebAndConfig = new(() =>
+    {
+        var (plugins, errors) = PluginLoader.Load(PluginsDirectory(),
+            ["Piper.Plugins.Config/bin/plugin/Piper.Plugins.Config.dll", "Piper.Plugins.Web/bin/plugin/Piper.Plugins.Web.dll"]);
+        Assert.Empty(errors);
+        // ASP.NET Core has the configuration packages the config plugin would bring, so nothing is restored.
+        var (references, referenceErrors) = ProgramReferences.Resolve(
+            Path.GetTempPath(), ImmutableDictionary<string, string>.Empty, [.. plugins.SelectMany(p => p.Frameworks)], [.. plugins.SelectMany(PluginLoader.References)]);
+        Assert.Empty(referenceErrors);
+        return (plugins, references);
+    });
+
+    /// <summary>
+    /// <c>config shop: Shop;</c> reads the config as the app is built (a missing value stops it, saying which), registers
+    /// it (and as IOptions), and names it for the clauses after.
+    /// </summary>
+    [Fact]
+    public void A_server_reads_its_config_as_it_starts()
+    {
+        var result = Compilation.Compile([new SourceText(""""
+            using System;
+            using Microsoft.Extensions.Options;
+            using Piper.Web;
+
+            config Shop from "PiperServerConfigTest" {
+                name: string;
+                url: string = "http://127.0.0.1:0";
+            }
+
+            endpoints Api {
+                get "/name" (shop: Shop) => shop.name;
+                get "/options" (options: IOptions<Shop>) => options.Value.name;
+            }
+
+            server S {
+                config shop: Shop;
+                urls shop.url;
+                logging off;
+                endpoints Api;
+            }
+
+            fn Main() {}
+
+            async test "a config is read, registered and named" {
+                Environment.SetEnvironmentVariable("PiperServerConfigTest__Name", "Piper Books");
+                using let site = await TestClient.Start(() => S());
+                AssertEqual("Piper Books", await site.GetStringAsync("/name"));
+                AssertEqual("Piper Books", await site.GetStringAsync("/options"));
+            }
+
+            async test "a missing value stops the app as it starts" {
+                Environment.SetEnvironmentVariable("PiperServerConfigTest__Name", None);
+                mut message = "";
+                try {
+                    using let site = await TestClient.Start(() => S());
+                } catch (e: Exception) {
+                    message = e.Message;
+                }
+                Assert(message.Contains("PiperServerConfigTest:name is missing"), message);
+            }
+            """", "main.piper")],
+            new CompilationOptions(LineDirectives: true, IncludeTests: true) { Plugins = WebAndConfig.Value.Plugins, References = WebAndConfig.Value.References });
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Empty(result.Diagnostics);
+        var run = Runner.RunTests(result.Files, references: result.References);
+        Assert.Empty(run.Errors);
+        Assert.True(run.Results.All(r => r.Passed), string.Join("\n", run.Results.Select(r => $"{r.Name}: {r.Failure}")));
+        Assert.Equal(2, run.Results.Length);
+    }
+
+    private const string ServerServices = """
+        using Microsoft.Extensions.DependencyInjection;
+        trait Clock { fn Now() => string; }
+        record SystemClock();
+        extend SystemClock: Clock { fn Now() => string = "now"; }
+        class Db { public let name = "db"; }
+        class Store(db: Db) { public let label = db.name; }
+        record Settings(name: string);
+        endpoints Api {
+            get "/now" (clock: Clock) => clock.Now();
+            get "/store" (store: Store, body: Settings) => store.label;
+        }
+        fn Main() {}
+
+        """;
+
+    /// <summary>
+    /// What a server's handlers, checks and hooks take must be registered, and a singleton mustn't keep a scoped
+    /// service: errors at the parameter (or the server), as DI would only fail at the first request.
+    /// </summary>
+    [Theory]
+    [InlineData("server S { endpoints Api; }",
+        "PIP0503", "clock: Clock", "S registers no Clock, but this handler takes it",
+        "PIP0503", "store: Store", "S registers no Store, but this handler takes it")]
+    [InlineData("server S { singleton Clock => SystemClock; scoped Db; singleton Store; endpoints Api; }",
+        "PIP0503", "S {", "Store is a singleton, but takes Db, which is scoped", null, null, null)]
+    [InlineData("server S { singleton Clock => SystemClock; singleton Store; endpoints Api; }",
+        "PIP0503", "S {", "Store (registered for Store) takes a Db, which S doesn't register.", null, null, null)]
+    [InlineData("server S { singleton Clock => SystemClock; scoped Db; scoped Store; endpoints Api; health \"/h\" { check \"c\" (settings: Settings) => true; } }",
+        "PIP0503", "settings: Settings", "S registers no Settings, but it's given to this", null, null, null)]
+    [InlineData("server S { configure { builder.Services.AddSingleton(typeof(Store)); } endpoints Api; }",
+        "PIP0505", "clock: Clock", "S registers no Clock", "PIP0505", "store: Store", "S registers no Store")]
+    public void What_a_server_needs_is_checked_against_what_it_registers(
+        string server, string code1, string at1, string message1, string? code2, string? at2, string? message2)
+    {
+        var text = ServerServices + server;
+        var reported = Compile(text).Diagnostics.Where(d => d.Message.EndsWith("(web)")).OrderBy(d => d.Span.Start).ToList();
+        var expected = new List<(string Code, int At, string Message)> { (code1, text.LastIndexOf(at1, StringComparison.Ordinal), message1) };
+        if (code2 is not null)
+            expected.Add((code2, text.LastIndexOf(at2!, StringComparison.Ordinal), message2!));
+        Assert.True(expected.Count == reported.Count, string.Join("\n", reported.Select(d => d.Format())));
+        foreach (var ((code, at, message), diagnostic) in expected.Zip(reported))
+        {
+            Assert.Equal(code, diagnostic.Code);
+            Assert.Equal(at, diagnostic.Span.Start);
+            Assert.Contains(message, diagnostic.Message);
+        }
+    }
+
+    [Fact]
+    public void A_server_registering_what_it_needs_reports_nothing()
+    {
+        var result = Compile(ServerServices + """
+            services AppServices { scoped Db; scoped Store; }
+            server S {
+                singleton Clock => SystemClock;
+                singleton Settings = Settings("shop");
+                services AppServices;
+                endpoints Api;
+                health "/h" { check "c" (settings: Settings, store: Store) => settings.name != store.label; }
+                stopping (clock: Clock) => clock.Now();
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Empty(result.Diagnostics);
+    }
+
+    [Fact]
+    public void Endpoints_needing_a_signed_in_user_need_an_authentication_scheme()
+    {
+        var text = """
+            policies Security { authorize "admin" roles "Admin"; }
+            endpoints Api { get "/" authorize "admin" () => "hi"; }
+            server S { policies Security; endpoints Api; }
+            fn Main() {}
+            """;
+        var error = Assert.Single(Compile(text).Diagnostics);
+        Assert.Equal("PIP0503", error.Code);
+        Assert.Contains("Api has endpoints needing a signed-in user ('authorize'), but S adds no authentication scheme", error.Message);
+        Assert.Equal(text.IndexOf("Api; }", StringComparison.Ordinal), error.Span.Start);
+    }
+
+    [Fact]
+    public void A_server_mapping_guarded_endpoints_without_their_policies_is_warned_about()
+    {
+        var text = """
+            using Microsoft.Extensions.DependencyInjection;
+            policies Security { authorize "admin" roles "Admin"; }
+            endpoints Api { get "/" authorize "admin" () => "hi"; }
+            server S { configure { builder.Services.AddAuthentication("Cookies").AddCookie("Cookies"); } endpoints Api; }
+            fn Main() {}
+            """;
+        var result = Compile(text);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var warning = Assert.Single(result.Diagnostics);
+        Assert.Equal("PIP0505", warning.Code);
+        Assert.Contains("Api uses 'authorize', which needs its policies' middleware: add 'policies Name;' to S.", warning.Message);
+        Assert.Equal(text.IndexOf("Api; }", StringComparison.Ordinal), warning.Span.Start);
+    }
+
     private const string Types = """
         trait Clock { fn Now() => string; }
         record FixedClock(time: string);

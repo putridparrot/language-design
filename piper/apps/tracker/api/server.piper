@@ -38,25 +38,31 @@ class HeaderAuthentication(options: IOptionsMonitor<AuthenticationSchemeOptions>
     }
 }
 
-/// The web app, set up but not started: `Main` runs it, and the tests start it on a free port.
-fn BuildApp(settings: Settings, clock: Clock, notifier: Notifier, urls: string) => WebApplication {
-    let builder = WebApplication.CreateBuilder();
-    builder.Logging.ClearProviders();
-    let addresses: string[] = [urls];
-    builder.WebHost.UseUrls(addresses);
+/// The web app, set up but not started: `Main` runs it, and the tests serve it from memory. Becomes
+/// `fn TrackerServer(settings, clock, notifier, urls) => WebApplication`, with its middleware in the order ASP.NET Core
+/// needs (the policies' before the endpoints).
+server TrackerServer(settings: Settings, clock: Clock, notifier: Notifier, urls: string) {
+    urls urls;
+    logging off;
 
     // One database context per request, as EF Core expects.
-    builder.Services.AddScoped<TrackerDb>(provider => TrackerDb(DbContextOptionsBuilder<TrackerDb>().UseSqlite(settings.connection).Options));
-    builder.Services.AddSingleton<Clock>(clock);
-    builder.Services.AddSingleton<Notifier>(notifier);
-    Security(builder.Services, settings);
-    builder.Services.AddAuthentication(HeaderAuthentication.Scheme)
-        .AddScheme<AuthenticationSchemeOptions, HeaderAuthentication>(HeaderAuthentication.Scheme, options => {});
+    scoped TrackerDb = TrackerDb(DbContextOptionsBuilder<TrackerDb>().UseSqlite(settings.connection).Options);
+    singleton Clock = clock;
+    singleton Notifier = notifier;
 
-    let app = builder.Build();
-    UseSecurity(app);
-    Api(app);
-    app
+    policies Security(settings);
+    // Sign-in is the app's choice, so it's written against the builder.
+    configure {
+        builder.Services.AddAuthentication(HeaderAuthentication.Scheme)
+            .AddScheme<AuthenticationSchemeOptions, HeaderAuthentication>(HeaderAuthentication.Scheme, options => {});
+    }
+    problems;
+    endpoints Api;
+
+    // /healthz while the process runs; /ready when the database answers too.
+    health "/healthz" ready "/ready" {
+        check "database" async (db: TrackerDb) => await db.Database.CanConnectAsync();
+    }
 }
 
 /// Makes the database's tables, if they aren't there.

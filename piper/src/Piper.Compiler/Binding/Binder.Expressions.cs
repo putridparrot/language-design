@@ -1419,8 +1419,19 @@ public sealed partial class Binder
             _diagnostics.ReportWrongArgumentCount(syntax.Span, name, 2, syntax.Arguments.Length);
             return new BoundErrorExpression();
         }
-        var expected = RequireValue(BindExpression(syntax.Arguments[0]), syntax.Arguments[0].Span);
-        var actual = RequireValue(BindExpression(syntax.Arguments[1], expected.Type), syntax.Arguments[1].Span);
+        // The argument with a type of its own is bound first, and gives it to the other: `AssertEqual(Ok(42), Parse(s))`
+        // and `AssertEqual(None, Find(id))` as well as `AssertEqual(Find(id), None)`.
+        BoundExpression expected, actual;
+        if (NeedsContext(syntax.Arguments[0]) && !NeedsContext(syntax.Arguments[1]))
+        {
+            actual = RequireValue(BindExpression(syntax.Arguments[1]), syntax.Arguments[1].Span);
+            expected = RequireValue(BindExpression(syntax.Arguments[0], actual.Type), syntax.Arguments[0].Span);
+        }
+        else
+        {
+            expected = RequireValue(BindExpression(syntax.Arguments[0]), syntax.Arguments[0].Span);
+            actual = RequireValue(BindExpression(syntax.Arguments[1], expected.Type), syntax.Arguments[1].Span);
+        }
         if (expected.Type == TypeSymbol.Error || actual.Type == TypeSymbol.Error)
             return new BoundErrorExpression();
         if (CommonType([expected.Type, actual.Type], null, out _) is not { } type)
@@ -1611,14 +1622,17 @@ public sealed partial class Binder
             return null;
         }
 
-        // Lambdas are bound after the other arguments: those usually fix the lambda's parameter types
-        // (map(xs, x => x * 2) learns T from xs), and the lambda's body then tells us the rest (U).
+        // Arguments with a type of their own are bound first, as they fix the type parameters. Then those with none
+        // (`None`, `Ok(1)`, `[]`), which take theirs from the others: `Same(None, Some(3))`, `Pick([], [1, 2])`. Lambdas
+        // come last: the others usually fix their parameter types (map(xs, x => x * 2) learns T from xs), and the
+        // lambda's body then tells us the rest (U).
         var bound = new BoundExpression[declared.Count];
-        foreach (bool lambdas in new[] { false, true })
+        static int Pass(ExpressionSyntax argument) => argument is LambdaExpressionSyntax ? 2 : NeedsContext(argument) ? 1 : 0;
+        foreach (int pass in new[] { 0, 1, 2 })
         {
             for (int i = 0; i < declared.Count; i++)
             {
-                if (arguments[i] is LambdaExpressionSyntax != lambdas)
+                if (Pass(arguments[i]) != pass)
                     continue;
 
                 var unresolved = inferred.Where(p => !map.ContainsKey(p)).ToHashSet();

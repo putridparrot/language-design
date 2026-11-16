@@ -45,16 +45,16 @@ endpoints Site layout Page {
     };
 }
 
-/// The app, listening on `url`, and its auctioneer (which the tests drive directly too).
-fn BuildApp(url: string) => (app: WebApplication, auction: Auctioneer) {
-    let builder = WebApplication.CreateBuilder();
-    builder.Logging.ClearProviders();
-    builder.Services.AddAntiforgery();
-    let auction = Auctioneer.Spawn(Broadcast);
-    builder.Services.AddSingleton<Auctioneer>(auction);
-    let urls: string[] = [url];
-    builder.WebHost.UseUrls(urls);
-    let app = builder.Build();
-    Site(app);
-    (app, auction)
+/// The site, listening on `url`, with `auction`, which Main (and the tests) also drive directly: listing lots, and
+/// telling them the time. Becomes `fn AuctionServer(url, auction) => WebApplication`.
+server AuctionServer(url: string, auction: Auctioneer) {
+    urls url;
+    logging off;
+    // Forms carry an anti-forgery token, which Form<T> checks.
+    configure {
+        builder.Services.AddAntiforgery();
+    }
+    singleton Auctioneer = auction;
+    endpoints Site;
+    health "/healthz";
 }

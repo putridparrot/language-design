@@ -14,6 +14,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -24,7 +25,11 @@ using Microsoft.Extensions.Logging;
 // enum's variant is its name: { "id": 1, "title": "…", "done": false, "priority": "High", "note": null }.
 enum Priority { Low, Normal, High }
 
-record Todo(id: int, title: string, done: bool, priority: Priority, note: string?);
+// A to-do's id: an int that can't be mixed up with any other int (a count, a port). It's still 1 in JSON and in a
+// route (`/api/todos/1`), and sorts as its value does.
+newtype TodoId = int;
+
+record Todo(id: TodoId, title: string, done: bool, priority: Priority, note: string?);
 
 // What a client posts. The priority and note may be left out (None), and a title that's blank breaks the invariant,
 // which ASP.NET Core answers with 400 Bad Request before the handler runs.
@@ -46,7 +51,7 @@ extend SystemClock: Clock {
 // The store: one for the whole app (a singleton), so what one request adds the next one sees. DI makes it, passing the
 // Clock it's registered with.
 class TodoStore(clock: Clock) {
-    let todos: Dictionary<int, Todo> = Dictionary();
+    let todos: Dictionary<TodoId, Todo> = Dictionary();
     let started = clock.Now();
     mut nextId = 1;
 
@@ -63,7 +68,7 @@ class TodoStore(clock: Clock) {
         .OrderBy(t => t.id)
         .ToList();
 
-    fn Find(id: int) => Todo? {
+    fn Find(id: TodoId) => Todo? {
         if todos.TryGetValue(id, out let todo) {
             return Some(todo);
         }
@@ -71,15 +76,20 @@ class TodoStore(clock: Clock) {
     }
 
     fn Add(request: NewTodo) => Todo {
-        let todo = Todo(nextId, request.title.Trim(), false, request.priority ?? Priority.Normal, request.note);
+        let todo = Todo(TodoId(nextId), request.title.Trim(), false, request.priority ?? Priority.Normal, request.note);
         todos[todo.id] = todo;
         nextId += 1;
         todo
     }
 
-    fn Complete(id: int) => Todo? = Find(id) ?> MarkDone;
+    fn Complete(id: TodoId) => Todo? = Find(id) ?> MarkDone;
 
-    fn Remove(id: int) => bool = todos.Remove(id);
+    // The to-do removed, or None if there was none.
+    fn Remove(id: TodoId) => Todo? {
+        let found = Find(id);
+        todos.Remove(id);
+        found
+    }
 
     private fn MarkDone(todo: Todo) => Todo {
         let done = { ...todo, done: true };
@@ -102,25 +112,53 @@ services AppServices {
 
 // Becomes `fn TodoApi(app: IEndpointRouteBuilder)`. Each handler's parameters come from the route ({id}), the query
 // string, the request's JSON body (a NewTodo), or the services (store, greeter, clock). An optional one (`done: bool?`)
-// is None when the request leaves it out. A handler returning an Option answers 200 with the value, or 404 for None.
-endpoints TodoApi "/api" {
+// is None when the request leaves it out, and a newtype (`id: TodoId`) is read as its value. A handler returning an
+// Option answers 200 with the value, or 404 for None, and says so in the OpenAPI document, as it says each endpoint's
+// tag: "Todos" for the group's, unless the endpoint gives its own.
+endpoints TodoApi "/api" tags "Todos" {
     get "/todos" (done: bool?, store: TodoStore) => store.All(done);
 
-    get "/todos/{id:int}" (id: int, store: TodoStore) => store.Find(id);
+    get "/todos/{id:int}" (id: TodoId, store: TodoStore) => store.Find(id);
 
-    // A blank title never gets here: NewTodo's invariant rejects it while the body is read.
+    // A blank title never gets here: NewTodo's invariant rejects it while the body is read. TypedResults (rather than
+    // Results) gives a type, Created<Todo>, which tells OpenAPI this answers 201 with a Todo.
     post "/todos" (request: NewTodo, store: TodoStore) => {
         let todo = store.Add(request);
-        Results.Created($"/api/todos/{todo.id}", todo)
+        TypedResults.Created($"/api/todos/{todo.id}", todo)
     }
 
-    put "/todos/{id:int}/done" (id: int, store: TodoStore) => store.Complete(id);
+    put "/todos/{id:int}/done" (id: TodoId, store: TodoStore) => store.Complete(id);
 
-    delete "/todos/{id:int}" (id: int, store: TodoStore) => store.Remove(id) ? Results.NoContent() : Results.NotFound();
+    // Answers the to-do it removed, or 404, as Find does.
+    delete "/todos/{id:int}" (id: TodoId, store: TodoStore) => store.Remove(id);
 
     get "/stats" (store: TodoStore) => Stats(store.Count, store.Done, store.Count - store.Done, store.Since);
 
-    get "/hello" (name: string?, greeter: Greeter) => greeter.Welcome(name ?? "there");
+    get "/hello" tags "Greetings" (name: string?, greeter: Greeter) => greeter.Welcome(name ?? "there");
+}
+
+// The app: what it's made of, rather than the builder code that makes it. Becomes `fn TodoServer(urls: string[],
+// quiet: bool) => WebApplication`, with its middleware in the order ASP.NET Core needs. Main runs it on `urls`; the
+// tests serve it from memory.
+server TodoServer(urls: string[], quiet: bool) {
+    urls urls;
+    // Anything the declaration doesn't say is written against the builder, before the app is built.
+    configure {
+        if quiet {
+            builder.Logging.ClearProviders();
+        }
+    }
+    services AppServices;
+    // Exceptions answer a 500 ProblemDetails, and a 404 without a body gets one.
+    problems;
+    // At /openapi/v1.json, from the openapi plugin, describing Piper's types as they're written in JSON: a TodoId as an
+    // integer, `note` as a string or null, a Priority as one of its names.
+    openapi;
+    endpoints TodoApi;
+    // For a load balancer or Kubernetes: /healthz answers while the app runs; /ready when the store answers too.
+    health "/healthz" ready "/ready" {
+        check "store" (store: TodoStore) => store.Count >= 0;
+    }
 }
 
 // The command line, from the args plugin: `--help` lists these, and a mistake is reported before anything starts.
@@ -139,18 +177,10 @@ async fn Main(args: string[]) {
         : options.https ? [$"http://localhost:{port}", $"https://localhost:{port + 1}"]
         : [$"http://localhost:{port}"];
 
-    let builder = WebApplication.CreateBuilder();
-    if !serve {
-        builder.Logging.ClearProviders();
-    }
-    builder.WebHost.UseUrls(urls);
-    AppServices(builder.Services);
-
-    let app = builder.Build();
-    TodoApi(app);
+    let app = TodoServer(urls, quiet: !serve);
 
     if serve {
-        Print($"Serving on {string.Join(" and ", urls)} (try /api/todos, /api/stats, /api/hello?name=Ada). Ctrl+C to stop.");
+        Print($"Serving on {string.Join(" and ", urls)} (try /api/todos, /api/stats, /api/hello?name=Ada, /openapi/v1.json). Ctrl+C to stop.");
         await app.RunAsync();
         return;
     }
@@ -182,6 +212,17 @@ async fn Main(args: string[]) {
     // GetFromJsonAsync gives None for a JSON null, so a missing body is dealt with here.
     let Some(stats) = await client.GetFromJsonAsync<Stats>("/api/stats") else { Print("GET /api/stats → nothing"); return; };
     Print($"GET /api/stats → {stats.total} total, {stats.done} done, {stats.open} open");
+
+    // What the OpenAPI document says of each endpoint: its tags, and the statuses it answers.
+    Print("GET /openapi/v1.json →");
+    using let document = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+    for path in document.RootElement.GetProperty("paths").EnumerateObject() {
+        for operation in path.Value.EnumerateObject() {
+            let tags = string.Join(", ", operation.Value.GetProperty("tags").EnumerateArray().Select(t => t.GetString() ?? ""));
+            let statuses = string.Join(", ", operation.Value.GetProperty("responses").EnumerateObject().Select(r => r.Name));
+            Print($"  {operation.Name.ToUpperInvariant()} {path.Name} [{tags}] → {statuses}");
+        }
+    }
 
     await app.StopAsync();
 }

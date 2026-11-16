@@ -574,8 +574,17 @@ public sealed class PiperPropertyException(string message, Exception? failure) :
 /// </summary>
 public static class PiperProperty
 {
-    /// <summary>The seed to use, as <c>piper test --seed</c> gives; otherwise a new one each run, shown on a failure.</summary>
-    public static int? Seed { get; set; }
+    private static readonly AsyncLocal<int?> CurrentSeed = new();
+
+    /// <summary>
+    /// The seed to use, as <c>piper test --seed</c> gives; otherwise a new one each run, shown on a failure. It's the
+    /// run's own (an AsyncLocal), so test runs going on at once don't take each other's.
+    /// </summary>
+    public static int? Seed
+    {
+        get => CurrentSeed.Value;
+        set => CurrentSeed.Value = value;
+    }
 
     /// <summary>How many cases must pass.</summary>
     public static int Runs { get; set; } = 100;

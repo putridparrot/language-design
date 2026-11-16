@@ -31,7 +31,7 @@ fn Usage(address: string) => string = $"""
     Refresh to see another node answer, when a load balancer is in front of them.
     """;
 
-/// The API, set up but not started, listening on `url`:
+/// The routes every node serves, each taking the node's `Shards` from the server's services:
 /// - `GET /`: what can be asked, as text
 /// - `GET /stock/{sku}`: the product's level
 /// - `POST /stock/{sku}/receive?quantity=10`: adds to it
@@ -39,50 +39,65 @@ fn Usage(address: string) => string = $"""
 /// - `GET /nodes`: this node, all of them, and the products this node keeps
 /// - `GET /cluster`: every node, and the products each keeps, with their levels
 /// - `GET /dashboard`: all of that in a browser, with buttons to try it
-/// - `GET /healthz`: "ok", for Kubernetes' probes
-fn BuildApi(shards: Shards, url: string) => WebApplication {
-    let builder = WebApplication.CreateBuilder();
-    builder.Logging.ClearProviders();
-    let urls: string[] = [url];
-    builder.WebHost.UseUrls(urls);
-    let app = builder.Build();
-    let address = shards.address;
+endpoints StockApi {
+    get "/stock/{sku}" async (sku: string, shards: Shards) => Served(shards.address, await shards.Ask(sku, p => p.Show()));
+
+    post "/stock/{sku}/receive" async (sku: string, quantity: int, shards: Shards) => {
+        if quantity <= 0 {
+            return Results.BadRequest("quantity must be more than 0");
+        }
+        Results.Ok(Served(shards.address, await shards.Ask(sku, p => p.Receive(quantity))))
+    }
+
+    post "/stock/{sku}/reserve" async (sku: string, quantity: int, shards: Shards) => {
+        if quantity <= 0 {
+            return Results.BadRequest("quantity must be more than 0");
+        }
+        let reservation = await shards.Ask(sku, p => p.Reserve(quantity));
+        if reservation.granted { Results.Ok(Served(shards.address, reservation)) } else { Results.Conflict(Served(shards.address, reservation)) }
+    }
+
+    get "/nodes" async (shards: Shards) => NodeInfo(shards.address, shards.Nodes(), await shards.Products());
+
+    get "/cluster" async (shards: Shards) => Served(shards.address, await shards.Cluster());
+
+    get "/" (shards: Shards) => Usage(shards.address);
+
+    get "/dashboard" () => Results.Content(DashboardPage(), "text/html");
+}
+
+/// A node's API, set up but not started, listening on `url`. Becomes `fn StockServer(shards, url) => WebApplication`.
+server StockServer(shards: Shards, url: string) {
+    urls url;
+    logging off;
+    singleton Shards = shards;
 
     // A product's node that doesn't answer (stopped, restarting, or too slow) is a 503, which a client can retry,
     // rather than a 500: the node serving the request is fine.
     //
     // Every answer closes its connection, so a browser's next request opens another, which the load balancer can send
     // to another node: otherwise the dashboard would keep talking to the one node it reached first.
-    app.Use(async (context: HttpContext, next: RequestDelegate) => {
-        context.Response.Headers["Connection"] = StringValues("close");
-        try {
-            await next(context);
-        } catch (e: System.Exception) {
-            let unavailable = e is _: System.TimeoutException || e is _: Proto.DeadLetterException;
-            context.Response.StatusCode = if unavailable { 503 } else { 500 };
-            await context.Response.WriteAsJsonAsync(Failure(address, e.GetType().Name, e.Message));
-        }
-    });
+    use {
+        app.Use(async (context: HttpContext, next: RequestDelegate) => {
+            context.Response.Headers["Connection"] = StringValues("close");
+            try {
+                await next(context);
+            } catch (e: System.Exception) {
+                let unavailable = e is _: System.TimeoutException || e is _: Proto.DeadLetterException;
+                context.Response.StatusCode = if unavailable { 503 } else { 500 };
+                await context.Response.WriteAsJsonAsync(Failure(shards.address, e.GetType().Name, e.Message));
+            }
+        });
+    }
 
-    app.MapGet("/stock/\{sku}", async (sku: string) => Served(address, await shards.Ask(sku, p => p.Show())));
-    app.MapPost("/stock/\{sku}/receive", async (sku: string, quantity: int) => {
-        if quantity <= 0 {
-            return Results.BadRequest("quantity must be more than 0");
+    endpoints StockApi;
+
+    // For Kubernetes: /healthz while the process runs (its liveness probe); /ready once this node's warehouse actor
+    // answers (its readiness probe), so no requests come before the node can serve them.
+    health "/healthz" ready "/ready" {
+        check "warehouse" async (shards: Shards) => {
+            let _ = await shards.Products();
+            true
         }
-        Results.Ok(Served(address, await shards.Ask(sku, p => p.Receive(quantity))))
-    });
-    app.MapPost("/stock/\{sku}/reserve", async (sku: string, quantity: int) => {
-        if quantity <= 0 {
-            return Results.BadRequest("quantity must be more than 0");
-        }
-        let reservation = await shards.Ask(sku, p => p.Reserve(quantity));
-        if reservation.granted { Results.Ok(Served(address, reservation)) } else { Results.Conflict(Served(address, reservation)) }
-    });
-    app.MapGet("/nodes", async () => NodeInfo(address, shards.Nodes(), await shards.Products()));
-    app.MapGet("/cluster", async () => Served(address, await shards.Cluster()));
-    app.MapGet("/healthz", () => "ok");
-    app.MapGet("/", () => Usage(address));
-    let page = DashboardPage();
-    app.MapGet("/dashboard", () => Results.Content(page, "text/html"));
-    app
+    }
 }

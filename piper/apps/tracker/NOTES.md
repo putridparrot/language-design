@@ -66,7 +66,7 @@ creation, an admin's job, stays with the command line.
 |---|---|---|
 | Inherited .NET statics | `ComboBox.SelectedIndexProperty` was "no member": it's declared by `ComboBox`'s base, `SelectingItemsControl`. Static methods were found through a derived type, but static properties and fields weren't. | **Language:** they are, as in C#, nearest declaration first. |
 | `(_, _) =>` | An event handler ignoring both its arguments was "'_' is already declared". | **Language:** a `_` lambda parameter binds nothing, as in C#. |
-| `Deserialize<T>` through a type parameter | A generic `Send<T>` returning `JsonSerializer.Deserialize<T>(…)` couldn't treat the result as optional: .NET's `T?` on an unconstrained `T` is null for a reference type, but Piper reads it as plain `T`, so a JSON `null` would slip through as a null `T`. | **Recorded** in [docs/future.md](../../docs/future.md). The app's `Send` returns the body, and each call deserializes to its own type, whose result Piper does know is optional. |
+| `Deserialize<T>` through a type parameter | A generic `Send<T>` returning `JsonSerializer.Deserialize<T>(…)` couldn't treat the result as optional: .NET's `T?` on an unconstrained `T` is null for a reference type, but Piper reads it as plain `T`, so a JSON `null` would slip through as a null `T`. | **Fixed in the language** (recorded at first, with a workaround: `Send` returned the body, and each call deserialized to its own type). The result is now a `T?`, so the app's `Send<T>` deserializes, and a JSON `null` is an error. |
 | Async event handlers | `model.PropertyChanged += async (_, e) => { await … }` is an error: an async lambda must return a Task, but the handler returns nothing. C# allows it (`async void`). | **Recorded.** The handler runs the `[Command]` instead, which starts the async method. |
 | A command's exception lost | An async `[Command]` was started and its task dropped, so anything it threw (a bug, or a failure the client didn't turn into a `Result`) vanished: the button did nothing, and nothing said why. | **Plugin:** an `OnCommandFailed(command, error)` method on the class hears of each command's failure; the app shows it in the status line. Without one, an async command's exception is thrown where C#'s `async void` would throw it, on the UI thread, rather than lost. |
 | `try` as a value | `try { …; Ok(x) } catch (e: …) { Err(…) }` as a function's last expression isn't its value: `try` is a statement, as in C#, and the function "doesn't return on all paths". | **App:** `return` in each branch. Not a gap: it's C#'s rule, and `match` on a `Result` is the Piper way. |
@@ -109,7 +109,8 @@ The desktop client (phase 5) found five more:
 - **Plugin (1):** `[Command]` failures reported, through `OnCommandFailed`, or thrown as `async void`'s are.
 - **Recorded for later (2):** .NET's `T?` through a Piper type parameter, which lets a null in, and async event
   handlers. Unlike the API's gaps, these needed workarounds a newcomer would have to find: deserializing in each call
-  rather than one generic one, and running a command from an event handler rather than awaiting there.
+  rather than one generic one, and running a command from an event handler rather than awaiting there. The first has
+  since been fixed in the language, and the app's workaround removed: `Send<T>` deserializes for every call.
 
 Two more problems weren't Piper's: `try` is a statement, as in C#, and Avalonia's list control loses its selection
 when its items are reset.

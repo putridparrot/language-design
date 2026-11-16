@@ -33,7 +33,7 @@ async fn Run(words: List<string>, settings: Settings, port: int) => Task<int> {
     match words {
         [] | ["serve"] => {
             let url = $"http://localhost:{port}";
-            let app = BuildApp(settings, SystemClock(), NotifierFor(settings), url);
+            let app = TrackerServer(settings, SystemClock(), NotifierFor(settings), url);
             Print($"Tracker on {url} (sign in with the X-User header)");
             await app.RunAsync();
             0

@@ -51,6 +51,43 @@ public sealed class AssemblyOutputTests : IDisposable
             Assert.Equal((0, "3 r 2\n"), Run(launcher));
     }
 
+    /// <summary>
+    /// <c>piper build --publish</c>: the executable without a native launcher, and a Dockerfile on .NET's runtime image
+    /// (aspnet for ASP.NET Core) of this version, running <c>dotnet app.dll</c>. (Building the image needs Docker; the
+    /// output runs with <c>dotnet</c> here.)
+    /// </summary>
+    [Fact]
+    public void A_published_program_is_ready_for_a_container_image()
+    {
+        var result = Compile("fn Main(args: string[]) { Print($\"hello {args.Length}\"); }");
+        var output = AssemblyWriter.Publish(result.Files, _directory, "app", ProgramReferences.None);
+
+        Assert.True(output.Success, string.Join("\n", output.Errors));
+        Assert.Null(output.Launcher);
+        Assert.False(File.Exists(Path.Combine(_directory, OperatingSystem.IsWindows() ? "app.exe" : "app")));
+        var dockerfile = File.ReadAllText(Path.Combine(_directory, "Dockerfile"));
+        var version = $"{Environment.Version.Major}.{Environment.Version.Minor}";
+        Assert.Contains($"FROM mcr.microsoft.com/dotnet/runtime:{version}\n", dockerfile);
+        Assert.Contains("COPY . .\n", dockerfile);
+        Assert.Contains("ENTRYPOINT [\"dotnet\", \"app.dll\"]\n", dockerfile);
+        Assert.Contains(Path.Combine(_directory, "Dockerfile"), output.Files);
+        Assert.Equal((0, "hello 2\n"), Run("dotnet", $"\"{Path.Combine(_directory, "app.dll")}\" a b"));
+    }
+
+    [Fact]
+    public void A_published_web_program_is_on_the_aspnet_image_and_a_desktop_one_is_refused()
+    {
+        var result = Compile("fn Main() { }");
+        var aspnet = ProgramReferences.None with { Frameworks = [new FrameworkReference("Microsoft.AspNetCore.App", "10.0.0", "")] };
+        Assert.True(AssemblyWriter.Publish(result.Files, _directory, "web", aspnet).Success);
+        Assert.Contains("FROM mcr.microsoft.com/dotnet/aspnet:", File.ReadAllText(Path.Combine(_directory, "Dockerfile")));
+
+        var desktop = ProgramReferences.None with { Frameworks = [new FrameworkReference("Microsoft.WindowsDesktop.App", "10.0.0", "")] };
+        var refused = AssemblyWriter.Publish(result.Files, Path.Combine(_directory, "desktop"), "desktop", desktop);
+        Assert.Contains("can't run in a Linux container", Assert.Single(refused.Errors));
+        Assert.False(Directory.Exists(Path.Combine(_directory, "desktop")));
+    }
+
     [Fact]
     public void Stack_traces_of_a_built_executable_show_piper_lines()
     {

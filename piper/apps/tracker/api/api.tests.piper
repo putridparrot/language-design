@@ -19,7 +19,7 @@ async fn StartTracker(searchesPerMinute: int) => Task<Running> {
     await keepAlive.OpenAsync();
     let settings = Settings(connection, searchesPerMinute, None);
     await Prepare(settings);
-    let client = await TestClient.Start(() => BuildApp(settings, FixedClock(Noon()), NoNotifier(), ""));
+    let client = await TestClient.Start(() => TrackerServer(settings, FixedClock(Noon()), NoNotifier(), ""));
     Running(client, keepAlive)
 }
 
@@ -54,6 +54,13 @@ async test "the API needs a signed-in user, except for its health" {
     AssertEqual(200, (await Call(running, "GET", "/api/health", "", "", "")).Item1);
     AssertEqual(401, (await Call(running, "GET", "/api/projects", "", "", "")).Item1);
     AssertEqual(200, (await Get(running, "/api/projects")).Item1);
+}
+
+async test "liveness and readiness need no sign-in, and readiness checks the database" {
+    let running = await StartTracker(60);
+    defer { Stop(running); }
+    AssertEqual((200, "Healthy"), await Call(running, "GET", "/healthz", "", "", ""));
+    AssertEqual((200, "Healthy"), await Call(running, "GET", "/ready", "", "", ""));
 }
 
 async test "only admins make projects, and codes are checked" {

@@ -284,7 +284,7 @@ public sealed class LanguageServerTests : IDisposable
             else if ((line == singletonLine || line == getLine) && token.EndsWith(":keyword"))
                 words.Add(token);
         }
-        Assert.Equal(["services:keyword", "AppServices:function", "endpoints:keyword", "TodoApi:function"], onLines);
+        Assert.Equal(["services:keyword", "AppServices:function", "endpoints:keyword", "TodoApi:function", "tags:keyword"], onLines);
         Assert.Equal(["singleton:keyword", "get:keyword"], words);
 
         var everything = new JsonObject { ["start"] = new JsonObject { ["line"] = 0, ["character"] = 0 }, ["end"] = new JsonObject { ["line"] = lines.Length, ["character"] = 0 } };

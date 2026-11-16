@@ -13,7 +13,8 @@ args Options "Auction: lots listed and bid on live, in the browser." {
 
 async fn Main(args: string[]) {
     let options = Options.FromArgs(args);
-    let (app, auction) = BuildApp($"http://localhost:{options.port}");
+    let auction = Auctioneer.Spawn(Broadcast);
+    let app = AuctionServer($"http://localhost:{options.port}", auction);
     if !options.empty {
         await ListDemoLots(auction, DateTime.UtcNow);
     }

@@ -103,14 +103,16 @@ public sealed record ProgramReferences(ImmutableArray<string> Assemblies, Immuta
     /// <paramref name="references"/> (relative to <paramref name="directory"/>, the program's folder) a program uses.
     /// Packages are restored by the .NET SDK, through a project generated in the folder's <c>obj/piper</c>; what it
     /// finds is remembered there, so the SDK only runs again when the packages change. Errors are reported against
-    /// <paramref name="project"/>, the piper.json, when given.
+    /// <paramref name="project"/>, the piper.json, when given. Native libraries are those for <paramref name="runtime"/>
+    /// (a runtime identifier, such as <c>linux-x64</c> for a container), or for this machine.
     /// </summary>
     public static (ProgramReferences References, ImmutableArray<Diagnostic> Errors) Resolve(
         string directory,
         IReadOnlyDictionary<string, string> packages,
         IReadOnlyList<string> frameworks,
         IReadOnlyList<string> references,
-        SourceText? project = null)
+        SourceText? project = null,
+        string? runtime = null)
     {
         var errors = ImmutableArray.CreateBuilder<Diagnostic>();
         void Error(string code, string message) =>
@@ -135,7 +137,7 @@ public sealed record ProgramReferences(ImmutableArray<string> Assemblies, Immuta
         var natives = new List<string>();
         if (packages.Count > 0)
         {
-            var (restored, restoredNatives, error) = RestorePackages(directory, packages, resolvedFrameworks);
+            var (restored, restoredNatives, error) = RestorePackages(directory, packages, resolvedFrameworks, runtime ?? NativeRuntimeIdentifier());
             if (error is not null)
                 Error("PIP0401", error);
             others.AddRange(restored);
@@ -229,7 +231,7 @@ public sealed record ProgramReferences(ImmutableArray<string> Assemblies, Immuta
     /// dependencies'), or an error. The result is cached in <c>obj/piper/references.json</c> under a hash of the inputs.
     /// </summary>
     private static (IReadOnlyList<string> Assemblies, IReadOnlyList<string> Natives, string? Error) RestorePackages(
-        string directory, IReadOnlyDictionary<string, string> packages, IReadOnlyList<FrameworkReference> frameworks)
+        string directory, IReadOnlyDictionary<string, string> packages, IReadOnlyList<FrameworkReference> frameworks, string rid)
     {
         var tfm = $"net{Environment.Version.Major}.{Environment.Version.Minor}";
         var project = new XElement("Project", new XAttribute("Sdk", "Microsoft.NET.Sdk"),
@@ -244,9 +246,9 @@ public sealed record ProgramReferences(ImmutableArray<string> Assemblies, Immuta
         var text = project.ToString();
 
         var work = Path.Combine(Path.GetFullPath(directory), "obj", "piper");
-        var cachePath = Path.Combine(work, "references.json");
+        // One per platform, so publishing for a container doesn't undo what this machine's builds remembered.
+        var cachePath = Path.Combine(work, $"references.{rid}.json");
         // Native libraries are per platform, so the platform is part of what's cached.
-        var rid = NativeRuntimeIdentifier();
         var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text + "\n" + rid)));
         if (ReadCache(cachePath, key) is { } cached)
             return (cached.Assemblies, cached.Natives ?? [], null);

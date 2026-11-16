@@ -3,5 +3,5 @@
   // processes, or as pods in Kubernetes that can be added or removed mid-job. See README.md.
   // `piper test apps/grid` runs its tests, which start a coordinator and workers in one process.
   "name": "grid",
-  "plugins": ["remote-actors", "args"]
+  "plugins": ["remote-actors", "args", "web"]
 }

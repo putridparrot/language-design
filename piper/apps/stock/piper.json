@@ -3,5 +3,5 @@
   // Kubernetes pods), on the remote actors plugin. See README.md for running it locally, in Docker and on AKS.
   // `piper test apps/stock` runs its tests, which start three nodes in one process.
   "name": "stock",
-  "plugins": ["remote-actors", "args"]
+  "plugins": ["remote-actors", "args", "web"]
 }

@@ -43,12 +43,11 @@ them too.
   enum variants, and postconditions (`ensures result >= 0`).
 - **Obsolete warnings for setting obsolete .NET properties and subscribing to obsolete events** (reading and calling are
   already reported).
-- **.NET's `T?` through a Piper type parameter** (found by apps/tracker-desktop): in `fn Read<T>(…) => T? =
-  JsonSerializer.Deserialize<T>(…)`, .NET may give null for any reference `T`, but Piper reads the result as plain `T`,
-  as it can't tell whether `T` will be a reference type. That lets a null in. The result should be `T?`, converted by an
-  unconstrained helper (`value is null ? None : Some(value)`), for results, properties, `out` parameters and tasks alike.
-  The `PiperInterop` helpers are constrained to `class` today, and `ToNullableReference` has no unconstrained
-  equivalent for passing a `T?` the other way.
+- ~~**.NET's `T?` through a Piper type parameter**~~ (found by apps/tracker-desktop), done: in `fn Read<T>(…) => T? =
+  JsonSerializer.Deserialize<T>(…)` the result is a `T?`, with null as None, for results, properties, `out` parameters
+  and tasks, and a `T?` passes to .NET the other way.
+- ~~**`AssertEqual(Ok(age), ParseAge(text))`**~~ (found by samples/testing.piper), done: an argument with no type of
+  its own (`None`, `Ok(…)`, `[]`) takes it from a generic call's other arguments, wherever it comes.
 - **Async event handlers** (found by apps/tracker-desktop): `button.Click += async (_, e) => { await Save(); }` is an
   error, as an async lambda must return a Task. C# allows `async void` there, losing the exceptions it throws to the
   synchronization context. To decide: allow it for event handlers only, as C# guidance suggests, perhaps with exceptions
@@ -144,10 +143,25 @@ Results answered as 200, 404 or ProblemDetails (see [JSON](language.md#json) and
    ~~OpenAPI schemas for Piper's types~~ are done too, opted in to with the `openapi` plugin (Options as their value or
    null, newtypes as their value, enums as their variants), for Microsoft.AspNetCore.OpenApi; Swashbuckle would need
    a schema filter of its own. Still to come: per-user rate limits, partitioned by the signed-in user or the client's
-   address rather than shared by everyone.
-3. **Hosting and operations.** A `server` declaration replacing the builder code in `Main`: services and endpoints,
-   configuration bound to records (`appsettings.json`, environment), health checks, ProblemDetails error handling,
-   HTTPS and graceful shutdown. Publishing a self-contained build or a container image (`piper build --publish`).
+   address rather than shared by everyone. ~~An optional query parameter described as its type~~ (found by
+   samples/todo-api), done: `done: bool?` was described as a `string`, as it's bound by its Option's `TryParse`.
+3. **Hosting and operations.** ~~A `server` declaration~~ is done (see [plugins](plugins.md#a-server)): services,
+   policies and endpoints with their middleware in order, ProblemDetails, OpenAPI, health and readiness checks,
+   `stopping` hooks and the shutdown timeout. Still to come:
+   - ~~**Checking the server at compile time**~~, done: a handler, check or hook needing a service nothing in the
+     server registers, a class DI makes needing one, a singleton taking a scoped service, and `authorize` with no
+     authentication scheme. Still to come: cycles between services, and the same for `services` blocks used without
+     a server (a console program's `ServiceCollection`), which would need its own idea of what's resolved.
+   - ~~**Configuration in the server**~~, done: `config Smtp;` reads a `config` record as the app starts and registers
+     it (and as `IOptions<Smtp>`). Still to come: reloading it when appsettings.json changes (`IOptionsMonitor`).
+   - **HTTPS:** a certificate from configuration, and redirecting HTTP to it.
+   - ~~**The other apps on it**~~, done: every web app is now a `server`. apps/stock and apps/grid moved their routes
+     into `endpoints`, and their hand-written `/healthz` became liveness and readiness checks (their Kubernetes
+     readiness probes use `/ready`); apps/auction's server takes its auctioneer, which Main and the tests make.
+   - ~~**Publishing for a container**~~, done: `piper build --publish` writes the compiled app, its packages (native
+     libraries for Linux) and a Dockerfile on .NET's runtime or aspnet image. Still to come: a self-contained build
+     (the runtime packs for each platform, from NuGet), and building the image itself without Docker, as .NET's own
+     container publishing does (base images pulled from a registry, layers written).
 
 Server-side HTML belongs with [UI](#ui) (htmx over plain endpoints), not Razor.
 
@@ -160,8 +174,9 @@ Server-side HTML belongs with [UI](#ui) (htmx over plain endpoints), not Razor.
   explicit form (`many Handler => AuditHandler;`) keeps that check for mistakes.
 - **Keyed services** (`singleton Cache["fast"] => MemoryCache;`, injected with `[FromKeyedServices("fast")]`) and
   **open generics** (`scoped Repository<> => SqlRepository<>;`).
-- **Configuration and options:** typed configuration is done (the `config` plugin). Still to come: registering a config
-  with DI (`config Smtp;` in `services`, as `IOptions<Smtp>` too), and reloading it when appsettings.json changes.
+- **Configuration and options:** typed configuration is done (the `config` plugin), and a `server` registers one with
+  `config Smtp;` (as `IOptions<Smtp>` too). Still to come: the same in a `services` block, for programs without a web
+  server, and reloading it when appsettings.json changes.
 - **Databases:** the `data` plugin covers EF Core models and queries. Still to come: registering a database with DI
   (`AddDbContext`, its connection string from a `config`), migrations from `piper` (`piper db migrate`), relationships
   between tables (navigation properties), and comparing an optional column with an optional variable in a query.

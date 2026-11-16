@@ -9,6 +9,10 @@ const string Usage = """
       piper build <inputs...> --exe [-o <dir>] [--name <name>]
                                            Compile to an executable: <name>.exe (or <name>), .dll, .pdb and Piper.Runtime.dll
                                            (default: a bin folder next to the first input; name: the first input's)
+      piper build <inputs...> --publish [-o <dir>] [--name <name>] [--runtime <rid>]
+                                           Compile to a folder ready for a container image: the executable, its
+                                           packages (native libraries for linux-x64, or <rid>) and a Dockerfile on
+                                           .NET's runtime or aspnet image; then docker build it (default: bin/publish)
       piper build <inputs...> --library [-o <dir>] [--name <name>]
                                            Compile to a library: <name>.dll, .pdb and Piper.Runtime.dll
       piper emit  <inputs...>              Print the generated C# to stdout
@@ -70,7 +74,8 @@ string? outputDirectory = null;
 string? assemblyName = null;
 string? filter = null;
 int? seed = null;
-bool executable = false, library = false, watch = false;
+bool executable = false, library = false, watch = false, publish = false;
+string? runtime = null;
 string[] programArguments = [];
 for (int i = 1; i < args.Length; i++)
 {
@@ -93,6 +98,10 @@ for (int i = 1; i < args.Length; i++)
     }
     else if (args[i] == "--exe" && command == "build")
         executable = true;
+    else if (args[i] == "--publish" && command == "build")
+        publish = executable = true;
+    else if (args[i] == "--runtime" && i + 1 < args.Length && command == "build")
+        runtime = args[++i];
     else if (args[i] == "--library" && command == "build")
         library = true;
     // Before the program's own options, so `piper run app --watch --port 8001` watches; `--` passes a --watch of its own.
@@ -146,7 +155,8 @@ ImmutableArray<IPiperPlugin> plugins = [];
 var references = ProgramReferences.None;
 if (inputs is [var folder] && Directory.Exists(folder) && File.Exists(Path.Combine(folder, PiperProject.FileName)))
 {
-    var (loaded, errors) = LoadedProject.Load(folder);
+    // Publishing for a container: its packages' native libraries are Linux's (or --runtime's), not this machine's.
+    var (loaded, errors) = LoadedProject.Load(folder, runtime: publish ? runtime ?? "linux-x64" : null);
     foreach (var error in errors)
         Console.Error.WriteLine(error.Format());
     if (loaded is null)
@@ -220,15 +230,19 @@ switch (command)
         // Named after the first input (`app.piper` → app, `src/` → src), and written to a bin folder beside it.
         var first = Path.GetFullPath(inputs[0]).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var name = assemblyName ?? Path.GetFileNameWithoutExtension(first);
-        var directory = outputDirectory ?? Path.Combine(Directory.Exists(first) ? first : Path.GetDirectoryName(first)!, "bin");
-        var output = AssemblyWriter.Write(result.Files, directory, name, executable, result.References);
+        var directory = outputDirectory ?? Path.Combine(Directory.Exists(first) ? first : Path.GetDirectoryName(first)!, "bin", publish ? "publish" : "");
+        var output = publish
+            ? AssemblyWriter.Publish(result.Files, directory, name, result.References)
+            : AssemblyWriter.Write(result.Files, directory, name, executable, result.References);
         foreach (var error in output.Errors)
             Console.Error.WriteLine(error);
         if (!output.Success)
             return 1;
         foreach (var path in output.Files)
             Console.WriteLine($"Wrote {path}");
-        if (executable && output.Launcher is null)
+        if (publish)
+            Console.WriteLine($"Build the image with: docker build -t {name.ToLowerInvariant()} \"{directory}\"");
+        else if (executable && output.Launcher is null)
             Console.WriteLine($"(No .NET SDK apphost was found for a native launcher; run it with: dotnet \"{Path.Combine(directory, name + ".dll")}\")");
         return 0;
     }

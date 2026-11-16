@@ -119,7 +119,8 @@ public sealed class ReferencesTests : IDisposable
         LocalFeed(folder, ("Piper.Test.Greetings", "1.0.0", GreetingsLibrary()));
 
         Assert.Equal("Hello Ada\n", Run(folder));
-        Assert.True(File.Exists(Path.Combine(folder, "obj", "piper", "references.json")));
+        // Remembered per platform (references.win-x64.json), as native libraries differ between them.
+        Assert.Single(Directory.GetFiles(Path.Combine(folder, "obj", "piper"), "references.*.json"));
 
         var (project, _) = LoadedProject.Load(folder);
         var source = new SourceText(File.ReadAllText(Path.Combine(folder, "main.piper")), "main.piper");

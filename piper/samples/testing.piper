@@ -43,3 +43,26 @@ test "compares lists element by element" {
     let lengths: List<int> = ["a", "bb", "ccc"].Select(s => s.Length).ToList();
     AssertEqual([1, 2, 3], lengths);
 }
+
+// Property tests: rather than a few chosen cases, the body runs over generated values (100 cases, or as many as
+// `runs` says), and a failure is shrunk to the smallest case that still fails, with a seed to repeat it
+// (`piper test samples/testing.piper --seed …`). A parameter's values come from its type, or from what `in` gives.
+
+test "any whole number from 0 up parses as itself" for (age: int in 0..1_000_000) runs 1000 {
+    AssertEqual(Ok(age), ParseAge($"{age}"));
+}
+
+// `requires` throws away the cases it refuses: here, ages of 0 and up.
+test "no negative number parses" for (age: int) requires age < 0 {
+    Assert(ParseAge($"{age}") is Err(_));
+}
+
+// A generator written in Piper, for values a type doesn't describe: a word is 1 to 8 letters, no spaces.
+fn Word() => PiperGen<string> =
+    PiperGen.ListOf(PiperGen.In("abcdefghij"), 1, 8).Select(letters => string.Concat(letters));
+
+test "words are counted however many spaces are between them" for (words: List<string> in PiperGen.ListOf(Word()), gap: int in 1..4) {
+    let text = string.Join(string(' ', gap), words);
+    AssertEqual(words.Count, WordCount(text));
+    AssertEqual(words.Count, Initials(text).Length);
+}

@@ -39,7 +39,8 @@ once can't oversell it, with no locks and no database transaction.
   | `GET /nodes` | This node, all of them, and the products this node keeps |
   | `GET /cluster` | Every node, whether it answered, and the products each keeps, with their levels |
   | `GET /dashboard` | All of that in a browser, with buttons to try it (see below) |
-  | `GET /healthz` | "ok", for Kubernetes' probes |
+  | `GET /healthz` | "Healthy" while the node runs: Kubernetes' liveness probe |
+  | `GET /ready` | "Healthy" once the node's warehouse actor answers, else 503: its readiness probe |
 
   If a product's node doesn't answer (stopped, or restarting), the answer is a 503 naming it, not a 500. Every answer
   closes its connection, so a client's next request can go to another node behind a load balancer.
@@ -91,7 +92,9 @@ docker run --rm --network stock_default stock:local load http://stock-0:8080 htt
 ```
 
 The image is built from the `piper` folder, since it compiles the app with this repository's compiler:
-`docker build -f apps/stock/Dockerfile -t stock .`
+`docker build -f apps/stock/Dockerfile -t stock .` With piper installed, `piper build apps/stock --publish` writes
+`apps/stock/bin/publish`, a folder ready for `docker build -t stock apps/stock/bin/publish`, built from the compiled
+app with no SDK in the image.
 
 **`piper test apps/stock`** starts three nodes in one process, on free ports, and checks that every node agrees on
 who keeps a product, that reservations from all three never oversell, and that the load run through their APIs

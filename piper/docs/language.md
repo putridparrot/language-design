@@ -331,6 +331,9 @@ fn Swap<A, B>(p: Pair<A, B>) => Pair<B, A> = Pair(p.second, p.first);
 ```
 
 - **Inferred type arguments:** type arguments are usually inferred from the arguments, e.g. `Pair(1, "one")` is a `Pair<int, string>`.
+  An argument with no type of its own (`None`, `Ok(…)`, `Err(…)`, `null`, `[]`) takes it from the others, wherever it
+  comes: in `fn Same<T>(a: T, b: T)`, `Same(None, Some(3))` and `Same(Ok(1), Parse(text))` are both at the other
+  argument's type, as is `AssertEqual(Ok(42), Parse("42"))`.
 - **Explicit type arguments:** they can also be written, as in C#: `Empty<string>()`, `Identity<long>(1)`, `Pair<long, string>(1, "x")`, `Option<int>.None`, `Stack<int>.Empty()`.
 - **The expected type helps.** When the arguments don't settle a type argument, the expected type does: `let x: Option<int> = Option.None;` or `fn F() => Option<int> = Option.None;`. If neither settles it, you get an error asking for a type annotation.
 - **Numeric widening applies:** `let p: Pair<long, double> = Pair(1, 2);` converts the arguments.
@@ -876,6 +879,11 @@ points.Add(Point(1, 2));                   // and can hold Piper values
   - Where .NET accepts null, you can pass a `T?`, and `None` becomes `null`.
   - A result marked `[return: NotNullIfNotNull("text")]` isn't null when that argument isn't, so given a plain value it's a plain value: `WebUtility.HtmlDecode(text)` and `Path.GetFileName(path)` are `string`s for a `string`, and `string?`s for a `string?`.
   - Piper's records, enums and traits are C# classes and interfaces, so a generic .NET result that may be null is optional for them too: `people.FirstOrDefault()` on a `List<Person>` is a `Person?`.
+  - So is one through a Piper type parameter, which may be a reference type: in `fn Read<T>(json: string) => T? =
+    JsonSerializer.Deserialize<T>(json)`, the result is a `T?`, and JSON's `null` is `None`. The same goes for
+    properties, `out` parameters, tasks (`DeserializeAsync<T>`), and passing a `T?` where .NET takes one. As in C#, a
+    value-type `T` has no null: `Read<int>` is never `None`, and `Head(List<int>())` over `FirstOrDefault()` is
+    `Some(0)`, where `FirstOrDefault()` on a `List<int>` written as such is the plain `0` it is in C#.
 - **`extend` on .NET types:** a non-generic .NET type can be extended like a builtin, e.g. `extend StringBuilder { fn Line(s: string) { this.AppendLine(s); } }`, but not with a member name it already has.
 - **Generic and extension methods:** type arguments are inferred from the arguments, including lambdas, and extension methods from imported namespaces apply, so LINQ works: `numbers.Where(n => n > 2).Select(n => n * 10).ToList()`.
 - **Indexers and setters:** `list[0]`, `ages["Ada"] = 36`, `ages["Ada"] += 1` and `builder.Length = 0` use .NET indexers, arrays and property setters.

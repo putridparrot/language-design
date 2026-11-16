@@ -22,7 +22,62 @@ public static class PiperOpenApiExtensions
 
     /// <summary>Piper's schemas, for a document set up some other way: <c>AddOpenApi(o => o.AddPiperSchemas())</c>.</summary>
     public static OpenApiOptions AddPiperSchemas(this OpenApiOptions options) =>
-        options.AddSchemaTransformer<PiperSchemaTransformer>();
+        options.AddSchemaTransformer<PiperSchemaTransformer>().AddOperationTransformer<PiperParameterTransformer>();
+}
+
+/// <summary>
+/// A parameter read from the route, query or a header (<c>done: bool?</c>, <c>after: BookId</c>) is bound by its type's
+/// <c>TryParse</c>, which ASP.NET Core describes as any string. This describes it as the value it takes: an Option's
+/// (and isn't required, as None is the request leaving it out), or a newtype's.
+/// </summary>
+public sealed class PiperParameterTransformer : IOpenApiOperationTransformer
+{
+    public async Task TransformAsync(OpenApiOperation operation, OpenApiOperationTransformerContext context, CancellationToken cancellationToken)
+    {
+        if (operation.Parameters is not { Count: > 0 } parameters)
+            return;
+        foreach (var description in context.Description.ParameterDescriptions)
+        {
+            if (description.Type is not { } type)
+                continue;
+            var (value, optional) = ValueOf(type);
+            if (value == type)
+                continue;
+            if (parameters.OfType<OpenApiParameter>().FirstOrDefault(p => string.Equals(p.Name, description.Name, StringComparison.OrdinalIgnoreCase)) is not { } parameter)
+                continue;
+            // A route constraint (`{id:int}`) has already described a route value; only the requirement is left.
+            if (parameter.In != ParameterLocation.Path)
+                parameter.Schema = await context.GetOrCreateSchemaAsync(value, null, cancellationToken);
+            if (optional)
+                parameter.Required = false;
+        }
+    }
+
+    /// <summary>
+    /// The type a parameter's text is read as, through Options and newtypes, and whether it may be left out. An optional
+    /// handler parameter is a <c>Nullable&lt;Option&lt;T&gt;&gt;</c>, so ASP.NET Core lets a request leave it out.
+    /// </summary>
+    private static (Type Value, bool Optional) ValueOf(Type type)
+    {
+        bool optional = false;
+        while (true)
+        {
+            if (Nullable.GetUnderlyingType(type) is { } underlying)
+            {
+                optional = true;
+                type = underlying;
+            }
+            else if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Option<>))
+            {
+                optional = true;
+                type = type.GetGenericArguments()[0];
+            }
+            else if (PiperNewtype.ValueType(type) is { } value)
+                type = value;
+            else
+                return (type, optional);
+        }
+    }
 }
 
 /// <summary>

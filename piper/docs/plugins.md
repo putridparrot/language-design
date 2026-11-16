@@ -823,6 +823,78 @@ Admin(app);
   - a declared policy no endpoint uses
   - endpoints using policy words in a program with no `policies` block at all
 
+#### A server
+
+`server` says what a web app is made of, rather than the builder code that makes it, and becomes the function
+building it, with its middleware in the order ASP.NET Core needs:
+
+```piper
+server TrackerServer(settings: Settings, clock: Clock) {
+    config smtp: Smtp;                              // a `config`, read as it starts, registered, and named
+    urls settings.url;                              // a URL or a list of them
+    logging off;
+    services AppServices;                           // a `services` block, with its arguments if it takes any
+    scoped TrackerDb = TrackerDb(settings.options); // or registrations of its own, as `services` writes them
+    singleton Clock = clock;
+    policies Security(settings);                    // registered, and its middleware added before the endpoints
+    configure {                                     // anything else, written against `builder`
+        builder.Services.AddAuthentication("Cookies").AddCookie("Cookies");
+    }
+    problems;                                       // errors as ProblemDetails
+    openapi;                                        // /openapi/v1.json, with the openapi plugin
+    endpoints Api, Admin;
+    health "/healthz" ready "/ready" {
+        check "database" async (db: TrackerDb) => await db.Database.CanConnectAsync();
+    }
+    stopping (jobs: Jobs) => jobs.Finish();         // run as it's asked to stop, and waited for
+    shutdown 30 seconds;
+}
+
+async fn Main() => Task = await TrackerServer(Load(), SystemClock()).RunAsync();
+```
+
+- **What it becomes:** `fn TrackerServer(settings: Settings, clock: Clock) => WebApplication`. Its parameters are
+  what the app is made from, so a test gives it others (`TestClient.Start(() => TrackerServer(settings,
+  FixedClock(noon)))`) and `Main` runs it. The builder is `builder` and the app `app`, in `configure` and `use`.
+- **Order:** registrations run in the order written, then the app is built and its middleware added: `problems` first
+  (so it sees every exception), then `use { … }` blocks (the app's own middleware, `app.Use(…)`), then the policies'
+  (CORS, authentication, authorization, rate limits, caching), then health, OpenAPI and the endpoints. Writing
+  `UseSecurity(app)` after the endpoints, where it silently does nothing, can't happen.
+- **`config`:** `config Smtp;` reads a [`config`](#config-typed-configuration) record from the app's configuration
+  (appsettings.json, environment variables) as the app is built, so a missing or invalid value stops it at startup,
+  listing every problem, rather than failing the first request that needs it. It's registered as a singleton, and as
+  `IOptions<Smtp>` for code written for .NET's options. `config smtp: Smtp;` also names it for the clauses after:
+  `urls smtp.url;`, `policies Security(smtp);`.
+- **`problems`:** an exception is a 500 ProblemDetails (`UseExceptionHandler`), and a status without a body, such as a
+  route nothing maps, gets one (`UseStatusCodePages`).
+- **`health`:** ASP.NET Core's health checks. With only a path, it runs every check. With `ready` too, the first is
+  liveness, healthy while the app runs (so Kubernetes doesn't restart it because a database is down), and `ready`
+  runs the checks (so it's sent no requests until they pass). A check is a handler whose parameters are services,
+  resolved from a scope of their own: healthy when it gives `true` (or a `HealthCheckResult` saying so), unhealthy
+  when it gives `false` or throws. They answer 200 `Healthy` or 503 `Unhealthy`.
+- **`stopping`:** a handler whose parameters are services, run when the app is asked to stop (Ctrl+C, or SIGTERM from
+  Kubernetes) and waited for before the server stops: finishing work in hand, telling others it's going. `shutdown`
+  says how long that and requests in flight have, ASP.NET Core's `ShutdownTimeout` (30 seconds without it).
+- **Checks:** a clause given twice that can only be given once (`urls`, `health`…), an endpoints block mapped twice, a
+  server mapping no endpoints, and an unknown clause are errors. A server mapping endpoints that use policy words
+  without a `policies` clause is a warning, as they'd be answered without the middleware they need.
+- **What it needs, checked against what it registers.** Once the program is type-checked, the server is checked for
+  what dependency injection would only find when a request comes in (a 500, or a failed health check):
+  - a handler taking a service of the program's own (a class or trait; a record is a request's body) that nothing in
+    the server registers, reported at the parameter: `S registers no Store, but this handler takes it`;
+  - a health check or `stopping` hook taking a class, trait or record nothing registers;
+  - a class DI makes (`singleton Store;`, `scoped Repo => SqlRepo;`) whose constructor takes a service nothing
+    registers, or a singleton taking a scoped service: a captive dependency, where one request's instance (a database
+    context) would be kept for every other;
+  - endpoints using `authorize` in a server that adds no authentication scheme (`AddCookie`, `AddJwtBearer`,
+    `AddScheme<…>`), which ASP.NET Core would only refuse at the first such request.
+
+  What's registered is read from the server and the Piper functions it calls (its `services` and `policies` blocks,
+  `configure`): each generic call given the service collection registers its type arguments (`AddSingleton<Clock,
+  SystemClock>`, `AddDbContext<Db>`). These are errors, or warnings where a registration could be out of sight: a
+  method of the program's own given the services or the builder, or a registration taking a `Type`
+  (`AddSingleton(typeof(Store))`).
+
 #### Testing a web app
 
 `TestClient` (in Piper.Web) serves an app from memory for `test` blocks, with no port: requests go straight to the
@@ -840,7 +912,8 @@ async test "a bid is taken" {
 }
 ```
 
-- **`TestClient.Start(build)`** calls the program's own function for building its app, unchanged: whatever builds
+- **`TestClient.Start(build)`** calls the program's own function for building its app, unchanged (a `server`'s, such
+  as `() => AuctionServer(url, auction)`, or one written by hand): whatever builds
   one web app (`WebApplication.CreateBuilder()`, or a host builder) and returns it, alone or with what the test
   drives directly, as `App`. While it runs, the app is given an in-memory server in place of Kestrel, so the
   addresses it asks for aren't used. Then the app is started; disposing the client stops it.
@@ -879,6 +952,9 @@ app.MapOpenApi();                       // /openapi/v1.json
   - An enum of fieldless variants is one of their names, a string. One with fields is one of its variants: a
     fieldless variant is its name, and one with fields is an object with `kind` (its name) and its fields.
   - A record with invariants is an object of its fields.
+  - A parameter from the query, route or a header that's an Option or a newtype (`done: bool?`, `after: BookId`) is
+    the value it's read as: a boolean, an integer. An optional one isn't required. (ASP.NET Core binds them with
+    their `TryParse`, and on its own describes them as any string.)
 - **With the web plugin's metadata,** each operation has its responses (200 with its value, 404 for an Option,
   ProblemDetails with each status an error's `[Status]`es give) and its tags. Piper.Web's own routes aren't in it.
 

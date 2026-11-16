@@ -32,6 +32,7 @@ piper run hello --watch       # and run it again whenever a .piper file or piper
 piper build src/ -o out/      # write the C# (one .cs per .piper file; it references the Piper.Runtime package)
 piper build app.piper --exe   # compile to bin/app.exe (plus app.dll, its .pdb and Piper.Runtime.dll)
 piper build src/ --library    # compile to bin/src.dll; --name and -o choose the name and folder
+piper build api/ --publish    # compile for a container: bin/publish, with a Dockerfile; then docker build bin/publish
 piper test src/               # run the program's test blocks (--filter picks some by name)
 piper emit hello.piper        # print the C#
 ```
@@ -67,7 +68,14 @@ changing what today's files mean. `piper run`, `piper test` and the editor use t
 too, and `piper build --exe` copies the packages' and references' assemblies next to the program.
 
 `--exe` makes a native launcher from the .NET SDK's apphost, as `dotnet build` does; with only a runtime installed you get
-the DLL, which runs with `dotnet app.dll`. For publishing (single-file, AOT) or mixing with C#, use a project: to compile
+the DLL, which runs with `dotnet app.dll`.
+
+`--publish` compiles for a container image: the executable (without a launcher), its packages' assemblies and native
+libraries for Linux (`linux-x64`, or `--runtime linux-arm64`), and a `Dockerfile` on .NET's `aspnet` image (for a
+web program) or `runtime` image, so `docker build -t api bin/publish` needs neither the SDK nor the source. A web app
+reachable from outside its container listens on every interface (`urls "http://*:8080";`).
+
+For a self-contained or single-file build, AOT, or mixing with C#, use a project: to compile
 `.piper` files as part of a .NET project, alongside its C#, reference the `Piper.Build` package:
 
 ```xml

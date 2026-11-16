@@ -31,25 +31,27 @@ extend LoadReport {
 /// a load balancer spreads them over the nodes rather than keeping one.
 async fn RunLoad(urls: List<string>, sku: string, stock: int, requests: int, concurrency: int) => Task<LoadReport> {
     using let http = HttpClient();
-    let first = urls[0].TrimEnd('/');
-    let received = await http.PostAsync($"{first}/stock/{sku}/receive?quantity={stock}", None);
+    // Each node's address is a Url as it is; the sku and quantity are encoded for their places in it (url$).
+    let nodes = urls.Select(u => Url.Raw(u.TrimEnd('/'))).ToList();
+    let first = nodes[0];
+    let received = await http.PostAsync(url$"{first}/stock/{sku}/receive?quantity={stock}".ToUri(), None);
     received.EnsureSuccessStatusCode();
 
     let pending = ConcurrentQueue<int>(Enumerable.Range(0, requests));
     let outcomes = ConcurrentBag<Outcome>();
     let clients = Enumerable.Range(0, concurrency).Select(async _ => {
         while pending.TryDequeue(out let n) {
-            outcomes.Add(await ReserveOne(http, urls[n % urls.Count].TrimEnd('/'), sku));
+            outcomes.Add(await ReserveOne(http, nodes[n % nodes.Count], sku));
         }
     });
     await Task.WhenAll(clients);
 
-    let level = JsonDocument.Parse(await http.GetStringAsync($"{first}/stock/{sku}")).RootElement.GetProperty("result");
+    let level = JsonDocument.Parse(await http.GetStringAsync(url$"{first}/stock/{sku}".ToUri())).RootElement.GetProperty("result");
     LoadReport(stock, [...outcomes], level.GetProperty("onHand").GetInt32(), level.GetProperty("reserved").GetInt32())
 }
 
-async fn ReserveOne(http: HttpClient, url: string, sku: string) => Task<Outcome> {
-    let request = HttpRequestMessage(HttpMethod.Post, $"{url}/stock/{sku}/reserve?quantity=1");
+async fn ReserveOne(http: HttpClient, node: Url, sku: string) => Task<Outcome> {
+    let request = HttpRequestMessage(HttpMethod.Post, url$"{node}/stock/{sku}/reserve?quantity=1".ToUri());
     request.Headers.ConnectionClose = true;
     try {
         let response = await http.SendAsync(request);

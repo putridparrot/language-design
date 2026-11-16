@@ -3,33 +3,41 @@ namespace GridApp;
 
 using System;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Logging;
 
-/// The API, set up but not started, listening on `url`:
+/// The routes, each taking the coordinator's `Jobs` from the server's services:
 /// - `GET /`: the dashboard
 /// - `GET /status`: the running (or last) job, its chunks, the workers, and the history
 /// - `POST /jobs?chunks=200&scenarios=100000&seed=42`: starts a job, or 409 if one is running
 /// - `POST /jobs/cancel`: stops the running job
-/// - `GET /healthz`: "ok", for Kubernetes' probes
-fn BuildApi(jobs: Jobs, url: string) => WebApplication {
-    let builder = WebApplication.CreateBuilder();
-    builder.Logging.ClearProviders();
-    let urls: string[] = [url];
-    builder.WebHost.UseUrls(urls);
-    let app = builder.Build();
+endpoints GridApi {
+    get "/status" async (jobs: Jobs) => await jobs.Status();
 
-    app.MapGet("/status", async () => await jobs.Status());
-    app.MapPost("/jobs", async (chunks: int, scenarios: int, seed: int) => {
+    post "/jobs" async (chunks: int, scenarios: int, seed: int, jobs: Jobs) => {
         if chunks < 1 || chunks > 5_000 || scenarios < 1 || scenarios > 10_000_000 {
             return Results.BadRequest("chunks must be 1 to 5,000, and scenarios 1 to 10,000,000");
         }
         if await jobs.Start(JobSpec(chunks, scenarios, seed)) { Results.Ok() } else { Results.Conflict("a job is running") }
-    });
-    app.MapPost("/jobs/cancel", async () => if await jobs.Cancel() { Results.Ok() } else { Results.Conflict("no job is running") });
-    app.MapGet("/healthz", () => "ok");
-    let page = DashboardPage();
-    app.MapGet("/", () => Results.Content(page, "text/html"));
-    app
+    }
+
+    post "/jobs/cancel" async (jobs: Jobs) => if await jobs.Cancel() { Results.Ok() } else { Results.Conflict("no job is running") };
+
+    get "/" () => Results.Content(DashboardPage(), "text/html");
+}
+
+/// The coordinator's API, set up but not started, listening on `url`. Becomes `fn GridServer(jobs, url) => WebApplication`.
+server GridServer(jobs: Jobs, url: string) {
+    urls url;
+    logging off;
+    singleton Jobs = jobs;
+    endpoints GridApi;
+
+    // For Kubernetes: /healthz while the process runs (its liveness probe); /ready once the jobs actor answers (its
+    // readiness probe).
+    health "/healthz" ready "/ready" {
+        check "jobs" async (jobs: Jobs) => {
+            let _ = await jobs.Status();
+            true
+        }
+    }
 }

@@ -60,6 +60,22 @@ async fn Main() {
     let noEmail = await shop.Customers.Where(c => c.email == None).Select(c => c.name).ToListAsync();
     Print($"No email: {string.Join(", ", noEmail)}");
 
+    // Raw SQL is written sql$"…": each hole is a parameter, sent beside the SQL rather than pasted into it, so no value
+    // can change what the SQL says. LINQ goes on from the query, and runs in the database with it.
+    let customer = 1;
+    let ordersOf = shop.Orders.Query(sql$"select * from Orders where customerId = {customer}").OrderBy(o => o.id);
+    Print(ordersOf.ToQueryString());
+    Print($"Ada's orders: {string.Join(", ", (await ordersOf.ToListAsync()).Select(o => o.id))}");
+    let sneaky = "Ada' or '1' = '1";
+    let named = await shop.Query<string>(sql$"select name as Value from Customers where name = {sneaky}").ToListAsync();
+    Print($"Customers named {sneaky}: {named.Count}");
+    let raised = await shop.ExecuteAsync(sql$"update Orders set total = total + {5m} where customerId = {customer}");
+    Print($"Orders raised by 5: {raised}");
+
+    // Sorting by an optional field puts None first, as C# and SQL put null.
+    let byNote = (await shop.Orders.AsNoTracking().ToListAsync()).OrderBy(o => o.note).Select(o => $"{o.id} ({o.note ?? "no note"})");
+    Print($"By note: {string.Join(", ", byNote)}");
+
     // Change a tracked row, and remove one.
     let alan = await shop.Customers.SingleAsync(c => c.name == "Alan");
     alan.email = Some("alan@example.com");

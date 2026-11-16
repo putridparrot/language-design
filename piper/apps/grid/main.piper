@@ -36,7 +36,7 @@ async fn Coordinate(options: Options) => Task<int> {
     let jobs = Jobs.Spawn(node, "jobs");
     let url = HttpUrl(options);
     Print($"Coordinator {node.Address}, dashboard on {url}");
-    await BuildApi(jobs, url).RunAsync();
+    await GridServer(jobs, url).RunAsync();
     await node.Remote().ShutdownAsync(true);
     0
 }
@@ -70,7 +70,7 @@ async fn Everything(options: Options) => Task<int> {
     }
     let url = HttpUrl(options);
     Print($"Coordinator {node.Address} and three workers; dashboard on {url}");
-    await BuildApi(jobs, url).RunAsync();
+    await GridServer(jobs, url).RunAsync();
     stop.Cancel();
     await Task.WhenAll(workers);
     0

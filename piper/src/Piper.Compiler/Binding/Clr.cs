@@ -363,4 +363,11 @@ public static class ClrTypes
     public static bool IsReferenceType(TypeSymbol type) =>
         type == TypeSymbol.String || type is ClrTypeSymbol { IsReferenceType: true } || type.IsTrait ||
         type.OriginalDefinition is NamedTypeDefinition { IsRuntimeType: false } and not RecordSymbol { IsStruct: true };
+
+    /// <summary>
+    /// A type whose .NET <c>T?</c> may be null, so it's an Option at the boundary: a reference type, or a type parameter,
+    /// which may be one (<c>Deserialize&lt;T&gt;</c> gives null for any reference T). The helpers it's converted by are
+    /// unconstrained, so for a value type the conversion is C#'s: <c>default</c>, never None.
+    /// </summary>
+    public static bool IsNullableAtBoundary(TypeSymbol type) => IsReferenceType(type) || type is TypeParameterSymbol;
 }

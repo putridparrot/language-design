@@ -1985,7 +1985,11 @@ public sealed partial class CSharpEmitter
     private string NullableBoundary(BoundNullableBoundaryExpression boundary)
     {
         // `Console.WriteLine(xs?.Count)`: an int? passed as object? is boxed, as ToNullableReference needs a class.
-        var helper = boundary.Kind == NullableBoundaryKind.ToNullableReference && !ClrTypes.IsReferenceType(boundary.Operand.Type.TypeArguments[0])
+        // A type parameter's Option goes to .NET's own `T?` unconstrained (EqualityComparer<T>.Equals), but to an
+        // `object?` boxed, so None is null whatever T is (`Show<int>(None)` printing nothing, not 0).
+        var inner = boundary.Operand.Type.TypeArguments.FirstOrDefault();
+        var helper = boundary.Kind == NullableBoundaryKind.ToNullableReference && inner is not null &&
+                     !ClrTypes.IsReferenceType(inner) && !(inner is TypeParameterSymbol && inner == boundary.Type)
             ? "ToNullableObject"
             : boundary.Kind.ToString();
         return $"global::{InteropClassName}.{helper}({Expr(boundary.Operand, AssignmentPrecedence)})";

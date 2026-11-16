@@ -85,8 +85,45 @@ public static class Runner
             _references is not null && _references.Has(assemblyName) ? _references.LoadFromAssemblyName(assemblyName) : null;
     }
 
-    // Console.Out is process-wide, so capturing it must be serialized.
+    // Console.Out is process-wide, so it's replaced once by a writer that sends each write to the capture of the run it
+    // comes from (an AsyncLocal, which flows into the tasks and threads a program starts), or else to the console.
+    // Programs running at once, as tests do, each get their own output, and nothing another writes meanwhile (a web
+    // app's log, a test's message) lands in it.
     private static readonly Lock ConsoleLock = new();
+    private static TextWriter? _installedOut;
+
+    private sealed class RoutingWriter(TextWriter console) : TextWriter
+    {
+        public static readonly AsyncLocal<TextWriter?> Capture = new();
+
+        private TextWriter Target => Capture.Value ?? console;
+
+        public override System.Text.Encoding Encoding => console.Encoding;
+
+        public override void Write(char value) => Target.Write(value);
+
+        public override void Write(string? value) => Target.Write(value);
+
+        public override void Write(char[] buffer, int index, int count) => Target.Write(buffer, index, count);
+
+        public override void WriteLine() => Target.WriteLine();
+
+        public override void WriteLine(string? value) => Target.WriteLine(value);
+
+        public override void Flush() => Target.Flush();
+    }
+
+    /// <summary>Makes Console.Out the routing writer, again if something has replaced it since.</summary>
+    private static void InstallRouting()
+    {
+        lock (ConsoleLock)
+        {
+            if (_installedOut is not null && ReferenceEquals(Console.Out, _installedOut))
+                return;
+            Console.SetOut(new RoutingWriter(Console.Out));
+            _installedOut = Console.Out;
+        }
+    }
 
     public static CSharpBuildResult Build(string csharp, string assemblyName = "PiperProgram") =>
         Build([new GeneratedFile("Program.cs", csharp)], assemblyName);
@@ -303,19 +340,20 @@ public static class Runner
 
     private static RunResult RunCaptured(MethodInfo entryPoint, string[] args)
     {
-        lock (ConsoleLock)
+        InstallRouting();
+        var outer = RoutingWriter.Capture.Value;
+        var output = new StringWriter { NewLine = "\n" };
+        RoutingWriter.Capture.Value = output;
+        try
         {
-            var original = Console.Out;
-            var output = new StringWriter { NewLine = "\n" };
-            Console.SetOut(output);
-            try
-            {
-                return RunDirect(entryPoint, args) with { Output = output.ToString() };
-            }
-            finally
-            {
-                Console.SetOut(original);
-            }
+            var result = RunDirect(entryPoint, args);
+            // Writes are serialized by Console's synchronized wrapper, which locks on itself.
+            lock (_installedOut!)
+                return result with { Output = output.ToString() };
+        }
+        finally
+        {
+            RoutingWriter.Capture.Value = outer;
         }
     }
 
