@@ -106,11 +106,19 @@ reserves each unit exactly once.
   and their network. Add `--rmi local` to remove the `stock:local` image as well.
 
 **Keeping the counts:** each product keeps its count as events (a [persisted actor](../../docs/plugins.md#keeping-state-persisted-actors)).
-Run without `--events`, a node keeps them in memory, so stopping it loses its products' counts. With
-`--events stock-1.db` (a SQLite file, made if it isn't there), a node that's stopped and started again carries on
-with them: the first time a product is asked for after the restart, its actor replays its events. Docker Compose and
-the Kubernetes StatefulSet give each node a volume for its file. To start again with nothing, delete the files (with
-Docker Compose, `down -v`).
+Where they're kept is configuration, not code (`Events:Provider` and its settings, from appsettings.json or the
+environment). With none, a node keeps them in memory, so stopping it loses its products' counts. With a SQLite file
+(made if it isn't there), a node that's stopped and started again carries on with them: the first time a product is
+asked for after the restart, its actor replays its events.
+
+```
+Events__Provider=sqlite Events__Connection="Data Source=stock-1.db" piper run apps/stock -- --port 8001 …
+```
+
+(In PowerShell, set `$env:Events__Provider` and `$env:Events__Connection` first.) Docker Compose and the Kubernetes
+StatefulSet set them for a file on each node's own volume. A database in your cloud is only other settings:
+`sqlserver` (Azure SQL, Amazon RDS) or `postgres` (Amazon RDS and Aurora, Google Cloud SQL, Azure's), with that EF Core
+package added to piper.json. To start again with nothing, delete the files (with Docker Compose, `down -v`).
 
 **Seeing its traces:** each node exports traces, metrics and logs (the [telemetry plugin](../../docs/plugins.md#telemetry-opentelemetry))
 when `OTEL_EXPORTER_OTLP_ENDPOINT` says where. .NET Aspire's dashboard takes them with no setup:

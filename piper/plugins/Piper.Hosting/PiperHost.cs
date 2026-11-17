@@ -12,6 +12,23 @@ namespace Piper.Hosting;
 /// </summary>
 public static class PiperHost
 {
+    /// <summary>
+    /// <c>provider IEventStore from "Events";</c>: the provider of <typeparamref name="T"/> the configuration's
+    /// <paramref name="section"/> chooses (<c>Events:Provider</c>, the local one if none), made from its settings, and
+    /// registered as a singleton. A provider that can't be made stops the program as it starts, saying why.
+    /// </summary>
+    public static T Provider<T>(IHostApplicationBuilder builder, string section) where T : class
+    {
+        var provider = Provider<T>(builder.Configuration, section);
+        builder.Services.AddSingleton(provider);
+        return provider;
+    }
+
+    /// <summary>The provider of <typeparamref name="T"/> that <paramref name="section"/> of any configuration chooses.</summary>
+    public static T Provider<T>(Microsoft.Extensions.Configuration.IConfiguration configuration, string section) where T : class =>
+        Piper.Runtime.PiperProviders.Create<T>(new Piper.Runtime.ProviderSettings(section,
+            Microsoft.Extensions.Configuration.ConfigurationExtensions.AsEnumerable(configuration.GetSection(section), makePathsRelative: true)));
+
     /// <summary><c>logging off;</c>: no logging providers, so the program writes nothing to the console.</summary>
     public static void LoggingOff(IHostApplicationBuilder builder) => builder.Logging.ClearProviders();
 

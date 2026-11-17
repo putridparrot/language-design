@@ -202,6 +202,11 @@ public sealed class ParallelPlugin : IPiperPlugin
   `References` (paths relative to the plugin's assembly), and call it from the rewritten code. A program using the
   plugin references it, and a built one gets a copy. The web plugin's Piper.Web is one: an ASP.NET Core endpoint
   filter.
+- **Providers it brings:** a plugin whose assembly implements a service (a cloud's store, a broker's transport) lists
+  in `Providers` the static methods registering them with Piper.Runtime's `PiperProviders`
+  (`["Piper.Data.DatabaseEventStore.RegisterProviders"]`). A program using the plugin calls them as it starts, so
+  bringing the plugin is all it takes for configuration to choose its providers by name (see
+  [Providers](#providers-chosen-by-configuration)).
 - **Fresh names:** `p.FreshName("tasks")` gives a name like `__tasks_1` for a variable the rewritten code needs. It
   won't clash with the user's names or with another expansion's.
 - **Async:** `p.AsyncContext` says whether the rewritten code can `await`:
@@ -888,6 +893,10 @@ async fn Main() => Task = await TrackerServer(Load(), SystemClock()).RunAsync();
   (so it sees every exception), then `https`, then `use { … }` blocks (the app's own middleware, `app.Use(…)`), then the policies'
   (CORS, authentication, authorization, rate limits, caching), then health, OpenAPI and the endpoints. Writing
   `UseSecurity(app)` after the endpoints, where it silently does nothing, can't happen.
+- **`provider`:** `provider store: IEventStore from "Events";` makes the implementation of a service the
+  configuration chooses (see [Providers](#providers-chosen-by-configuration)) and registers it, naming it `store` for
+  the clauses after. A provider that can't be made (an unknown name, a missing setting, a package not brought) stops
+  the app as it starts, saying why. A `host` has it too.
 - **`sources`:** `sources (configuration: IConfigurationBuilder) => configuration.AddAzureKeyVault(…);` adds where
   configuration comes from beyond appsettings.json and the environment, from any provider (a key vault, a cloud's
   secrets manager, mounted files), chosen by the app. It's added before anything reads configuration, wherever it's
@@ -1166,6 +1175,44 @@ async fn Main(args: string[]) => Task = await WorkerNode(await StartNode(), Opti
   (warnings where a registration could be out of sight).
 - **Packages:** it brings `Microsoft.Extensions.Hosting`. [apps/grid](../apps/grid/main.piper)'s worker nodes are hosts.
 
+### Providers, chosen by configuration
+
+Piper's cloud-type services are each a trait or interface (`IEventStore` now; a messaging transport next), with
+implementations, called providers, that a program chooses among by configuration as it starts, not in code. So the
+same program runs locally, or on Azure, AWS or Google Cloud, by changing its settings. Every service has a local
+provider, used when nothing is configured, so a program runs and is tested with no cloud at all.
+
+```json
+// appsettings.json, or the environment: Events__Provider=sqlite, Events__Connection=…
+"Events": { "Provider": "sqlite", "Connection": "Data Source=events.db" }
+```
+
+```piper
+server Shop {
+    provider store: IEventStore from "Events";      // registered, and named for the clauses after
+    …
+}
+// or, anywhere there's an IConfiguration:
+let store = PiperHost.Provider<IEventStore>(configuration, "Events");
+```
+
+- **Choosing:** the section's `Provider` names one, and the rest of the section is its settings. With no `Provider`
+  it's the local one. An unknown name, a missing setting or a provider whose package the program hasn't brought is a
+  `ProviderException` at startup, saying which, and listing the names there are.
+- **Where providers come from:** the local ones with Piper.Runtime; others with the plugin that brings them, which a
+  program names in piper.json (with its packages). The compiler has the program register them as it starts.
+
+| Service | Local | Others |
+|---|---|---|
+| `IEventStore` (persisted actors) | `memory` | `sqlite`, `sqlserver`, `postgres` (the data plugin; each with its EF Core package) |
+
+- **Code doesn't depend on this:** an actor, a function or a test takes the service as a value
+  (`Shelf.Spawn(store, …)`), so nothing outside a program's startup knows about configuration or dependency injection;
+  a server's or host's `provider` clause also registers it, for code that's injected.
+- **Writing one:** register it with `PiperProviders.Register<IEventStore>("name", settings => …, local: false)` from a
+  static method your plugin lists in `Providers` (see [Writing a plugin](#writing-a-plugin)); `settings["Key"]`,
+  `settings.Required("Key")` and `settings.RequiredSecret("Key")` read its settings.
+
 ### `telemetry` (OpenTelemetry)
 
 [Piper.Plugins.Telemetry](../plugins/Piper.Plugins.Telemetry/TelemetryPlugin.cs) adds no syntax. A `server` or `host`
@@ -1417,18 +1464,21 @@ let tea = Shelf.Spawn(store, "tea");          // Spawn(system, name, store, …)
 - **Changing events:** across processes, the events are recorded in the actor's `Name.shape.json` with its
   messages, so a change that old streams couldn't be read as (an event removed, a new field needed) is a breaking
   change, reported as one.
-- **Kept in a database:** with the [data plugin](#data-ef-core-databases), Piper.Data's `DatabaseEventStore` keeps the
-  events in a `PiperEvents` table, through EF Core, so they outlive the process:
+- **Where events are kept is configuration:** an actor takes an `IEventStore`, and which one is the app's choice at
+  startup, not code (see [Providers](#providers-chosen-by-configuration)):
 
-  ```piper
-  // piper.json: { "plugins": ["actors", "data"], "packages": { "Microsoft.EntityFrameworkCore.Sqlite": "10.0.14" } }
-  let store = await DatabaseEventStore.OpenAsync(DbContextOptionsBuilder().UseSqlite("Data Source=events.db").Options);
-  let tea = Shelf.Spawn(store, "tea");
+  ```json
+  "Events": { "Provider": "postgres", "Connection": "Host=…" }
   ```
 
-  Any EF Core provider works, and the table can share the program's own database: opening the store makes it if it
-  isn't there. Each event is a row keyed by its stream and place in it, so two writers racing for one stream can't
-  both succeed, even on two machines: the second gets `EventStreamConflictException`.
+  `memory` (the local one, used when nothing is configured) comes with Piper.Runtime. With the
+  [data plugin](#data-ef-core-databases), Piper.Data's `DatabaseEventStore` keeps them in a `PiperEvents` table,
+  through EF Core, so they outlive the process: `sqlite` (a local file), `sqlserver` (Azure SQL, Amazon RDS) or
+  `postgres` (Amazon RDS and Aurora, Google Cloud SQL, Azure's), each needing its `Connection` and its EF Core package
+  in piper.json. The table can share the program's own database: opening the store makes it if it isn't there. Each
+  event is a row keyed by its stream and place in it, so two writers racing for one stream can't both succeed, even on
+  two machines: the second gets `EventStreamConflictException`. A test, or a program wanting its own, passes a store
+  directly: `Shelf.Spawn(MemoryEventStore(), "tea")`, or `DatabaseEventStore.Open(options)`.
 - **Not yet:** snapshots for long streams (every event is replayed as the actor starts).
 
 ### `actor` across processes and machines

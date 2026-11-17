@@ -206,10 +206,14 @@ developer's machine with no cloud at all. What's built so far follows this:
 | Service | The abstraction | Local | Cloud, chosen at startup |
 |---|---|---|---|
 | Secrets and configuration | .NET's configuration sources (`sources`) | appsettings.json, the environment, files | Azure Key Vault, AWS Secrets Manager, GCP Secret Manager, HashiCorp Vault |
-| Persisted actors' events | `IEventStore` | `MemoryEventStore`; `DatabaseEventStore` on SQLite | `DatabaseEventStore` on any EF Core database (Azure SQL, Amazon RDS, Cloud SQL) |
+| Persisted actors' events | `IEventStore`, chosen by `Events:Provider` | `memory`; `sqlite` | `sqlserver` (Azure SQL, Amazon RDS), `postgres` (Amazon RDS and Aurora, Cloud SQL, Azure's) |
 | Telemetry | OpenTelemetry's protocol (OTLP) | nothing, or Aspire's dashboard | any OTLP backend (Azure Monitor, AWS X-Ray, Google Cloud Trace, Jaeger) |
 
-Planned services start the same way: the messaging plugin's transport trait with an in-memory transport first.
+The choice is made by Piper.Runtime's provider registry (see [plugins](plugins.md#providers-chosen-by-configuration)):
+a service's providers by name, the local one built in, others registered by the plugins a program brings, chosen by
+the configuration's `Provider` at startup, with a server's or host's `provider` clause. Code takes the service as a
+value, so nothing depends on dependency injection. Planned services start the same way: the messaging plugin's
+transport trait, with an in-memory transport first and brokers as registered providers.
 
 What [apps/stock](../apps/stock/README.md) and [apps/grid](../apps/grid/README.md) wrote by hand, running as pods in
 Kubernetes, that the language or its plugins could provide. They also raise the priority of what's planned above:

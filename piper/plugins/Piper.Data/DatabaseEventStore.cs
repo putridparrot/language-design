@@ -24,6 +24,46 @@ public sealed class DatabaseEventStore : IEventStore
 
     private DatabaseEventStore(DbContextOptions options) => _options = options;
 
+    /// <summary>The same, made as a program starts (a server's or host's <c>provider</c> clause), not awaited.</summary>
+    public static DatabaseEventStore Open(DbContextOptions options) => OpenAsync(options).GetAwaiter().GetResult();
+
+    /// <summary>
+    /// The databases an app can keep its events in by configuration (<c>"Events": { "Provider": "postgres",
+    /// "Connection": "…" }</c>), each through its EF Core provider, which the app brings as a package: SQLite (a local
+    /// file), SQL Server (Azure SQL, Amazon RDS) and PostgreSQL (Amazon RDS and Aurora, Google Cloud SQL, Azure's).
+    /// </summary>
+    private static readonly (string Name, string Package, string Extensions, string Method)[] Databases =
+    [
+        ("sqlite", "Microsoft.EntityFrameworkCore.Sqlite", "Microsoft.EntityFrameworkCore.SqliteDbContextOptionsBuilderExtensions", "UseSqlite"),
+        ("sqlserver", "Microsoft.EntityFrameworkCore.SqlServer", "Microsoft.EntityFrameworkCore.SqlServerDbContextOptionsBuilderExtensions", "UseSqlServer"),
+        ("postgres", "Npgsql.EntityFrameworkCore.PostgreSQL", "Microsoft.EntityFrameworkCore.NpgsqlDbContextOptionsBuilderExtensions", "UseNpgsql"),
+    ];
+
+    /// <summary>
+    /// Registers the databases above as providers of <see cref="IEventStore"/>, by name (the data plugin's programs call
+    /// this as they start). Each needs its <c>Connection</c> setting, and its EF Core package in the program's piper.json.
+    /// </summary>
+    public static void RegisterProviders()
+    {
+        foreach (var (name, package, extensions, method) in Databases)
+            PiperProviders.Register<IEventStore>(name, settings => Open(Options(name, package, extensions, method, settings)));
+    }
+
+    /// <summary>The options of a database chosen by name, through its EF Core provider's <c>Use…</c>, found in its package.</summary>
+    private static DbContextOptions Options(string name, string package, string extensions, string method, ProviderSettings settings)
+    {
+        var connection = settings.Required("Connection");
+        var type = Type.GetType($"{extensions}, {package}")
+            ?? throw new ProviderException($"The '{name}' provider of {settings.Section} needs EF Core's {package} package: add it to piper.json's \"packages\".");
+        var use = type.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).FirstOrDefault(m =>
+            m.Name == method && !m.IsGenericMethod && m.GetParameters() is [{ ParameterType: var builder }, { ParameterType: var text }, ..] rest &&
+            builder == typeof(DbContextOptionsBuilder) && text == typeof(string) && rest.Skip(2).All(p => p.IsOptional))
+            ?? throw new ProviderException($"{package} has no {method}(DbContextOptionsBuilder, string) that this version of Piper knows.");
+        var options = new DbContextOptionsBuilder();
+        use.Invoke(null, [options, connection, .. use.GetParameters().Skip(2).Select(p => p.DefaultValue is DBNull ? null : p.DefaultValue)]);
+        return options.Options;
+    }
+
     /// <summary>A store in the database <paramref name="options"/> configure, with its table made if it isn't there.</summary>
     public static async Task<DatabaseEventStore> OpenAsync(DbContextOptions options)
     {

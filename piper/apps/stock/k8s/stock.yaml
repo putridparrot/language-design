@@ -62,12 +62,16 @@ spec:
             - $(POD_NAME).stock-nodes
             - --nodes
             - stock-0.stock-nodes:8000,stock-1.stock-nodes:8000,stock-2.stock-nodes:8000
-            - --events
-            - /data/events.db
           volumeMounts:
             - name: events             # this pod's own volume (below), so its products' counts outlive it
               mountPath: /data
           env:
+            # Where its products' events are kept: a SQLite file on the pod's own volume. A database in your cloud
+            # (sqlserver, postgres) is only a change of these, with Events__Connection from a Secret.
+            - name: Events__Provider
+              value: sqlite
+            - name: Events__Connection
+              value: Data Source=/data/events.db
             - name: POD_NAME
               valueFrom:
                 fieldRef:

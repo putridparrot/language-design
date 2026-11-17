@@ -22,6 +22,9 @@ public sealed class DataPlugin : IPiperPlugin
     /// <summary>Piper.Data, storing Options as nullable columns.</summary>
     public IReadOnlyList<string> References => ["Piper.Data.dll"];
 
+    /// <summary>Persisted actors' event stores in a database, chosen by configuration: sqlite, sqlserver, postgres.</summary>
+    public IReadOnlyList<string> Providers => ["Piper.Data.DatabaseEventStore.RegisterProviders"];
+
     public IReadOnlyList<PluginKeyword> Keywords { get; } =
     [
         new DeclarationKeyword("database", Database)

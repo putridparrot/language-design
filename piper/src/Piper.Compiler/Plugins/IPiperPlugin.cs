@@ -37,6 +37,14 @@ public interface IPiperPlugin
     IReadOnlyList<string> References => [];
 
     /// <summary>
+    /// The providers this plugin brings, which a program's configuration can choose among at startup (see Piper.Runtime's
+    /// <c>PiperProviders</c>): each the full name of a public static method, in one of <see cref="References"/>, that
+    /// registers them (<c>Piper.Data.DatabaseEventStore.RegisterProviders</c>). A program using the plugin calls each as
+    /// it starts, so bringing the plugin is all it takes to make its providers available by name.
+    /// </summary>
+    IReadOnlyList<string> Providers => [];
+
+    /// <summary>
     /// Checks the program once it's type-checked, reporting errors or warnings, such as about the types used in the
     /// plugin's constructs. Called for every compilation (and as the editor analyzes), after the program is bound,
     /// whether or not it uses the plugin's keywords. By default it does nothing.

@@ -162,14 +162,16 @@ public sealed partial class CSharpEmitter
     /// Write `#line` directives so compiler errors, stack traces and debuggers point at the `.piper` source.
     /// </param>
     /// <param name="aliases">Extern aliases for referenced assemblies (assembly name → alias), whose types are named by them.</param>
-    public static ImmutableArray<GeneratedFile> Emit(BoundProgram program, bool lineDirectives = false, IReadOnlyDictionary<string, string>? aliases = null)
+    /// <param name="providers">Static methods registering the providers the program's plugins bring, called as it starts.</param>
+    public static ImmutableArray<GeneratedFile> Emit(
+        BoundProgram program, bool lineDirectives = false, IReadOnlyDictionary<string, string>? aliases = null, IReadOnlyList<string>? providers = null)
     {
         var emitter = new CSharpEmitter(program, lineDirectives, aliases ?? ImmutableDictionary<string, string>.Empty);
         var texts = program.Files.Select((file, i) => (File: file, Text: emitter.EmitFile(file, program.FileNamespaces[i]))).ToList();
 
         // Runtime support goes last, once every file has been written and we know what was used.
         var runtimeIndex = texts.FindIndex(t => t.File == emitter._runtimeFile);
-        texts[runtimeIndex] = (emitter._runtimeFile, texts[runtimeIndex].Text + emitter.EmitRuntime());
+        texts[runtimeIndex] = (emitter._runtimeFile, texts[runtimeIndex].Text + emitter.EmitRuntime() + emitter.EmitProviders(providers ?? []));
 
         return [.. texts.Select(t => new GeneratedFile(Path.ChangeExtension(Path.GetFileName(t.File.FileName), ".cs"), t.Text))];
     }
@@ -1141,6 +1143,28 @@ public sealed partial class CSharpEmitter
             _writer.CloseBrace();
             _writer.CloseBrace();
         }
+        return _writer.ToString();
+    }
+
+    /// <summary>
+    /// A module initializer calling each plugin's provider registration, so the providers its plugins bring are known
+    /// by name before any of the program runs (Main, or a test).
+    /// </summary>
+    private string EmitProviders(IReadOnlyList<string> providers)
+    {
+        if (providers.Count == 0)
+            return "";
+        _writer = new CodeWriter();
+        _writer.WriteLine();
+        _writer.WriteLine("internal static class PiperProviderRegistrations");
+        _writer.OpenBrace();
+        _writer.WriteLine("[global::System.Runtime.CompilerServices.ModuleInitializer]");
+        _writer.WriteLine("internal static void Register()");
+        _writer.OpenBrace();
+        foreach (var provider in providers)
+            _writer.WriteLine($"global::{provider}();");
+        _writer.CloseBrace();
+        _writer.CloseBrace();
         return _writer.ToString();
     }
 

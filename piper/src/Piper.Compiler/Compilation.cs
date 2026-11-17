@@ -97,7 +97,7 @@ public static class Compilation
         var lowered = Lowerer.Lower(program);
         if (options.IncludeTests)
             lowered = lowered.WithTestsAsFunctions();
-        return new CompilationResult(files, sorted, CSharpEmitter.Emit(lowered, options.LineDirectives, options.References.Aliases))
+        return new CompilationResult(files, sorted, CSharpEmitter.Emit(lowered, options.LineDirectives, options.References.Aliases, [.. options.Plugins.SelectMany(p => p.Providers).Distinct()]))
         {
             HasMain = program.Main is not null,
             TestCount = program.Tests.Length,

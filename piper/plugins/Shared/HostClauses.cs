@@ -45,6 +45,7 @@ internal static class HostClauses
     /// <summary>What each shared clause's words mean, for hover and completion.</summary>
     public static IReadOnlyDictionary<string, string> Words { get; } = new Dictionary<string, string>
     {
+        ["provider"] = "The implementation of a service (a trait or interface) the configuration chooses, made as the program starts and registered: `provider IEventStore from \"Events\";` reads Events:Provider (memory, sqlite, sqlserver, postgres…; the local one if none) and the provider's settings. `provider store: IEventStore from \"Events\";` also names it for the clauses after.",
         ["sources"] = "Where configuration (secrets among it) comes from beyond appsettings.json and the environment, from any provider: `sources (configuration: IConfigurationBuilder) => configuration.AddAzureKeyVault(…);` or AWS's, HashiCorp Vault's, Kubernetes secrets as files. Added before anything reads configuration, wherever it's written.",
         ["telemetry"] = "Traces, metrics and logs over OpenTelemetry (OTLP) to `OTEL_EXPORTER_OTLP_ENDPOINT` (Aspire's dashboard, Jaeger, a collector), named as the declaration is or as given: `telemetry \"stock-api\";`. Needs the telemetry plugin.",
         ["logging"] = "`logging off;` removes the logging providers, for a program that writes nothing to the console.",
@@ -63,7 +64,7 @@ internal static class HostClauses
     };
 
     /// <summary>The shared clauses' words, for a message listing what may be written.</summary>
-    public const string Listed = "'config', 'sources', 'services', 'singleton', 'scoped', 'transient', 'configure', 'logging', 'telemetry', 'hosted', 'worker', 'stopping' or 'shutdown'";
+    public const string Listed = "'config', 'sources', 'provider', 'services', 'singleton', 'scoped', 'transient', 'configure', 'logging', 'telemetry', 'hosted', 'worker', 'stopping' or 'shutdown'";
 
     private static readonly Dictionary<string, string> Lifetimes = new()
     {
@@ -143,6 +144,25 @@ internal static class HostClauses
                 p.ReadWord();
                 parts.Building.Add(new ExpressionStatementSyntax(p.Current.Span, p.ParseBlock()));
                 return true;
+
+            case "provider":
+            {
+                // `provider IEventStore from "Events";`, or `provider store: IEventStore from "Events";` to use it in
+                // the clauses after: the implementation the configuration chooses (local if it chooses none), made as
+                // the program starts and registered as a singleton.
+                p.ReadWord();
+                var local = p.Current.Kind == TokenKind.Identifier && p.Peek(1).Kind == TokenKind.Colon ? p.NextToken() : null;
+                if (local is not null)
+                    p.NextToken();
+                var service = p.ParseType();
+                p.ExpectWord("from");
+                var section = p.ParseExpression();
+                p.Expect(TokenKind.Semicolon);
+                var value = local ?? p.FreshName("provider");
+                parts.Building.Add(p.Template.Statement($"let $value = {Host}.Provider<$service>(builder, $section);",
+                    ("value", value), ("service", service), ("section", section)));
+                return true;
+            }
 
             case "sources":
             {

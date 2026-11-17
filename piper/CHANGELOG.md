@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Providers, chosen by configuration:** a cloud-type service is a trait or interface whose implementations a program
+  chooses among by configuration at startup. Piper.Runtime's `PiperProviders` holds each service's providers by name,
+  its local one (used when nothing is configured) built in, and others registered by the plugins a program brings
+  (a plugin's new `Providers`, which the compiler has the program call as it starts). A server's or host's
+  `provider store: IEventStore from "Events";` makes the one `Events:Provider` names, from the rest of the section,
+  and registers it; `PiperHost.Provider<T>(configuration, section)` does the same anywhere. For `IEventStore`: `memory`
+  (local), and with the data plugin `sqlite`, `sqlserver` and `postgres`. An unknown name or missing setting stops
+  the program at startup, saying which. apps/stock now takes its store from configuration
+  (`Events__Provider=sqlite`) rather than its own `--events` option.
+
 - **`sources` in a server or host:** `sources (configuration: IConfigurationBuilder) => …;` adds a configuration source
   from any provider (a key vault, a cloud's secrets manager, mounted files), chosen by the app, before anything reads
   configuration, wherever it's written. Secrets are read through it; nothing in Piper is tied to one cloud. The
@@ -20,9 +30,10 @@
   the usual way one leaks into a log or a message. A `config` field marked `secret` is read as one. apps/tracker's
   webhook URL is a secret. See [Secrets](docs/language.md#secrets).
 
-- **apps/stock keeps its counts:** each product is a persisted actor (`Received` and `Reserved` events), and with
-  `--events file.db` a node keeps its products' events in SQLite, so a node that restarts carries on with their
-  counts. Docker Compose and the Kubernetes StatefulSet give each node a volume of its own for its file.
+- **apps/stock keeps its counts:** each product is a persisted actor (`Received` and `Reserved` events), and a node
+  keeps its products' events where its configuration says (`Events__Provider=sqlite`, see Providers above), so a node
+  that restarts carries on with their counts. Docker Compose and the Kubernetes StatefulSet give each node a volume
+  of its own for its SQLite file.
 
 - **Persisted actors' events in a database (data plugin):** Piper.Data's `DatabaseEventStore`
   (`await DatabaseEventStore.OpenAsync(DbContextOptionsBuilder().UseSqlite("Data Source=events.db").Options)`) keeps
