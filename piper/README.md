@@ -36,6 +36,7 @@ piper build api/ --publish    # compile for a container: bin/publish, with a Doc
 piper test src/               # run the program's test blocks (--filter picks some by name)
 piper build src/ --accept-breaking   # record an api's shape over a deliberate breaking change (see docs/plugins.md)
 piper emit hello.piper        # print the C#
+piper fmt src/                # lay out .piper files as Piper is written (--check lists them, failing if any would change)
 ```
 
 A program folder can say what it builds into, and what it uses, with a `piper.json`, which `piper build src/` then

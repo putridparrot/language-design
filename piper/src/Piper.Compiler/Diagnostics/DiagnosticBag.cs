@@ -190,6 +190,10 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0402", span, $"A '{type}' can't go in a hole of {prefix}$\"…\".{what}");
     }
 
+    public void ReportSecretInString(TextSpan span) =>
+        Error("PIP0407", span, "A Secret can't go in a string's hole: it would show as ***, or, revealed, leak its value into " +
+                               "the text (a log, a message, a page). Pass it where it's meant to go; if it's really meant to be here, write .Reveal().");
+
     public void ReportInterpolationKindFormat(TextSpan span, string prefix, bool alignment) =>
         Error("PIP0403", span, alignment
             ? $"A hole of {prefix}$\"…\" can't have an alignment."

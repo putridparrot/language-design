@@ -888,6 +888,10 @@ async fn Main() => Task = await TrackerServer(Load(), SystemClock()).RunAsync();
   (so it sees every exception), then `https`, then `use { … }` blocks (the app's own middleware, `app.Use(…)`), then the policies'
   (CORS, authentication, authorization, rate limits, caching), then health, OpenAPI and the endpoints. Writing
   `UseSecurity(app)` after the endpoints, where it silently does nothing, can't happen.
+- **`sources`:** `sources (configuration: IConfigurationBuilder) => configuration.AddAzureKeyVault(…);` adds where
+  configuration comes from beyond appsettings.json and the environment, from any provider (a key vault, a cloud's
+  secrets manager, mounted files), chosen by the app. It's added before anything reads configuration, wherever it's
+  written, so every `config` sees it. A `host` has it too.
 - **`config`:** `config Smtp;` reads a [`config`](#config-typed-configuration) record from the app's configuration
   (appsettings.json, environment variables) as the app is built, so a missing or invalid value stops it at startup,
   listing every problem, rather than failing the first request that needs it. It's registered as a singleton, and as
@@ -1112,6 +1116,11 @@ match LoadSmtp(configuration) { Ok(s) => …, Err(problems) => … }
     `TryParse` does, in the invariant culture
   - any of those optional (`T?`) or in a `List<T>`
   - another config, for a nested section
+- **Secrets:** `secret password: string;` (or `string?`, `int`, any one value) is read as its type and kept as a
+  [`Secret`](language.md#secrets), so the config prints as `Database { host = db, password = *** }` and its value is
+  `settings.password.Reveal()`. apps/tracker's webhook URL, which carries its token, is one. Where they come from is
+  any configuration source the app chooses: a server's or host's `sources` clause adds one (a key vault, a cloud's
+  secrets manager, mounted files), before any `config` is read.
 - **Problems** are all reported at once, each with its key: `Smtp:port: "abc" isn't a valid int`,
   `Smtp:host is missing`, and, once every value is there, a broken invariant (`Smtp: Invariant failed: port > 0 …`).
 - **Packages:** it brings `Microsoft.Extensions.Configuration.Json` and `.EnvironmentVariables` for console programs. A
@@ -1365,6 +1374,62 @@ How it behaves:
   (`DateTime`, `System.Collections.Immutable`) and other actors' handles are fine.
 
 The syntax describes what an actor is, not how it runs, so another plugin can run the same declarations differently.
+
+#### Keeping state: persisted actors
+
+An actor's state lives only in memory, so a process that stops loses it. A `persisted` actor keeps it as events
+instead, saved as it handles messages and replayed when it starts again (event sourcing), in either actor plugin:
+
+```piper
+actor Shelf(sku: string) persisted by sku {
+    mut onHand = 0;
+    mut reserved = 0;
+
+    event Received(quantity: int) { onHand += quantity; }
+    event Reserved(quantity: int) { onHand -= quantity; reserved += quantity; }
+
+    on Receive(quantity: int) { emit Received(quantity); }
+    on Reserve(quantity: int) => bool {
+        if quantity > onHand { false } else { emit Reserved(quantity); true }
+    }
+}
+
+let store = MemoryEventStore();               // Piper.Runtime's; or any IEventStore
+let tea = Shelf.Spawn(store, "tea");          // Spawn(system, name, store, …) across processes
+```
+
+- **Events are the only way the state changes.** A handler decides, and `emit Received(quantity);` applies the event
+  at once (the handler sees its effect) and keeps it. When the handler finishes, the message's events are saved
+  together, before an ask's answer is sent. When an actor with the same identity starts, in this process or after a
+  restart, it replays its events to rebuild the state, before it handles any message.
+- **Identity:** `persisted by sku` names each actor's stream of events, `Shelf/tea`. The store is the `store` that
+  `Spawn` takes, first: Piper.Runtime's `MemoryEventStore`, or another `IEventStore` (`LoadAsync`, `AppendAsync`).
+  Events are kept as JSON, as Piper's enums are written: `{"kind":"Received","quantity":10}`.
+- **Failures:** a handler that throws saves none of its events, and its state is put back as before the message,
+  so a persisted actor rolls back by its nature (`on failure resume` is an error). `restart` goes back to `Spawn`'s
+  state and replays the saved events, reading the stream afresh; `stop` stops it.
+- **Two writers:** a save expects the stream as the actor last read it. If something else wrote to it (the same
+  actor running twice, on two nodes), the save throws `EventStreamConflictException` and saves nothing, so the
+  handler fails; with `on failure restart`, the actor reads the stream again and catches up.
+- **Checked at compile time:** a handler assigning the state itself (rather than emitting), an `emit` of an event
+  the actor doesn't have, an event's body that awaits or emits (replaying it would do that again), a persisted actor
+  without events, events in an actor that isn't persisted, and state that isn't immutable values (as for `rollback`).
+- **Changing events:** across processes, the events are recorded in the actor's `Name.shape.json` with its
+  messages, so a change that old streams couldn't be read as (an event removed, a new field needed) is a breaking
+  change, reported as one.
+- **Kept in a database:** with the [data plugin](#data-ef-core-databases), Piper.Data's `DatabaseEventStore` keeps the
+  events in a `PiperEvents` table, through EF Core, so they outlive the process:
+
+  ```piper
+  // piper.json: { "plugins": ["actors", "data"], "packages": { "Microsoft.EntityFrameworkCore.Sqlite": "10.0.14" } }
+  let store = await DatabaseEventStore.OpenAsync(DbContextOptionsBuilder().UseSqlite("Data Source=events.db").Options);
+  let tea = Shelf.Spawn(store, "tea");
+  ```
+
+  Any EF Core provider works, and the table can share the program's own database: opening the store makes it if it
+  isn't there. Each event is a row keyed by its stream and place in it, so two writers racing for one stream can't
+  both succeed, even on two machines: the second gets `EventStreamConflictException`.
+- **Not yet:** snapshots for long streams (every event is replayed as the actor starts).
 
 ### `actor` across processes and machines
 

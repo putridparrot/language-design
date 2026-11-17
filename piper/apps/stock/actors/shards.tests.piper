@@ -3,12 +3,13 @@ namespace StockApp;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Piper.Runtime;
 using Proto;
 using Proto.Remote;
 
 /// Three nodes in this process, on free ports, each knowing all three: as three pods would be, but on localhost.
 async fn StartCluster() => Task<List<Shards>> {
-    let systems = await Task.WhenAll(Enumerable.Range(0, 3).Select(_ => StartNode("127.0.0.1", 0)));
+    let systems = await Task.WhenAll(Enumerable.Range(0, 3).Select(_ => StartNode("127.0.0.1", 0, MemoryEventStore())));
     let addresses: List<string> = [...systems.Select(s => s.Address)];
     [...systems.Select(s => Shards(s, addresses))]
 }

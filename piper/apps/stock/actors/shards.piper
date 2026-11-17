@@ -6,6 +6,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Piper.Runtime;
 using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
@@ -20,10 +21,10 @@ fn OwnerIndex(sku: string, count: int) => int {
     (int)(hash % count)
 }
 
-/// Starts this node: an actor system the other nodes reach at `host:port`, hosting this node's warehouse. A loopback
-/// host binds to it alone; any other (a container's or pod's name) binds to every interface and tells the others
-/// that name.
-async fn StartNode(host: string, port: int) => Task<ActorSystem> {
+/// Starts this node: an actor system the other nodes reach at `host:port`, hosting this node's warehouse, whose products
+/// keep their events in `store`. A loopback host binds to it alone; any other (a container's or pod's name) binds to
+/// every interface and tells the others that name.
+async fn StartNode(host: string, port: int, store: IEventStore) => Task<ActorSystem> {
     let config = if host == "127.0.0.1" || host == "localhost" {
         RemoteConfig.BindToLocalhost(port)
     } else {
@@ -31,7 +32,7 @@ async fn StartNode(host: string, port: int) => Task<ActorSystem> {
     };
     let system = ActorSystem().WithRemote(config);
     await system.Remote().StartAsync();
-    Warehouse.Spawn(system, "warehouse", system);
+    Warehouse.Spawn(system, "warehouse", system, store);
     system
 }
 

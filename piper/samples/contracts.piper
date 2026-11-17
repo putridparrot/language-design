@@ -15,11 +15,11 @@ extend Money {
 fn Withdraw(account: Account, amount: Money) => Account
     requires amount.cents > 0
     requires amount.cents <= account.balance.cents
-= { ...account, balance: Money(account.balance.cents - amount.cents) };
+    = { ...account, balance: Money(account.balance.cents - amount.cents) };
 
 fn Deposit(account: Account, amount: Money) => Account
     requires amount.cents > 0
-= { ...account, balance: account.balance + amount };
+    = { ...account, balance: account.balance + amount };
 
 // Several conditions can share one clause.
 fn Percent(part: long, whole: long) => double requires whole > 0, part >= 0, part <= whole = (double)part / whole * 100;

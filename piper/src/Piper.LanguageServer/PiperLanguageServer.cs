@@ -168,6 +168,12 @@ public sealed class PiperLanguageServer
                 return InDocument(parameters!, (analysis, source) => InlayHints.Hints(analysis, source, SpanOf(source, parameters!["range"]!)));
             case "textDocument/semanticTokens/full":
                 return InDocument(parameters!, SemanticTokens.Tokens);
+            case "textDocument/formatting":
+                // `piper fmt`'s layout, as one edit of the whole document; none if it's laid out already, or doesn't lex.
+                return InDocument(parameters!, (_, source) =>
+                    Piper.Formatting.Formatter.Format(source).Text is { } formatted && formatted != source.Text
+                        ? new JsonArray(new JsonObject { ["range"] = Range(source, new TextSpan(0, source.Length)), ["newText"] = formatted })
+                        : new JsonArray());
             case "textDocument/codeAction":
                 return InDocument(parameters!, (analysis, source) =>
                     CodeActions.Actions(analysis, source, SpanOf(source, parameters!["range"]!), parameters!["context"]?["diagnostics"] as JsonArray ?? []));
@@ -270,6 +276,7 @@ public sealed class PiperLanguageServer
             ["documentHighlightProvider"] = true,
             ["renameProvider"] = new JsonObject { ["prepareProvider"] = true },
             ["documentSymbolProvider"] = true,
+            ["documentFormattingProvider"] = true,
             ["completionProvider"] = new JsonObject { ["triggerCharacters"] = new JsonArray(".") },
             ["signatureHelpProvider"] = new JsonObject { ["triggerCharacters"] = new JsonArray("(", ","), ["retriggerCharacters"] = new JsonArray(")") },
             ["inlayHintProvider"] = true,

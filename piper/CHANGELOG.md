@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+- **`sources` in a server or host:** `sources (configuration: IConfigurationBuilder) => …;` adds a configuration source
+  from any provider (a key vault, a cloud's secrets manager, mounted files), chosen by the app, before anything reads
+  configuration, wherever it's written. Secrets are read through it; nothing in Piper is tied to one cloud. The
+  roadmap now states the rule every cloud feature follows: an abstraction, a local implementation, and providers
+  chosen by configuration at startup.
+
+- **`piper fmt`:** lays out .piper files as Piper is written: four spaces for each open bracket (those one line opens
+  counting once), one more for a continued line (a chain's `.Call()`, `requires …`, an expression after `=`), and
+  blank lines tidied, with trailing whitespace gone. Nothing moves within a line, and a string's or markup literal's
+  lines are left as they are, so it can't change what code means (a test checks every file in the repository keeps
+  its tokens). `--check` lists the files it would change and fails, for CI. The language server formats a document
+  the same way (Format Document). The samples and apps are formatted.
+
+- **Secrets:** Piper.Runtime's `Secret<T>` prints, formats and is written to JSON as `***` (read from JSON, it's the
+  value written), `.Reveal()` is the one way to its value, and the compiler refuses one in a string's hole (PIP0407),
+  the usual way one leaks into a log or a message. A `config` field marked `secret` is read as one. apps/tracker's
+  webhook URL is a secret. See [Secrets](docs/language.md#secrets).
+
+- **apps/stock keeps its counts:** each product is a persisted actor (`Received` and `Reserved` events), and with
+  `--events file.db` a node keeps its products' events in SQLite, so a node that restarts carries on with their
+  counts. Docker Compose and the Kubernetes StatefulSet give each node a volume of its own for its file.
+
+- **Persisted actors' events in a database (data plugin):** Piper.Data's `DatabaseEventStore`
+  (`await DatabaseEventStore.OpenAsync(DbContextOptionsBuilder().UseSqlite("Data Source=events.db").Options)`) keeps
+  their events in a `PiperEvents` table through EF Core, made in the database if it isn't there, so they outlive the
+  process. Its key (stream and place) refuses a second writer racing for one stream, even from another machine.
+
+- **Persisted actors (event sourcing, both actor plugins):** `actor Shelf(sku: string) persisted by sku { … }` keeps
+  its state as events: `event Received(quantity: int) { onHand += quantity; }` says how each changes the state, and
+  handlers `emit` them. A message's events are saved together when its handler finishes (none if it throws, and the
+  state is put back), and replayed when an actor with that identity starts again. `Spawn` takes the store:
+  Piper.Runtime's `MemoryEventStore`, or any `IEventStore`; a stream written by two actors at once is caught
+  (`EventStreamConflictException`). The compiler checks that state changes only through events, that events don't
+  await or emit, and that the state is immutable values; a remote actor's events are in its recorded shape. See
+  [plugins](docs/plugins.md#keeping-state-persisted-actors).
+
 - **Failure policies for actors (both actor plugins):** `on failure …;` says what a handler that throws does to its
   actor: `resume` (the default, as before), `rollback` (the state is put back as it was before the message, so a
   handler finishes or changes nothing), `restart` (back to how `Spawn` made it; `restart 3 per minute` stops it past

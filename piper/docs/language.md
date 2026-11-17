@@ -1068,6 +1068,35 @@ if result.Succeeded { Print(result.output); } else { Print(result.error); }
 - **On Windows,** a `.bat` or `.cmd` program is run by `cmd.exe`, which reads its arguments its own way, so for those
   a hole's text can still reach a shell. Run programs, not scripts, with arguments from outside.
 
+### Secrets
+
+A password, a connection string or a webhook's URL with its token mustn't end up in a log, a message or a page. Piper.Runtime's
+`Secret<T>` holds one:
+
+```piper
+let password = Secret<string>("hunter2");
+Print(password);                          // ***
+Print($"signing in with {password}");     // error PIP0407: a Secret can't go in a string's hole
+db.Connect(password.Reveal());            // the one way to its value, where it's meant to go
+```
+
+- **It shows nothing:** printed, formatted, in a record's printout (`Settings { password = *** }`) and written to
+  JSON, it's `***`. Read from JSON, it's the value written, so configuration and requests can carry one in.
+- **The compiler refuses one in a string's hole** (PIP0407), an Option of one too, as that's the usual way one leaks:
+  a `$"…"` built for a log or a message, or a log's own template. `.Reveal()` in the hole says it's meant.
+- **From configuration,** a `config` record's field is one when marked `secret` (see the
+  [config plugin](plugins.md#config-typed-configuration)): `secret password: string;`.
+- **From any provider:** where configuration, secrets among it, comes from is the app's choice, not Piper's. A
+  `server`'s or `host`'s `sources` clause adds any provider's configuration source (Azure Key Vault, AWS Secrets
+  Manager, HashiCorp Vault, Kubernetes secrets mounted as files), before anything reads configuration:
+
+  ```piper
+  server Api {
+      config settings: Settings;
+      sources (configuration: IConfigurationBuilder) => configuration.AddAzureKeyVault(vault, credential);
+  }
+  ```
+
 ### Logging
 
 A `$"…"` given to `ILogger`'s `Log…` methods (`LogInformation`, `LogWarning`, `LogError`, `Log(level, …)` and the rest,

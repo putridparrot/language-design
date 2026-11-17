@@ -97,7 +97,7 @@ fn Simulate(scenarios: int, seed: int) => Sample {
 ///   simulation, which should come close
 /// - `histogram`: the scenarios counted in 100 wider bars, from `low` to `high`, for drawing
 record Valuation(scenarios: long, value: double, mean: double, var95: double, var99: double, shortfall99: double,
-                 formulaVar99: double, histogram: ImmutableList<long>, low: double, high: double);
+    formulaVar99: double, histogram: ImmutableList<long>, low: double, high: double);
 
 /// Nothing found: what a cancelled job has.
 fn NoValuation() => Valuation = Valuation(0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ImmutableList.Create<long>(), 0.0, 0.0);

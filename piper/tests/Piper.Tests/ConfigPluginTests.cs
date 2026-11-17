@@ -95,6 +95,64 @@ public class ConfigPluginTests
             """, output);
     }
 
+    /// <summary>
+    /// A secret field is read as its type and kept as a Secret: printing the config shows ***, and .Reveal() gives the
+    /// value. A missing optional one is None; a missing required one is reported as any field is.
+    /// </summary>
+    [Fact]
+    public void A_secret_field_is_read_and_never_shown()
+    {
+        var output = Run("""
+            using System;
+            using System.Collections.Generic;
+            using Microsoft.Extensions.Configuration;
+
+            config Database {
+                host: string;
+                secret password: string;
+                secret token: string?;
+                secret pin: int?;
+            }
+
+            fn Settings(values: Dictionary<string, string>) => IConfiguration {
+                let configuration = ConfigurationManager();
+                for (key, value) in values { configuration[key] = value; }
+                configuration
+            }
+
+            fn Main() {
+                match LoadDatabase(Settings(["Database:Host": "db", "Database:Password": "hunter2", "Database:Pin": "1234"])) {
+                    Ok(d) => {
+                        Print(d);
+                        Print(d.password.Reveal());
+                        Print(d.token is None);
+                        Print(d.pin?.Reveal() ?? 0);
+                    },
+                    Err(problems) => Print(string.Join("; ", problems)),
+                }
+                match LoadDatabase(Settings(["Database:Host": "db"])) {
+                    Ok(_) => Print("loaded"),
+                    Err(problems) => Print(string.Join("; ", problems)),
+                }
+            }
+            """);
+        Assert.Equal("""
+            Database { host = db, password = ***, token = None, pin = Some(***) }
+            hunter2
+            True
+            1234
+            Database:password is missing
+
+            """, output);
+    }
+
+    [Fact]
+    public void A_secret_is_one_value()
+    {
+        var result = Compile("config C { secret keys: System.Collections.Generic.List<string>; }\nfn Main() {}");
+        Assert.Contains(result.FormattedDiagnostics, d => d.Contains("A secret is one value"));
+    }
+
     [Fact]
     public void Every_problem_is_reported_at_once_with_its_key()
     {

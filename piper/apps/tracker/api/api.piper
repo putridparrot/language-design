@@ -17,7 +17,7 @@ using Microsoft.Extensions.Logging;
 config Settings from "Tracker" {
     connection: string = "Data Source=tracker.db";
     searchesPerMinute: int = 60 requires searchesPerMinute > 0;
-    webhook: string?;                       // where to post changed issues, if anywhere
+    secret webhook: string?;                // where to post changed issues, if anywhere: a secret, as its URL carries its token
 }
 
 /// The time now: a service, so tests can fix it.

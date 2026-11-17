@@ -36,6 +36,7 @@ public sealed class ActorPlugin : IPiperPlugin
 
     public IReadOnlyList<PluginKeyword> Keywords { get; } =
     [
+        ActorSyntax.EmitKeyword(),
         new DeclarationKeyword("actor", p => ActorSyntax.Parse(p, GeneratedNames) is { } actor ? Expand(p, actor) : [])
         {
             Description = "Declares an actor: an object with private state that handles one message at a time, so its state needs no locks. " +
@@ -65,7 +66,8 @@ public sealed class ActorPlugin : IPiperPlugin
 
     private static ImmutableArray<DeclarationSyntax> Expand(PluginParser p, ActorDeclaration declaration)
     {
-        p.Data = new ActorData(declaration.Name, declaration.Failure, [.. declaration.State.OfType<VariableDeclarationSyntax>().Select(v => v.Name.Text)]);
+        p.Data = new ActorData(declaration.Name, declaration.Failure, [.. declaration.State.OfType<VariableDeclarationSyntax>().Select(v => v.Name.Text)],
+            declaration.PersistedBy is not null);
         return Generate(p, declaration);
     }
 
@@ -81,6 +83,13 @@ public sealed class ActorPlugin : IPiperPlugin
         var (setup, before, onFailure) = ActorSyntax.PolicyCode(declaration, hole, "__stopped = true; __channel.Writer.TryComplete();");
         if (canStop)
             setup += "mut __stopped = false;\n";
+        // A persisted actor's events: its Spawn takes their store, replays them as its loop starts, and saves each
+        // message's once its handler has finished (before an ask's answer is sent).
+        bool persisted = declaration.PersistedBy is not null;
+        var (eventEnum, eventSetup) = ActorSyntax.EventCode(declaration, hole);
+        var commit = ActorSyntax.Commit(declaration);
+        var store = persisted ? "store: Piper.Runtime.IEventStore, " : "";
+        var replay = persisted ? ActorSyntax.Replay : "";
 
         var variants = new List<string>();
         var arms = new List<string>();
@@ -95,7 +104,9 @@ public sealed class ActorPlugin : IPiperPlugin
                 var fields = names.Count == 0 ? "" : $"({hole[handler.Parameters]}: unit)";
                 var arguments = names.Count == 0 ? "" : $"({string.Join(", ", names)})";
                 variants.Add($"{handler.Name.Text}{fields}");
-                arms.Add($"{handler.Name.Text}{arguments} => {hole[handler.Body]},");
+                arms.Add(persisted
+                    ? $"{handler.Name.Text}{arguments} => {{ {hole[handler.Body]}; {commit} }},"
+                    : $"{handler.Name.Text}{arguments} => {hole[handler.Body]},");
                 methods.Add($$"""
                     fn {{hole[handler.Name]}}({{hole[handler.Parameters]}}: unit) {
                         {{string.Format(send, $"{message}.{handler.Name.Text}{arguments}")}}
@@ -111,6 +122,7 @@ public sealed class ActorPlugin : IPiperPlugin
                         try {
                             // The body is the handler's declared result, so `Ok(x)` or `None` infer from it, as in a function.
                             let __result: {{hole[handler.Result]}} = {{hole[handler.Body]}};
+                            {{commit}}
                             __reply.SetResult(__result);
                         } catch (__error: System.Exception) {
                             __reply.SetException(__error);
@@ -133,6 +145,7 @@ public sealed class ActorPlugin : IPiperPlugin
         var ignoreTells = stoppedArms.Count < declaration.Handlers.Count ? "_ => {}" : "";
 
         var template = $$"""
+            {{eventEnum}}
             enum {{message}} {
                 {{string.Join(",\n", variants)}}
             }
@@ -140,11 +153,13 @@ public sealed class ActorPlugin : IPiperPlugin
             record {{hole[declaration.Name]}}(__mailbox: System.Threading.Channels.ChannelWriter<{{message}}>, __completion: {{Tasks}}.Task);
 
             extend {{actor}} {
-                static fn Spawn({{hole[declaration.Parameters]}}: unit) => {{actor}} {
+                static fn Spawn({{store}}{{hole[declaration.Parameters]}}: unit) => {{actor}} {
                     let __channel = System.Threading.Channels.Channel.CreateUnbounded<{{message}}>();
                     {{hole[declaration.State]}};
+                    {{eventSetup}}
                     {{setup}}
                     let __loop = {{Tasks}}.Task.Run(async () => {
+                        {{replay}}
                         await for __message in __channel.Reader.ReadAllAsync() {
                             {{(canStop ? $"if __stopped {{ match __message {{ {string.Join("\n", stoppedArms)} {ignoreTells} }} continue; }}" : "")}}
                             {{before}}

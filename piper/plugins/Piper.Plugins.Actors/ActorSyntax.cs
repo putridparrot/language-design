@@ -17,7 +17,16 @@ internal sealed record ActorDeclaration(Token Name, ImmutableArray<ParameterSynt
 
     /// <summary>The names of its `mut` state, which `rollback` and `restart` put back.</summary>
     public List<string> Mutable { get; init; } = [];
+
+    /// <summary>`persisted by sku`: the actor's identity, naming its stream of events; null for an actor that isn't.</summary>
+    public ExpressionSyntax? PersistedBy { get; init; }
+
+    /// <summary>Its events (`event Received(quantity: int) { onHand += quantity; }`), the only way a persisted actor's state changes.</summary>
+    public List<ActorEvent> Events { get; init; } = [];
 }
+
+/// <summary>An event of a persisted actor: its fields, and how it changes the state (replayed as the actor starts).</summary>
+internal sealed record ActorEvent(Token Name, ImmutableArray<ParameterSyntax> Parameters, BlockExpressionSyntax Body);
 
 /// <summary>
 /// `on failure resume|rollback|stop|restart [n per unit];`: what an actor does when a handler throws. <paramref name="Limit"/>
@@ -25,8 +34,11 @@ internal sealed record ActorDeclaration(Token Name, ImmutableArray<ParameterSynt
 /// </summary>
 internal sealed record FailurePolicy(Token Word, string Kind, ExpressionSyntax? Limit, string? Window);
 
-/// <summary>What an actor plugin notes for its analysis: the actor's name, its failure policy, and its state's names.</summary>
-internal sealed record ActorData(Token Name, FailurePolicy? Failure, List<string> State);
+/// <summary>
+/// What an actor plugin notes for its analysis: the actor's name, its failure policy, its state's names, and whether
+/// it's persisted (whose state, like rollback's, must be immutable).
+/// </summary>
+internal sealed record ActorData(Token Name, FailurePolicy? Failure, List<string> State, bool Persisted = false);
 
 /// <summary>
 /// What the actor plugins share: reading an `actor` declaration (the same syntax whether actors run in one process or
@@ -50,6 +62,9 @@ internal static class ActorSyntax
         ["restart"] = "Put the state back as Spawn made it. `restart 3 per minute`: after more restarts than that in the window, stop. The state must be immutable values.",
         ["stop"] = "Stop the actor: later messages aren't handled, and an ask sent to it fails.",
         ["per"] = "The window the restarts are counted in: `per second`, `per minute` or `per hour`.",
+        ["persisted"] = "The actor keeps its state as events, saved in the store its Spawn takes and replayed as it starts: `persisted by sku` names each one's stream.",
+        ["by"] = "What identifies each actor, naming the stream its events are kept in: `persisted by sku` keeps Product/tea's.",
+        ["event"] = "Something that happened to a persisted actor, and how it changes the state: `event Received(quantity: int) { onHand += quantity; }`. Handlers `emit` them; replaying them rebuilds the state.",
     };
 
     private static readonly string[] Policies = ["resume", "rollback", "restart", "stop"];
@@ -76,14 +91,45 @@ internal static class ActorSyntax
         var name = p.Expect(TokenKind.Identifier);
         bool valid = true;
         var parameters = p.Current.Kind == TokenKind.OpenParen ? Parameters(p, ref valid) : [];
+        // `persisted by sku`: its events are kept, in the stream its identity names, and replayed as it starts.
+        Token? persisted = null;
+        ExpressionSyntax? persistedBy = null;
+        if (p.AtWord("persisted"))
+        {
+            persisted = p.ReadWord();
+            if (p.AtWord("by"))
+            {
+                p.ReadWord();
+                persistedBy = p.ParseExpressionBeforeBlock();
+            }
+            else
+            {
+                p.Report(p.Current.Span, $"Expected what identifies each {name.Text}, whose events are kept under it: 'persisted by sku'.");
+                valid = false;
+            }
+            foreach (var parameter in parameters.Where(parameter => parameter.Name.Text == "store"))
+            {
+                p.Report(parameter.Span, "A persisted actor's Spawn takes 'store' itself (where its events are kept), so its own parameter needs another name.");
+                valid = false;
+            }
+        }
         p.Expect(TokenKind.OpenBrace);
 
         var state = new List<StatementSyntax>();
         var handlers = new List<ActorHandler>();
+        var events = new List<ActorEvent>();
         var functions = new List<StatementSyntax>();
         FailurePolicy? failure = null;
         while (p.Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
         {
+            if (p.AtWord("event") && p.Peek(1).Kind == TokenKind.Identifier && p.Peek(2).Kind == TokenKind.OpenParen)
+            {
+                p.ReadWord();
+                var eventName = p.Expect(TokenKind.Identifier);
+                var fields = Parameters(p, ref valid);
+                events.Add(new ActorEvent(eventName, fields, p.ParseBlock()));
+                continue;
+            }
             if (p.Current.Kind is TokenKind.LetKeyword or TokenKind.MutKeyword)
             {
                 state.Add(p.ParseVariableDeclaration());
@@ -162,15 +208,106 @@ internal static class ActorSyntax
                 if (keyword == TokenKind.MutKeyword)
                     mutable.Add(stateName.Text);
             }
-            else if (failure is { Kind: "rollback" or "restart" })
+            else if (failure is { Kind: "rollback" or "restart" } || persisted is not null)
             {
-                p.Report(statement.Span, $"'{failure.Kind}' puts the actor's state back, so declare it one name at a time: 'mut count = 0;'.");
+                var why = persisted is not null ? "A persisted actor's state is put back when a handler fails" : $"'{failure!.Kind}' puts the actor's state back";
+                p.Report(statement.Span, $"{why}, so declare it one name at a time: 'mut count = 0;'.");
                 valid = false;
             }
         }
+        if (!CheckEvents(p, name, persisted, events, handlers, mutable, failure))
+            valid = false;
         // After all the state, which they may use.
         state.AddRange(functions);
-        return valid ? new ActorDeclaration(name, parameters, state, handlers) { Failure = failure, Mutable = mutable } : null;
+        return valid
+            ? new ActorDeclaration(name, parameters, state, handlers) { Failure = failure, Mutable = mutable, PersistedBy = persistedBy, Events = events }
+            : null;
+    }
+
+    /// <summary>
+    /// A persisted actor's rules: it has events; its handlers change its state only through them (`emit`), so replaying
+    /// them rebuilds it; each `emit` names one of them; an event's body only changes state (no `await`, no `emit`); and
+    /// it doesn't `resume` after a failure, as its state is always put back with its unsaved events. Events need a
+    /// persisted actor.
+    /// </summary>
+    private static bool CheckEvents(
+        PluginParser p, Token name, Token? persisted, List<ActorEvent> events, List<ActorHandler> handlers, List<string> mutable, FailurePolicy? failure)
+    {
+        bool valid = true;
+        void Error(TextSpan span, string message)
+        {
+            p.Report(span, message);
+            valid = false;
+        }
+
+        var emits = handlers.SelectMany(h => SyntaxWalker.DescendantsAndSelf(h.Body)).Concat(events.SelectMany(e => SyntaxWalker.DescendantsAndSelf(e.Body)))
+            .OfType<NameExpressionSyntax>().Where(n => n.Identifier.Text.StartsWith(EmitPrefix, StringComparison.Ordinal)).ToList();
+        if (persisted is null)
+        {
+            foreach (var @event in events)
+                Error(@event.Name.Span, $"Event '{@event.Name.Text}' needs a persisted actor, whose events are kept: 'actor {name.Text}(…) persisted by id {{ … }}'.");
+            foreach (var emit in emits)
+                Error(emit.Span, $"Only a persisted actor emits events: 'actor {name.Text}(…) persisted by id {{ … }}'.");
+            return valid;
+        }
+
+        if (events.Count == 0)
+            Error(persisted.Span, $"{name.Text} is persisted but has no events, so nothing of it is kept; add one, such as 'event Received(quantity: int) {{ onHand += quantity; }}'.");
+        if (failure is { Kind: "resume" })
+            Error(failure.Word.Span, "A persisted actor can't resume after a failure: its unsaved events are dropped, so its state is put back too. Use rollback (the default), restart or stop.");
+
+        var known = events.Select(e => e.Name.Text).ToHashSet();
+        var seen = new HashSet<string>();
+        foreach (var @event in events.Where(e => !seen.Add(e.Name.Text)))
+            Error(@event.Name.Span, $"{name.Text} already has an event called '{@event.Name.Text}'.");
+        foreach (var emit in emits.Where(e => !known.Contains(e.Identifier.Text[EmitPrefix.Length..])))
+            Error(emit.Span, $"{name.Text} has no event '{emit.Identifier.Text[EmitPrefix.Length..]}'; its events are {string.Join(", ", known.Order())}.");
+
+        // A handler that changed the state itself would change it in a way replaying the events can't repeat.
+        var state = mutable.ToHashSet();
+        foreach (var assignment in handlers.SelectMany(h => SyntaxWalker.DescendantsAndSelf(h.Body)).OfType<AssignmentExpressionSyntax>())
+        {
+            if (assignment.Target is NameExpressionSyntax target && state.Contains(target.Identifier.Text))
+                Error(assignment.Span, $"A persisted actor's state changes only through its events, which are replayed as it starts: emit one whose body changes '{target.Identifier.Text}'.");
+        }
+        foreach (var @event in events)
+        {
+            foreach (var node in SyntaxWalker.DescendantsAndSelf(@event.Body))
+            {
+                if (node is AwaitExpressionSyntax wait)
+                    Error(wait.Span, "An event's body changes the state, and is replayed as the actor starts, so it can't await: do that in the handler, before it emits.");
+                else if (node is NameExpressionSyntax emitted && emitted.Identifier.Text.StartsWith(EmitPrefix, StringComparison.Ordinal))
+                    Error(emitted.Span, "An event's body can't emit another: replaying it would emit again. Emit both from the handler.");
+            }
+        }
+        return valid;
+    }
+
+    /// <summary>What `emit Received(5);` calls: the actor's function applying the event and keeping it to save.</summary>
+    public const string EmitPrefix = "__emit_";
+
+    /// <summary>The `emit` statement, which each actor plugin adds.</summary>
+    public static StatementKeyword EmitKeyword() => new("emit", Emit)
+    {
+        Description = "In a persisted actor's handler: `emit Received(quantity);` applies the event to the state, and saves it with the " +
+                      "message's other events when the handler finishes (none are saved if it throws).",
+    };
+
+    /// <summary>
+    /// emit = "emit" IDENT "(" [ arguments ] ")" ";" ; in a persisted actor's handler: applies the event to the state,
+    /// and keeps it to save when the handler finishes. It's `__emit_Received(5);`, which the actor declares.
+    /// </summary>
+    public static IEnumerable<StatementSyntax> Emit(PluginParser p)
+    {
+        var expression = p.ParseExpression();
+        p.Expect(TokenKind.Semicolon);
+        if (expression is not CallExpressionSyntax { Callee: NameExpressionSyntax { Identifier: var eventName } } call)
+        {
+            p.Report(expression.Span, "Expected the event to emit, with its fields: 'emit Received(quantity);'.");
+            return [];
+        }
+        var callee = new NameExpressionSyntax(eventName.Span, new Token(TokenKind.Identifier, eventName.Span, EmitPrefix + eventName.Text));
+        return [new ExpressionStatementSyntax(call.Span, call with { Callee = callee })];
     }
 
     /// <summary>`on failure rollback;` or `on failure restart 3 per minute;`.</summary>
@@ -230,27 +367,78 @@ internal static class ActorSyntax
     /// it puts back, and the restarts' count); <c>Before</c> each message (rollback's snapshot); and <c>OnFailure</c> in
     /// each handler's <c>catch</c>, given <paramref name="stop"/>, the plugin's way of stopping the actor.
     /// </summary>
+    /// A persisted actor always drops the failed message's unsaved events and puts its state back as before it (so
+    /// the default for it is rollback); its restart goes back to Spawn's state and replays its saved events, reading
+    /// its stream afresh, which also recovers from another writer having added to it.
     public static (string Setup, string Before, string OnFailure) PolicyCode(ActorDeclaration actor, TemplateHoles hole, string stop)
     {
         string Restore(string from) => string.Concat(actor.Mutable.Select(name => $"{name} = {from}{name}; "));
-        switch (actor.Failure)
+        bool persisted = actor.PersistedBy is not null;
+        var kind = actor.Failure?.Kind ?? (persisted ? "rollback" : "resume");
+
+        var setup = new System.Text.StringBuilder();
+        var before = "";
+        if (kind == "rollback")
         {
-            case { Kind: "rollback" }:
-                return (string.Concat(actor.Mutable.Select(name => $"mut __saved_{name} = {name};\n")),
-                        string.Concat(actor.Mutable.Select(name => $"__saved_{name} = {name}; ")),
-                        Restore("__saved_"));
-            case { Kind: "restart", Limit: { } limit, Window: var window }:
-                return (string.Concat(actor.Mutable.Select(name => $"let __initial_{name} = {name};\n")) +
-                        $"let __restarts = Piper.Runtime.PiperRestarts({hole[limit]}, System.TimeSpan.From{Capitalized(window!)}s(1));\n",
-                        "",
-                        $"if __restarts.Allow() {{ {Restore("__initial_")}}} else {{ {stop} }}");
-            case { Kind: "restart" }:
-                return (string.Concat(actor.Mutable.Select(name => $"let __initial_{name} = {name};\n")), "", Restore("__initial_"));
-            case { Kind: "stop" }:
-                return ("", "", stop);
-            default:
-                return ("", "", "");
+            setup.Append(string.Concat(actor.Mutable.Select(name => $"mut __saved_{name} = {name};\n")));
+            before = string.Concat(actor.Mutable.Select(name => $"__saved_{name} = {name}; "));
         }
+        if (kind == "restart")
+            setup.Append(string.Concat(actor.Mutable.Select(name => $"let __initial_{name} = {name};\n")));
+        if (actor.Failure is { Kind: "restart", Limit: { } limit, Window: var window })
+            setup.Append($"let __restarts = Piper.Runtime.PiperRestarts({hole[limit]}, System.TimeSpan.From{Capitalized(window!)}s(1));\n");
+
+        var restart = Restore("__initial_") + (persisted ? Replay : "");
+        var action = kind switch
+        {
+            "rollback" => Restore("__saved_"),
+            "restart" when actor.Failure!.Limit is not null => $"if __restarts.Allow() {{ {restart}}} else {{ {stop} }}",
+            "restart" => restart,
+            "stop" => stop,
+            _ => "",
+        };
+        return (setup.ToString(), before, (persisted ? "__events.Discard(); " : "") + action);
+    }
+
+    /// <summary>Rebuilds a persisted actor's state from its saved events (after putting it back as Spawn made it).</summary>
+    public const string Replay = "for __event in await __events.ReplayAsync() { __apply(__event); } ";
+
+    /// <summary>Saves the events the handled message emitted, together, before its reply is sent.</summary>
+    public static string Commit(ActorDeclaration actor) => actor.PersistedBy is null ? "" : "await __events.CommitAsync();";
+
+    /// <summary>
+    /// A persisted actor's events, for its plugin's template: <c>Enum</c>, the <c>{Actor}Event</c> enum (a variant for
+    /// each event, saved as JSON); and <c>Setup</c>, after its state in Spawn: its event log (the stream its identity
+    /// names, in the <c>store</c> Spawn takes), <c>__apply</c> (each event's body, changing the state), and an <c>__emit_…</c> for
+    /// each, which applies the event and keeps it to save. Empty for an actor that isn't persisted.
+    /// </summary>
+    public static (string Enum, string Setup) EventCode(ActorDeclaration actor, TemplateHoles hole)
+    {
+        if (actor.PersistedBy is not { } identity)
+            return ("", "");
+        var type = actor.Name.Text + "Event";
+        var variants = actor.Events.Select(e => e.Parameters.IsEmpty ? e.Name.Text : $"{e.Name.Text}({hole[e.Parameters]}: unit)");
+        var arms = actor.Events.Select(e =>
+        {
+            var fields = e.Parameters.IsEmpty ? "" : $"({string.Join(", ", e.Parameters.Select(f => f.Name.Text))})";
+            return $"{type}.{e.Name.Text}{fields} => {hole[e.Body]},";
+        });
+        var emits = actor.Events.Select(e =>
+        {
+            var arguments = e.Parameters.IsEmpty ? "" : $"({string.Join(", ", e.Parameters.Select(f => f.Name.Text))})";
+            // A local function, whose parameters are written one by one (a whole list's hole is for declarations).
+            var parameters = string.Join(", ", e.Parameters.Select(f => $"{f.Name.Text}: {hole[f.Type]}"));
+            return $"fn {EmitPrefix}{e.Name.Text}({parameters}) {{\n" +
+                   $"    let __event = {type}.{e.Name.Text}{arguments};\n    __apply(__event);\n    __events.Add(__event);\n}}\n";
+        });
+        // The stream is the actor's name and its identity, written invariantly (a template's hole can't go in a $"…").
+        var setup =
+            $"let __events = Piper.Runtime.PiperEventLog<{type}>(store, System.String.Concat(\"{actor.Name.Text}/\", " +
+            $"System.Convert.ToString({hole[identity]}, System.Globalization.CultureInfo.InvariantCulture)));\n" +
+            $"fn __apply(__applied: {type}) {{\n    match __applied {{\n{string.Join("\n", arms)}\n    }}\n}}\n" +
+            string.Concat(emits);
+        // Indented: a `fn` that starts a line is read as the next top-level declaration, not a local function.
+        return ($"enum {type} {{\n{string.Join(",\n", variants)}\n}}\n", string.Join("\n", setup.Split('\n').Select(line => "    " + line)));
     }
 
     private static string Capitalized(string word) => char.ToUpperInvariant(word[0]) + word[1..];
@@ -264,7 +452,7 @@ internal static class ActorSyntax
     {
         foreach (var expansion in analysis.Expansions)
         {
-            if (expansion.Data is not ActorData { Failure: { Kind: "rollback" or "restart" } failure } data)
+            if (expansion.Data is not ActorData data || (data.Failure is not { Kind: "rollback" or "restart" } && !data.Persisted))
                 continue;
             var actor = analysis.Program.Types.OfType<RecordSymbol>().FirstOrDefault(r => expansion.Result.Any(x => ReferenceEquals(x, r.Declaration)) && r.Name == data.Name.Text);
             var spawn = analysis.Program.Methods.FirstOrDefault(m => m.Symbol is MethodSymbol { Name: "Spawn" } method && ReferenceEquals(method.ContainingType.OriginalDefinition, actor));
@@ -275,9 +463,12 @@ internal static class ActorSyntax
                 if (!data.State.Contains(declaration.Variable.Name) ||
                     MutablePart(declaration.Variable.Type, [], traitsAreOpaque) is not { } part)
                     continue;
-                analysis.ReportError(expansion.File, failure.Word.Span,
-                    $"'{failure.Kind}' puts {data.Name.Text}'s state back by keeping its values, but '{declaration.Variable.Name}' holds a {part}, " +
-                    "which could be changed in place, so it wouldn't be put back. Keep immutable values (records, ImmutableList, ImmutableDictionary), or use 'on failure stop'.");
+                var (span, why, instead) = data.Persisted
+                    ? (data.Name.Span, $"{data.Name.Text} is persisted, so its state changes only through events and is put back when a handler fails", "")
+                    : (data.Failure!.Word.Span, $"'{data.Failure.Kind}' puts {data.Name.Text}'s state back", ", or use 'on failure stop'");
+                analysis.ReportError(expansion.File, span,
+                    $"{why}, by keeping its values; but '{declaration.Variable.Name}' holds a {part}, which could be changed in place, " +
+                    $"so it wouldn't be put back. Keep immutable values (records, ImmutableList, ImmutableDictionary){instead}.");
             }
         }
     }

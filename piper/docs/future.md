@@ -195,6 +195,22 @@ Server-side HTML belongs with [UI](#ui) (htmx over plain endpoints), not Razor.
 
 ## Cloud and distributed
 
+**Provider agnostic, always.** Every cloud-type service (secrets, queues, storage, event stores, functions, telemetry
+backends) is defined by a trait or interface describing what it does, and the app assigns the implementation:
+registered as a service, passed to `Spawn`, chosen by configuration at startup. A provider (Azure, AWS, Google Cloud, a
+self-hosted broker) is an adapter or a package the app brings, never part of the language or a plugin's shape, so a
+program moves between providers by changing its configuration, not its code. **And every one has a local
+implementation** (in memory, a local file or database, a local container), so a program runs and is tested on a
+developer's machine with no cloud at all. What's built so far follows this:
+
+| Service | The abstraction | Local | Cloud, chosen at startup |
+|---|---|---|---|
+| Secrets and configuration | .NET's configuration sources (`sources`) | appsettings.json, the environment, files | Azure Key Vault, AWS Secrets Manager, GCP Secret Manager, HashiCorp Vault |
+| Persisted actors' events | `IEventStore` | `MemoryEventStore`; `DatabaseEventStore` on SQLite | `DatabaseEventStore` on any EF Core database (Azure SQL, Amazon RDS, Cloud SQL) |
+| Telemetry | OpenTelemetry's protocol (OTLP) | nothing, or Aspire's dashboard | any OTLP backend (Azure Monitor, AWS X-Ray, Google Cloud Trace, Jaeger) |
+
+Planned services start the same way: the messaging plugin's transport trait with an in-memory transport first.
+
 What [apps/stock](../apps/stock/README.md) and [apps/grid](../apps/grid/README.md) wrote by hand, running as pods in
 Kubernetes, that the language or its plugins could provide. They also raise the priority of what's planned above:
 health checks (both apps hand-write `/healthz`), graceful shutdown (a deleted grid pod abandons its chunk rather than
@@ -241,7 +257,13 @@ finishing it), container publishing, and hosted workers; and of actor clustering
    ```
 
    The compiler can check that every event changes state, and that replaying needs nothing but the events. It would be
-   stored through Proto.Persistence or the data plugin. With clustering, it would replace the stock app's fixed
+   stored through Proto.Persistence or the data plugin. ~~The language part~~ is done, in both actor plugins
+   (`persisted by sku`, `event`, `emit`; see [plugins](plugins.md#keeping-state-persisted-actors)), with an in-memory
+   store and checks that state changes only through events, and so is ~~a durable store~~ (Piper.Data's
+   `DatabaseEventStore`, through EF Core), and ~~stock using it~~ (each product persisted, its node's events in a SQLite
+   file on the pod's own volume). Still to come: grid's jobs, a store the nodes share (so a product could move
+   between them), and snapshots for long streams.
+   With clustering, it would replace the stock app's fixed
    `--nodes` list, `hash % count` and StatefulSet. The largest of these.
 4. **Failure policies.** The same patterns were written by hand several times: stock retries once after a dead letter,
    grid lends chunks with a lease and ignores late results, the tracker retries its webhook (with `[Retry]`). The
@@ -333,16 +355,20 @@ More, around the services themselves:
   issue has none until it's saved; with messaging and an outbox, an event needs one first. Time-ordered GUIDs
   (`Guid.CreateVersion7()`, in .NET) index well and are made on any node. With newtypes this is small: a standard way
   to declare such an id and make a new one, which the data plugin stores.
-- **Secrets that can't leak.** A `Secret<T>`, or a `secret` field of a `config` record (the tracker's webhook URL, a
-  connection string), prints and serializes as `***`; the compiler stops it being interpolated into a string or a
-  log, and `.reveal()` is the one way to its value. It could come from Azure Key Vault through the config plugin.
+- ~~**Secrets that can't leak**~~, done (see [Secrets](language.md#secrets)): `Secret<T>` prints and serializes as
+  `***`, the compiler refuses one in a string's hole (PIP0407), `.Reveal()` is the one way to its value, and a
+  `config` field can be `secret`; apps/tracker's webhook URL is one. Where secrets come from is any configuration
+  source, chosen by the app with a server's or host's `sources` clause (Azure Key Vault, AWS Secrets Manager,
+  HashiCorp Vault, Kubernetes secrets as files: each its provider's `IConfigurationBuilder` extension). Still to come:
+  refusing one in string concatenation (`"key " + secret` gives `***` today, safe but likely a mistake).
 - ~~**Structured logging from interpolation**~~, done (see [Logging](language.md#logging)):
   `log.LogInformation($"Reserved {quantity} of {sku}")` is a template with named fields, checking the level first,
   and the telemetry plugin exports the logs with their traces. apps/tracker's webhook failures are logged so. Still
   to come: a high-performance form (`LoggerMessage.Define`, cached per call site, as C#'s generator makes), and event
   ids.
-- **Serverless hosts, and Native AOT.** A `consumer` or an endpoint could also run as an Azure Function (a queue or
-  HTTP trigger), the code unchanged and only the host different. That wants Native AOT and trimming, for fast starts
+- **Serverless hosts, and Native AOT.** A `consumer` or an endpoint could also run as a serverless function (a queue
+  or HTTP trigger), the code unchanged and only the host different: one host abstraction, with an adapter for each
+  platform the app chooses (Azure Functions, AWS Lambda, Google Cloud Functions, Knative). That wants Native AOT and trimming, for fast starts
   when scaling from zero, and Piper's runtime uses reflection in places (enum JSON, the data plugin's converters,
   newtypes' delegates). Worth checking Piper programs against AOT early, before more reflection goes in, with
   source-generated JSON where it's needed.
@@ -352,7 +378,8 @@ More, around the services themselves:
 
 ### A messaging plugin
 
-Service buses and message queues (Azure Service Bus first, then RabbitMQ) as declarations: what messages there are,
+Service buses and message queues, behind a transport trait the app chooses an implementation of (in-memory for tests;
+adapters for RabbitMQ, Azure Service Bus, Amazon SQS and others), as declarations: what messages there are,
 where they go and who handles them, so the compiler checks what C# libraries find only when the system runs. Programs
 name what they mean (a command, an event, an ordering key); which broker carries it is configuration.
 
@@ -423,8 +450,9 @@ await bus.Publish(OrderPlaced(id, total));
 **Messages or actors:** actors are fast request and reply within one cluster; messages are durable and asynchronous,
 between services. Both stay, and the docs say when to use which.
 
-**In order:** the runtime with the in-memory and Service Bus transports, `messages` and `consumer` with `Handled`, and
-the compile-time checks; then the outbox and topology; then RabbitMQ; then versions and sagas.
+**In order:** the transport trait and the runtime with the in-memory transport and a first broker's adapter, `messages`
+and `consumer` with `Handled`, and the compile-time checks; then the outbox and topology; then more adapters; then
+versions and sagas.
 
 **To decide:** whether Piper services must interoperate with existing C# services on the same bus. Their envelope
 (headers, type names, correlation) is a protocol; if they use MassTransit's or NServiceBus's, the transports would need
@@ -564,7 +592,10 @@ finds, and what was done.
 
 ## Tools
 
-- **`piper fmt`:** a formatter.
+- ~~**`piper fmt`**~~, done: `piper fmt app/` lays out .piper files as Piper is written (indentation from brackets and
+  continued lines, blank lines tidied, nothing moved within a line), and so does Format Document in the editor;
+  `--check` fails CI on files it would change. Still to come: spacing within a line (around operators and commas),
+  wrapping long lines, and putting a `{` on the line it belongs to.
 - **Language server:**
   - `piper.json` errors while typing, not just on save;
   - a quick fix to add a missing `using`;

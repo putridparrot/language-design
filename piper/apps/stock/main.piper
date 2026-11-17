@@ -5,6 +5,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using Piper.Data;
+using Piper.Runtime;
 using Proto.Remote;
 
 args Options "Stock: products as actors, spread over several nodes. Commands: serve (the default) starts a node; load URL... reserves one product from many clients at once through those nodes' HTTP APIs." {
@@ -12,6 +15,7 @@ args Options "Stock: products as actors, spread over several nodes. Commands: se
     port: int = 8000 "The port the nodes talk on (gRPC)";
     http: int = 8080 "The port of this node's HTTP API";
     nodes: string? "Every node's host:port, comma-separated, in the same order on every node (default: this one alone)";
+    events: string? "A SQLite file keeping this node's products' events, so a restarted node carries on with their counts (default: in memory, lost when the node stops)";
     sku: string? "load: the product to reserve (default: a new one each run)";
     stock: int = 100 "load: how many to put in stock first";
     requests: int = 500 "load: how many reservations to try";
@@ -32,7 +36,7 @@ async fn Main(args: string[]) {
 }
 
 async fn Serve(options: Options) => Task<int> {
-    let node = await StartNode(options.host, options.port);
+    let node = await StartNode(options.host, options.port, await EventStore(options.events));
     let nodes = match options.nodes {
         Some(list) => [...list.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)],
         None => [node.Address],
@@ -57,3 +61,10 @@ async fn Load(options: Options, urls: List<string>) => Task<int> {
     Print(Describe(report, sku));
     if report.Exact() { 0 } else { 1 }
 }
+
+/// Where this node's products keep their events: the SQLite file `--events` names (made, with its table, if it isn't
+/// there), or memory.
+async fn EventStore(path: string?) => Task<IEventStore> = match path {
+    Some(file) => await DatabaseEventStore.OpenAsync(DbContextOptionsBuilder().UseSqlite($"Data Source={file}").Options),
+    None => MemoryEventStore(),
+};

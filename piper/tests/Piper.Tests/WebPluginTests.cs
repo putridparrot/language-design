@@ -577,6 +577,56 @@ public class WebPluginTests
         Assert.Equal(text.LastIndexOf(at, StringComparison.Ordinal), error.Span.Start);
     }
 
+    /// <summary>
+    /// `sources` adds where configuration comes from, whatever the provider (a vault, a cloud's secret store, files): here
+    /// an in-memory one stands in for it. It's added before anything reads configuration, though written after the
+    /// `config` that reads it, and a secret field read from it is kept as a Secret.
+    /// </summary>
+    [Fact]
+    public void A_server_reads_config_from_its_sources()
+    {
+        var result = Compilation.Compile([new SourceText(""""
+            using System;
+            using System.Collections.Generic;
+            using Microsoft.Extensions.Configuration;
+            using Piper.Web;
+
+            config Vaulted from "PiperSourcesTest" {
+                user: string;
+                secret password: string;
+            }
+
+            endpoints Api {
+                get "/user" (vaulted: Vaulted) => $"{vaulted.user} {vaulted.password.Reveal().Length}";
+            }
+
+            /// Stands in for a provider's source (a key vault, a secrets manager): any IConfigurationBuilder extension.
+            fn Vault(configuration: IConfigurationBuilder) => IConfigurationBuilder {
+                let json = """{ "PiperSourcesTest": { "User": "ada", "Password": "hunter2" } }""";
+                configuration.AddJsonStream(System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(json)))
+            }
+
+            server S {
+                config vaulted: Vaulted;
+                logging off;
+                endpoints Api;
+                sources (configuration: IConfigurationBuilder) => Vault(configuration);
+            }
+
+            fn Main() {}
+
+            async test "configuration comes from the sources" {
+                using let site = await TestClient.Start(() => S());
+                AssertEqual("ada 7", await site.GetStringAsync("/user"));
+            }
+            """", "main.piper")],
+            new CompilationOptions(LineDirectives: true, IncludeTests: true) { Plugins = WebAndConfig.Value.Plugins, References = WebAndConfig.Value.References });
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.RunTests(result.Files, references: result.References);
+        Assert.Empty(run.Errors);
+        Assert.True(run.Results.All(r => r.Passed), string.Join("\n", run.Results.Select(r => $"{r.Name}: {r.Failure}")));
+    }
+
     private static readonly Lazy<(ImmutableArray<IPiperPlugin> Plugins, ProgramReferences References)> WebAndConfig = new(() =>
     {
         var (plugins, errors) = PluginLoader.Load(PluginsDirectory(),

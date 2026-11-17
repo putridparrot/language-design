@@ -1,5 +1,5 @@
 fn RequiredFunction(i: int?) => unit
-    requires i is Some(> 0) 
+    requires i is Some(> 0)
 {
     if i is Some(value) {
         Print(value);
@@ -25,17 +25,16 @@ fn F(a: int, b: int) => Result<int, MathError> {
     Ok(a + b)
 }
 
-fn Main() 
+fn Main()
 {
-    match F(b: 5, a: 3) { 
+    match F(b: 5, a: 3) {
         Ok(value) => value
             |> (x: int) => x * 2
             |> Print,
         Err(_) => Print(0),
-    }   
+    }
 
     // worth thinking about ?> as a way to use a result
-
 
     // F(b: 5, a: 3)
     //     |> (x: int) => x * 2

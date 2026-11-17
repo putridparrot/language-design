@@ -62,6 +62,24 @@ public sealed class LanguageServerTests : IDisposable
         };
     }
 
+    /// <summary>Format Document lays the file out as `piper fmt` does, as one edit; a file laid out already gets none.</summary>
+    [Fact]
+    public async Task Formatting_a_document_lays_it_out_as_fmt_does()
+    {
+        var uri = await OpenAsync("fn Main() {\nPrint(1);\n}\n");
+        var edits = (JsonArray)(await _server.HandleAsync("textDocument/formatting", new JsonObject
+        {
+            ["textDocument"] = new JsonObject { ["uri"] = uri },
+            ["options"] = new JsonObject { ["tabSize"] = 4, ["insertSpaces"] = true },
+        }))!;
+        var edit = Assert.Single(edits)!;
+        Assert.Equal("fn Main() {\n    Print(1);\n}\n", edit["newText"]!.GetValue<string>());
+        Assert.Equal(0, edit["range"]!["start"]!["line"]!.GetValue<int>());
+
+        var tidy = await OpenAsync("fn Main() {\n    Print(1);\n}\n", "tidy.piper");
+        Assert.Empty((JsonArray)(await _server.HandleAsync("textDocument/formatting", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = tidy } }))!);
+    }
+
     [Fact]
     public async Task Publishes_diagnostics_as_documents_change()
     {

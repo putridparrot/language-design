@@ -74,10 +74,19 @@ public sealed partial class Binder
         var parts = syntax.Parts.Select(part => part switch
         {
             InterpolatedTextSyntax text => new BoundLiteralExpression(text.Text, TypeSymbol.String),
-            InterpolationSyntax { Alignment: null, Format: null } hole => RequireValue(BindExpression(hole.Expression), hole.Expression.Span),
-            InterpolationSyntax hole => new BoundFormattedExpression(RequireValue(BindExpression(hole.Expression), hole.Expression.Span), hole.Alignment, hole.Format),
+            InterpolationSyntax { Alignment: null, Format: null } hole => Hole(hole),
+            InterpolationSyntax hole => new BoundFormattedExpression(Hole(hole), hole.Alignment, hole.Format),
             _ => throw new InvalidOperationException(),
         });
+
+        // A Secret in a hole is refused: a string is how one usually leaks (into a log, a message, a page).
+        BoundExpression Hole(InterpolationSyntax hole)
+        {
+            var value = RequireValue(BindExpression(hole.Expression), hole.Expression.Span);
+            if (IsSecret(value.Type))
+                _diagnostics.ReportSecretInString(hole.Expression.Span);
+            return value;
+        }
         var bound = new BoundInterpolatedStringExpression([.. parts]) { Syntax = syntax };
 
         if (syntax.Prefix is { } prefix)
@@ -87,6 +96,11 @@ public sealed partial class Binder
             return BindAsKind(bound, expected);
         return bound;
     }
+
+    /// <summary>Piper.Runtime's <c>Secret&lt;T&gt;</c>, or an Option of one.</summary>
+    private static bool IsSecret(TypeSymbol type) =>
+        (type.IsOption ? type.TypeArguments[0] : type) is ClrTypeSymbol { Type: { IsGenericType: true } clr } &&
+        clr.GetGenericTypeDefinition().FullName == "Piper.Runtime.Secret`1";
 
     /// <summary>
     /// An interpolated string, already bound as text, as a value of <paramref name="kind"/>: its builder's calls, with

@@ -40,8 +40,8 @@ record Run(job: int, spec: JobSpec, seconds: double, workers: int, retried: int,
 /// - `retried`: chunks handed out again after their lease ran out
 /// - `late`: results that came back after their chunk was done (or their job ended), and were ignored
 record Board(job: int, spec: JobSpec, running: bool, started: DateTime, finished: DateTime,
-             cells: ImmutableList<Cell>, samples: ImmutableDictionary<int, Sample>,
-             workers: ImmutableDictionary<string, Seen>, retried: int, late: int, history: ImmutableList<Run>);
+    cells: ImmutableList<Cell>, samples: ImmutableDictionary<int, Sample>,
+    workers: ImmutableDictionary<string, Seen>, retried: int, late: int, history: ImmutableList<Run>);
 
 fn NewBoard(now: DateTime) => Board = Board(0, JobSpec(0, 0, 0), false, now, now, ImmutableList.Create<Cell>(),
     ImmutableDictionary.Create<int, Sample>(), ImmutableDictionary.Create<string, Seen>(), 0, 0, ImmutableList.Create<Run>());
@@ -64,7 +64,7 @@ fn StartJob(board: Board, spec: JobSpec, now: DateTime) => (board: Board, starte
     let workers = board.workers.ToImmutableDictionary(w => w.Key, w => Seen(w.Key, w.Value.last, -1, 0, 0L));
     let cells = Enumerable.Repeat(Cell("waiting", "", 0, now, 0L), spec.chunks).ToImmutableList();
     ({ ...board, job: board.job + 1, spec: spec, running: true, started: now, finished: now, cells: cells,
-       samples: ImmutableDictionary.Create<int, Sample>(), workers: workers, retried: 0, late: 0 }, true)
+        samples: ImmutableDictionary.Create<int, Sample>(), workers: workers, retried: 0, late: 0 }, true)
 }
 
 /// A worker asks for work: the first chunk no one has had, or else one whose lease has run out.
@@ -129,7 +129,7 @@ fn Finish(board: Board, now: DateTime, valuation: Valuation, cancelled: bool) =>
     let run = Run(board.job, board.spec, (now - board.started).TotalSeconds, workers, board.retried, cancelled, valuation);
     let history = board.history.Insert(0, run);
     { ...board, running: false, finished: now,
-      history: if history.Count > 12 { history.RemoveAt(12) } else { history } }
+        history: if history.Count > 12 { history.RemoveAt(12) } else { history } }
 }
 
 /// Notes that `worker` asked, now.
@@ -145,7 +145,7 @@ record WorkerView(name: string, active: bool, current: int, done: int, averageMs
 /// What the dashboard shows.
 /// - `outstanding`: chunks a worker has now
 record View(job: int, spec: JobSpec, running: bool, seconds: double, done: int, outstanding: int, retried: int, late: int,
-            leaseSeconds: double, cells: ImmutableList<Cell>, workers: ImmutableList<WorkerView>, history: ImmutableList<Run>);
+    leaseSeconds: double, cells: ImmutableList<Cell>, workers: ImmutableList<WorkerView>, history: ImmutableList<Run>);
 
 /// The board, as the dashboard shows it. Workers not heard from for two minutes are left out.
 fn Describe(board: Board, now: DateTime) => View {

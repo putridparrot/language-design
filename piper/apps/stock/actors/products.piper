@@ -2,6 +2,7 @@
 namespace StockApp;
 
 using System.Collections.Immutable;
+using Piper.Runtime;
 using Proto;
 
 /// How much of a product there is, and the node keeping its count.
@@ -11,15 +12,19 @@ record Level(sku: string, onHand: int, reserved: int, node: string);
 record Reservation(sku: string, granted: bool, left: int, node: string);
 
 /// One product's stock. Its count lives only here, and it handles one message at a time, so reservations arriving
-/// from every node at once can't oversell it: no locks, and no database transaction.
-actor Product(sku: string, node: string) {
+/// from every node at once can't oversell it: no locks, and no database transaction. It keeps its count as events,
+/// saved in its node's store, so a node that restarts carries on with its products' counts rather than losing them.
+actor Product(sku: string, node: string) persisted by sku {
     mut onHand = 0;
     mut reserved = 0;
-    // A handler that throws changes nothing: its counts are put back, so a failed reserve never half-happens.
-    on failure rollback;
+
+    // What happens to a product. Replaying them, as a restarted node's product starts, rebuilds its count; a handler
+    // that throws saves none, and its count is put back, so a failed reserve never half-happens.
+    event Received(quantity: int) { onHand += quantity; }
+    event Reserved(quantity: int) { onHand -= quantity; reserved += quantity; }
 
     on Receive(quantity: int) => Level {
-        onHand += quantity;
+        emit Received(quantity);
         Level(sku, onHand, reserved, node)
     }
 
@@ -27,8 +32,7 @@ actor Product(sku: string, node: string) {
         if quantity > onHand {
             Reservation(sku, false, onHand, node)
         } else {
-            onHand -= quantity;
-            reserved += quantity;
+            emit Reserved(quantity);
             Reservation(sku, true, onHand, node)
         }
     }
@@ -37,13 +41,14 @@ actor Product(sku: string, node: string) {
 }
 
 /// Every node hosts one, named "warehouse". It starts each product this node keeps the first time it's asked for, so
-/// a product's actor exists once, on its node, however many nodes ask at the same moment.
-actor Warehouse(host: ActorSystem) {
+/// a product's actor exists once, on its node, however many nodes ask at the same moment. Each starts with its events
+/// from `store`, so one that ran here before carries on.
+actor Warehouse(host: ActorSystem, store: IEventStore) {
     mut skus = ImmutableSortedSet.Create<string>();
 
     on Open(sku: string) => bool {
         if !skus.Contains(sku) {
-            Product.Spawn(host, ProductName(sku), sku, host.Address);
+            Product.Spawn(host, ProductName(sku), store, sku, host.Address);
             skus = skus.Add(sku);
         }
         true

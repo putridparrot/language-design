@@ -52,6 +52,7 @@ public sealed class RemoteActorPlugin : IPiperPlugin
             Snippet = ActorSyntax.Snippet,
             Words = ActorSyntax.Words,
         },
+        ActorSyntax.EmitKeyword(),
     ];
 
     private static IEnumerable<DeclarationSyntax> Actor(PluginParser p)
@@ -61,7 +62,8 @@ public sealed class RemoteActorPlugin : IPiperPlugin
         var clashing = actor.Parameters.Where(parameter => ReservedParameters.Contains(parameter.Name.Text)).ToList();
         foreach (var parameter in clashing)
             p.Report(parameter.Span, $"'Spawn' takes '{parameter.Name.Text}' itself, so the actor's own parameter needs another name.");
-        p.Data = new ActorData(actor.Name, actor.Failure, [.. actor.State.OfType<VariableDeclarationSyntax>().Select(v => v.Name.Text)]);
+        p.Data = new ActorData(actor.Name, actor.Failure, [.. actor.State.OfType<VariableDeclarationSyntax>().Select(v => v.Name.Text)],
+            actor.PersistedBy is not null);
         return clashing.Count == 0 ? Expand(p, actor) : [];
     }
 
@@ -94,7 +96,8 @@ public sealed class RemoteActorPlugin : IPiperPlugin
         foreach (var expansion in analysis.Expansions)
         {
             bool Generated(Syntax.SyntaxNode? node) => node is not null && expansion.Result.Any(r => ReferenceEquals(r, node));
-            if (analysis.Program.Types.OfType<Binding.EnumSymbol>().FirstOrDefault(e => Generated(e.Declaration)) is not { } messages ||
+            var generatedEnums = analysis.Program.Types.OfType<Binding.EnumSymbol>().Where(e => Generated(e.Declaration)).ToList();
+            if (generatedEnums.FirstOrDefault(e => e.Name.EndsWith("Message", StringComparison.Ordinal)) is not { } messages ||
                 analysis.Program.Types.OfType<Binding.RecordSymbol>().FirstOrDefault(r => Generated(r.Declaration) && r.Name + "Message" == messages.Name) is not { } actor)
                 continue;
             // An ask's method answers a Task of its reply; a tell's answers nothing.
@@ -112,7 +115,11 @@ public sealed class RemoteActorPlugin : IPiperPlugin
                     [.. variant.Fields.Select(f => (f.Name, f.Type))],
                     reply?.ToString() ?? "nothing (a tell)",
                     reply is null ? [] : [reply]);
-            });
+            }).ToList();
+            // A persisted actor's saved events are read back by later versions of it: one that old streams can't be read
+            // as (a variant gone, a new field needed) is a breaking change, as a message is.
+            if (generatedEnums.FirstOrDefault(e => e.Name == actor.Name + "Event") is { } events)
+                operations.Add(new WireOperation($"{actor.Name} events", $"{actor.Name} events", [("event", events)], null, []));
             analysis.CheckWireShape(expansion.File, actor.Declaration.Name.Span, actor.Name, operations);
         }
     }
@@ -127,6 +134,13 @@ public sealed class RemoteActorPlugin : IPiperPlugin
         const string Tracing = "Piper.Actors.Remote.PiperActorTracing";
         // What a throwing handler does to the actor (`on failure …`): stopping it is Proto.Actor's, here.
         var (setup, before, onFailure) = ActorSyntax.PolicyCode(declaration, hole, "__context.Stop(__context.Self);");
+        // A persisted actor's events: its Spawn takes their store, it replays them as Proto.Actor starts it (before any
+        // message), and saves each message's once its handler has finished (before an ask's answer is sent).
+        bool persisted = declaration.PersistedBy is not null;
+        var (eventEnum, eventSetup) = ActorSyntax.EventCode(declaration, hole);
+        var commit = ActorSyntax.Commit(declaration);
+        var store = persisted ? "store: Piper.Runtime.IEventStore, " : "";
+        var replay = persisted ? $"if __context.Message is _: Proto.Started {{ {ActorSyntax.Replay}}}" : "";
 
         var variants = new List<string>();
         var arms = new List<string>();
@@ -144,6 +158,7 @@ public sealed class RemoteActorPlugin : IPiperPlugin
                     {{message}}.{{handler.Name.Text}}{{arguments}} => {
                         try {
                             {{hole[handler.Body]}};
+                            {{commit}}
                         } catch (__error: System.Exception) {
                             {{Tracing}}.Failed(__error);
                             System.Console.Error.WriteLine("{{actor}}: {__error.Message}");
@@ -164,6 +179,7 @@ public sealed class RemoteActorPlugin : IPiperPlugin
                         try {
                             // The body is the handler's declared result, so `Ok(x)` or `None` infer from it, as in a function.
                             let __result: {{hole[handler.Result]}} = {{hole[handler.Body]}};
+                            {{commit}}
                             __context.Respond(__result);
                         } catch (__error: System.Exception) {
                             {{Tracing}}.Failed(__error);
@@ -187,14 +203,15 @@ public sealed class RemoteActorPlugin : IPiperPlugin
 
         // A receive function that awaits must be async; one that doesn't returns a finished task (an async lambda
         // without an await would be warned about).
-        bool awaits = declaration.Handlers.Any(handler => SyntaxWalker.Awaits(handler.Body));
+        bool awaits = persisted || declaration.Handlers.Any(handler => SyntaxWalker.Awaits(handler.Body));
         // Each of the actor's messages is handled in a span continuing its sender's trace (from its headers), and timed.
         var span = $"using let __span = {Tracing}.Start<{message}>(__context, \"{actor}\");";
         var receive = awaits
-            ? $"async __context => {{ {span} {before} match __context.Message {{ {string.Join("\n", arms)} _ => {{}} }} }}"
+            ? $"async __context => {{ {span} {replay} {before} match __context.Message {{ {string.Join("\n", arms)} _ => {{}} }} }}"
             : $"__context => {{ {span} {before} match __context.Message {{ {string.Join("\n", arms)} _ => {{}} }} {Tasks}.Task.CompletedTask }}";
 
         var template = $$"""
+            {{eventEnum}}
             enum {{message}} {
                 {{string.Join(",\n", variants)}}
             }
@@ -206,8 +223,9 @@ public sealed class RemoteActorPlugin : IPiperPlugin
 
             extend {{actor}} {
                 /// Starts the actor in this process under `name`, so other processes can reach it with `Connect`.
-                static fn Spawn(system: Proto.ActorSystem, name: string, {{hole[declaration.Parameters]}}: unit) => {{actor}} {
+                static fn Spawn(system: Proto.ActorSystem, name: string, {{store}}{{hole[declaration.Parameters]}}: unit) => {{actor}} {
                     {{hole[declaration.State]}};
+                    {{eventSetup}}
                     {{setup}}
                     let __props = Proto.Props.FromFunc({{receive}});
                     {{actor}}(system, system.Root.SpawnNamed(__props, name), System.TimeSpan.FromSeconds(10))

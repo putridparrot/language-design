@@ -20,6 +20,9 @@ internal sealed class HostParts(string host)
     public List<LambdaExpressionSyntax> Hooks { get; } = [];
     public List<LambdaExpressionSyntax> Workers { get; } = [];
 
+    /// <summary>How many `sources` handlers lead <see cref="Building"/>, before anything reads configuration.</summary>
+    public int Sources { get; set; }
+
     /// <summary>Hosted services named (<c>hosted Mailer;</c>), which run, as workers do.</summary>
     public int Hosted { get; set; }
 }
@@ -42,6 +45,7 @@ internal static class HostClauses
     /// <summary>What each shared clause's words mean, for hover and completion.</summary>
     public static IReadOnlyDictionary<string, string> Words { get; } = new Dictionary<string, string>
     {
+        ["sources"] = "Where configuration (secrets among it) comes from beyond appsettings.json and the environment, from any provider: `sources (configuration: IConfigurationBuilder) => configuration.AddAzureKeyVault(…);` or AWS's, HashiCorp Vault's, Kubernetes secrets as files. Added before anything reads configuration, wherever it's written.",
         ["telemetry"] = "Traces, metrics and logs over OpenTelemetry (OTLP) to `OTEL_EXPORTER_OTLP_ENDPOINT` (Aspire's dashboard, Jaeger, a collector), named as the declaration is or as given: `telemetry \"stock-api\";`. Needs the telemetry plugin.",
         ["logging"] = "`logging off;` removes the logging providers, for a program that writes nothing to the console.",
         ["config"] = "Reads a `config` record from the configuration as it starts (stopping it, listing every problem, if one is missing or invalid), and registers it, and as `IOptions<T>`. `config smtp: Smtp;` names it for the clauses after.",
@@ -59,7 +63,7 @@ internal static class HostClauses
     };
 
     /// <summary>The shared clauses' words, for a message listing what may be written.</summary>
-    public const string Listed = "'config', 'services', 'singleton', 'scoped', 'transient', 'configure', 'logging', 'telemetry', 'hosted', 'worker', 'stopping' or 'shutdown'";
+    public const string Listed = "'config', 'sources', 'services', 'singleton', 'scoped', 'transient', 'configure', 'logging', 'telemetry', 'hosted', 'worker', 'stopping' or 'shutdown'";
 
     private static readonly Dictionary<string, string> Lifetimes = new()
     {
@@ -139,6 +143,26 @@ internal static class HostClauses
                 p.ReadWord();
                 parts.Building.Add(new ExpressionStatementSyntax(p.Current.Span, p.ParseBlock()));
                 return true;
+
+            case "sources":
+            {
+                // `sources (configuration: IConfigurationBuilder) => configuration.AddAzureKeyVault(…);`: where
+                // configuration (secrets among it) comes from beyond appsettings.json and the environment, whatever the
+                // provider. Added first, wherever it's written, so every `config` reads it.
+                p.ReadWord();
+                if (p.Current.Kind != TokenKind.OpenParen)
+                {
+                    p.Report(p.Current.Span, "Expected a handler taking the configuration builder: sources (configuration: IConfigurationBuilder) => configuration.Add…(…);");
+                    SkipClause(p);
+                    return true;
+                }
+                var handler = p.ParseExpression();
+                p.Expect(TokenKind.Semicolon);
+                var source = p.FreshName("sources");
+                parts.Building.Insert(parts.Sources++, p.Template.Statement("let $source = $handler;", ("source", source), ("handler", handler)));
+                parts.Building.Insert(parts.Sources++, p.Template.Statement("$source(builder.Configuration);", ("source", source)));
+                return true;
+            }
 
             case "hosted":
                 p.ReadWord();

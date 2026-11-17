@@ -24,6 +24,8 @@ const string Usage = """
       piper test  <inputs...> [--filter <text>] [--seed <n>]
                                            Run the program's test blocks (those whose name contains <text>);
                                            --seed repeats a property test's failure, from the seed it showed
+      piper fmt   <inputs...> [--check]    Lay out .piper files as Piper is written (indentation and blank lines),
+                                           rewriting those that change; --check only lists them, failing if any would
       piper new   <folder> [--template <name>]
                                            Make a program folder: console (the default), or web (an API using the
                                            services and web plugins)
@@ -66,6 +68,9 @@ if (args is ["new", .. var newArguments])
 
 if (args is ["plugin", .. var pluginArguments])
     return Plugin(pluginArguments);
+
+if (args is ["fmt", .. var fmtArguments])
+    return Fmt(fmtArguments);
 
 if (args.Length < 2 || args[0] is not ("build" or "emit" or "run" or "test"))
 {
@@ -284,6 +289,61 @@ switch (command)
 }
 
 // `piper plugin add plugins/My.Plugin`, `piper plugin remove my-plugin`, `piper plugin list`.
+/// <summary>
+/// <c>piper fmt app/</c>: lays out each .piper file in the inputs (folders searched as for a build, without bin/ and
+/// obj/), rewriting those whose layout changes. <c>--check</c> lists them instead, and fails if there are any, for CI.
+/// </summary>
+static int Fmt(string[] arguments)
+{
+    bool check = arguments.Contains("--check");
+    var inputs = arguments.Where(a => a != "--check").ToList();
+    if (inputs.Count == 0 || inputs.Any(i => i.StartsWith('-')))
+    {
+        Console.Error.WriteLine("Usage: piper fmt <inputs...> [--check]");
+        return 2;
+    }
+    var files = new List<string>();
+    foreach (var input in inputs)
+    {
+        if (Directory.Exists(input))
+            files.AddRange(LoadedProject.SourceFiles(input));
+        else if (File.Exists(input))
+            files.Add(input);
+        else
+        {
+            Console.Error.WriteLine($"File not found: {input}");
+            return 2;
+        }
+    }
+
+    int changed = 0, failed = 0;
+    foreach (var path in files)
+    {
+        var text = File.ReadAllText(path);
+        var (formatted, errors) = Piper.Formatting.Formatter.Format(new SourceText(text, path));
+        if (formatted is null)
+        {
+            foreach (var error in errors)
+                Console.Error.WriteLine(error.Format());
+            failed++;
+            continue;
+        }
+        if (formatted == text)
+            continue;
+        changed++;
+        if (check)
+            Console.WriteLine($"Would format {path}");
+        else
+        {
+            File.WriteAllText(path, formatted);
+            Console.WriteLine($"Formatted {path}");
+        }
+    }
+    if (failed > 0)
+        return 1;
+    return check && changed > 0 ? 1 : 0;
+}
+
 static int Plugin(string[] arguments)
 {
     switch (arguments)

@@ -61,12 +61,15 @@ public sealed class ConfigPlugin : IPiperPlugin
         ["DateTime"] = new($"System.DateTime.TryParse($text, {Invariant}, System.Globalization.DateTimeStyles.RoundtripKind, out let $value)", "System.DateTime.MinValue"),
     };
 
-    /// <summary>A field: <c>port: int = 587 requires port &gt; 0;</c>.</summary>
-    private sealed record Field(Token Name, TypeSyntax Type, ExpressionSyntax? Default, ImmutableArray<ExpressionSyntax> Requires);
+    /// <summary>
+    /// A field: <c>port: int = 587 requires port &gt; 0;</c>. A <paramref name="Secret"/> one (<c>secret password: string;</c>)
+    /// is read as its type, then kept as a <c>Piper.Runtime.Secret</c>, which never shows its value.
+    /// </summary>
+    private sealed record Field(Token Name, TypeSyntax Type, ExpressionSyntax? Default, ImmutableArray<ExpressionSyntax> Requires, bool Secret = false);
 
     /// <summary>
     /// config = "config" IDENT [ "from" STRING ] "{" { field } "}" ;
-    /// field  = IDENT ":" type [ "=" expression ] { "requires" expression { "," expression } } ";" ;
+    /// field  = [ "secret" ] IDENT ":" type [ "=" expression ] { "requires" expression { "," expression } } ";" ;
     /// </summary>
     private static IEnumerable<DeclarationSyntax> Config(PluginParser p)
     {
@@ -83,6 +86,8 @@ public sealed class ConfigPlugin : IPiperPlugin
         var fields = new List<Field>();
         while (p.Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
         {
+            // `secret password: string;`, not a field called `secret`, which would be followed by `:`.
+            var secret = p.AtWord("secret") && p.Peek(1).Kind == TokenKind.Identifier ? p.ReadWord() : null;
             var field = p.Expect(TokenKind.Identifier);
             p.Expect(TokenKind.Colon);
             var type = p.ParseType();
@@ -110,13 +115,15 @@ public sealed class ConfigPlugin : IPiperPlugin
                 p.Report(field.Span, $"'{field.Text}' is already a field of {name.Text}.");
             else if (Kind(type) is null)
                 p.Report(type.Span, $"A configuration value can't be read as this type. It can be {string.Join(", ", Scalars.Keys)}, one of those optional (T?) or in a List<T>, or another config, for a nested section.");
+            else if (secret is not null && Kind(type) is not ("scalar" or "optional"))
+                p.Report(secret.Span, $"A secret is one value, such as 'secret {field.Text}: string;' or 'string?': not a list or a section.");
             else
-                fields.Add(new Field(field, type, @default, requires.ToImmutable()));
+                fields.Add(new Field(field, type, @default, requires.ToImmutable(), secret is not null));
         }
         p.Expect(TokenKind.CloseBrace);
 
         var record = (RecordDeclarationSyntax)p.Template.Declarations("record $name($fields: unit);",
-            ("name", name), ("fields", fields.Select(f => new ParameterSyntax(f.Name.Span, f.Name, f.Type)).ToList())).Single();
+            ("name", name), ("fields", fields.Select(f => new ParameterSyntax(f.Name.Span, f.Name, f.Secret ? SecretType(f.Type) : f.Type)).ToList())).Single();
         record = record with { Requires = [.. fields.SelectMany(f => f.Requires)] };
 
         var section_ = p.FreshName("section");
@@ -126,7 +133,15 @@ public sealed class ConfigPlugin : IPiperPlugin
         var locals = new List<ExpressionSyntax>();
         var nested = new List<(Token Result, Token Value)>();
         foreach (var field in fields)
+        {
             statements.AddRange(Read(p, field, section_, path, errors, locals, nested));
+            // Read as its type, then kept as a Secret.
+            if (field.Secret)
+                locals[^1] = field.Type is OptionalTypeSyntax { Inner: var inner }
+                    ? p.Template.Expression("match $value { Some($x) => Some(Piper.Runtime.Secret<$T>($x)), None => None }",
+                        ("value", locals[^1]), ("x", p.FreshName("value")), ("T", inner))
+                    : p.Template.Expression("Piper.Runtime.Secret<$T>($value)", ("value", locals[^1]), ("T", field.Type));
+        }
 
         // Every problem has been noted; a nested section's value is there when none was.
         var finish = new List<StatementSyntax> { Statement(p, "if $errors.Count > 0 { return Err($errors); }", ("errors", errors)) };
@@ -160,6 +175,17 @@ public sealed class ConfigPlugin : IPiperPlugin
             ("sectionLoader", SectionLoader(name.Text)), ("section", section_), ("path", path), ("name", name), ("errors", errors),
             ("statements", statements), ("finish", finish), ("loader", $"Load{name.Text}"), ("sectionName", section), ("from", $"{name.Text}From"));
         return [record, .. functions];
+    }
+
+    /// <summary>A secret field's type: <c>Piper.Runtime.Secret&lt;string&gt;</c>, or an Option of one for <c>string?</c>.</summary>
+    private static TypeSyntax SecretType(TypeSyntax type)
+    {
+        TypeSyntax Wrap(TypeSyntax inner)
+        {
+            Token Name(string text) => new(TokenKind.Identifier, inner.Span, text) { IsGenerated = true };
+            return new NamedTypeSyntax(inner.Span, [Name("Piper"), Name("Runtime")], Name("Secret"), [inner]);
+        }
+        return type is OptionalTypeSyntax optional ? new OptionalTypeSyntax(type.Span, Wrap(optional.Inner)) : Wrap(type);
     }
 
     /// <summary>The function reading one section into a config, which a config with a field of its type calls for a nested section.</summary>

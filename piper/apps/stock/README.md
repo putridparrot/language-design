@@ -105,7 +105,12 @@ reserves each unit exactly once.
 - **Docker Compose:** Ctrl+C, then `docker compose -f apps/stock/docker-compose.yml down` to remove the containers
   and their network. Add `--rmi local` to remove the `stock:local` image as well.
 
-Nothing is kept on disk, so there's no data to clear: stopping a node loses its products' counts.
+**Keeping the counts:** each product keeps its count as events (a [persisted actor](../../docs/plugins.md#keeping-state-persisted-actors)).
+Run without `--events`, a node keeps them in memory, so stopping it loses its products' counts. With
+`--events stock-1.db` (a SQLite file, made if it isn't there), a node that's stopped and started again carries on
+with them: the first time a product is asked for after the restart, its actor replays its events. Docker Compose and
+the Kubernetes StatefulSet give each node a volume for its file. To start again with nothing, delete the files (with
+Docker Compose, `down -v`).
 
 **Seeing its traces:** each node exports traces, metrics and logs (the [telemetry plugin](../../docs/plugins.md#telemetry-opentelemetry))
 when `OTEL_EXPORTER_OTLP_ENDPOINT` says where. .NET Aspire's dashboard takes them with no setup:
@@ -198,8 +203,9 @@ of its products starts that product again there, empty.
 ## What it doesn't do
 
 It's a demonstration of actors across pods, not a stock system.
-- **Counts live only in memory:** a pod that restarts loses its products' counts. Storing each product's events
-  (Proto.Actor's persistence, or the data plugin) would fix that.
+- **Each node keeps its own products' events,** in a file on its own volume. That suits the fixed list of nodes,
+  where a product always belongs to the same node, but a product can't move to another node, and losing a node's
+  volume loses its products. A database every node shares would allow both.
 - **The nodes are a fixed list:** scaling means changing `replicas` and `--nodes` together and restarting, and since
   ownership is `hash % count`, most products then belong to another node, so they start again empty. Finding nodes as
   they come and go, and moving actors between them, is Proto.Actor's clustering. That's on Piper's list (see the remote

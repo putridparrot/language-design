@@ -74,6 +74,6 @@ async fn Prepare(settings: Settings) {
 
 /// The notifier the settings ask for: a webhook, or no one.
 fn NotifierFor(settings: Settings) => Notifier = match settings.webhook {
-    Some(url) => WebhookNotifier(HttpClient(), url),
+    Some(url) => WebhookNotifier(HttpClient(), url.Reveal()),
     None => NoNotifier(),
 };

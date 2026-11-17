@@ -304,6 +304,53 @@ public class RemoteActorPluginTests
         Assert.Equal("3\nnot enough\n2\nfine\nblown\nstopped\n", run.Output.Replace("\r\n", "\n"));
     }
 
+    /// <summary>
+    /// A persisted remote actor keeps its state through its events: stopped on one node and spawned again on another
+    /// (as a pod restarting does), it replays them as Proto.Actor starts it and carries on where it was. A handler that
+    /// throws saves none of its events.
+    /// </summary>
+    [Fact]
+    public void A_persisted_remote_actor_comes_back_with_its_state()
+    {
+        var result = Compile(Node + """
+            actor Tally(id: string) persisted by id {
+                mut total = 0;
+                event Added(amount: int) { total += amount; }
+                on Add(amount: int) => int {
+                    emit Added(amount);
+                    if amount < 0 { throw System.InvalidOperationException("negative"); }
+                    total
+                }
+                on Total() => int { total }
+            }
+
+            async fn Main() {
+                let store = Piper.Runtime.MemoryEventStore();
+                let first = await StartNode();
+                let second = await StartNode();
+                let client = await StartNode();
+
+                let here = Tally.Spawn(first, "tally", store, "visits");
+                let tally = Tally.Connect(client, first.Address, "tally");
+                Print(await tally.Add(3));
+                Print(await tally.Add(4));
+                try { await tally.Add(-100); } catch (e: System.InvalidOperationException) { Print(e.Message); }
+                await here.Stop();
+
+                Tally.Spawn(second, "tally", store, "visits");
+                Print(await Tally.Connect(client, second.Address, "tally").Total());
+                await client.Remote().ShutdownAsync(true);
+                await first.Remote().ShutdownAsync(true);
+                await second.Remote().ShutdownAsync(true);
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Empty(result.Diagnostics);
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("3\n7\nnegative\n7\n", run.Output.Replace("\r\n", "\n"));
+    }
+
     private const string Stock = """
         record Level(sku: string, onHand: int);
         enum Refusal { TooMany(asked: int), Unknown }

@@ -374,9 +374,9 @@ public class ActorPluginTests
 
     [Theory]
     [InlineData("mut items: System.Collections.Generic.List<int> = [];\non failure rollback;", "rollback",
-        "'rollback' puts A's state back by keeping its values, but 'items' holds a List<int>")]
+        "'rollback' puts A's state back, by keeping its values; but 'items' holds a List<int>")]
     [InlineData("let seen: System.Collections.Generic.List<int> = [];\non failure restart;", "restart",
-        "'restart' puts A's state back by keeping its values, but 'seen' holds a List<int>")]
+        "'restart' puts A's state back, by keeping its values; but 'seen' holds a List<int>")]
     [InlineData("mut n = 0;\non failure explode;", "explode", "Expected what the actor does when a handler throws")]
     [InlineData("mut n = 0;\non failure restart 3;", ";\non Get", "Expected the window the restarts are counted in")]
     [InlineData("mut n = 0;\non failure restart 3 per week;", "week", "Expected 'second', 'minute' or 'hour'")]
@@ -387,5 +387,118 @@ public class ActorPluginTests
         var text = $"fn Main() {{}}\nactor A {{\n{body}\non Get() => int {{ 1 }}\n}}";
         var error = Assert.Single(Compile(text).Diagnostics, d => d.Message.Contains(message));
         Assert.Equal(text.IndexOf(at, StringComparison.Ordinal), error.Span.Start);
+    }
+
+    private const string Shelf = """
+        using System;
+        using Piper.Runtime;
+
+        actor Shelf(sku: string) persisted by sku {
+            mut onHand = 0;
+            mut reserved = 0;
+
+            event Received(quantity: int) { onHand += quantity; }
+            event Reserved(quantity: int) { onHand -= quantity; reserved += quantity; }
+
+            on Receive(quantity: int) { emit Received(quantity); }
+            on Reserve(quantity: int) => bool {
+                if quantity > onHand {
+                    false
+                } else {
+                    emit Reserved(quantity);
+                    true
+                }
+            }
+            on Broken(quantity: int) => int {
+                emit Received(quantity);
+                throw InvalidOperationException("broken");
+            }
+            on Show() => string { $"{sku}: {onHand} on hand, {reserved} reserved" }
+        }
+
+        """;
+
+    /// <summary>
+    /// A persisted actor's state changes only through its events, which are saved as each message is handled and
+    /// replayed when an actor with the same identity starts: a second Shelf for "tea" picks up where the first left
+    /// off. A handler that throws saves none of its events, and its state is put back.
+    /// </summary>
+    [Fact]
+    public void A_persisted_actor_keeps_its_state_through_its_events()
+    {
+        var output = Run(Shelf + """
+            async fn Main() {
+                let store = MemoryEventStore();
+                let first = Shelf.Spawn(store, "tea");
+                first.Receive(10);
+                Print(await first.Reserve(4));
+                Print(await first.Reserve(20));
+                try { await first.Broken(100); } catch (e: InvalidOperationException) { Print(e.Message); }
+                Print(await first.Show());
+                await first.Stop();
+
+                let again = Shelf.Spawn(store, "tea");
+                Print(await again.Show());
+                let other = Shelf.Spawn(store, "milk");
+                Print(await other.Show());
+                Print(string.Join(", ", store.Streams));
+                Print(string.Join(" ", await store.LoadAsync("Shelf/tea")));
+            }
+            """);
+        Assert.Equal(
+            "True\nFalse\nbroken\ntea: 6 on hand, 4 reserved\ntea: 6 on hand, 4 reserved\nmilk: 0 on hand, 0 reserved\nShelf/milk, Shelf/tea\n" +
+            "{\"kind\":\"Received\",\"quantity\":10} {\"kind\":\"Reserved\",\"quantity\":4}\n",
+            output);
+    }
+
+    /// <summary>
+    /// Two actors with one identity both writing its stream: the second's save finds the stream changed, so its
+    /// handler fails (and its state is put back); with `restart`, it reads the stream afresh and catches up.
+    /// </summary>
+    [Fact]
+    public void Two_writers_of_one_stream_are_caught()
+    {
+        var output = Run(Shelf.Replace("persisted by sku {", "persisted by sku {\n    on failure restart;") + """
+            async fn Main() {
+                let store = MemoryEventStore();
+                let a = Shelf.Spawn(store, "tea");
+                let b = Shelf.Spawn(store, "tea");
+                Print(await a.Show());
+                Print(await b.Show());
+                a.Receive(5);
+                Print(await a.Show());
+                try { await b.Reserve(0); } catch (e: EventStreamConflictException) { Print("conflict"); }
+                Print(await b.Show());
+            }
+            """);
+        Assert.Equal("tea: 0 on hand, 0 reserved\ntea: 0 on hand, 0 reserved\ntea: 5 on hand, 0 reserved\nconflict\ntea: 5 on hand, 0 reserved\n", output);
+    }
+
+    [Theory]
+    [InlineData("mut n = 0;\nevent Added(k: int) { n += k; }\non Add(k: int) { n += k; }", "n += k; }\non Get",
+        "A persisted actor's state changes only through its events")]
+    [InlineData("mut n = 0;\nevent Added(k: int) { n += k; }\non Add(k: int) { emit Lost(k); }", "__emit_Lost",
+        "A has no event 'Lost'; its events are Added")]
+    [InlineData("mut n = 0;\non Add(k: int) { }", "persisted", "A is persisted but has no events")]
+    [InlineData("mut n = 0;\nevent Added(k: int) { n += k; }\non failure resume;\non Add(k: int) { emit Added(k); }", "resume",
+        "A persisted actor can't resume after a failure")]
+    [InlineData("mut items: System.Collections.Generic.List<int> = [];\nevent Added(k: int) { items = items; }\non Add(k: int) { emit Added(k); }", "A",
+        "A is persisted, so its state changes only through events")]
+    public void A_persisted_actors_rules_are_checked(string body, string at, string message)
+    {
+        var text = $"fn Main() {{}}\nactor A(id: string) persisted by id {{\n{body}\non Get() => int {{ 1 }}\n}}";
+        var result = Compile(text);
+        var error = Assert.Single(result.Diagnostics, d => d.Message.Contains(message));
+        Assert.Equal(at == "__emit_Lost" ? text.IndexOf("Lost(k)", StringComparison.Ordinal) : at == "A" ? text.IndexOf("A(", StringComparison.Ordinal) : text.IndexOf(at, StringComparison.Ordinal), error.Span.Start);
+    }
+
+    [Theory]
+    [InlineData("actor A { mut n = 0; event Added(k: int) { n += k; } on Get() => int { n } }", "Event 'Added' needs a persisted actor")]
+    [InlineData("actor A(store: string) persisted by store { mut n = 0; event Added(k: int) { n += k; } on Get() => int { n } }",
+        "A persisted actor's Spawn takes 'store' itself")]
+    [InlineData("actor A(id: string) persisted { mut n = 0; on Get() => int { n } }", "Expected what identifies each A")]
+    public void Events_need_a_persisted_actor(string actor, string message)
+    {
+        Assert.Contains(Compile("fn Main() {}\n" + actor).Diagnostics, d => d.Message.Contains(message));
     }
 }
