@@ -1,0 +1,46 @@
+{
+  "name": "Product",
+  "calls": {
+    "Product.Receive": {
+      "name": "Product.Receive",
+      "inputs": {
+        "quantity": "int"
+      },
+      "output": "Level"
+    },
+    "Product.Reserve": {
+      "name": "Product.Reserve",
+      "inputs": {
+        "quantity": "int"
+      },
+      "output": "Reservation"
+    },
+    "Product.Show": {
+      "name": "Product.Show",
+      "inputs": {},
+      "output": "Level"
+    }
+  },
+  "types": {
+    "Level": {
+      "sent": "response",
+      "kind": "record",
+      "fields": {
+        "sku": "string",
+        "onHand": "int",
+        "reserved": "int",
+        "node": "string"
+      }
+    },
+    "Reservation": {
+      "sent": "response",
+      "kind": "record",
+      "fields": {
+        "sku": "string",
+        "granted": "bool",
+        "left": "int",
+        "node": "string"
+      }
+    }
+  }
+}

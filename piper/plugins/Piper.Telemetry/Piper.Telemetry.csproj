@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    What the telemetry plugin (plugins/Piper.Plugins.Telemetry) brings: PiperTelemetry.Add, which a `server` or `host`
+    with `telemetry;` calls, exporting traces, metrics and logs over OpenTelemetry (OTLP). It comes with the plugin,
+    beside its assembly (IPiperPlugin.References), so only programs asking for telemetry carry the packages.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Piper.Telemetry</RootNamespace>
+    <!-- One place whatever the configuration, so the plugin can copy it beside itself. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\runtime\</OutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The program restores the packages itself (the plugin's Packages), so they aren't copied here. -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.20.1" PrivateAssets="all" ExcludeAssets="runtime" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.20.1" PrivateAssets="all" ExcludeAssets="runtime" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.20.1" PrivateAssets="all" ExcludeAssets="runtime" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.20.1" PrivateAssets="all" ExcludeAssets="runtime" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,32 @@
+{
+  "name": "Worker",
+  "calls": {
+    "Worker.Count": {
+      "name": "Worker.Count",
+      "inputs": {
+        "chunk": "Chunk"
+      },
+      "output": "ChunkResult"
+    }
+  },
+  "types": {
+    "Chunk": {
+      "sent": "request",
+      "kind": "record",
+      "fields": {
+        "id": "int",
+        "from": "long",
+        "to": "long"
+      }
+    },
+    "ChunkResult": {
+      "sent": "response",
+      "kind": "record",
+      "fields": {
+        "id": "int",
+        "primes": "long",
+        "worker": "string"
+      }
+    }
+  }
+}

@@ -27,12 +27,18 @@ public class AppsTests
         var folder = Path.Combine(AppsDirectory(), name);
         var (project, errors) = LoadedProject.Load(folder);
         Assert.Empty(errors);
-        var files = Directory.GetFiles(folder, "*.piper", SearchOption.AllDirectories)
+        // A shared project's code ("projects") is compiled in too, without its tests.
+        var files = project!.SharedFiles.Concat(Directory.GetFiles(folder, "*.piper", SearchOption.AllDirectories))
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"))
             .Order()
             .Select(f => new SourceText(File.ReadAllText(f), f))
             .ToList();
-        var options = new CompilationOptions(LineDirectives: true, IncludeTests: true) { Plugins = project!.Plugins, References = project.References };
+        var options = new CompilationOptions(LineDirectives: true, IncludeTests: true)
+        {
+            Plugins = project.Plugins,
+            References = project.References,
+            SharedFiles = [.. project.SharedFiles],
+        };
 
         var result = Compilation.Compile(files, options);
         Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));

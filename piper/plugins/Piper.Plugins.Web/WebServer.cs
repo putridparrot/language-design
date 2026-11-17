@@ -1,6 +1,9 @@
 using System.Collections.Immutable;
 using Piper.Plugins;
 using Piper.Syntax;
+using Piper.Text;
+using Piper.Plugins.Shared;
+using static Piper.Plugins.Shared.HostClauses;
 
 namespace Piper.Plugins.Web;
 
@@ -26,28 +29,20 @@ public sealed partial class WebPlugin
 {
     private const string DependencyInjection = "Microsoft.Extensions.DependencyInjection";
 
-    private static readonly Dictionary<string, string> Lifetimes = new()
-    {
-        ["singleton"] = "AddSingleton",
-        ["scoped"] = "AddScoped",
-        ["transient"] = "AddTransient",
-    };
-
     private static DeclarationKeyword ServerKeyword() => new("server", Server)
     {
-        Description = "Declares a web app: where it listens, its services, policies, endpoints and health checks, and what it does as it stops, " +
+        Description = "Declares a web app: where it listens, its services, policies, endpoints and health checks, its background work, and what it does as it stops, " +
                       "as `fn Name(…) => WebApplication`, with its middleware in the order ASP.NET Core needs. `Main` runs it: `await Name().RunAsync();`.",
         Snippet = "server ${1:App} {\n\turls \"${2:http://localhost:5080}\";\n\tendpoints ${3:Api};\n\t$0\n}",
-        Words = new Dictionary<string, string>
+        Words = new Dictionary<string, string>(HostClauses.Words)
         {
             ["urls"] = "Where it listens: a URL, or a list of them (`UseUrls`). A test's TestClient serves it from memory instead.",
-            ["logging"] = "`logging off;` removes the logging providers, for an app that writes nothing to the console.",
-            ["config"] = "Reads a `config` record from the app's configuration as it starts (stopping it, listing every problem, if one is missing or invalid), and registers it, and as `IOptions<T>`. `config smtp: Smtp;` names it for the clauses after.",
-            ["services"] = "A `services` block registering the app's services: `services AppServices;`, with its arguments if it takes any.",
-            ["singleton"] = "Registers one instance, shared by everything: `AddSingleton`.",
-            ["scoped"] = "Registers one instance per request: `AddScoped`.",
-            ["transient"] = "Registers a new instance each time it's asked for: `AddTransient`.",
-            ["configure"] = "Code run on the builder (`builder`) before the app is built, for what the declaration doesn't say: `configure { builder.Services.AddAntiforgery(); }`.",
+            ["https"] = "Redirects HTTP to HTTPS, and outside Development tells browsers to use only HTTPS (HSTS). `https certificate \"server.pfx\" password secret;` or `https certificate \"tls.crt\" key \"tls.key\";` gives the certificate it serves.",
+            ["forwarded"] = "Behind a proxy that ends TLS (an ingress, a load balancer): each request's scheme and client are those the proxy saw (`X-Forwarded-Proto`, `X-Forwarded-For`), so `https` doesn't redirect what arrived as HTTPS. `forwarded from \"10.0.0.0/8\";` believes only those proxies.",
+            ["from"] = "The proxies `forwarded` believes: IP addresses (\"10.1.2.3\") or networks (\"10.0.0.0/8\"). Without, any.",
+            ["certificate"] = "The certificate HTTPS serves: a .pfx file (with `password` if it has one), or a PEM file with its `key`, loaded as the server starts.",
+            ["password"] = "The .pfx file's password.",
+            ["key"] = "The PEM certificate's private key file.",
             ["problems"] = "Errors as ProblemDetails: an exception is a 500, and an error status without a body (404) has one, rather than a bare page.",
             ["use"] = "Middleware of the app's own (`app`), run after `problems` and before the policies' and the endpoints: `use { app.Use(…); }`.",
             ["policies"] = "A `policies` block: registers its policies, and adds their middleware where it must go, before the endpoints.",
@@ -56,23 +51,29 @@ public sealed partial class WebPlugin
             ["health"] = "Health checks at this path. With `ready`, it's liveness (healthy while the app runs) and `ready` runs the checks.",
             ["ready"] = "Readiness at this path: healthy when every check passes, so Kubernetes sends no requests until then.",
             ["check"] = "A health check, as a handler whose parameters are services: healthy when it gives true, unhealthy when it gives false or throws.",
-            ["async"] = "The handler awaits, so it runs as an async lambda.",
-            ["stopping"] = "Run when the app is asked to stop (Ctrl+C, or SIGTERM from Kubernetes), and waited for, before the server stops: a handler whose parameters are services.",
-            ["shutdown"] = "How long requests and `stopping` have to finish once the app is asked to stop: `shutdown 30 seconds;`.",
         },
     };
 
-    /// <summary>What a <c>server</c> says, for <see cref="Analyze"/>: the endpoints it maps, and whether it has policies.</summary>
-    private sealed record ServerData(Token Name, ImmutableArray<Token> Endpoints, bool HasPolicies, ImmutableArray<LambdaExpressionSyntax> Checks, ImmutableArray<LambdaExpressionSyntax> Hooks);
+    /// <summary>
+    /// What a <c>server</c> says, for <see cref="Analyze"/>: the endpoints it maps, whether it has policies, and its
+    /// handlers whose parameters are services. <c>PlainUrls</c> is where <c>urls</c> gives only http:// addresses to a
+    /// server redirecting to HTTPS.
+    /// </summary>
+    private sealed record ServerData(Token Name, ImmutableArray<Token> Endpoints, bool HasPolicies, ImmutableArray<LambdaExpressionSyntax> Checks, ImmutableArray<LambdaExpressionSyntax> Hooks,
+        ImmutableArray<LambdaExpressionSyntax> Workers, TextSpan? PlainUrls);
 
     /// <summary>
     /// server  = "server" IDENT [ lambdaParameters ] "{" { clause } "}" ;
-    /// clause  = "urls" expression ";" | "logging" "off" ";" | "services" IDENT [ arguments ] ";" | "config" [ IDENT ":" ] IDENT ";"
-    ///         | ( "singleton" | "scoped" | "transient" ) type [ "=>" type | "=" expression ] ";"
-    ///         | "configure" block | "problems" ";" | "use" block | "policies" IDENT [ arguments ] ";"
+    /// clause  = "urls" expression ";" | "https" [ "certificate" expression [ "password" expression | "key" expression ] ] ";"
+    ///         | "forwarded" [ "from" expression { "," expression } ] ";"
+    ///         | "problems" ";" | "use" block | "policies" IDENT [ arguments ] ";"
     ///         | "openapi" ";" | "endpoints" IDENT { "," IDENT } ";"
     ///         | "health" STRING [ "ready" STRING ] ( ";" | "{" { "check" STRING handler } "}" )
-    ///         | "stopping" handler | "shutdown" duration ";" ;
+    ///         | hostClause ;
+    /// hostClause (shared with `host`, see HostClauses)
+    ///         = "logging" "off" ";" | "services" IDENT [ arguments ] ";" | "config" [ IDENT ":" ] IDENT ";"
+    ///         | ( "singleton" | "scoped" | "transient" ) type [ "=>" type | "=" expression ] ";" | "configure" block
+    ///         | "hosted" type ";" | "worker" [ "every" duration ] handler | "stopping" handler | "shutdown" duration ";" ;
     /// </summary>
     private static IEnumerable<DeclarationSyntax> Server(PluginParser p)
     {
@@ -91,18 +92,19 @@ public sealed partial class WebPlugin
         p.Expect(TokenKind.OpenBrace);
 
         // Before the app is built (registrations), and after, in the order middleware must run.
-        var building = new List<StatementSyntax>();
+        var host = new HostParts("app") { Name = name.Text };
         var problems = new List<StatementSyntax>();
+        var forwarded = new List<StatementSyntax>();
+        var https = new List<StatementSyntax>();
+        ExpressionSyntax? urls = null;
         var middleware = new List<StatementSyntax>();
         var policyMiddleware = new List<StatementSyntax>();
         var mapping = new List<StatementSyntax>();
         var endpoints = new List<StatementSyntax>();
-        var stopping = new List<StatementSyntax>();
         var endpointNames = new List<Token>();
         var seen = new Dictionary<string, Token>();
         bool hasPolicies = false;
         var checks = new List<LambdaExpressionSyntax>();
-        var hooks = new List<LambdaExpressionSyntax>();
 
         // A clause that may only be written once (`urls`, `problems`, `health`…).
         void Once(Token word)
@@ -127,64 +129,67 @@ public sealed partial class WebPlugin
                 case "urls":
                     p.ReadWord();
                     Once(word);
-                    building.Add(p.Template.Statement("Piper.Web.PiperServer.Urls(builder, $urls);", ("urls", p.ParseExpression())));
+                    urls = p.ParseExpression();
+                    host.Building.Add(p.Template.Statement("Piper.Web.PiperServer.Urls(builder, $urls);", ("urls", urls)));
                     p.Expect(TokenKind.Semicolon);
                     break;
 
-                case "logging":
+                case "https":
                     p.ReadWord();
                     Once(word);
-                    p.ExpectWord("off");
-                    building.Add(p.Template.Statement("Piper.Web.PiperServer.LoggingOff(builder);"));
+                    if (p.AtWord("certificate"))
+                    {
+                        p.ReadWord();
+                        var path = p.ParseExpression();
+                        if (p.AtWord("key"))
+                        {
+                            p.ReadWord();
+                            host.Building.Add(p.Template.Statement("Piper.Web.PiperServer.PemCertificate(builder, $path, $key);", ("path", path), ("key", p.ParseExpression())));
+                        }
+                        else if (p.AtWord("password"))
+                        {
+                            p.ReadWord();
+                            host.Building.Add(p.Template.Statement("Piper.Web.PiperServer.Certificate(builder, $path, $password);", ("path", path), ("password", p.ParseExpression())));
+                        }
+                        else
+                            host.Building.Add(p.Template.Statement("Piper.Web.PiperServer.Certificate(builder, $path);", ("path", path)));
+                    }
+                    https.Add(p.Template.Statement("Piper.Web.PiperServer.Https(app);"));
                     p.Expect(TokenKind.Semicolon);
                     break;
 
-                case "services":
+                case "forwarded":
                 {
                     p.ReadWord();
-                    var services = p.Expect(TokenKind.Identifier);
-                    building.Add(p.Template.Statement("$services(builder.Services, $arguments);", ("services", services), ("arguments", Arguments(p))));
+                    Once(word);
+                    // `from "10.0.0.0/8", "10.1.2.3"`: only these proxies are believed; a literal that isn't one is reported here.
+                    var trusted = new List<ExpressionSyntax>();
+                    if (p.AtWord("from"))
+                    {
+                        p.ReadWord();
+                        do
+                        {
+                            if (trusted.Count > 0)
+                                p.NextToken();
+                            var entry = p.ParseExpression();
+                            if (entry is LiteralExpressionSyntax { Value: string text } && !IsAddressOrNetwork(text))
+                                p.Report(entry.Span, $"'{text}' isn't an IP address (10.1.2.3) or a network (10.0.0.0/8), so it can't be a trusted proxy.");
+                            trusted.Add(entry);
+                        }
+                        while (p.Current.Kind == TokenKind.Comma);
+                    }
+                    var holes = trusted.Select((entry, i) => ($"t{i}", (object)entry)).ToList();
+                    host.Building.Add(p.Template.Statement(
+                        $"Piper.Web.PiperServer.Forwarded(builder{string.Concat(holes.Select(h => $", ${h.Item1}"))});", [.. holes]));
+                    forwarded.Add(p.Template.Statement("Microsoft.AspNetCore.Builder.ForwardedHeadersExtensions.UseForwardedHeaders(app);"));
                     p.Expect(TokenKind.Semicolon);
                     break;
                 }
-
-                case "config":
-                {
-                    // `config Smtp;`, or `config smtp: Smtp;` to use it in the clauses after (`urls smtp.url;`).
-                    p.ReadWord();
-                    var local = p.Current.Kind == TokenKind.Identifier && p.Peek(1).Kind == TokenKind.Colon ? p.NextToken() : null;
-                    if (local is not null)
-                        p.NextToken();
-                    var config = p.Expect(TokenKind.Identifier);
-                    var value = local ?? p.FreshName(char.ToLowerInvariant(config.Text[0]) + config.Text[1..]);
-                    var from = new Token(TokenKind.Identifier, config.Span, config.Text + "From");
-                    // Read as the app is built, so a missing or invalid value stops it at startup, listing every problem.
-                    building.Add(p.Template.Statement("let $value = $from(builder.Configuration);", ("value", value), ("from", from)));
-                    building.Add(p.Template.Statement($"{DependencyInjection}.ServiceCollectionServiceExtensions.AddSingleton<$config>(builder.Services, $value);",
-                        ("config", config), ("value", value)));
-                    // As IOptions<Smtp> too, for code written for .NET's options.
-                    building.Add(p.Template.Statement(
-                        $"{DependencyInjection}.ServiceCollectionServiceExtensions.AddSingleton<Microsoft.Extensions.Options.IOptions<$config>>(builder.Services, Microsoft.Extensions.Options.Options.Create($value));",
-                        ("config", config), ("value", value)));
-                    p.Expect(TokenKind.Semicolon);
-                    break;
-                }
-
-                case "singleton" or "scoped" or "transient":
-                    p.ReadWord();
-                    building.Add(Registration(p, Lifetimes[word.Text]));
-                    p.Expect(TokenKind.Semicolon);
-                    break;
-
-                case "configure":
-                    p.ReadWord();
-                    building.Add(new ExpressionStatementSyntax(p.Current.Span, p.ParseBlock()));
-                    break;
 
                 case "problems":
                     p.ReadWord();
                     Once(word);
-                    building.Add(p.Template.Statement($"{DependencyInjection}.ProblemDetailsServiceCollectionExtensions.AddProblemDetails(builder.Services);"));
+                    host.Building.Add(p.Template.Statement($"{DependencyInjection}.ProblemDetailsServiceCollectionExtensions.AddProblemDetails(builder.Services);"));
                     // An exception is a 500 ProblemDetails, and a status without a body (a 404) gets one.
                     problems.Add(p.Template.Statement("Microsoft.AspNetCore.Builder.ExceptionHandlerExtensions.UseExceptionHandler(app);"));
                     problems.Add(p.Template.Statement("Microsoft.AspNetCore.Builder.StatusCodePagesExtensions.UseStatusCodePages(app);"));
@@ -201,7 +206,7 @@ public sealed partial class WebPlugin
                     p.ReadWord();
                     hasPolicies = true;
                     var policies = p.Expect(TokenKind.Identifier);
-                    building.Add(p.Template.Statement("$policies(builder.Services, $arguments);", ("policies", policies), ("arguments", Arguments(p))));
+                    host.Building.Add(p.Template.Statement("$policies(builder.Services, $arguments);", ("policies", policies), ("arguments", Arguments(p))));
                     var use = new Token(TokenKind.Identifier, policies.Span, "Use" + policies.Text);
                     policyMiddleware.Add(p.Template.Statement("$use(app);", ("use", use)));
                     p.Expect(TokenKind.Semicolon);
@@ -211,7 +216,7 @@ public sealed partial class WebPlugin
                 case "openapi":
                     p.ReadWord();
                     Once(word);
-                    building.Add(p.Template.Statement("Piper.Web.OpenApi.PiperOpenApiExtensions.AddPiperOpenApi(builder.Services);"));
+                    host.Building.Add(p.Template.Statement("Piper.Web.OpenApi.PiperOpenApiExtensions.AddPiperOpenApi(builder.Services);"));
                     mapping.Add(p.Template.Statement("Microsoft.AspNetCore.Builder.OpenApiEndpointRouteBuilderExtensions.MapOpenApi(app);"));
                     p.Expect(TokenKind.Semicolon);
                     break;
@@ -235,39 +240,30 @@ public sealed partial class WebPlugin
                 case "health":
                     p.ReadWord();
                     Once(word);
-                    Health(p, building, mapping, checks);
-                    break;
-
-                case "stopping":
-                    p.ReadWord();
-                    if (Handler(p) is { } hook && hook.Parameters.All(parameter => parameter.Type is not null))
-                    {
-                        stopping.Add(p.Template.Statement("Piper.Web.PiperServer.OnStopping(app, $hook);", ("hook", hook)));
-                        hooks.Add(hook);
-                    }
-                    break;
-
-                case "shutdown":
-                    p.ReadWord();
-                    Once(word);
-                    building.Add(p.Template.Statement("Piper.Web.PiperServer.ShutdownTimeout(builder, $timeout);", ("timeout", Duration(p, countOptional: false))));
-                    p.Expect(TokenKind.Semicolon);
+                    Health(p, host.Building, mapping, checks);
                     break;
 
                 default:
-                    p.Report(word.Span, $"'{word.Text}' isn't a server clause; expected 'urls', 'config', 'services', 'singleton', 'policies', 'endpoints', 'health', 'problems', 'openapi', 'configure', 'use', 'stopping' or 'shutdown'.");
-                    SkipClause(p);
+                    if (!HostClauses.TryParse(p, word, host, Once))
+                    {
+                        p.Report(word.Span, $"'{word.Text}' isn't a server clause; expected 'urls', 'https', 'forwarded', 'policies', 'endpoints', 'health', 'problems', 'openapi', 'use', {HostClauses.Listed}.");
+                        SkipClause(p);
+                    }
                     break;
             }
         }
         p.Expect(TokenKind.CloseBrace);
         if (endpointNames.Count == 0)
             p.Report(name.Span, $"{name.Text} maps no endpoints; add 'endpoints Api;' naming an 'endpoints' block.");
-        p.Data = new ServerData(name, [.. endpointNames], hasPolicies, [.. checks], [.. hooks]);
+        p.Data = new ServerData(name, [.. endpointNames], hasPolicies, [.. checks], [.. host.Hooks], [.. host.Workers],
+            // Behind a proxy (`forwarded`), TLS ends there, so listening on http:// alone is expected.
+            https.Count > 0 && forwarded.Count == 0 && urls is not null && OnlyPlainUrls(urls) ? urls.Span : null);
 
-        // problems first, so it sees every exception; then the app's own middleware; then the policies' (CORS,
-        // authentication, authorization, rate limits, caching), which must come before the endpoints they guard.
-        List<StatementSyntax> pipeline = [.. problems, .. middleware, .. policyMiddleware, .. mapping, .. endpoints, .. stopping];
+        // The proxy's forwarded headers first, so everything after sees the scheme and client it saw; then problems, so
+        // it sees every exception; then HTTPS, so nothing is answered over HTTP; then the app's own
+        // middleware; then the policies' (CORS, authentication, authorization, rate limits, caching), which must come
+        // before the endpoints they guard.
+        List<StatementSyntax> pipeline = [.. forwarded, .. problems, .. https, .. middleware, .. policyMiddleware, .. mapping, .. endpoints, .. host.Built];
         return p.Template.Declarations($$"""
             fn $name({{(parameters.Count == 0 ? "" : "$parameters: unit")}}) => Microsoft.AspNetCore.Builder.WebApplication {
                 let builder = Microsoft.AspNetCore.Builder.WebApplication.CreateBuilder();
@@ -276,49 +272,22 @@ public sealed partial class WebPlugin
                 $pipeline;
                 app
             }
-            """, [("name", name), ("building", building), ("pipeline", pipeline),
+            """, [("name", name), ("building", host.Building), ("pipeline", pipeline),
                  .. parameters.Count == 0 ? Array.Empty<(string, object)>() : [("parameters", (object)parameters)]]);
     }
 
-    /// <summary>A call's arguments after a block's name, <c>(settings, 5)</c>, or none.</summary>
-    private static List<ExpressionSyntax> Arguments(PluginParser p)
-    {
-        var arguments = new List<ExpressionSyntax>();
-        if (p.Current.Kind != TokenKind.OpenParen)
-            return arguments;
-        p.NextToken();
-        while (p.Current.Kind is not (TokenKind.CloseParen or TokenKind.EndOfFile))
-        {
-            arguments.Add(p.ParseExpression());
-            if (p.Current.Kind != TokenKind.Comma)
-                break;
-            p.NextToken();
-        }
-        p.Expect(TokenKind.CloseParen);
-        return arguments;
-    }
+    /// <summary>A trusted proxy as <c>forwarded from</c> takes it: an IP address, or a network in CIDR form.</summary>
+    private static bool IsAddressOrNetwork(string text) =>
+        text.Contains('/') ? System.Net.IPNetwork.TryParse(text, out _) : System.Net.IPAddress.TryParse(text, out _);
 
-    /// <summary><c>singleton Clock =&gt; SystemClock</c>, <c>singleton Clock = clock</c> or <c>scoped Db</c>, as the services plugin reads them.</summary>
-    private static StatementSyntax Registration(PluginParser p, string method)
+    /// <summary>
+    /// <c>urls</c> written as string literals (one, or a list), none of them https://: an app redirecting to HTTPS
+    /// with nowhere to redirect to. An address from elsewhere (configuration) can't be known, so isn't reported.
+    /// </summary>
+    private static bool OnlyPlainUrls(ExpressionSyntax urls)
     {
-        const string Registrations = DependencyInjection + ".ServiceCollectionServiceExtensions";
-        var service = p.ParseType();
-        if (p.Current.Kind == TokenKind.FatArrow)
-        {
-            p.NextToken();
-            return p.Template.Statement($"{Registrations}.{method}<$service, $implementation>(builder.Services);",
-                ("service", service), ("implementation", p.ParseType()));
-        }
-        if (p.Current.Kind == TokenKind.Equals)
-        {
-            p.NextToken();
-            var value = p.ParseExpression();
-            var factory = value is LambdaExpressionSyntax { Parameters.Length: 1 }
-                ? value
-                : p.Template.Expression("$provider => $value", ("provider", p.FreshName("provider")), ("value", value));
-            return p.Template.Statement($"{Registrations}.{method}<$service>(builder.Services, $factory);", ("service", service), ("factory", factory));
-        }
-        return p.Template.Statement($"{Registrations}.{method}<$service>(builder.Services);", ("service", service));
+        ImmutableArray<ExpressionSyntax> all = urls is CollectionExpressionSyntax list ? list.Elements : [urls];
+        return all.Length > 0 && all.All(url => url is LiteralExpressionSyntax { Value: string text } && !text.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary><c>health "/healthz" [ready "/ready"] ( ";" | "{" { check "name" handler } "}" )</c>.</summary>
@@ -360,7 +329,7 @@ public sealed partial class WebPlugin
             var checkName = new LiteralExpressionSyntax(nameToken.Span, nameToken, nameToken.Value);
             if (!names.Add((string)nameToken.Value!))
                 p.Report(nameToken.Span, $"There's already a check named \"{nameToken.Value}\".");
-            if (Handler(p) is { } check && check.Parameters.All(parameter => parameter.Type is not null))
+            if (HostClauses.Handler(p) is { } check)
             {
                 building.Add(p.Template.Statement("Piper.Web.PiperHealth.AddCheck(builder.Services, $name, $check);", ("name", checkName), ("check", check)));
                 checks.Add(check);
@@ -384,6 +353,12 @@ public sealed partial class WebPlugin
     /// </summary>
     private static void AnalyzeServers(PluginAnalysis analysis)
     {
+        foreach (var expansion in analysis.Expansions.Where(e => e.Data is ServerData { PlainUrls: not null }))
+        {
+            var server = (ServerData)expansion.Data!;
+            analysis.ReportWarning(expansion.File, server.PlainUrls!.Value,
+                $"{server.Name.Text} redirects to HTTPS, but listens only on http:// addresses; add an https:// one to 'urls'.");
+        }
         // Without any `policies` block, AnalyzePolicies has already warned, once, about the setup they need.
         if (!analysis.Expansions.Any(e => e.Data is PoliciesData))
             return;

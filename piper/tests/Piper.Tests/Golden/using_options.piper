@@ -1,0 +1,35 @@
+// `using` on an Option: disposed if it's Some, as C#'s using skips a null.
+using System;
+using System.Threading.Tasks;
+
+class Resource(name: string): IDisposable {
+    fn Dispose() { Print($"disposed {name}"); }
+}
+
+class Pending(name: string): IAsyncDisposable {
+    fn DisposeAsync() => ValueTask {
+        Print($"disposed {name} later");
+        ValueTask.CompletedTask
+    }
+}
+
+fn Open(name: string, wanted: bool) => Resource? = if wanted { Some(Resource(name)) } else { None };
+
+async fn Main() {
+    {
+        using let some = Open("a", true);
+        using let none = Open("b", false);
+        Print("in the block");
+    }
+    using (let maybe = Open("c", true)) {
+        Print($"has one: {maybe is Some(_)}");
+    }
+    using (Open("d", false)) {
+        Print("none to dispose");
+    }
+    {
+        let later: Pending? = Some(Pending("e"));
+        await using let pending = later;
+    }
+    Print("done");
+}

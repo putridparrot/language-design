@@ -512,6 +512,7 @@ public sealed class Lowerer
                     operands[0], invocation.ContainerType, invocation.Member, operands[1..], invocation.Type, invocation.TypeArguments)
                 {
                     ArgumentNames = invocation.ArgumentNames,
+                    LogLevel = invocation.LogLevel,
                 };
             }
 
@@ -521,6 +522,7 @@ public sealed class Lowerer
                     invocation.TypeArguments)
                 {
                     ArgumentNames = invocation.ArgumentNames,
+                    LogLevel = invocation.LogLevel,
                 };
 
             case BoundLambdaExpression lambda:

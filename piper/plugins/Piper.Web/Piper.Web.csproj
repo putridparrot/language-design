@@ -27,6 +27,8 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <!-- A program has its own Piper.Runtime; this must use that one, not a copy. -->
     <ProjectReference Include="..\..\src\Piper.Runtime\Piper.Runtime.csproj" Private="false" />
+    <!-- Workers, stopping hooks and the shutdown timeout, shared with `host`; the web plugin copies it beside itself. -->
+    <ProjectReference Include="..\Piper.Hosting\Piper.Hosting.csproj" Private="false" />
   </ItemGroup>
 
 </Project>

@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using Piper.Plugins;
 using Piper.Syntax;
+using static Piper.Plugins.Shared.HostClauses;
 using Piper.Text;
 
 namespace Piper.Plugins.Web;
@@ -31,8 +32,8 @@ public sealed partial class WebPlugin : IPiperPlugin
 
     public IReadOnlyList<string> Frameworks => ["Microsoft.AspNetCore.App"];
 
-    /// <summary>Piper.Web, answering handlers' Options and Results, and holding <c>[Status]</c>.</summary>
-    public IReadOnlyList<string> References => ["Piper.Web.dll"];
+    /// <summary>Piper.Web, answering handlers' Options and Results, and holding <c>[Status]</c>; and Piper.Hosting, for a server's workers and hooks.</summary>
+    public IReadOnlyList<string> References => ["Piper.Web.dll", "Piper.Hosting.dll"];
 
     private const string Responses = "Piper.Web.PiperResponses";
 
@@ -89,7 +90,7 @@ public sealed partial class WebPlugin : IPiperPlugin
     ];
 
     /// <summary>
-    /// endpoints = "endpoints" IDENT [ STRING ] [ "layout" IDENT ] { policyWord } "{" { endpoint } "}" ;
+    /// endpoints = "endpoints" IDENT [ ":" IDENT ] [ STRING ] [ "layout" IDENT ] { policyWord } "{" { endpoint } "}" ;
     /// endpoint  = ( "get" | "post" | "put" | "delete" | "patch" ) [ IDENT ] STRING [ "async" ] lambdaParameters "=>" ( block [ ";" ] | expression ";" ) ;
     /// A named endpoint (<c>get Lot "/lots/{id:int}" …</c>) has a route function in <c>&lt;Name&gt;Routes</c>, which links to it.
     /// Routes are written as ASP.NET Core documents them: <c>"/users/{id}"</c> is a route parameter, not interpolation.
@@ -97,6 +98,13 @@ public sealed partial class WebPlugin : IPiperPlugin
     private static IEnumerable<DeclarationSyntax> Endpoints(PluginParser p)
     {
         var name = p.Expect(TokenKind.Identifier);
+        // `endpoints Api: TrackerApi`: they answer an api plugin's `api`, checked once types are known.
+        Token? api = null;
+        if (p.Current.Kind == TokenKind.Colon)
+        {
+            p.NextToken();
+            api = p.Expect(TokenKind.Identifier);
+        }
         var prefix = p.Current.Kind is TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral ? Route(p, p.NextToken()) : null;
         // `layout Page`: the function putting each endpoint's markup in a page, unless htmx asked for the fragment.
         Token? ReadLayout()
@@ -121,6 +129,7 @@ public sealed partial class WebPlugin : IPiperPlugin
         var mappings = new List<StatementSyntax>();
         // Each mapped handler, in order, for the servers' checks of what they take (WebServer.cs).
         var handlers = new List<LambdaExpressionSyntax>();
+        var answered = new List<(string, string, Token, LambdaExpressionSyntax)>();
         var mapped = new HashSet<string>();
         var routeNames = new HashSet<string>();
         var routeFunctions = new List<string>();
@@ -170,6 +179,7 @@ public sealed partial class WebPlugin : IPiperPlugin
                 continue;
             CheckRoute(p, routeToken, (string)route.Value!, handler);
             handlers.Add(handler);
+            answered.Add((verb.Text.ToUpperInvariant(), JoinRoute((string?)prefix?.Value, (string)route.Value!), routeToken, handler));
             if (endpointName is not null)
                 routeFunctions.Add(RouteFunction(endpointName, (string?)prefix?.Value + (string)route.Value!, routeToken.Span, handler, routeHoles));
 
@@ -182,7 +192,7 @@ public sealed partial class WebPlugin : IPiperPlugin
             mappings.Add(new ExpressionStatementSyntax(endpoint.Span, ApplyPolicies(p, endpoint, words.Values)));
         }
         p.Expect(TokenKind.CloseBrace);
-        p.Data = new EndpointsData(name, [.. policyUses], [.. policyWords], [.. handlers]);
+        p.Data = new EndpointsData(name, [.. policyUses], [.. policyWords], [.. handlers]) { Api = api, Prefix = (string?)prefix?.Value, Routes = [.. answered] };
 
         if (router is not null)
             mappings.Insert(0, p.Template.Statement($"let $group = {Routing}.MapGroup(app, $prefix);", ("group", router), ("prefix", prefix!)));
@@ -339,24 +349,5 @@ public sealed partial class WebPlugin : IPiperPlugin
         p.Report(token.Span, "A route is a plain string, \"/users/{id}\", whose braces are route parameters; drop the '$'.");
         var value = token.Text.TrimStart('$').Trim('"');
         return new LiteralExpressionSyntax(token.Span, new Token(TokenKind.StringLiteral, token.Span, token.Text, value), value);
-    }
-
-    /// <summary>Skips to the end of a clause that can't be read: past its `;`, or up to the block's `}`.</summary>
-    private static void SkipClause(PluginParser p)
-    {
-        int depth = 0;
-        while (p.Current.Kind != TokenKind.EndOfFile)
-        {
-            var token = p.Current;
-            if (token.Kind == TokenKind.CloseBrace && depth == 0)
-                return;
-            p.NextToken();
-            if (token.Kind == TokenKind.OpenBrace)
-                depth++;
-            else if (token.Kind == TokenKind.CloseBrace)
-                depth--;
-            else if (token.Kind == TokenKind.Semicolon && depth == 0)
-                return;
-        }
     }
 }

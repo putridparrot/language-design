@@ -80,9 +80,15 @@ An action the issue's status doesn't allow is a 409, a missing issue or project 
 
 ## How it works
 
-Each folder has its tests beside its code, in `*.tests.piper` files.
+Each folder has its tests beside its code, in `*.tests.piper` files. The issues, their workflow, the records the API
+exchanges and the API's shape are in [apps/tracker-core](../tracker-core), which piper.json's `"projects"` compiles
+into this program and into [the desktop client](../tracker-desktop/README.md).
 
-- **The workflow** ([domain/issues.piper](domain/issues.piper)) is a `statemachine` (the state-machines plugin):
+- **The API's shape** ([tracker-core/api.piper](../tracker-core/api.piper)) is `api TrackerApi`, the api plugin's: each
+  call's route, what it takes and what it answers. [api/api.piper](api/api.piper)'s `endpoints Api: TrackerApi`
+  answers it, which is checked when it compiles, and its clients call it through the typed client it generates (a
+  test in [api/api.tests.piper](api/api.tests.piper) drives the server with it).
+- **The workflow** ([tracker-core/issues.piper](../tracker-core/issues.piper)) is a `statemachine` (the state-machines plugin):
 
   | Status | Actions it allows |
   |---|---|

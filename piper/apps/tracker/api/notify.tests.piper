@@ -6,6 +6,7 @@ using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging.Abstractions;
 
 /// A webhook that fails its first `failures` calls, then succeeds, recording what it was sent.
 class FlakyWebhook(failures: int): HttpMessageHandler {
@@ -25,14 +26,14 @@ fn SomeView() => IssueView = View(NewBug());
 
 async test "a webhook that's briefly down is tried again" {
     let webhook = FlakyWebhook(2);
-    await Notify(WebhookNotifier(HttpClient(webhook), "http://hooks.test/issues"), SomeView());
+    await Notify(WebhookNotifier(HttpClient(webhook), "http://hooks.test/issues"), SomeView(), NullLogger.Instance);
     AssertEqual(3, webhook.calls);
     Assert(webhook.bodies[2].Contains("\"title\":\"Crash on save\""), webhook.bodies[2]);
 }
 
 async test "a webhook that stays down doesn't fail the change it's told about" {
     let webhook = FlakyWebhook(10);
-    await Notify(WebhookNotifier(HttpClient(webhook), "http://hooks.test/issues"), SomeView());
+    await Notify(WebhookNotifier(HttpClient(webhook), "http://hooks.test/issues"), SomeView(), NullLogger.Instance);
     AssertEqual(3, webhook.calls);
 }
 

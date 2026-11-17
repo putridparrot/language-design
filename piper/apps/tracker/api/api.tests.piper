@@ -133,3 +133,39 @@ async test "search filters by status, and is limited per minute" {
     Assert(problem.Contains("isn't a status: Open, InProgress, InReview, Closed"), problem);
     AssertEqual(429, (await Get(running, "/api/projects/1/issues")).Item1);
 }
+
+/// The typed client apps/tracker-core's `api TrackerApi` generates, which apps/tracker-desktop uses, against the real
+/// server: its records, newtypes and enums go over the wire and back, and the server's errors come back as IssueErrors.
+async test "the API's own client works with the server" {
+    let running = await StartTracker(60);
+    defer { Stop(running); }
+    running.client.DefaultRequestHeaders.Add("X-User", "root");
+    running.client.DefaultRequestHeaders.Add("X-Roles", "admin");
+    let api = TrackerApi(running.client);
+
+    AssertEqual(Ok("ok"), await api.Health());
+    let Ok(web) = await api.AddProject(NewProject("WEB", "Website")) else { Assert(false, "adding the project failed"); return; };
+    let Ok(issue) = await api.AddIssue(web.id, NewIssue("Crash on save", "Every time.", Priority.High)) else { Assert(false, "adding the issue failed"); return; };
+    AssertEqual(WorkflowState.Open, issue.status);
+    AssertEqual(["Start", "Close"], issue.next);
+
+    let Ok(started) = await api.Act(issue.id, WorkflowEvent.Start("ada")) else { Assert(false, "starting failed"); return; };
+    AssertEqual(Some("ada"), started.assignee);
+    let Err(refused) = await api.Act(issue.id, WorkflowEvent.Approve) else { Assert(false, "an in-progress issue was approved"); return; };
+    AssertEqual(409, refused.Status);
+    AssertEqual(Some(IssueError.NotAllowed("Approve", WorkflowState.InProgress)), refused.Error);
+
+    let Ok(found) = await api.Issues(web.id, Some("InProgress"), None) else { Assert(false, "searching failed"); return; };
+    AssertEqual([issue.id], found.ConvertAll(i => i.id));
+    let Err(badStatus) = await api.Issues(web.id, Some("Lost"), None) else { Assert(false, "a made-up status was searched for"); return; };
+    AssertEqual(400, badStatus.Status);
+
+    let Ok(_) = await api.AddComment(issue.id, NewComment("On it.")) else { Assert(false, "commenting failed"); return; };
+    let Ok(comments) = await api.Comments(issue.id) else { Assert(false, "reading comments failed"); return; };
+    AssertEqual(["root: On it."], comments.ConvertAll(c => $"{c.author}: {c.text}"));
+
+    let Ok(missing) = await api.Issue(IssueId(99)) else { Assert(false, "a missing issue wasn't None"); return; };
+    Assert(missing is None);
+    let Err(noProject) = await api.AddIssue(ProjectId(99), NewIssue("Lost", "", Priority.Low)) else { Assert(false, "an issue was added to no project"); return; };
+    AssertEqual(Some(IssueError.NoProject(ProjectId(99))), noProject.Error);
+}

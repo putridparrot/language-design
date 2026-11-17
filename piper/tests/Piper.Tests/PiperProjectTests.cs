@@ -48,6 +48,7 @@ public class PiperProjectTests
     [InlineData("{ \"plugins\": \"a.dll\" }", "\"plugins\" must be a list of plugins")]
     [InlineData("{ \"plugins\": [\"\"] }", "\"plugins\" must be a list of plugins")]
     [InlineData("{ \"plugins\": [1] }", "\"plugins\" must be a list of plugins")]
+    [InlineData("{ \"projects\": \"../shared\" }", "\"projects\" must be a list of paths to Piper program folders")]
     public void Anything_else_is_an_error(string text, string message)
     {
         var (project, errors) = Parse(text);
@@ -111,7 +112,7 @@ public class PiperProjectTests
             File.WriteAllText(Path.Combine(folder, PiperProject.FileName), """{ "plugins": ["webb"] }""");
             (_, errors) = LoadedProject.Load(folder);
             var error = Assert.Single(errors);
-            Assert.Contains("isn't one that comes with piper (actors, args, aspects, config, data, openapi, parallel, remote-actors, services, state-machines, web)", error.Message);
+            Assert.Contains("isn't one that comes with piper (actors, api, args, aspects, config, data, hosting, openapi, parallel, remote-actors, services, state-machines, telemetry, web)", error.Message);
         }
         finally
         {
@@ -245,5 +246,86 @@ public class PiperProjectTests
         Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
         var run = Runner.Run(result.Files);
         Assert.Equal(string.Concat(Enumerable.Repeat("Hello from the greet plugin\n", 3)), run.Output.Replace("\r\n", "\n"));
+    }
+
+    /// <summary>
+    /// "projects" shares other program folders' code: their source is compiled in (and theirs, each once, a cycle
+    /// included), with their plugins, but not their tests, which are their own.
+    /// </summary>
+    [Fact]
+    public void A_program_shares_the_code_of_the_projects_it_names()
+    {
+        var root = Directory.CreateTempSubdirectory("piper-projects").FullName;
+        try
+        {
+            void Write(string path, string text)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(root, path))!);
+                File.WriteAllText(Path.Combine(root, path), text);
+            }
+            Write("money/piper.json", """{ "output": "library", "projects": ["../app"] }""");
+            Write("money/money.piper", """
+                newtype Pence = int;
+                fn Pounds(p: Pence) => string = $"£{p.value / 100}.{(p.value % 100):D2}";
+                test "the shared project's own test" { AssertEqual("£1.50", Pounds(Pence(150))); }
+                """);
+            Write("contract/piper.json", """{ "output": "library", "projects": ["../money"], "plugins": ["args"] }""");
+            Write("contract/prices.piper", """
+                record Price(item: string, pence: Pence);
+                fn Label(price: Price) => string = $"{price.item}: {Pounds(price.pence)}";
+                test "broken, but not the app's to run" { AssertEqual(1, 2); }
+                """);
+            Write("app/piper.json", """{ "projects": ["../contract"] }""");
+            Write("app/main.piper", """
+                fn Main() { Print(Label(Price("tea", Pence(250)))); }
+                test "the app's test" { AssertEqual("tea: £2.50", Label(Price("tea", Pence(250)))); }
+                """);
+
+            var app = Path.Combine(root, "app");
+            var (project, errors) = LoadedProject.Load(app);
+            Assert.Empty(errors);
+            Assert.Equal(["contract", "money"], project!.SharedFolders.Select(f => Path.GetFileName(f)!).ToArray());
+            Assert.Contains(project.Plugins, p => p.Name == "args");
+            Assert.Equal(project.SharedFolders.ToArray(), LoadedProject.SharedFoldersOf(app).ToArray());
+
+            var shared = project.SharedFiles;
+            var sources = shared.Concat(LoadedProject.SourceFiles(app)).Select(path => new SourceText(File.ReadAllText(path), path)).ToList();
+            var options = new CompilationOptions(IncludeTests: true) { Plugins = project.Plugins, References = project.References, SharedFiles = [.. shared] };
+            var result = Compilation.Compile(sources, options);
+            Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+            Assert.Equal(1, result.TestCount);
+            var tests = Runner.RunTests(result.Files, references: result.References);
+            Assert.True(tests.Success, string.Join("\n", tests.Errors.Concat(tests.Results.Select(r => $"{r.Name}: {r.Failure}"))));
+            Assert.Equal("the app's test", Assert.Single(tests.Results).Name);
+            Assert.Equal("tea: £2.50", Runner.Run(Compilation.Compile(sources, options with { IncludeTests = false }).Files).Output.Trim());
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("""{ "projects": ["../nowhere"] }""", "There's no folder '../nowhere'")]
+    [InlineData("""{ "projects": ["../plain"] }""", "'../plain' has no piper.json")]
+    [InlineData("""{ "projects": ["../broken"] }""", "Unknown key \"sauce\"")]
+    public void A_shared_project_that_isnt_one_is_an_error(string json, string message)
+    {
+        var root = Directory.CreateTempSubdirectory("piper-projects").FullName;
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "app"));
+            Directory.CreateDirectory(Path.Combine(root, "plain"));
+            Directory.CreateDirectory(Path.Combine(root, "broken"));
+            File.WriteAllText(Path.Combine(root, "broken", PiperProject.FileName), """{ "sauce": 1 }""");
+            File.WriteAllText(Path.Combine(root, "app", PiperProject.FileName), json);
+            var (project, errors) = LoadedProject.Load(Path.Combine(root, "app"));
+            Assert.Null(project);
+            Assert.Contains(errors, e => e.Code == "PIP0400" && e.Message.Contains(message));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
     }
 }

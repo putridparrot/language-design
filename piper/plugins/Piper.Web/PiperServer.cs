@@ -1,4 +1,5 @@
-using System.Reflection;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Hosting;
@@ -6,14 +7,12 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 
 namespace Piper.Web;
 
 /// <summary>
-/// What the code a <c>server</c> declaration writes calls: where the app listens, how long it has to stop, and the
-/// hooks run as it stops. A hook or a health check is a handler whose parameters are services, resolved as a
-/// minimal API's are, which may return a value or a task.
+/// What the code a <c>server</c> declaration writes calls: where the app listens, and HTTPS. Its workers, stopping
+/// hooks, shutdown timeout and logging are Piper.Hosting's (<c>PiperHost</c>), as a <c>host</c>'s are.
 /// </summary>
 public static class PiperServer
 {
@@ -23,68 +22,93 @@ public static class PiperServer
     /// <summary><c>urls ["http://localhost:5080", "https://localhost:5081"];</c></summary>
     public static void Urls(WebApplicationBuilder builder, IEnumerable<string> urls) => builder.WebHost.UseUrls([.. urls]);
 
-    /// <summary><c>logging off;</c>: no logging providers, so the app writes nothing to the console.</summary>
-    public static void LoggingOff(WebApplicationBuilder builder) => builder.Logging.ClearProviders();
-
-    /// <summary><c>shutdown 30 seconds;</c>: how long requests and <c>stopping</c> hooks have to finish once it's asked to stop.</summary>
-    public static void ShutdownTimeout(WebApplicationBuilder builder, TimeSpan timeout) =>
-        builder.Services.Configure<HostOptions>(options => options.ShutdownTimeout = timeout);
+    /// <summary>
+    /// <c>forwarded;</c>: behind a proxy that ends TLS (a Kubernetes ingress, a load balancer), a request's scheme and
+    /// client address are the ones the proxy saw, from its <c>X-Forwarded-Proto</c> and <c>X-Forwarded-For</c>, so
+    /// <c>https</c> doesn't redirect a request that arrived as HTTPS, and links and logs show the client. With
+    /// <paramref name="trusted"/> addresses (<c>"10.1.2.3"</c>) or networks (<c>"10.0.0.0/8"</c>), only requests from
+    /// them are believed; without, any are, as ASP.NET Core's <c>ASPNETCORE_FORWARDEDHEADERS_ENABLED</c> does, which suits
+    /// an app only the proxy can reach.
+    /// </summary>
+    public static void Forwarded(WebApplicationBuilder builder, params string[] trusted)
+    {
+        var proxies = new List<System.Net.IPAddress>();
+        var networks = new List<System.Net.IPNetwork>();
+        foreach (var entry in trusted)
+        {
+            if (entry.Contains('/') && System.Net.IPNetwork.TryParse(entry, out var network))
+                networks.Add(network);
+            else if (System.Net.IPAddress.TryParse(entry, out var address))
+                proxies.Add(address);
+            else
+                throw new InvalidOperationException($"'{entry}' isn't an IP address (10.1.2.3) or a network (10.0.0.0/8), so it can't be a trusted proxy.");
+        }
+        builder.Services.Configure<Microsoft.AspNetCore.Builder.ForwardedHeadersOptions>(options =>
+        {
+            options.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor |
+                                       Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto;
+            // ASP.NET Core trusts only loopback by default, which a proxy in another pod or machine never is.
+            options.KnownIPNetworks.Clear();
+            options.KnownProxies.Clear();
+            foreach (var network in networks)
+                options.KnownIPNetworks.Add(network);
+            foreach (var proxy in proxies)
+                options.KnownProxies.Add(proxy);
+        });
+    }
 
     /// <summary>
-    /// <c>stopping (jobs: Jobs) =&gt; await jobs.Finish();</c>: run when the app is asked to stop (Ctrl+C, or SIGTERM from
-    /// Kubernetes), before the server stops, and waited for.
+    /// <c>https;</c>: HTTP requests are redirected to HTTPS, and outside Development, browsers are told to use only
+    /// HTTPS from then on (HSTS). Served from memory by a TestClient, which has no HTTPS address, nothing is redirected.
     /// </summary>
-    public static void OnStopping(WebApplication app, Delegate hook) =>
-        app.Lifetime.ApplicationStopping.Register(() =>
+    public static void Https(WebApplication app)
+    {
+        if (!app.Environment.IsDevelopment())
+            app.UseHsts();
+        app.UseHttpsRedirection();
+    }
+
+    /// <summary><c>https certificate "server.pfx";</c>: the certificate HTTPS serves, from a PKCS#12 (.pfx) file.</summary>
+    public static void Certificate(WebApplicationBuilder builder, string path) =>
+        UseCertificate(builder, path, () => X509CertificateLoader.LoadPkcs12FromFile(path, null));
+
+    /// <summary><c>https certificate tls.path password tls.password;</c>: from a PKCS#12 (.pfx) file with a password.</summary>
+    public static void Certificate(WebApplicationBuilder builder, string path, string? password) =>
+        UseCertificate(builder, path, () => X509CertificateLoader.LoadPkcs12FromFile(path, password));
+
+    /// <summary>
+    /// <c>https certificate "/tls/tls.crt" key "/tls/tls.key";</c>: from PEM files, as a Kubernetes TLS secret
+    /// mounts them.
+    /// </summary>
+    public static void PemCertificate(WebApplicationBuilder builder, string certificate, string key) =>
+        UseCertificate(builder, certificate, () =>
         {
-            try
-            {
-                Invoke(app.Services, hook, CancellationToken.None).GetAwaiter().GetResult();
-            }
-            catch (Exception e)
-            {
-                Console.Error.WriteLine($"A 'stopping' hook failed: {e}");
-            }
+            var pem = X509Certificate2.CreateFromPemFile(certificate, key);
+            if (!OperatingSystem.IsWindows())
+                return pem;
+            // Windows' TLS can't use a key held only in memory, as a PEM file's is; through PKCS#12 it's one it can.
+            using (pem)
+                return X509CertificateLoader.LoadPkcs12(pem.Export(X509ContentType.Pkcs12), null);
         });
 
     /// <summary>
-    /// Calls <paramref name="handler"/> with its parameters from a new scope's services (a CancellationToken is
-    /// <paramref name="cancellation"/>), awaiting it if it returns a task; what it returned, or null.
+    /// Every HTTPS address serves the certificate, loaded when the server first binds one, so an app served from memory
+    /// (a test's) needs no file, and a missing or unreadable one stops the app as it starts, saying which.
     /// </summary>
-    internal static async Task<object?> Invoke(IServiceProvider services, Delegate handler, CancellationToken cancellation)
+    private static void UseCertificate(WebApplicationBuilder builder, string path, Func<X509Certificate2> load)
     {
-        await using var scope = services.CreateAsyncScope();
-        var arguments = handler.Method.GetParameters()
-            .Skip(handler.Target is not null && handler.Method.IsStatic ? 1 : 0)
-            .Select(p => p.ParameterType == typeof(CancellationToken) ? cancellation : scope.ServiceProvider.GetRequiredService(p.ParameterType))
-            .ToArray();
-        object? result;
-        try
+        var certificate = new Lazy<X509Certificate2>(() =>
         {
-            result = handler.DynamicInvoke(arguments);
-        }
-        catch (TargetInvocationException e) when (e.InnerException is not null)
-        {
-            throw e.InnerException;
-        }
-        switch (result)
-        {
-            case Task task:
-                await task.ConfigureAwait(false);
-                return task.GetType().IsGenericType ? task.GetType().GetProperty("Result")!.GetValue(task) : null;
-            case ValueTask valueTask:
-                await valueTask.ConfigureAwait(false);
-                return null;
-            default:
-                // A ValueTask<T>: as a task, for its result.
-                if (result?.GetType() is { IsGenericType: true } type && type.GetGenericTypeDefinition() == typeof(ValueTask<>))
-                {
-                    var asTask = (Task)type.GetMethod("AsTask")!.Invoke(result, null)!;
-                    await asTask.ConfigureAwait(false);
-                    return asTask.GetType().GetProperty("Result")!.GetValue(asTask);
-                }
-                return result;
-        }
+            try
+            {
+                return load();
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or CryptographicException)
+            {
+                throw new InvalidOperationException($"The server's certificate couldn't be loaded from '{path}': {e.Message}", e);
+            }
+        });
+        builder.WebHost.ConfigureKestrel(kestrel => kestrel.ConfigureHttpsDefaults(https => https.ServerCertificate = certificate.Value));
     }
 }
 
@@ -129,7 +153,7 @@ public static class PiperHealth
         {
             try
             {
-                return await PiperServer.Invoke(services, check, cancellationToken) switch
+                return await Piper.Hosting.PiperHost.Invoke(services, check, cancellationToken) switch
                 {
                     HealthCheckResult result => result,
                     false => HealthCheckResult.Unhealthy(),

@@ -32,9 +32,11 @@ API and open the app again (Refresh reloads a project's issues, not the list of 
 
 - **[app.piper](app.piper):** the options (`--api`, `--user`), and Avalonia started with its Fluent theme, showing the
   main window.
-- **[client/client.piper](client/client.piper):** `TrackerClient`, the API's calls over `HttpClient`, signing in with
-  the `X-User` header. Each call returns a `Result`, so a failure (the API down, a 409 for an action the issue's
-  status doesn't allow) is a value the view model shows, not an exception.
+- **The API's client** is `TrackerApi`, generated from [apps/tracker-core](../tracker-core/api.piper)'s `api
+  TrackerApi`, which the server answers too, with the server's own records (`IssueView`, `IssueId`, `WorkflowEvent`),
+  so a change to the API that this app doesn't follow fails to compile. [app.piper](app.piper)'s `SignedIn` gives it an
+  HttpClient sending the `X-User` header. Each call returns a `Result`, so a failure (the API down, a 409 for an action
+  the issue's status doesn't allow) is a value the view model shows, not an exception.
 - **[viewmodels/main.piper](viewmodels/main.piper):** `MainViewModel`, with the aspects plugin's `[Notify]` (its
   properties raise `PropertyChanged`) and `[Command]` (its async methods become commands for buttons). Buttons enable
   themselves from computed properties: `CanStart` is true when the chosen issue's `next` actions include Start. Choosing a

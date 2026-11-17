@@ -40,7 +40,12 @@ const string Usage = """
     Inputs are .piper files or directories (searched recursively for .piper files);
     all of them are compiled together as one program. A single directory may have a piper.json,
     { "name": "app", "output": "exe" | "library" }, which 'piper build' follows when given no --exe,
-    --library or --name, and whose "plugins" can name those that come with piper: ["services", "web"].
+    --library or --name, whose "plugins" can name those that come with piper: ["services", "web"], and
+    whose "projects" name other program folders whose code it shares: ["../shared"].
+
+    An api's shape (its calls and the types they send) is kept in <Name>.shape.json beside it, which build, run
+    and test record and check: a change that would break callers built before is an error. --accept-breaking
+    records it anyway, when the break is meant.
     """;
 
 if (args is ["--version" or "-v"])
@@ -74,7 +79,7 @@ string? outputDirectory = null;
 string? assemblyName = null;
 string? filter = null;
 int? seed = null;
-bool executable = false, library = false, watch = false, publish = false;
+bool executable = false, library = false, watch = false, publish = false, acceptBreaking = false;
 string? runtime = null;
 string[] programArguments = [];
 for (int i = 1; i < args.Length; i++)
@@ -102,6 +107,8 @@ for (int i = 1; i < args.Length; i++)
         publish = executable = true;
     else if (args[i] == "--runtime" && i + 1 < args.Length && command == "build")
         runtime = args[++i];
+    else if (args[i] == "--accept-breaking" && command != "emit")
+        acceptBreaking = true;
     else if (args[i] == "--library" && command == "build")
         library = true;
     // Before the program's own options, so `piper run app --watch --port 8001` watches; `--` passes a --watch of its own.
@@ -153,6 +160,7 @@ if (command == "run")
 // what packages, frameworks and assemblies it references.
 ImmutableArray<IPiperPlugin> plugins = [];
 var references = ProgramReferences.None;
+ImmutableArray<string> sharedFiles = [];
 if (inputs is [var folder] && Directory.Exists(folder) && File.Exists(Path.Combine(folder, PiperProject.FileName)))
 {
     // Publishing for a container: its packages' native libraries are Linux's (or --runtime's), not this machine's.
@@ -163,6 +171,8 @@ if (inputs is [var folder] && Directory.Exists(folder) && File.Exists(Path.Combi
         return 2;
     var project = loaded.Project;
     (plugins, references) = (loaded.Plugins, loaded.References);
+    // The code of the projects it shares ("projects") is compiled in too, before its own.
+    sharedFiles = loaded.SharedFiles;
     if (command == "run" && project.Output == PiperOutput.Library)
     {
         Console.Error.WriteLine($"{PiperProject.FileName} says this program is a library, which can't be run; build it with 'piper build'.");
@@ -177,9 +187,16 @@ if (inputs is [var folder] && Directory.Exists(folder) && File.Exists(Path.Combi
 }
 
 // An assembly's PDB names its source files, which debuggers find breakpoints' files by, so those need full paths.
-var sources = files.Select(path => new SourceText(File.ReadAllText(path), executable || library ? Path.GetFullPath(path) : path)).ToList();
+var sources = sharedFiles.Concat(files).Select(path => new SourceText(File.ReadAllText(path), executable || library ? Path.GetFullPath(path) : path)).ToList();
 // `emit` is for reading the C#; `build` and `run` map it back to the Piper source for errors and debugging.
-var result = Compilation.Compile(sources, new CompilationOptions(LineDirectives: command != "emit", IncludeTests: command == "test") { Plugins = plugins, References = references });
+var result = Compilation.Compile(sources, new CompilationOptions(LineDirectives: command != "emit", IncludeTests: command == "test")
+{
+    Plugins = plugins,
+    References = references,
+    SharedFiles = [.. sources.Take(sharedFiles.Length).Select(s => s.FileName)],
+    // An api's shape (Name.shape.json) is checked, and recorded when it's new or the change is compatible; emit only reads.
+    WireShapes = command == "emit" ? WireShapeMode.Check : acceptBreaking ? WireShapeMode.AcceptBreaking : WireShapeMode.Record,
+});
 foreach (var diagnostic in result.FormattedDiagnostics)
     Console.Error.WriteLine(diagnostic);
 
@@ -249,7 +266,7 @@ switch (command)
     case "build":
         for (int i = 0; i < result.Files.Length; i++)
         {
-            var directory = outputDirectory ?? Path.GetDirectoryName(Path.GetFullPath(files[i]))!;
+            var directory = outputDirectory ?? Path.GetDirectoryName(Path.GetFullPath(sharedFiles.Concat(files).ElementAt(i)))!;
             Directory.CreateDirectory(directory);
             var path = Path.Combine(directory, result.Files[i].Name);
             File.WriteAllText(path, result.Files[i].Text);

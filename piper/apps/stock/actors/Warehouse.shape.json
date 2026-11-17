@@ -1,0 +1,18 @@
+{
+  "name": "Warehouse",
+  "calls": {
+    "Warehouse.Open": {
+      "name": "Warehouse.Open",
+      "inputs": {
+        "sku": "string"
+      },
+      "output": "bool"
+    },
+    "Warehouse.Products": {
+      "name": "Warehouse.Products",
+      "inputs": {},
+      "output": "ImmutableList<string>"
+    }
+  },
+  "types": {}
+}

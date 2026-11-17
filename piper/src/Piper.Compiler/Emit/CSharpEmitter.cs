@@ -1361,6 +1361,14 @@ public sealed partial class CSharpEmitter
         _ => null,
     };
 
+    /// <summary>A logger that's only read, so naming it for <c>IsEnabled</c> and again for the call does nothing twice.</summary>
+    private static bool IsPlainLogger(BoundExpression logger) => logger switch
+    {
+        BoundVariableExpression => true,
+        BoundFieldAccessExpression { Target: var target } => IsPlainLogger(target),
+        _ => false,
+    };
+
     /// <summary>C# only allows calls and assignments as expression statements.</summary>
     private static bool IsStatementExpression(BoundExpression expression) =>
         expression is BoundCallExpression or BoundMethodCallExpression or BoundClrInvocationExpression or BoundAssignmentExpression or BoundFieldAssignmentExpression or BoundObjectCreationExpression
@@ -1445,6 +1453,13 @@ public sealed partial class CSharpEmitter
                 }
                 break;
             }
+
+            // `log.LogInformation($"… {x}")`, now a template: the level is checked first, so a disabled one evaluates no hole.
+            // The logger is named twice, so only a plain variable or field is (anything else could do something twice).
+            case BoundExpressionStatement { Expression: BoundClrInvocationExpression { LogLevel: { } level, Receiver: null, Arguments: [var logger, ..] } invocation }
+                when IsPlainLogger(logger):
+                _writer.WriteLine($"if ({Expr(logger, PrimaryPrecedence)}.IsEnabled(global::Microsoft.Extensions.Logging.LogLevel.{level})) {Expr(invocation, AssignmentPrecedence)};");
+                break;
 
             case BoundExpressionStatement expressionStatement when IsStatementExpression(expressionStatement.Expression):
                 _writer.WriteLine($"{Expr(expressionStatement.Expression, AssignmentPrecedence)};");
@@ -2265,6 +2280,8 @@ public sealed partial class CSharpEmitter
             TypeParameterSymbol parameter => Escape(parameter.Name),
             ClrTypeSymbol { IsArray: true } array => ArrayTypeName(array, null, shadowedNames),
             ClrTypeSymbol clr when clr.TypeArguments.IsEmpty => ClrTypeName(clr.Type),
+            // A nested type's arguments are its outer types' first, then its own: Dictionary<string, int>.Enumerator.
+            ClrTypeSymbol clr when clr.Type.IsNested => NestedClrTypeName(clr.Type, clr.TypeArguments, Arguments),
             ClrTypeSymbol clr => $"{ClrTypeName(clr.Type)}<{Arguments(clr.TypeArguments)}>",
             _ => throw new InvalidOperationException($"Type '{type}' cannot be emitted."),
         };
@@ -2298,7 +2315,40 @@ public sealed partial class CSharpEmitter
         if (type == typeof(object))
             return "object";
         var root = type.Assembly.GetName().Name is { } assembly && _aliases.TryGetValue(assembly, out var alias) ? alias : "global";
-        return $"{root}::{type.Namespace}.{type.Name.Split('`')[0]}";
+        // A nested type is named through the types it's in: Outer.Inner.
+        var name = type.Name.Split('`')[0];
+        for (var outer = type.DeclaringType; outer is not null; outer = outer.DeclaringType)
+            name = $"{outer.Name.Split('`')[0]}.{name}";
+        return type.Namespace is { Length: > 0 } ns ? $"{root}::{ns}.{name}" : $"{root}::{name}";
+    }
+
+    /// <summary>
+    /// A nested .NET type with type arguments, which .NET lists outermost type's first: each type in the chain takes as
+    /// many as its own arity (<c>Dictionary`2</c> two, <c>Enumerator</c> none), so
+    /// <c>global::System.Collections.Generic.Dictionary&lt;string, int&gt;.Enumerator</c>.
+    /// </summary>
+    private string NestedClrTypeName(Type type, ImmutableArray<TypeSymbol> arguments, Func<IEnumerable<TypeSymbol>, string> written)
+    {
+        var chain = new List<Type>();
+        for (var current = type; current is not null; current = current.DeclaringType)
+            chain.Insert(0, current);
+        var root = type.Assembly.GetName().Name is { } assembly && _aliases.TryGetValue(assembly, out var alias) ? alias : "global";
+        var name = new StringBuilder($"{root}::");
+        if (chain[0].Namespace is { Length: > 0 } ns)
+            name.Append(ns).Append('.');
+        int used = 0;
+        for (int i = 0; i < chain.Count; i++)
+        {
+            var tick = chain[i].Name.IndexOf('`');
+            var arity = tick < 0 ? 0 : int.Parse(chain[i].Name[(tick + 1)..], CultureInfo.InvariantCulture);
+            name.Append(i == 0 ? "" : ".").Append(tick < 0 ? chain[i].Name : chain[i].Name[..tick]);
+            if (arity > 0 && used + arity <= arguments.Length)
+            {
+                name.Append('<').Append(written(arguments.Skip(used).Take(arity))).Append('>');
+                used += arity;
+            }
+        }
+        return name.ToString();
     }
 
     private static string Escape(string name) => CSharpKeywords.Contains(name) ? "@" + name : name;

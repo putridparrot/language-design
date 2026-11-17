@@ -49,6 +49,56 @@ public sealed class PluginAnalysis
     /// <summary>Each use of this plugin's keywords, in source order.</summary>
     public ImmutableArray<PluginExpansion> Expansions { get; }
 
+    /// <summary>Whether <see cref="CheckWireShape"/> only checks, or records the shape too.</summary>
+    public WireShapeMode ShapeMode { get; init; } = WireShapeMode.Check;
+
+    /// <summary>
+    /// Checks what <paramref name="name"/> answers over the wire against the shape recorded beside
+    /// <paramref name="file"/>, <c>name.shape.json</c>, so a change that breaks callers built against it (a client
+    /// already installed, a pod not yet updated) is an error at <paramref name="span"/>, not a failure in production.
+    /// As <see cref="ShapeMode"/> says, it then records the shape: when there's none yet, or the change is compatible
+    /// (a call or optional field added), or when breaking changes are accepted. A file not on disk has no shape, and a
+    /// program with errors is neither compared nor recorded until they're fixed.
+    /// </summary>
+    public void CheckWireShape(SourceText file, TextSpan span, string name, IEnumerable<WireOperation> operations)
+    {
+        // A program with errors has types that couldn't be bound: compared, they'd look like changes; recorded, wrong.
+        if (!File.Exists(file.FileName) || _diagnostics.HasErrors)
+            return;
+        var path = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(file.FileName))!, $"{name}.shape.json");
+        var now = WireShapes.Describe(name, operations);
+        var text = WireShapes.Write(now);
+
+        string? recorded = File.Exists(path) ? File.ReadAllText(path) : null;
+        if (recorded is not null && ShapeMode != WireShapeMode.AcceptBreaking)
+        {
+            System.Text.Json.Nodes.JsonObject? before;
+            try
+            {
+                before = System.Text.Json.Nodes.JsonNode.Parse(recorded) as System.Text.Json.Nodes.JsonObject;
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                before = null;
+            }
+            if (before is null)
+            {
+                ReportError(file, span, $"{Path.GetFileName(path)} isn't a shape Piper can read; delete it to record {name}'s shape afresh.");
+                return;
+            }
+            var breaking = WireShapes.Breaking(before, now);
+            foreach (var change in breaking)
+            {
+                ReportError(file, span,
+                    $"A breaking change to {name}: {change}. If it's meant, build with --accept-breaking, which records the new shape in {Path.GetFileName(path)}.");
+            }
+            if (!breaking.IsEmpty)
+                return;
+        }
+        if (ShapeMode != WireShapeMode.Check && recorded?.ReplaceLineEndings("\n") != text)
+            File.WriteAllText(path, text);
+    }
+
     /// <summary>Reports an error at <paramref name="span"/> in <paramref name="file"/>; the message is followed by the plugin's name.</summary>
     public void ReportError(SourceText file, TextSpan span, string message)
     {

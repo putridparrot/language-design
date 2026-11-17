@@ -11,7 +11,7 @@ using Piper.Web;
 async test "lots are listed, sold, bid on and pushed to the pages watching them, over HTTP" {
     // Served from memory: the address the server asks for isn't used.
     let auction = Auctioneer.Spawn(Broadcast);
-    using let site = await TestClient.Start(() => AuctionServer("http://127.0.0.1:0", auction));
+    using let site = await TestClient.Start(() => AuctionServer("http://127.0.0.1:0", auction, TimeSpan.FromHours(1)));
     await auction.Open(NewLot("Brass carriage clock", "Victorian.", "Ada", Money(40m), None, 5), DateTime.UtcNow);
 
     // The list, and searching it.
@@ -52,7 +52,7 @@ async test "lots are listed, sold, bid on and pushed to the pages watching them,
 }
 
 async test "a form posted without its anti-forgery token is refused" {
-    using let site = await TestClient.Start(() => AuctionServer("", Auctioneer.Spawn(Broadcast)));
+    using let site = await TestClient.Start(() => AuctionServer("", Auctioneer.Spawn(Broadcast), TimeSpan.FromHours(1)));
     let request = HttpRequestMessage(HttpMethod.Post, SiteRoutes.Bid(LotId(1))) {
         Content: FormUrlEncodedContent(["bidder": "Alan", "amount": "100"]),
     };

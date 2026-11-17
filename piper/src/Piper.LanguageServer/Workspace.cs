@@ -100,16 +100,43 @@ public sealed class Workspace
     /// <summary>Analyzes <paramref name="path"/>'s program afresh (after an edit) and remembers it for each of its files.</summary>
     public AnalysisResult Analyze(string path)
     {
-        var sources = ProgramFiles(path)
+        var root = ProgramRoot(path);
+        var own = ProgramFiles(path);
+        // The projects it shares code with (piper.json's "projects") are compiled in, without their tests.
+        var shared = SharedFiles(root).Where(f => !own.Contains(f, PathComparer)).ToList();
+        var sources = shared.Concat(own)
             .Select(file => (File: file, Text: Text(file)))
             .Where(f => f.Text is not null)
             .Select(f => new SourceText(f.Text!, f.File))
             .ToList();
-        var project = ProjectOf(ProgramRoot(path));
-        var analysis = Compilation.Analyze(sources, project.Plugins, project.References);
-        foreach (var source in sources)
+        var project = ProjectOf(root);
+        var analysis = Compilation.Analyze(sources, project.Plugins, project.References, [.. shared]);
+        // A shared file's own analysis is its own project's, so only this program's files remember this one.
+        foreach (var source in sources.Where(s => !shared.Contains(s.FileName, PathComparer)))
             _analyses[source.FileName] = analysis;
         return analysis;
+    }
+
+    /// <summary>The .piper files of the projects <paramref name="root"/>'s program shares code with, open ones' too.</summary>
+    private IEnumerable<string> SharedFiles(string? root)
+    {
+        if (root is null)
+            return [];
+        try
+        {
+            return LoadedProject.SharedFoldersOf(root)
+                .SelectMany(folder => Directory.EnumerateFiles(folder, "*.piper", SearchOption.AllDirectories)
+                    .Where(f => !IsBuildOutput(folder, f))
+                    .Concat(_open.Keys.Where(f => IsUnder(folder, f))))
+                .Select(Normalize)
+                .Distinct(PathComparer)
+                .Order(PathComparer)
+                .ToList();
+        }
+        catch (IOException)
+        {
+            return [];
+        }
     }
 
     /// <summary>

@@ -65,7 +65,7 @@ syntax**, which then goes through the binder, lowering and C# emitter like anyth
 ### Using a plugin
 
 List the plugin in the program folder's `piper.json`. The plugins in this repository's [plugins](../plugins) folder
-come with piper (in a `plugins` folder beside it), and are named: `actors`, `args`, `aspects`, `config`, `data`, `openapi`, `remote-actors`, `parallel`,
+come with piper (in a `plugins` folder beside it), and are named: `actors`, `api`, `args`, `aspects`, `config`, `data`, `hosting`, `openapi`, `remote-actors`, `parallel`,
 `services`, `state-machines` and `web`. Any other is given as the path of its assembly, relative to the folder:
 
 ```json
@@ -578,6 +578,9 @@ A program calls them as `AppServices(builder.Services)` and `Api(app)`.
 - **Packages and frameworks:** the services plugin lists the `Microsoft.Extensions.DependencyInjection` package, and
   the web plugin the `Microsoft.AspNetCore.App` framework, so a program needs only `"plugins"` in its piper.json. A web
   program gets dependency injection from ASP.NET Core, whose newer version wins over the package's.
+- **Answering an api:** `endpoints Api: TrackerApi "/api" { … }` answers an `api` declaration (the [api
+  plugin](#api-an-apis-shape-and-a-typed-client)), whose typed client calls it, and is checked against it: every call
+  answered, each handler taking what its call sends and answering its type.
 - **Routes** are written as ASP.NET Core documents them, `"/users/{id}"`: as in C#, only a `$"…"` string
   interpolates, so a plain string's braces are the route's own.
 - **Typed links:** an endpoint can be named, between its verb and its route, and then has a route function in
@@ -832,6 +835,7 @@ building it, with its middleware in the order ASP.NET Core needs:
 server TrackerServer(settings: Settings, clock: Clock) {
     config smtp: Smtp;                              // a `config`, read as it starts, registered, and named
     urls settings.url;                              // a URL or a list of them
+    https certificate settings.pfx;                 // HTTP redirected to HTTPS, serving this certificate
     logging off;
     services AppServices;                           // a `services` block, with its arguments if it takes any
     scoped TrackerDb = TrackerDb(settings.options); // or registrations of its own, as `services` writes them
@@ -846,6 +850,8 @@ server TrackerServer(settings: Settings, clock: Clock) {
     health "/healthz" ready "/ready" {
         check "database" async (db: TrackerDb) => await db.Database.CanConnectAsync();
     }
+    worker every 1 minute (db: TrackerDb) => Purge(db); // background work: each minute, or for the app's life
+    hosted Mailer;                                  // a .NET hosted service (a BackgroundService)
     stopping (jobs: Jobs) => jobs.Finish();         // run as it's asked to stop, and waited for
     shutdown 30 seconds;
 }
@@ -857,7 +863,7 @@ async fn Main() => Task = await TrackerServer(Load(), SystemClock()).RunAsync();
   what the app is made from, so a test gives it others (`TestClient.Start(() => TrackerServer(settings,
   FixedClock(noon)))`) and `Main` runs it. The builder is `builder` and the app `app`, in `configure` and `use`.
 - **Order:** registrations run in the order written, then the app is built and its middleware added: `problems` first
-  (so it sees every exception), then `use { … }` blocks (the app's own middleware, `app.Use(…)`), then the policies'
+  (so it sees every exception), then `https`, then `use { … }` blocks (the app's own middleware, `app.Use(…)`), then the policies'
   (CORS, authentication, authorization, rate limits, caching), then health, OpenAPI and the endpoints. Writing
   `UseSecurity(app)` after the endpoints, where it silently does nothing, can't happen.
 - **`config`:** `config Smtp;` reads a [`config`](#config-typed-configuration) record from the app's configuration
@@ -865,6 +871,27 @@ async fn Main() => Task = await TrackerServer(Load(), SystemClock()).RunAsync();
   listing every problem, rather than failing the first request that needs it. It's registered as a singleton, and as
   `IOptions<Smtp>` for code written for .NET's options. `config smtp: Smtp;` also names it for the clauses after:
   `urls smtp.url;`, `policies Security(smtp);`.
+- **`https`:** HTTP requests are redirected to HTTPS (`UseHttpsRedirection`), and outside Development browsers are
+  told to use only HTTPS from then on (`UseHsts`). The certificate it serves can be given, for every https:// address:
+  - `https certificate "server.pfx";`, or `… password secret;` for a .pfx file with one;
+  - `https certificate "/tls/tls.crt" key "/tls/tls.key";` for PEM files, as a Kubernetes TLS secret mounts them.
+
+  Each is an expression, so it can come from a `config` (`config tls: Tls;` then `https certificate tls.path password
+  tls.password;`). The file is loaded as the server binds its HTTPS address, so a missing or unreadable one stops the
+  app as it starts, saying which; a test's `TestClient` serves from memory, so needs no file, and isn't redirected.
+  Without `certificate`, Kestrel's own is used: its configuration (`Kestrel:Certificates:Default`), or the development
+  certificate. `urls` written as literals with no https:// address is a warning, as there'd be nowhere to redirect to,
+  unless the server is behind a proxy (`forwarded`).
+- **`forwarded`:** behind a proxy that ends TLS (a Kubernetes ingress, a load balancer), each request's scheme and
+  client address are the ones the proxy saw, from its `X-Forwarded-Proto` and `X-Forwarded-For`
+  (`UseForwardedHeaders`, first in the pipeline). So `https` redirects only what really arrived as HTTP, while the app
+  itself listens on http://, and links, logs and rate limits see the client rather than the proxy.
+  - `forwarded;` believes any proxy, as ASP.NET Core's `ASPNETCORE_FORWARDEDHEADERS_ENABLED` does. That suits an app
+    only the proxy can reach, as in a cluster.
+  - `forwarded from "10.0.0.0/8", "192.168.1.1";` believes only those networks and addresses. A literal that isn't
+    one is an error.
+
+  Without `forwarded`, the headers are ignored, as anyone could send them.
 - **`problems`:** an exception is a 500 ProblemDetails (`UseExceptionHandler`), and a status without a body, such as a
   route nothing maps, gets one (`UseStatusCodePages`).
 - **`health`:** ASP.NET Core's health checks. With only a path, it runs every check. With `ready` too, the first is
@@ -874,7 +901,25 @@ async fn Main() => Task = await TrackerServer(Load(), SystemClock()).RunAsync();
   when it gives `false` or throws. They answer 200 `Healthy` or 503 `Unhealthy`.
 - **`stopping`:** a handler whose parameters are services, run when the app is asked to stop (Ctrl+C, or SIGTERM from
   Kubernetes) and waited for before the server stops: finishing work in hand, telling others it's going. `shutdown`
-  says how long that and requests in flight have, ASP.NET Core's `ShutdownTimeout` (30 seconds without it).
+  says how long that, workers and requests in flight have, ASP.NET Core's `ShutdownTimeout` (30 seconds without it).
+- **`worker`:** a handler run in the background as the app starts, whose parameters are services; a
+  `CancellationToken` parameter is cancelled as the app stops, and the app waits for the worker to finish. Without
+  `every` it runs for the app's life, with its services from one scope, and if it throws, the app logs it and stops,
+  as .NET's hosted services do, rather than carrying on without it:
+
+  ```piper
+  worker async (jobs: Jobs, stopping: CancellationToken) => await RunWorkers(jobs, stopping);
+  worker every 30 seconds (lots: Lots) => lots.CloseEnded();
+  worker every tick (auction: Auctioneer) => auction.Tick(DateTime.UtcNow);   // a TimeSpan, a parameter here
+  ```
+
+  With `every` (`every 30 seconds`, `every minute`, or a `TimeSpan`), it runs as the app starts and then once each
+  period, each run with a scope of its own (so a database context is fresh each time); a run that throws is logged,
+  and the next runs as usual. A worker taking a period as the server's parameter lets a test give it one long enough
+  not to interfere ([apps/auction](../apps/auction/web/site.piper) does). A test's `TestClient` starts and stops
+  workers with the app.
+- **`hosted Mailer;`:** a .NET hosted service, a class implementing `IHostedService` (such as a `BackgroundService`),
+  started and stopped with the app: `AddHostedService`.
 - **Checks:** a clause given twice that can only be given once (`urls`, `health`…), an endpoints block mapped twice, a
   server mapping no endpoints, and an unknown clause are errors. A server mapping endpoints that use policy words
   without a `policies` clause is a warning, as they'd be answered without the middleware they need.
@@ -882,7 +927,7 @@ async fn Main() => Task = await TrackerServer(Load(), SystemClock()).RunAsync();
   what dependency injection would only find when a request comes in (a 500, or a failed health check):
   - a handler taking a service of the program's own (a class or trait; a record is a request's body) that nothing in
     the server registers, reported at the parameter: `S registers no Store, but this handler takes it`;
-  - a health check or `stopping` hook taking a class, trait or record nothing registers;
+  - a health check, `stopping` hook or worker taking a class, trait or record nothing registers;
   - a class DI makes (`singleton Store;`, `scoped Repo => SqlRepo;`) whose constructor takes a service nothing
     registers, or a singleton taking a scoped service: a captive dependency, where one request's instance (a database
     context) would be kept for every other;
@@ -958,6 +1003,63 @@ app.MapOpenApi();                       // /openapi/v1.json
 - **With the web plugin's metadata,** each operation has its responses (200 with its value, 404 for an Option,
   ProblemDetails with each status an error's `[Status]`es give) and its tags. Piper.Web's own routes aren't in it.
 
+### `api` (an API's shape, and a typed client)
+
+[Piper.Plugins.Api](../plugins/Piper.Plugins.Api/ApiPlugin.cs) declares an HTTP API once, for its server and its
+clients. Each call is written as a function whose body is its route:
+
+```piper
+// piper.json: { "plugins": ["api"] }
+api TrackerApi "/api" {
+    fn Projects() => List<Project> = get "/projects";
+    fn Issue(id: IssueId) => IssueView? = get "/issues/{id:int}";
+    fn Issues(projectId: ProjectId, status: string?, q: string?) => Result<List<IssueView>, IssueError> = get "/projects/{projectId:int}/issues";
+    fn AddIssue(projectId: ProjectId, issue: NewIssue) => Result<IssueView, IssueError> = post "/projects/{projectId:int}/issues";
+}
+```
+
+- **The client.** It becomes `class TrackerApi(http: HttpClient)`. Each call is an async method giving a `Result`, so
+  nothing throws for a failed call: `await api.Issue(id)` is a `Task<Result<IssueView?, ApiError>>`.
+  - What's sent: route values fill the route; simple and optional values are the query, left out for None; anything
+    else is the JSON body (at most one, and not for GET or DELETE).
+  - What comes back: the answer is read as the web plugin writes it. A 200 is the value. An Option's 404 is
+    `Ok(None)`. A `Result`'s error is read back from its ProblemDetails: `ApiError<IssueError>`'s `Error` is the
+    `IssueError` the handler returned (None for any other failure, such as a 401 or a 500).
+  - Every `ApiError` has a `Status` (0 when the server couldn't be reached) and a `Message` (the ProblemDetails'
+    `detail` or `title`). Headers every call sends, such as a token, go on the HttpClient.
+- **The server.** `endpoints Api: TrackerApi "/api" { … }` says the endpoints answer the api, and the web plugin
+  checks it once types are known:
+  - every call has an endpoint of its method and route, and every endpoint is a call;
+  - each handler takes what its call sends, by name and type, and takes nothing more the client would have to send
+    (a required simple value, or a body); services, the user and optional values are the server's own;
+  - each handler answers its call's type.
+
+  A change to either side that the other doesn't follow is a compile error, rather than a failure in production.
+- **Sharing it.** The api and the records it names go in a folder that both programs name in piper.json's
+  `"projects"`, which compiles its source into each. [apps/tracker-core](../apps/tracker-core) holds the tracker's
+  domain and `api TrackerApi`. [apps/tracker](../apps/tracker) answers it, and
+  [apps/tracker-desktop](../apps/tracker-desktop) calls it, with the server's own records.
+- **Light.** The client's code calls Piper.Runtime's `PiperClient`, so a client needs neither the web plugin nor
+  ASP.NET Core. `[Status]` lives in Piper.Runtime too (still `using Piper.Web;`), so error enums can be shared.
+- **Compatibility with clients already built.** Compiling the client and server together catches drift between
+  them, but not a desktop already installed, or old pods during a rolling update. So an api's shape is recorded in
+  `Name.shape.json` beside it, to check in. That covers its calls (method, route, what each sends and answers) and
+  every record, enum and newtype they use, with which way each is sent. `piper build`, `run` and `test` record it the
+  first time, then compare each change with it:
+  - **Breaking, an error:**
+    - a call removed, or its route or method changed;
+    - a new value callers must send;
+    - a value, or an answer, of another type;
+    - a field callers send that's new and needed, or a field they read that's gone (unless it was optional);
+    - a field of another type;
+    - a variant removed from an enum callers send, or added to one they read.
+  - **Compatible, recorded:** a new call; a new optional value or a field with a default; a new field in an answer.
+
+  `--accept-breaking` records a deliberate break. The editor and `piper emit` only check, and a program with errors
+  is neither checked nor recorded. [apps/tracker-core/TrackerApi.shape.json](../apps/tracker-core/TrackerApi.shape.json)
+  is the tracker's.
+- **Not yet:** a call answering nothing (`unit`), or `Result<T?, E>`.
+
 ### `config` (typed configuration)
 
 [Piper.Plugins.Config](../plugins/Piper.Plugins.Config/ConfigPlugin.cs) reads configuration (appsettings.json,
@@ -992,6 +1094,79 @@ match LoadSmtp(configuration) { Ok(s) => …, Err(problems) => … }
   `Smtp:host is missing`, and, once every value is there, a broken invariant (`Smtp: Invariant failed: port > 0 …`).
 - **Packages:** it brings `Microsoft.Extensions.Configuration.Json` and `.EnvironmentVariables` for console programs. A
   web program has them in ASP.NET Core.
+
+### `hosting` (programs without a web server)
+
+[Piper.Plugins.Hosting](../plugins/Piper.Plugins.Hosting/HostingPlugin.cs) adds `host`: a [`server`](#a-server)
+without the web, for a console program or a worker, over .NET's generic host (`Host.CreateApplicationBuilder`). It
+gets configuration (appsettings.json, environment variables), logging, dependency injection and a lifetime: it runs
+until Ctrl+C or SIGTERM, then stops its workers and waits for them.
+
+```piper
+// piper.json: { "plugins": ["hosting", "config"] }
+using Microsoft.Extensions.Hosting;
+
+host WorkerNode(node: ActorSystem, options: Options) {
+    config settings: Settings;                      // the same clauses as a server's, without the web's
+    logging off;
+    services AppServices;
+    singleton Options = options;
+    worker (options: Options, stopping: CancellationToken) => RunWorkers(node, options, stopping);
+    worker every 1 minute (db: Db) => Purge(db);
+    hosted Mailer;
+    stopping (log: Log) => log.Flush();
+    shutdown 30 seconds;
+}
+
+async fn Main(args: string[]) => Task = await WorkerNode(await StartNode(), Options.FromArgs(args)).RunAsync();
+```
+
+- **What it becomes:** `fn WorkerNode(node: ActorSystem, options: Options) => IHost`. `Main` runs it (`RunAsync` is
+  `Microsoft.Extensions.Hosting`'s), and a test starts it (`await host.StartAsync()`), reaches its services
+  (`host.Services`) and stops it (`await host.StopAsync()`). The builder is `builder` in `configure`.
+- **Its clauses** are a server's that aren't about the web, and mean the same (see [A server](#a-server)): `config`,
+  `logging off`, `telemetry` (see [below](#telemetry-opentelemetry)), `services`, `singleton`/`scoped`/`transient`,
+  `configure`, `worker` (for its life, or `every` period), `hosted`, `stopping` and `shutdown`. So a program moves
+  between the two by changing the word and adding or removing the web's clauses. Both call Piper.Hosting, which comes
+  with each plugin.
+- **Checks:** a clause given twice that can only be given once, an unknown clause and a handler parameter without a
+  type are errors. A server checks the services its handlers take against what it registers; a host doesn't yet.
+- **Packages:** it brings `Microsoft.Extensions.Hosting`. [apps/grid](../apps/grid/main.piper)'s worker nodes are hosts.
+
+### `telemetry` (OpenTelemetry)
+
+[Piper.Plugins.Telemetry](../plugins/Piper.Plugins.Telemetry/TelemetryPlugin.cs) adds no syntax. A `server` or `host`
+asks for telemetry with a clause, and the plugin brings what it calls: OpenTelemetry's SDK, its OTLP exporter, its
+ASP.NET Core and HttpClient instrumentation, and [Piper.Telemetry](../plugins/Piper.Telemetry/PiperTelemetry.cs).
+
+```piper
+// piper.json: { "plugins": ["web", "telemetry"] }
+server StockServer(shards: Shards, url: string) {
+    telemetry "stock";               // or `telemetry;`, named as the server is
+    …
+}
+```
+
+- **Where it goes:** traces, metrics and logs go over OTLP to `OTEL_EXPORTER_OTLP_ENDPOINT`, configured by
+  OpenTelemetry's standard `OTEL_*` settings (`OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_PROTOCOL`, …). Without an
+  endpoint nothing is added, so a run with no collector pays nothing.
+- **Viewing it locally:** .NET Aspire's dashboard shows traces, metrics and structured logs with no setup:
+
+  ```
+  docker run --rm -p 18888:18888 -p 4317:18889 mcr.microsoft.com/dotnet/aspire-dashboard
+  OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 piper run apps/stock -- …
+  ```
+
+  Then open http://localhost:18888. The dashboard prints a sign-in token in its own log.
+- **What's in it:**
+  - Traces: ASP.NET Core's requests (`POST /stock/{sku}/receive`, with the route and status), HttpClient's calls, and
+    Piper's own sources (`Piper.*`): [remote actors' handlers](#actor-across-processes-and-machines), each continuing
+    the trace that sent it. So one request is one trace, through HTTP, node A, and the actor on node B.
+  - Metrics: ASP.NET Core's, Kestrel's, HttpClient's, .NET's runtime (memory, GC, threads) and Piper's
+    (`piper.actor.handler.duration`).
+  - Logs: whatever is written through `ILogger`, each line with its trace.
+- **Needs ASP.NET Core:** the instrumentation does, so a `host` with `telemetry` runs on the aspnet runtime, as a
+  server does. [apps/stock](../apps/stock/README.md) and [apps/grid](../apps/grid/README.md) use it.
 
 ### `data` (EF Core databases)
 
@@ -1180,6 +1355,20 @@ What's different from in-process actors:
 - **The same program, run or built:** a message's type is named with the program's assembly name, so the nodes must
   run the same program. `piper run` names it as `piper build` does (after its piper.json `name`, or its folder), so a
   built node and a `piper run` one understand each other.
+- **Rolling updates are checked:** while a new version deploys, old and new nodes send each other messages. So each
+  actor's messages are recorded in `Name.shape.json` beside it, as an [api's shape](#api-an-apis-shape-and-a-typed-client)
+  is: each handler, what it takes, what it replies (or that it's a tell), and the records and enums they carry.
+  `piper build`, `run` and `test` record it and check each change against it. A handler removed, a value it newly
+  needs, a reply of another type, or a field the other side reads that's gone is an error, unless you build with
+  `--accept-breaking`. A new handler, or a new optional value, is compatible.
+  [apps/stock](../apps/stock/actors/Product.shape.json) and apps/grid record theirs.
+- **Traced:** a message sent within a trace (an HTTP request's, or another handler's) carries its trace context
+  (`traceparent`) in Proto.Actor's message headers, so the message itself doesn't change. Each handler runs in a span
+  continuing that trace: `Product.Receive`, kind Server for an ask and Consumer for a tell, tagged with the actor, the
+  message and the node, and marked failed if it throws. So one request is one trace across nodes. Each handler's time
+  is the `piper.actor.handler.duration` metric. This uses .NET's own `Activity` and `Meter` (the `Piper.Actors`
+  source), so it costs nothing unless something listens, such as the [telemetry plugin](#telemetry-opentelemetry), or
+  a test's `ActivityListener`.
 
 For grid computing, which spreads one job over many machines, [samples/grid](../samples/grid/main.piper) builds on the
 same handles. Each machine runs a worker node, which hosts a `Worker` actor per core. The coordinator splits the job

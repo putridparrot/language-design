@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    What the code a `host` (plugins/Piper.Plugins.Hosting) or a `server` (plugins/Piper.Plugins.Web) writes calls at
+    run time: workers, stopping hooks and the shutdown timeout, over .NET's generic host. It comes with both plugins,
+    beside their assemblies, and a program using either references it (IPiperPlugin.References).
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Piper.Hosting</RootNamespace>
+    <!-- One place whatever the configuration, so the plugins can copy it beside themselves. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\runtime\</OutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The program has the host itself (the hosting plugin's Packages, or ASP.NET Core's framework), so it isn't copied here. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" PrivateAssets="all" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+</Project>

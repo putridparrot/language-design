@@ -7,11 +7,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 
-record Project(id: ProjectId, code: string, name: string);
-
-record Comment(id: CommentId, issueId: IssueId, author: string, text: string, created: DateTime)
-    requires text.Trim().Length > 0;
-
 database TrackerDb {
     table Projects: Project key id index code;
     table Issues: Issue key id index projectId index (projectId, status);

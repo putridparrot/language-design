@@ -45,6 +45,13 @@ public sealed record PiperProject(string? Name, PiperOutput? Output)
     /// <summary>Paths of .NET assemblies the program uses, relative to the folder.</summary>
     public ImmutableArray<string> References { get; init; } = [];
 
+    /// <summary>
+    /// Other Piper program folders this one shares code with, relative to the folder (<c>["../shared"]</c>): their
+    /// source is compiled into the program, without their tests, with their plugins and references. Piper's own types
+    /// (Options, newtypes, enums) don't survive a trip through a compiled assembly, so they're shared as source.
+    /// </summary>
+    public ImmutableArray<string> Projects { get; init; } = [];
+
     public static PiperProject Empty { get; } = new(null, null);
 
     /// <summary>Reads a piper.json; on failure, the project is null and there are errors (PIP0400) explaining why.</summary>
@@ -83,7 +90,7 @@ public sealed record PiperProject(string? Name, PiperOutput? Output)
 
             string? name = null;
             PiperOutput? output = null;
-            ImmutableArray<string> plugins = [], frameworks = [], references = [];
+            ImmutableArray<string> plugins = [], frameworks = [], references = [], projects = [];
             var packages = ImmutableDictionary<string, string>.Empty;
             int searchFrom = 0;
             foreach (var property in document.RootElement.EnumerateObject())
@@ -136,13 +143,19 @@ public sealed record PiperProject(string? Name, PiperOutput? Output)
                     case "references":
                         Error(key, "\"references\" must be a list of paths to .NET assemblies, such as [\"lib/My.Library.dll\"].");
                         break;
+                    case "projects" when StringList(property.Value) is { } folders:
+                        projects = folders;
+                        break;
+                    case "projects":
+                        Error(key, "\"projects\" must be a list of paths to Piper program folders whose code this one shares, such as [\"../shared\"].");
+                        break;
                     default:
-                        Error(key, $"Unknown key \"{property.Name}\"; piper.json can have \"name\", \"output\", \"packages\", \"frameworks\", \"references\" and \"plugins\".");
+                        Error(key, $"Unknown key \"{property.Name}\"; piper.json can have \"name\", \"output\", \"packages\", \"frameworks\", \"references\", \"projects\" and \"plugins\".");
                         break;
                 }
             }
             return errors.Count == 0
-                ? (new PiperProject(name, output) { Plugins = plugins, Packages = packages, Frameworks = frameworks, References = references }, [])
+                ? (new PiperProject(name, output) { Plugins = plugins, Packages = packages, Frameworks = frameworks, References = references, Projects = projects }, [])
                 : (null, errors.ToImmutable());
         }
     }
@@ -182,25 +195,44 @@ public sealed record LoadedProject(PiperProject Project, ImmutableArray<IPiperPl
         if (project is null)
             return (null, errors);
 
-        var named = trusted ? project.Plugins : [.. project.Plugins.Where(PluginLoader.IsBundledName)];
-        var (plugins, pluginErrors) = PluginLoader.Load(directory, named, source);
-        if (!pluginErrors.IsEmpty)
-            return (null, pluginErrors);
+        // The projects it shares code with ("projects"), and theirs, each once: their plugins, packages, frameworks and
+        // assemblies are needed to compile their code, so they're the program's too.
+        var shared = new List<(string Folder, PiperProject Project, SourceText Source)>();
+        var sharedErrors = new List<Diagnostic>();
+        CollectShared(Path.GetFullPath(directory), project, source, shared, sharedErrors, [Normalized(directory)]);
+        if (sharedErrors.Count > 0)
+            return (null, [.. sharedErrors]);
+        var everyone = shared.Select(s => (s.Folder, s.Project, s.Source)).Prepend((Folder: directory, Project: project, Source: source)).ToList();
 
-        // Plugins' packages, frameworks and assemblies are the program's too; the program's own choice of version wins.
-        var packages = new Dictionary<string, string>(project.Packages, StringComparer.OrdinalIgnoreCase);
-        foreach (var (id, version) in plugins.SelectMany(p => p.Packages))
-            packages.TryAdd(id, version);
-        var frameworks = project.Frameworks.Concat(plugins.SelectMany(p => p.Frameworks)).ToList();
-        // A plugin's own assemblies come with it, so they're as trusted as it is.
-        var assemblies = (trusted ? project.References : []).Concat(plugins.SelectMany(PluginLoader.References)).ToList();
-
+        var pluginBuilder = new List<IPiperPlugin>();
         var skipped = new List<string>();
+        foreach (var (folder, each, eachSource) in everyone)
+        {
+            var named = trusted ? each.Plugins : [.. each.Plugins.Where(PluginLoader.IsBundledName)];
+            var (loadedPlugins, pluginErrors) = PluginLoader.Load(folder, named, eachSource);
+            if (!pluginErrors.IsEmpty)
+                return (null, pluginErrors);
+            // Plugins are loaded once per assembly, so a plugin two projects name is the same one.
+            pluginBuilder.AddRange(loadedPlugins.Where(p => !pluginBuilder.Contains(p) && !pluginBuilder.Any(q => q.Name == p.Name)));
+            if (!trusted)
+                skipped.AddRange(each.Plugins.Except(named).Select(p => $"the plugin '{p}'"));
+        }
+        ImmutableArray<IPiperPlugin> plugins = [.. pluginBuilder];
+
+        // Plugins' packages, frameworks and assemblies are the program's too; the program's own choice of version wins,
+        // then the shared projects', in order.
+        var packages = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (id, version) in everyone.SelectMany(e => e.Project.Packages).Concat(plugins.SelectMany(p => p.Packages)))
+            packages.TryAdd(id, version);
+        var frameworks = everyone.SelectMany(e => e.Project.Frameworks).Concat(plugins.SelectMany(p => p.Frameworks)).Distinct().ToList();
+        // A plugin's own assemblies come with it, so they're as trusted as it is. A shared project's are relative to its folder.
+        var ownAssemblies = everyone.SelectMany(e => e.Project.References.Select(r => e.Folder == directory ? r : Path.GetFullPath(Path.Combine(e.Folder, r)))).ToList();
+        var assemblies = (trusted ? ownAssemblies : []).Concat(plugins.SelectMany(PluginLoader.References)).ToList();
+
         if (!trusted)
         {
-            skipped.AddRange(project.Plugins.Except(named).Select(p => $"the plugin '{p}'"));
             skipped.AddRange(packages.Keys.Order(StringComparer.OrdinalIgnoreCase).Select(p => $"the package '{p}'"));
-            skipped.AddRange(project.References.Select(r => $"the assembly '{r}'"));
+            skipped.AddRange(ownAssemblies.Select(r => $"the assembly '{r}'"));
             packages.Clear();
         }
 
@@ -213,6 +245,76 @@ public sealed record LoadedProject(PiperProject Project, ImmutableArray<IPiperPl
                 $"This folder isn't trusted, so the editor hasn't loaded what could run code from it: {string.Join(", ", skipped)}. " +
                 "Code using them shows errors until you trust the folder (in VS Code: Manage Workspace Trust).") { Source = source },
         ];
-        return (new LoadedProject(project, plugins, references) { Warnings = warnings }, []);
+        return (new LoadedProject(project, plugins, references) { Warnings = warnings, SharedFolders = [.. shared.Select(s => s.Folder)] }, []);
+    }
+
+    /// <summary>
+    /// The folders of the projects the program shares code with (piper.json's <c>"projects"</c>, and theirs), as full
+    /// paths, each once.
+    /// </summary>
+    public ImmutableArray<string> SharedFolders { get; init; } = [];
+
+    /// <summary>The .piper files of the shared projects (see <see cref="SharedFolders"/>), which are compiled in without their tests.</summary>
+    public ImmutableArray<string> SharedFiles => [.. SharedFolders.SelectMany(SourceFiles)];
+
+    /// <summary>A program folder's .piper files, in its subfolders too (not bin/ or obj/, where builds write), in a stable order.</summary>
+    public static IEnumerable<string> SourceFiles(string folder) =>
+        Directory.GetFiles(folder, "*.piper", SearchOption.AllDirectories)
+            .Where(file => !Path.GetRelativePath(folder, file).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Any(part => part is "bin" or "obj"))
+            .Order(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The shared projects' folders of the program at <paramref name="directory"/>, from piper.json alone, without
+    /// loading plugins or packages (for <c>piper run --watch</c>, to watch them too); none if it has no valid piper.json.
+    /// </summary>
+    public static ImmutableArray<string> SharedFoldersOf(string directory)
+    {
+        var path = Path.Combine(directory, PiperProject.FileName);
+        if (!File.Exists(path))
+            return [];
+        var source = new SourceText(File.ReadAllText(path), path);
+        if (PiperProject.Parse(source).Project is not { } project)
+            return [];
+        var shared = new List<(string Folder, PiperProject Project, SourceText Source)>();
+        CollectShared(Path.GetFullPath(directory), project, source, shared, [], [Normalized(directory)]);
+        return [.. shared.Select(s => s.Folder)];
+    }
+
+    private static string Normalized(string folder) =>
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
+
+    private static void CollectShared(
+        string folder, PiperProject project, SourceText source,
+        List<(string Folder, PiperProject Project, SourceText Source)> shared, List<Diagnostic> errors, HashSet<string> seen)
+    {
+        foreach (var entry in project.Projects)
+        {
+            // Reported at the entry in piper.json, found by its text (JsonDocument keeps no positions).
+            var quoted = System.Text.Json.JsonSerializer.Serialize(entry);
+            int at = source.Text.IndexOf(quoted, StringComparison.Ordinal);
+            var span = at < 0 ? new TextSpan(0, 0) : new TextSpan(at, quoted.Length);
+            void Error(string message) => errors.Add(new Diagnostic("PIP0400", DiagnosticSeverity.Error, span, message) { Source = source });
+
+            var other = Normalized(Path.Combine(folder, entry));
+            if (!seen.Add(other))
+                continue;   // the program itself, or one already shared: compiled in once
+            var path = Path.Combine(other, PiperProject.FileName);
+            if (!File.Exists(path))
+            {
+                Error(Directory.Exists(other)
+                    ? $"'{entry}' has no piper.json; a shared project is a Piper program folder, with one."
+                    : $"There's no folder '{entry}' (looked for {other}).");
+                continue;
+            }
+            var otherSource = new SourceText(File.ReadAllText(path), path);
+            var (otherProject, otherErrors) = PiperProject.Parse(otherSource);
+            if (otherProject is null)
+            {
+                errors.AddRange(otherErrors);
+                continue;
+            }
+            shared.Add((other, otherProject, otherSource));
+            CollectShared(other, otherProject, otherSource, shared, errors, seen);
+        }
     }
 }

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    What the code the remote actors plugin (plugins/Piper.Plugins.Actors.Remote) writes calls at run time: sending,
+    asking and handling messages with the caller's trace context in Proto.Actor's message headers, so one request is one
+    trace across nodes. It comes with the plugin, beside its assembly, and a program using it references it
+    (IPiperPlugin.References). It uses only System.Diagnostics; exporting the traces is the telemetry plugin's.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Piper.Actors.Remote</RootNamespace>
+    <!-- One place whatever the configuration, so the plugin can copy it beside itself. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\runtime\</OutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The program has Proto.Actor itself (the plugin's Packages), so it isn't copied here. -->
+    <PackageReference Include="Proto.Actor" Version="1.8.0" PrivateAssets="all" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+</Project>

@@ -1,8 +1,7 @@
-// Starting the auction: the app, the clock that tells the lots the time, and a few lots to bid on.
+// Starting the auction: the app (which tells the lots the time), and a few lots to bid on.
 namespace Auction;
 
 using System;
-using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
 
@@ -14,28 +13,13 @@ args Options "Auction: lots listed and bid on live, in the browser." {
 async fn Main(args: string[]) {
     let options = Options.FromArgs(args);
     let auction = Auctioneer.Spawn(Broadcast);
-    let app = AuctionServer($"http://localhost:{options.port}", auction);
+    let app = AuctionServer($"http://localhost:{options.port}", auction, TimeSpan.FromSeconds(1));
     if !options.empty {
         await ListDemoLots(auction, DateTime.UtcNow);
     }
     await app.StartAsync();
     Print($"Auction on http://localhost:{options.port}; Ctrl+C to stop.");
-    using let stop = CancellationTokenSource();
-    let clock = KeepTime(auction, stop.Token);
     await app.WaitForShutdownAsync();
-    stop.Cancel();
-    await clock;
-}
-
-/// Tells the lots the time once a second (their countdowns move, and they end on time), until stopped.
-async fn KeepTime(auction: Auctioneer, stop: CancellationToken) {
-    while !stop.IsCancellationRequested {
-        auction.Tick(DateTime.UtcNow);
-        try {
-            await Task.Delay(1000, stop);
-        } catch (_: OperationCanceledException) {
-        }
-    }
 }
 
 async fn ListDemoLots(auction: Auctioneer, now: DateTime) {

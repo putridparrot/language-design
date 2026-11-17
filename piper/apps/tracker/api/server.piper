@@ -43,7 +43,6 @@ class HeaderAuthentication(options: IOptionsMonitor<AuthenticationSchemeOptions>
 /// needs (the policies' before the endpoints).
 server TrackerServer(settings: Settings, clock: Clock, notifier: Notifier, urls: string) {
     urls urls;
-    logging off;
 
     // One database context per request, as EF Core expects.
     scoped TrackerDb = TrackerDb(DbContextOptionsBuilder<TrackerDb>().UseSqlite(settings.connection).Options);
@@ -51,8 +50,10 @@ server TrackerServer(settings: Settings, clock: Clock, notifier: Notifier, urls:
     singleton Notifier = notifier;
 
     policies Security(settings);
-    // Sign-in is the app's choice, so it's written against the builder.
+    // Logging and sign-in are the app's choices, so they're written against the builder.
     configure {
+        // Warnings and errors only (a webhook that stays down), not each request.
+        builder.Logging.SetMinimumLevel(LogLevel.Warning);
         builder.Services.AddAuthentication(HeaderAuthentication.Scheme)
             .AddScheme<AuthenticationSchemeOptions, HeaderAuthentication>(HeaderAuthentication.Scheme, options => {});
     }

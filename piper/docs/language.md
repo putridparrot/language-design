@@ -1068,6 +1068,29 @@ if result.Succeeded { Print(result.output); } else { Print(result.error); }
 - **On Windows,** a `.bat` or `.cmd` program is run by `cmd.exe`, which reads its arguments its own way, so for those
   a hole's text can still reach a shell. Run programs, not scripts, with arguments from outside.
 
+### Logging
+
+A `$"…"` given to `ILogger`'s `Log…` methods (`LogInformation`, `LogWarning`, `LogError`, `Log(level, …)` and the rest,
+from Microsoft.Extensions.Logging) is a template with a named field for each hole, as C#'s `LoggerMessage` generator
+makes one. So the log is ordinary Piper, while a log store (Aspire's dashboard, Seq, Application Insights) gets each
+hole as a field to search by, and every line of one call shares its template:
+
+```piper
+log.LogInformation($"Reserved {quantity} of {sku}");
+// LoggerExtensions.LogInformation(log, "Reserved {quantity} of {sku}", quantity, sku)
+log.LogWarning(error, $"Couldn't tell about issue {issue.id}");      // the field is "issue.id"
+```
+
+- **Field names** are what the hole says: `{quantity}` is `quantity`, `{order.id}` is `order.id`, `{Total(order)}` is
+  `Total`, anything else `value`; a name used twice is numbered (`quantity2`). A format or alignment is kept
+  (`{total:C}`), and the text's own braces are written as text.
+- **Checked first:** as a statement, the call checks the level before anything else
+  (`if (log.IsEnabled(LogLevel.Information))`), so a level that's off costs nothing and its holes aren't evaluated,
+  as C#'s interpolated string handlers skip them. The logger must be a variable or a field for that, since it's named
+  twice; any other logger, a call that isn't a statement, and `Log(level, …)` get the template without the check.
+- **Unlike C#,** where a `$"…"` here makes one string, losing the fields (CA2254 warns about it), in Piper it's the
+  way to write them. A plain string is logged as it is, and a call that already passes arguments is left alone.
+
 ### Attributes
 
 .NET attributes go before a declaration, field or parameter, as in C#:
@@ -1501,6 +1524,8 @@ using (let writer = StringWriter()) {         // disposed after the block
 
 - A `using let` (or `using mut`) variable is disposed at the end of the block that declares it, even when that block is an expression, and can't be reassigned.
 - `using (expression) { … }` disposes the value of any expression after the block.
+- An Option of something disposable is disposed if it's Some, as C#'s `using` skips a null:
+  `using let span = source.StartActivity("request");` (an `Activity?`, None when nothing listens).
 
 ### Cleaning up: `defer`
 

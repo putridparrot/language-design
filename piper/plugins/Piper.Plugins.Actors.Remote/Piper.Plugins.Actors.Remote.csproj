@@ -17,6 +17,9 @@
     <ProjectReference Include="..\..\src\Piper.Compiler\Piper.Compiler.csproj" Private="false" ExcludeAssets="runtime" />
     <!-- How an `actor` declaration reads is shared with the in-process actors plugin. -->
     <Compile Include="..\Piper.Plugins.Actors\ActorSyntax.cs" Link="ActorSyntax.cs" />
+    <!-- What the code the plugin writes calls (IPiperPlugin.References): built first, and copied beside the plugin. -->
+    <ProjectReference Include="..\Piper.Actors.Remote\Piper.Actors.Remote.csproj" ReferenceOutputAssembly="false" />
+    <None Include="..\Piper.Actors.Remote\bin\runtime\Piper.Actors.Remote.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 
 </Project>

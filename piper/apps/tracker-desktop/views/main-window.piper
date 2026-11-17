@@ -10,6 +10,7 @@ using Avalonia.Controls.Templates;
 using Avalonia.Data;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Tracker;
 
 fn MainWindow(model: MainViewModel) => Window {
     let window = Window() {
@@ -50,7 +51,7 @@ fn IssueList(model: MainViewModel) => Control = Bound(
     Shown(ListBox() {
         // A plain StackPanel, as the virtualizing default keeps the chosen issue's old row when the list is replaced.
         ItemsPanel: FuncTemplate<Panel>(() => StackPanel()),
-        ItemTemplate: FuncDataTemplate<IssueView>((issue, _) => TextBlock() { Text: $"#{issue.id}  {issue.status,-10}  {issue.priority,-6}  {issue.title}" }),
+        ItemTemplate: FuncDataTemplate<IssueView>((issue, _) => TextBlock() { Text: $"#{issue.id}  {issue.status.Name,-10}  {issue.priority.Name,-6}  {issue.title}" }),
         Margin: Thickness(8, 0),
     }, ItemsControl.ItemsSourceProperty, "Issues"),
     ListBox.SelectedIndexProperty, "SelectedIssueIndex");
@@ -80,7 +81,7 @@ fn IssuePane(model: MainViewModel) => Control = ScrollViewer() {
             Separator(),
             Label("Comments"),
             Shown(TextBlock() { TextWrapping: TextWrapping.Wrap }, TextBlock.TextProperty, "CommentsText"),
-            Bound(TextBox() { Watermark: "Add a comment", AcceptsReturn: true, TextWrapping: TextWrapping.Wrap, MinHeight: 60 }, TextBox.TextProperty, "NewComment"),
+            Bound(TextBox() { Watermark: "Add a comment", AcceptsReturn: true, TextWrapping: TextWrapping.Wrap, MinHeight: 60 }, TextBox.TextProperty, "CommentText"),
             Button() { Content: "Comment", Command: model.AddCommentCommand },
             Separator(),
             Label("New issue"),

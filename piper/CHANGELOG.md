@@ -2,6 +2,88 @@
 
 ## Unreleased
 
+- **`using` on an Option:** `using let span = source.StartActivity("x");` (an `Activity?`), `using (…)` and `await
+  using` dispose the value if it's Some, as C#'s `using` skips a null; an Option of something not disposable is still
+  an error. (Piper.Runtime's `Option<T>` implements `IDisposable` and `IAsyncDisposable` explicitly to do it.)
+
+- **Structured logging from interpolation:** a `$"…"` given to `ILogger`'s `Log…` methods is a template with a named
+  field for each hole (`log.LogInformation($"Reserved {quantity} of {sku}")` logs `"Reserved {quantity} of {sku}"`
+  with `quantity` and `sku`), and as a statement checks the level first, so a level that's off evaluates no hole. See
+  [Logging](docs/language.md#logging). apps/tracker logs a webhook that stays down as a warning this way, rather than
+  writing to the console, and logs warnings rather than nothing.
+
+- **Remote actors are traced:** a message sent within a trace carries it (`traceparent`, in Proto.Actor's message
+  headers, so the messages don't change), and each handler runs in a span continuing it (`Product.Receive`; Server for
+  an ask, Consumer for a tell; failed if it throws), so one request is one trace across nodes. Each handler's time is
+  the `piper.actor.handler.duration` metric. It's .NET's own `Activity` and `Meter` (source `Piper.Actors`, in the new
+  Piper.Actors.Remote that comes with the plugin), costing nothing unless something listens.
+
+- **The `telemetry` plugin:** `telemetry;` (or `telemetry "name";`) in a `server` or `host` exports traces, metrics and
+  logs over OpenTelemetry's protocol to `OTEL_EXPORTER_OTLP_ENDPOINT` (Aspire's dashboard, Jaeger, a collector), and
+  adds nothing without one. It covers ASP.NET Core's requests (named by route), HttpClient's calls, Piper's actors,
+  and .NET's runtime metrics. apps/stock and apps/grid use it. See [plugins](docs/plugins.md#telemetry-opentelemetry).
+
+- **Fixed: a nested .NET type in the generated C#** (one Piper meets by inference, such as
+  `Dictionary<string, int>.Enumerator`) was written without the types it's nested in, so the C# didn't compile.
+
+- **`forwarded` in a server (web plugin):** behind a proxy that ends TLS (an ingress, a load balancer), `forwarded;`
+  makes each request's scheme and client those the proxy saw (`X-Forwarded-Proto`, `X-Forwarded-For`), first in the
+  pipeline, so `https` works behind an ingress and logs see the client. `forwarded from "10.0.0.0/8", "10.1.2.3";`
+  believes only those proxies (a literal that isn't an address or network is an error). With it, `https` and only
+  http:// `urls` isn't warned about. See [plugins](docs/plugins.md#a-server).
+
+- **Breaking changes to a remote actor's messages are caught,** for rolling updates, where old and new nodes talk:
+  each actor's handlers (what they take, and what they reply, or that they're tells) are recorded in
+  `Name.shape.json` and checked as an api's are (below). apps/stock, apps/grid and the remote actor samples record
+  theirs.
+
+- **Breaking changes to an api are caught:** an `api`'s shape (its calls, and the records, enums and newtypes they
+  send and answer, with which way each goes) is recorded in `Name.shape.json` beside it, to check in. `piper build`,
+  `run` and `test` record it, and report a change that would break callers built against it as an error: a call
+  removed or moved, a new value or field callers must send, a field they read removed, a type changed, an enum
+  variant added to one they read or removed from one they send. Compatible changes are recorded; `--accept-breaking`
+  records a deliberate break. The editor and `piper emit` only check. Plugins can do the same for what they send
+  (`PluginAnalysis.CheckWireShape`). apps/tracker-core records `TrackerApi.shape.json`.
+
+- **The `api` plugin (typed clients):** `api TrackerApi "/api" { fn Issue(id: IssueId) => IssueView? = get
+  "/issues/{id:int}"; … }` declares an HTTP API's calls, as functions whose body is their route, and becomes
+  `class TrackerApi(http: HttpClient)`, a client whose methods send the requests and read the answers as the web
+  plugin writes them: each a `Result`, with a 404 as an Option's None and a handler's own error read back from its
+  ProblemDetails (`ApiError<IssueError>`'s `Error`). `endpoints Api: TrackerApi` says a server's endpoints answer it,
+  and the web plugin checks that every call is answered, by a handler taking what it sends and answering its type,
+  and that nothing else is mapped. The client needs only Piper.Runtime (its new `PiperClient`, `ApiError` and
+  `[ApiCall]`). See [plugins](docs/plugins.md#api-an-apis-shape-and-a-typed-client).
+
+- **`"projects"` in piper.json:** names other program folders whose code a program shares, compiled in from source
+  (Piper's own types don't survive a compiled assembly), with their plugins, packages and references, without their
+  tests, and theirs in turn, each once. `piper run --watch` watches them too, and the editor analyzes a program with
+  them. The tracker's domain and `api TrackerApi` moved to the new apps/tracker-core, which apps/tracker answers and
+  apps/tracker-desktop calls; the desktop's hand-written client and its copies of the records are gone.
+
+- **`[Status]` moved to Piper.Runtime,** keeping its namespace (`using Piper.Web;` still finds it), so an error enum
+  can be shared with a client that doesn't reference ASP.NET Core. Piper.Web forwards the type.
+
+- **The `hosting` plugin:** `host WorkerNode(options: Options) { config …; services …; worker …; stopping …; shutdown
+  …; }` is a `server` without the web, for console programs and workers, over .NET's generic host: it becomes
+  `fn WorkerNode(options) => IHost`, which `Main` runs (`await WorkerNode(options).RunAsync();`) until Ctrl+C or
+  SIGTERM, stopping its workers and waiting for them. Its clauses are the server's that aren't about the web, and
+  both now call Piper.Hosting (which comes with the web plugin too), so the server's `stopping`, `shutdown` and
+  `logging off` are `PiperHost`'s rather than `PiperServer`'s. apps/grid's worker nodes are hosts, rather than wiring
+  Ctrl+C and process exit to a cancellation source by hand. See [plugins](docs/plugins.md#hosting-programs-without-a-web-server).
+
+- **Background work in a server (web plugin):** `worker (jobs: Jobs, stopping: CancellationToken) => …;` runs a
+  handler whose parameters are services for the app's life (its token cancelled as the app stops, and waited for; if
+  it throws, the app logs it and stops), and `worker every 30 seconds (lots: Lots) => …;` runs one as the app starts
+  and each period after (a failing run is logged, and the next runs anyway; the period can be a `TimeSpan`, `every
+  tick`). `hosted Mailer;` runs a .NET hosted service. A worker taking a service the server doesn't register is an
+  error, as for health checks. apps/auction's clock is now a worker, rather than a loop beside the app in `Main`.
+
+- **`https` in a server (web plugin):** `https;` redirects HTTP to HTTPS, and outside Development adds HSTS.
+  `https certificate "server.pfx" password secret;` serves a .pfx certificate, and `https certificate "tls.crt" key
+  "tls.key";` PEM files (as a Kubernetes TLS secret mounts them), loaded as the server binds, so a missing one stops
+  it at startup and a test served from memory needs none. `urls` given as literals with no https:// address is a
+  warning. See [plugins](docs/plugins.md#a-server).
+
 - **`piper build --publish`:** compiles a program for a container image, into `bin/publish`: the executable (without a
   native launcher), its packages' assemblies with their native libraries for Linux (`linux-x64`, or `--runtime
   linux-arm64`), and a `Dockerfile` on .NET's `aspnet` image for a web program, or `runtime` otherwise. `docker build`

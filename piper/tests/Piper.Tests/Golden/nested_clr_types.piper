@@ -1,0 +1,13 @@
+// .NET types nested in others, which Piper only meets by inference, are named through them in the C#:
+// TimeZoneInfo.AdjustmentRule, and Dictionary<string, int>.Enumerator (its outer type's arguments first).
+using System;
+using System.Collections.Generic;
+
+fn Main() {
+    let rules = () => TimeZoneInfo.Utc.GetAdjustmentRules();
+    Print(rules().Length);
+    let counts: Dictionary<string, int> = ["a": 1, "b": 2];
+    let walk = () => counts.GetEnumerator();
+    let first = walk();
+    Print(first.MoveNext());
+}

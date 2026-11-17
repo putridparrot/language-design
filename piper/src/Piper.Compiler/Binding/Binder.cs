@@ -2110,10 +2110,16 @@ public sealed partial class Binder
     }
 
     /// <param name="await">`await using`: the value must be an IAsyncDisposable, in an async function.</param>
+    /// <remarks>
+    /// An Option of one is disposed if it's Some, as C#'s <c>using</c> skips a null:
+    /// <c>using let span = source.StartActivity("x");</c>, whose <c>Activity?</c> is None with nothing listening.
+    /// </remarks>
     private void CheckDisposable(TypeSymbol type, TextSpan span, Token? await = null)
     {
         if (await is not null)
             CheckAwaitAllowed(await);
+        if (type.IsOption)
+            type = type.TypeArguments[0];
         var required = await is null ? typeof(IDisposable) : typeof(IAsyncDisposable);
         if (type != TypeSymbol.Error && !(ClrTypes.ToClr(type) is { } clr && required.IsAssignableFrom(clr)) && !Implements(type, ClrTypeSymbol.For(required)))
             _diagnostics.ReportNotDisposable(span, type, required.Name);

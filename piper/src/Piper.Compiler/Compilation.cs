@@ -57,6 +57,18 @@ public sealed record CompilationOptions(bool LineDirectives = false, bool Includ
 
     /// <summary>The packages, frameworks and assemblies the program can use beyond the platform (piper.json's, resolved).</summary>
     public ProgramReferences References { get; init; } = ProgramReferences.None;
+
+    /// <summary>
+    /// The sources (by <see cref="SourceText.FileName"/>) that come from a shared project (piper.json's "projects"):
+    /// compiled in, but without their `test` blocks, which are that project's own.
+    /// </summary>
+    public ImmutableHashSet<string> SharedFiles { get; init; } = [];
+
+    /// <summary>
+    /// Whether the shapes of what crosses the wire (an api's calls and types, in <c>Name.shape.json</c> beside it) are
+    /// only checked, as by default, or recorded too, as <c>piper build</c>, <c>run</c> and <c>test</c> do.
+    /// </summary>
+    public WireShapeMode WireShapes { get; init; } = WireShapeMode.Check;
 }
 
 /// <summary>Runs the whole pipeline over a program's files: lex → parse → bind → lower → emit C#.</summary>
@@ -68,12 +80,12 @@ public static class Compilation
         var files = sources.ToImmutableArray();
         var diagnostics = new DiagnosticBag();
         var plugins = PluginRegistry.Create(options.Plugins, diagnostics);
-        var units = files.Select(source => Parser.ParseCompilationUnit(source, diagnostics, plugins)).ToImmutableArray();
+        var units = WithoutSharedTests(files.Select(source => Parser.ParseCompilationUnit(source, diagnostics, plugins)), options.SharedFiles);
 
         // Bind even after syntax errors: missing tokens and error nodes bind silently to the
         // error type, so the user still sees genuine semantic errors elsewhere in the file.
         var program = Binder.BindProgram(units, diagnostics, clr: ClrTypeIndex.For(options.References.Assemblies));
-        plugins.Analyze(program, diagnostics);
+        plugins.Analyze(program, diagnostics, options.WireShapes);
 
         var sorted = diagnostics
             .OrderBy(d => d.Source is null ? -1 : files.IndexOf(d.Source))
@@ -97,12 +109,14 @@ public static class Compilation
     /// Parses and binds without lowering or emitting, recording what editor tooling needs: the syntax trees, the bound
     /// program and a <see cref="SemanticModel"/>. Works on incomplete code, as the parser and binder recover from errors.
     /// </summary>
-    public static AnalysisResult Analyze(IEnumerable<SourceText> sources, ImmutableArray<IPiperPlugin> plugins = default, ProgramReferences? references = null)
+    public static AnalysisResult Analyze(
+        IEnumerable<SourceText> sources, ImmutableArray<IPiperPlugin> plugins = default, ProgramReferences? references = null,
+        ImmutableHashSet<string>? sharedFiles = null)
     {
         var files = sources.ToImmutableArray();
         var diagnostics = new DiagnosticBag();
         var registry = PluginRegistry.Create(plugins.IsDefault ? [] : plugins, diagnostics);
-        var units = files.Select(source => Parser.ParseCompilationUnit(source, diagnostics, registry)).ToImmutableArray();
+        var units = WithoutSharedTests(files.Select(source => Parser.ParseCompilationUnit(source, diagnostics, registry)), sharedFiles ?? []);
         var semantic = new SemanticModel();
         var program = Binder.BindProgram(units, diagnostics, semantic, ClrTypeIndex.For(references?.Assemblies ?? []));
         registry.Analyze(program, diagnostics);
@@ -110,6 +124,12 @@ public static class Compilation
             semantic.AddPluginKeyword(use);
         return new AnalysisResult(files, [.. diagnostics], units, program, semantic) { Plugins = plugins.IsDefault ? [] : plugins };
     }
+
+    /// <summary>The units, with the `test` blocks of shared projects' files left out: those are their own projects' tests.</summary>
+    private static ImmutableArray<CompilationUnitSyntax> WithoutSharedTests(IEnumerable<CompilationUnitSyntax> units, ImmutableHashSet<string> shared) =>
+        [.. units.Select(unit => shared.Contains(unit.Source.FileName)
+            ? unit with { Declarations = [.. unit.Declarations.Where(d => d is not TestDeclarationSyntax)] }
+            : unit)];
 
     public static CompilationResult Compile(SourceText source, CompilationOptions? options = null) => Compile([source], options);
 

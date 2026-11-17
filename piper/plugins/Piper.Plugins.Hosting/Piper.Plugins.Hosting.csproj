@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The hosting plugin: `host Name { config …; services …; worker …; stopping …; }` for a program without a web server
+    (a console program, a worker), over .NET's generic host. It's listed in a program's piper.json
+    ("plugins": ["hosting"]) and loaded by the compiler, which never references it.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!-- One place whatever the configuration, so piper.json files can point at it. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\plugin\</OutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The compiler loads the plugin, so it provides Piper.Compiler; don't copy it next to the plugin. -->
+    <ProjectReference Include="..\..\src\Piper.Compiler\Piper.Compiler.csproj" Private="false" ExcludeAssets="runtime" />
+    <!-- What the code the plugin writes calls (IPiperPlugin.References): built first, and copied beside the plugin. -->
+    <ProjectReference Include="..\Piper.Hosting\Piper.Hosting.csproj" ReferenceOutputAssembly="false" />
+    <None Include="..\Piper.Hosting\bin\runtime\Piper.Hosting.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <!-- The clauses a `host` shares with the web plugin's `server`. -->
+  <ItemGroup>
+    <Compile Include="..\Shared\HostClauses.cs" Link="HostClauses.cs" />
+  </ItemGroup>
+
+</Project>

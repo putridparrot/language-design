@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 /// The tracker's settings, from the "Tracker" section of appsettings.json or the environment (Tracker__Connection).
 config Settings from "Tracker" {
@@ -36,17 +37,6 @@ extend FixedClock: Clock {
     fn Now() => DateTime = this.time;
 }
 
-record NewProject(code: string, name: string)
-    requires code.Length >= 2 && code.Length <= 10 && code.All(c => char.IsAsciiLetterUpper(c))
-    requires name.Trim().Length > 0;
-
-record NewComment(text: string) requires text.Trim().Length > 0;
-
-/// An issue as the API shows it, with what can be done to it next.
-record IssueView(
-    id: IssueId, projectId: ProjectId, title: string, description: string, priority: Priority, status: WorkflowState,
-    assignee: string?, resolution: string?, created: DateTime, updated: DateTime, next: List<string>);
-
 fn View(issue: Issue) => IssueView = IssueView(
     issue.id, issue.projectId, issue.title, issue.description, issue.priority, issue.status,
     issue.assignee, issue.resolution, Utc(issue.created), Utc(issue.updated), Workflow.Resume(issue.status, issue).Events);
@@ -61,7 +51,7 @@ policies Security(settings: Settings) {
     ratelimit "search" fixed settings.searchesPerMinute per minute;
 }
 
-endpoints Api "/api" authorize {
+endpoints Api: TrackerApi "/api" authorize {
     get "/health" anonymous () => "ok";
 
     get "/projects" async (db: TrackerDb) => await db.Projects.OrderBy(p => p.code).ToListAsync();
@@ -73,9 +63,9 @@ endpoints Api "/api" authorize {
         await AddIssue(db, projectId, issue, clock.Now()) ?> View;
 
     get "/issues/{id:int}" async (id: IssueId, db: TrackerDb) => await FindIssue(db, id) ?> View;
-    post "/issues/{id:int}/events" async (id: IssueId, event: WorkflowEvent, db: TrackerDb, clock: Clock, notifier: Notifier) => {
+    post "/issues/{id:int}/events" async (id: IssueId, event: WorkflowEvent, db: TrackerDb, clock: Clock, notifier: Notifier, log: ILogger<Notifier>) => {
         let result = await Transition(db, id, event, clock.Now()) ?> View;
-        if result is Ok(view) { await Notify(notifier, view); }
+        if result is Ok(view) { await Notify(notifier, view, log); }
         result
     }
 

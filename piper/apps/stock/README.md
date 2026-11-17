@@ -107,6 +107,19 @@ reserves each unit exactly once.
 
 Nothing is kept on disk, so there's no data to clear: stopping a node loses its products' counts.
 
+**Seeing its traces:** each node exports traces, metrics and logs (the [telemetry plugin](../../docs/plugins.md#telemetry-opentelemetry))
+when `OTEL_EXPORTER_OTLP_ENDPOINT` says where. .NET Aspire's dashboard takes them with no setup:
+
+```
+docker run --rm -p 18888:18888 -p 4317:18889 mcr.microsoft.com/dotnet/aspire-dashboard
+```
+
+Start the nodes with `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317` set (in PowerShell,
+`$env:OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:4317"` first), then open http://localhost:18888, signing in with
+the token the dashboard printed. A request is one trace: `POST /stock/{sku}/reserve` on the node it reached, then
+`Product.Reserve` on the node that keeps the product, each span showing its node. That's what `servedBy` and the
+dashboard page show by hand.
+
 ## On Docker Desktop's Kubernetes
 
 The same manifest, in a namespace of its own, with the image built locally (Docker Desktop's Kubernetes uses Docker's

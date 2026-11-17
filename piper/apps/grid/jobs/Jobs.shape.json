@@ -1,0 +1,155 @@
+{
+  "name": "Jobs",
+  "calls": {
+    "Jobs.Cancel": {
+      "name": "Jobs.Cancel",
+      "inputs": {},
+      "output": "bool"
+    },
+    "Jobs.Done": {
+      "name": "Jobs.Done",
+      "inputs": {
+        "tally": "Tally"
+      },
+      "output": "bool"
+    },
+    "Jobs.Start": {
+      "name": "Jobs.Start",
+      "inputs": {
+        "spec": "JobSpec"
+      },
+      "output": "bool"
+    },
+    "Jobs.Status": {
+      "name": "Jobs.Status",
+      "inputs": {},
+      "output": "View"
+    },
+    "Jobs.Take": {
+      "name": "Jobs.Take",
+      "inputs": {
+        "worker": "string"
+      },
+      "output": "Assignment"
+    }
+  },
+  "types": {
+    "Assignment": {
+      "sent": "response",
+      "kind": "enum",
+      "variants": {
+        "Work": {
+          "chunk": "Chunk"
+        },
+        "Wait": {}
+      }
+    },
+    "Cell": {
+      "sent": "response",
+      "kind": "record",
+      "fields": {
+        "state": "string",
+        "worker": "string",
+        "attempts": "int",
+        "taken": "DateTime",
+        "milliseconds": "long"
+      }
+    },
+    "Chunk": {
+      "sent": "response",
+      "kind": "record",
+      "fields": {
+        "job": "int",
+        "id": "int",
+        "scenarios": "int",
+        "seed": "int"
+      }
+    },
+    "JobSpec": {
+      "sent": "both",
+      "kind": "record",
+      "fields": {
+        "chunks": "int",
+        "scenarios": "int",
+        "seed": "int"
+      }
+    },
+    "Run": {
+      "sent": "response",
+      "kind": "record",
+      "fields": {
+        "job": "int",
+        "spec": "JobSpec",
+        "seconds": "double",
+        "workers": "int",
+        "retried": "int",
+        "cancelled": "bool",
+        "valuation": "Valuation"
+      }
+    },
+    "Sample": {
+      "sent": "request",
+      "kind": "record",
+      "fields": {
+        "counts": "ImmutableList<int>",
+        "total": "double"
+      }
+    },
+    "Tally": {
+      "sent": "request",
+      "kind": "record",
+      "fields": {
+        "job": "int",
+        "chunk": "int",
+        "worker": "string",
+        "sample": "Sample",
+        "milliseconds": "long"
+      }
+    },
+    "Valuation": {
+      "sent": "response",
+      "kind": "record",
+      "fields": {
+        "scenarios": "long",
+        "value": "double",
+        "mean": "double",
+        "var95": "double",
+        "var99": "double",
+        "shortfall99": "double",
+        "formulaVar99": "double",
+        "histogram": "ImmutableList<long>",
+        "low": "double",
+        "high": "double"
+      }
+    },
+    "View": {
+      "sent": "response",
+      "kind": "record",
+      "fields": {
+        "job": "int",
+        "spec": "JobSpec",
+        "running": "bool",
+        "seconds": "double",
+        "done": "int",
+        "outstanding": "int",
+        "retried": "int",
+        "late": "int",
+        "leaseSeconds": "double",
+        "cells": "ImmutableList<Cell>",
+        "workers": "ImmutableList<WorkerView>",
+        "history": "ImmutableList<Run>"
+      }
+    },
+    "WorkerView": {
+      "sent": "response",
+      "kind": "record",
+      "fields": {
+        "name": "string",
+        "active": "bool",
+        "current": "int",
+        "done": "int",
+        "averageMs": "long"
+      }
+    }
+  }
+}

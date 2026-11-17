@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using Piper.Plugins;
 using Piper.Syntax;
+using static Piper.Plugins.Shared.HostClauses;
 
 namespace Piper.Plugins.Web;
 
@@ -56,7 +57,17 @@ public sealed partial class WebPlugin
     private sealed record PolicyName(Concern Concern, string Name, Token Token);
 
     /// <summary>What an <c>endpoints</c> block noted for the analysis: the named policies it uses, and its policy words.</summary>
-    private sealed record EndpointsData(Token Name, ImmutableArray<PolicyName> Uses, ImmutableArray<Token> Words, ImmutableArray<LambdaExpressionSyntax> Handlers);
+    private sealed record EndpointsData(Token Name, ImmutableArray<PolicyName> Uses, ImmutableArray<Token> Words, ImmutableArray<LambdaExpressionSyntax> Handlers)
+    {
+        /// <summary>The api the endpoints answer (<c>endpoints Api: TrackerApi</c>), checked once types are known (WebApiChecks.cs).</summary>
+        public Token? Api { get; init; }
+
+        /// <summary>The group's route prefix, if it has one.</summary>
+        public string? Prefix { get; init; }
+
+        /// <summary>Each endpoint: its HTTP method, its full route (the group's prefix and its own), and its handler.</summary>
+        public ImmutableArray<(string Method, string Route, Token RouteToken, LambdaExpressionSyntax Handler)> Routes { get; init; } = [];
+    }
 
     /// <summary>What a <c>policies</c> block noted for the analysis: the policies it declares.</summary>
     private sealed record PoliciesData(ImmutableArray<PolicyName> Declared);
@@ -364,38 +375,6 @@ public sealed partial class WebPlugin
         return null;
     }
 
-    private static readonly Dictionary<string, string> DurationUnits = new()
-    {
-        ["millisecond"] = "FromMilliseconds",
-        ["milliseconds"] = "FromMilliseconds",
-        ["second"] = "FromSeconds",
-        ["seconds"] = "FromSeconds",
-        ["minute"] = "FromMinutes",
-        ["minutes"] = "FromMinutes",
-        ["hour"] = "FromHours",
-        ["hours"] = "FromHours",
-    };
-
-    /// <summary>
-    /// A duration, <c>10 seconds</c> or, after <c>per</c>, just <c>minute</c>: a <c>System.TimeSpan</c>. The count is an
-    /// expression, so a constant or a configuration value works.
-    /// </summary>
-    private static ExpressionSyntax Duration(PluginParser p, bool countOptional)
-    {
-        bool AtUnit() => p.Current.Kind == TokenKind.Identifier && DurationUnits.ContainsKey(p.Current.Text);
-
-        var count = countOptional && AtUnit() ? p.Template.Expression("1") : p.ParseExpression();
-        if (!AtUnit())
-        {
-            // `per fortnight`: the word read as the count was meant as the unit.
-            var at = count is NameExpressionSyntax && countOptional ? count.Span : p.Current.Span;
-            p.Report(at, "Expected the unit: seconds, minutes, hours or milliseconds.");
-            return p.Template.Expression("System.TimeSpan.Zero");
-        }
-        var unit = p.ReadWord();
-        return p.Template.Expression($"System.TimeSpan.{DurationUnits[unit.Text]}((double)($count))", ("count", count));
-    }
-
     /// <summary>A CORS origin, <c>"https://partner.example"</c>; any string expression works, so configuration can supply it.</summary>
     private static ExpressionSyntax PolicyOrigin(PluginParser p) => p.ParseExpression();
 
@@ -416,6 +395,7 @@ public sealed partial class WebPlugin
         AnalyzePolicies(analysis);
         AnalyzeServers(analysis);
         AnalyzeServerServices(analysis);
+        AnalyzeApis(analysis);
     }
 
     /// <summary>

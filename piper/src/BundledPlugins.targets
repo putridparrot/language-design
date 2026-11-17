@@ -7,15 +7,18 @@
   -->
   <ItemGroup>
     <BundledPlugin Include="actors" Folder="Piper.Plugins.Actors" />
+    <BundledPlugin Include="api" Folder="Piper.Plugins.Api" />
     <BundledPlugin Include="aspects" Folder="Piper.Plugins.Aspects" />
     <BundledPlugin Include="args" Folder="Piper.Plugins.Args" />
     <BundledPlugin Include="config" Folder="Piper.Plugins.Config" />
     <BundledPlugin Include="data" Folder="Piper.Plugins.Data" />
+    <BundledPlugin Include="hosting" Folder="Piper.Plugins.Hosting" />
     <BundledPlugin Include="remote-actors" Folder="Piper.Plugins.Actors.Remote" />
     <BundledPlugin Include="openapi" Folder="Piper.Plugins.OpenApi" />
     <BundledPlugin Include="parallel" Folder="Piper.Plugins.Parallel" />
     <BundledPlugin Include="services" Folder="Piper.Plugins.Services" />
     <BundledPlugin Include="state-machines" Folder="Piper.Plugins.StateMachines" />
+    <BundledPlugin Include="telemetry" Folder="Piper.Plugins.Telemetry" />
     <BundledPlugin Include="web" Folder="Piper.Plugins.Web" />
     <ProjectReference Include="@(BundledPlugin->'$(MSBuildThisFileDirectory)..\plugins\%(Folder)\%(Folder).csproj')" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>

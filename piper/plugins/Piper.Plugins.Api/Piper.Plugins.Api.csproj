@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The api plugin: `api Name "/prefix" { fn Call(…) => Type = get "/route"; … }`, an HTTP API's shape, and a typed client
+    calling it. It's listed in a program's piper.json ("plugins": ["api"]) and loaded by the compiler, which never
+    references it. The client's code calls Piper.Runtime (PiperClient), which every program has, so it needs no web.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!-- One place whatever the configuration, so piper.json files can point at it. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\plugin\</OutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The compiler loads the plugin, so it provides Piper.Compiler; don't copy it next to the plugin. -->
+    <ProjectReference Include="..\..\src\Piper.Compiler\Piper.Compiler.csproj" Private="false" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+</Project>

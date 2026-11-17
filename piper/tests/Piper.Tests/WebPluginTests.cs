@@ -256,13 +256,318 @@ public class WebPluginTests
         Assert.Equal(2, run.Results.Length);
     }
 
+    /// <summary>
+    /// <c>https</c> serves a certificate from a .pfx file (with its password) or PEM files (as a Kubernetes TLS secret
+    /// has them), and redirects HTTP to HTTPS. Served from memory, there's nowhere to redirect to, and no certificate
+    /// is loaded, so a test needs neither.
+    /// </summary>
+    [Fact]
+    public void A_server_serves_https_with_its_certificate()
+    {
+        var folder = Directory.CreateTempSubdirectory("piper-https-");
+        try
+        {
+            using var rsa = System.Security.Cryptography.RSA.Create(2048);
+            var request = new System.Security.Cryptography.X509Certificates.CertificateRequest(
+                "CN=localhost", rsa, System.Security.Cryptography.HashAlgorithmName.SHA256, System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+            using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
+            string Write(string name, string text)
+            {
+                var path = Path.Combine(folder.FullName, name);
+                File.WriteAllText(path, text);
+                return path.Replace('\\', '/');
+            }
+            var pfx = Path.Combine(folder.FullName, "server.pfx");
+            File.WriteAllBytes(pfx, certificate.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Pfx, "secret"));
+            var crt = Write("tls.crt", certificate.ExportCertificatePem());
+            var key = Write("tls.key", rsa.ExportPkcs8PrivateKeyPem());
+
+            var result = Compilation.Compile([new SourceText($$""""
+                using System;
+                using System.Linq;
+                using System.Net;
+                using System.Net.Http;
+                using System.Collections.Generic;
+                using System.Threading.Tasks;
+                using Microsoft.AspNetCore.Builder;
+                using Piper.Web;
+
+                endpoints Api { get "/" () => "secure"; }
+
+                server Pfx(path: string) {
+                    urls ["http://127.0.0.1:0", "https://127.0.0.1:0"];
+                    logging off;
+                    https certificate path password "secret";
+                    endpoints Api;
+                }
+
+                server Pem {
+                    urls "https://127.0.0.1:0";
+                    logging off;
+                    https certificate "{{crt}}" key "{{key}}";
+                    endpoints Api;
+                }
+
+                fn Main() {}
+
+                // What the app answers at its https:// address, and the thumbprint of the certificate it showed.
+                async fn Fetch(app: WebApplication) => Task<string> {
+                    let url = app.Urls.First(u => u.StartsWith("https://"));
+                    let seen = List<string>();
+                    using let handler = HttpClientHandler();
+                    handler.ServerCertificateCustomValidationCallback = (message, certificate, chain, errors) => {
+                        seen.Add(certificate.Thumbprint);
+                        true
+                    };
+                    using let client = HttpClient(handler);
+                    let body = await client.GetStringAsync(url);
+                    $"{body} {seen[0]}"
+                }
+
+                async test "a .pfx certificate is served, and HTTP redirected to it" {
+                    let app = Pfx("{{pfx.Replace('\\', '/')}}");
+                    await app.StartAsync();
+                    AssertEqual("secure {{certificate.Thumbprint}}", await Fetch(app));
+
+                    using let handler = HttpClientHandler();
+                    handler.AllowAutoRedirect = false;
+                    using let client = HttpClient(handler);
+                    let plain = await client.GetAsync(app.Urls.First(u => u.StartsWith("http://")));
+                    AssertEqual(HttpStatusCode.TemporaryRedirect, plain.StatusCode);
+                    AssertEqual(app.Urls.First(u => u.StartsWith("https://")) + "/", plain.Headers.Location?.ToString() ?? "");
+                    await app.StopAsync();
+                }
+
+                async test "a PEM certificate and key are served" {
+                    let app = Pem();
+                    await app.StartAsync();
+                    AssertEqual("secure {{certificate.Thumbprint}}", await Fetch(app));
+                    await app.StopAsync();
+                }
+
+                async test "served from memory, nothing is redirected and no certificate is loaded" {
+                    using let site = await TestClient.Start(() => Pfx("missing.pfx"));
+                    AssertEqual("secure", await site.GetStringAsync("/"));
+                }
+                """", "main.piper")],
+                new CompilationOptions(LineDirectives: true, IncludeTests: true) { Plugins = Web.Value.Plugins, References = Web.Value.References });
+            Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+            var run = Runner.RunTests(result.Files, references: result.References);
+            Assert.Empty(run.Errors);
+            Assert.True(run.Results.All(r => r.Passed), string.Join("\n", run.Results.Select(r => $"{r.Name}: {r.Failure}")));
+            Assert.Equal(3, run.Results.Length);
+        }
+        finally
+        {
+            folder.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A server's background work: <c>worker</c> runs a handler for the app's life (its token cancelled as it stops,
+    /// and waited for), <c>worker every</c> runs one each period (a failing run logged, and the next run anyway), and
+    /// <c>hosted</c> runs a .NET hosted service.
+    /// </summary>
+    [Fact]
+    public void A_server_runs_its_workers_and_hosted_services()
+    {
+        var result = Compilation.Compile([new SourceText(""""
+            using System;
+            using System.Collections.Generic;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Microsoft.Extensions.Hosting;
+            using Piper.Web;
+
+            class Log { public mut lines: List<string> = []; }
+            class Ticks { public mut count = 0; }
+
+            class Beacon(log: Log): IHostedService {
+                fn StartAsync(cancellation: CancellationToken) => Task {
+                    log.lines.Add("beacon on");
+                    Task.CompletedTask
+                }
+                fn StopAsync(cancellation: CancellationToken) => Task {
+                    log.lines.Add("beacon off");
+                    Task.CompletedTask
+                }
+            }
+
+            endpoints Api { get "/ticks" (ticks: Ticks) => ticks.count; }
+
+            server S(log: Log, ticks: Ticks) {
+                logging off;
+                singleton Log = log;
+                singleton Ticks = ticks;
+                endpoints Api;
+                hosted Beacon;
+                worker async (log: Log, stopping: CancellationToken) => {
+                    log.lines.Add("working");
+                    try {
+                        await Task.Delay(Timeout.Infinite, stopping);
+                    } catch (_: OperationCanceledException) {
+                        log.lines.Add("finished");
+                    }
+                };
+                worker every 10 milliseconds (ticks: Ticks) => {
+                    ticks.count += 1;
+                    if ticks.count == 2 {
+                        throw InvalidOperationException("the second run fails");
+                    }
+                };
+            }
+
+            fn Main() {}
+
+            async test "workers run with the app, and stop with it" {
+                let log = Log();
+                let ticks = Ticks();
+                let site = await TestClient.Start(() => S(log, ticks));
+                for attempt in 1..200 {
+                    if ticks.count >= 4 { break; }
+                    await Task.Delay(10);
+                }
+                Assert(ticks.count >= 4, $"a failing run stops the next: {ticks.count}");
+                site.Dispose();
+                AssertEqual(["beacon on", "working", "finished", "beacon off"], log.lines);
+            }
+            """", "main.piper")],
+            new CompilationOptions(LineDirectives: true, IncludeTests: true) { Plugins = Web.Value.Plugins, References = Web.Value.References });
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.RunTests(result.Files, references: result.References);
+        Assert.Empty(run.Errors);
+        Assert.True(run.Results.All(r => r.Passed), string.Join("\n", run.Results.Select(r => $"{r.Name}: {r.Failure}")));
+    }
+
+    [Theory]
+    [InlineData("every 30 seconds")]
+    [InlineData("every minute")]
+    [InlineData("every tick")]
+    [InlineData("every settings.tick")]
+    [InlineData("every settings.seconds seconds")]
+    [InlineData("every (settings.seconds * 2) milliseconds")]
+    public void A_workers_period_is_written_as_units_or_a_TimeSpan(string every)
+    {
+        var text = $$"""
+            using System;
+            record Settings(tick: TimeSpan, seconds: int);
+            endpoints Api { get "/" () => "hi"; }
+            server S(settings: Settings, tick: TimeSpan) { endpoints Api; worker {{every}} () => {}; }
+            fn Main() {}
+            """;
+        var result = Compile(text);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Empty(result.Diagnostics);
+    }
+
+    [Fact]
+    public void A_worker_taking_a_service_nothing_registers_is_an_error()
+    {
+        var text = """
+            class Store {}
+            endpoints Api { get "/" () => "hi"; }
+            server S { endpoints Api; worker every 1 minute (store: Store) => {}; }
+            fn Main() {}
+            """;
+        var error = Assert.Single(Compile(text).Diagnostics);
+        Assert.Equal("PIP0503", error.Code);
+        Assert.Contains("S registers no Store, but it's given to this", error.Message);
+        Assert.Equal(text.IndexOf("store: Store", StringComparison.Ordinal), error.Span.Start);
+    }
+
+    [Theory]
+    [InlineData("urls \"http://127.0.0.1:5080\";", true)]
+    [InlineData("urls [\"http://127.0.0.1:5080\", \"http://127.0.0.1:5081\"];", true)]
+    [InlineData("urls [\"http://127.0.0.1:5080\", \"https://127.0.0.1:5081\"];", false)]
+    [InlineData("urls Environment.GetEnvironmentVariable(\"URLS\") ?? \"\";", false)]
+    [InlineData("urls \"http://0.0.0.0:8080\"; forwarded;", false)]
+    [InlineData("", false)]
+    public void Https_with_only_http_urls_is_warned_about(string urls, bool warned)
+    {
+        var text = $$"""
+            using System;
+            endpoints Api { get "/" () => "hi"; }
+            server S { {{urls}} https; endpoints Api; }
+            fn Main() {}
+            """;
+        var result = Compile(text);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        if (!warned)
+        {
+            Assert.Empty(result.Diagnostics);
+            return;
+        }
+        var warning = Assert.Single(result.Diagnostics);
+        Assert.Equal("PIP0505", warning.Code);
+        Assert.Contains("S redirects to HTTPS, but listens only on http:// addresses", warning.Message);
+        Assert.Equal(text.IndexOf(urls[5..], StringComparison.Ordinal), warning.Span.Start);
+    }
+
+    /// <summary>
+    /// <c>forwarded</c>: behind a proxy, a request's scheme and client are those the proxy says (X-Forwarded-Proto and
+    /// X-Forwarded-For), before anything else in the pipeline sees them. With <c>from</c>, only those proxies are
+    /// believed: a request from anywhere else keeps its own (served from memory, it comes from 127.0.0.1, which isn't one).
+    /// </summary>
+    [Fact]
+    public void A_server_behind_a_proxy_sees_what_the_proxy_saw()
+    {
+        var result = Compilation.Compile([new SourceText(""""
+            using System;
+            using System.Net.Http;
+            using Microsoft.AspNetCore.Http;
+            using Piper.Web;
+
+            endpoints Api {
+                get "/where" (http: HttpContext) => $"{http.Request.Scheme} {http.Connection.RemoteIpAddress?.ToString() ?? "none"}";
+            }
+
+            server Anywhere { logging off; forwarded; endpoints Api; }
+            server OnlyOurs { logging off; forwarded from "10.0.0.0/8", "192.168.1.1"; endpoints Api; }
+            server Plain { logging off; endpoints Api; }
+
+            fn Proxied() => HttpRequestMessage {
+                let request = HttpRequestMessage(HttpMethod.Get, "/where");
+                request.Headers.Add("X-Forwarded-Proto", "https");
+                request.Headers.Add("X-Forwarded-For", "203.0.113.7");
+                request
+            }
+
+            fn Main() {}
+
+            async test "any proxy is believed" {
+                using let site = await TestClient.Start(() => Anywhere());
+                AssertEqual("https 203.0.113.7", await (await site.SendAsync(Proxied())).Content.ReadAsStringAsync());
+                AssertEqual("http 127.0.0.1", await site.GetStringAsync("/where"));
+            }
+
+            async test "only the proxies named are believed" {
+                using let site = await TestClient.Start(() => OnlyOurs());
+                AssertEqual("http 127.0.0.1", await (await site.SendAsync(Proxied())).Content.ReadAsStringAsync());
+            }
+
+            async test "without forwarded, the headers are ignored" {
+                using let site = await TestClient.Start(() => Plain());
+                AssertEqual("http 127.0.0.1", await (await site.SendAsync(Proxied())).Content.ReadAsStringAsync());
+            }
+            """", "main.piper")],
+            new CompilationOptions(LineDirectives: true, IncludeTests: true) { Plugins = Web.Value.Plugins, References = Web.Value.References });
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.RunTests(result.Files, references: result.References);
+        Assert.Empty(run.Errors);
+        Assert.True(run.Results.All(r => r.Passed), string.Join("\n", run.Results.Select(r => $"{r.Name}: {r.Failure}")));
+        Assert.Equal(3, run.Results.Length);
+    }
+
     [Theory]
     [InlineData("server S { endpoints Api; colour red; }", "colour", "'colour' isn't a server clause")]
+    [InlineData("server S { https; https; endpoints Api; }", "https; endpoints", "'https' is already given for S")]
     [InlineData("server S { urls \"a\"; urls \"b\"; endpoints Api; }", "urls \"b\"", "'urls' is already given for S")]
     [InlineData("server S { urls \"a\"; }", "S", "S maps no endpoints")]
     [InlineData("server S { endpoints Api, Api; }", "Api;", "'Api' is already mapped by S")]
     [InlineData("server S { endpoints Api; health \"/h\" { check \"a\" () => true; check \"a\" () => true; } }", "\"a\" () => true; }", "There's already a check named \"a\"")]
     [InlineData("server S(port) { endpoints Api; }", "port", "Give 'port' a type")]
+    [InlineData("server S { endpoints Api; forwarded from \"10.0.0.0/8\", \"proxy\"; }", "\"proxy\"", "'proxy' isn't an IP address (10.1.2.3) or a network (10.0.0.0/8)")]
+    [InlineData("server S { endpoints Api; forwarded; forwarded; }", "forwarded; }", "'forwarded' is already given for S")]
     public void Mistakes_in_a_server_are_reported(string server, string at, string message)
     {
         var text = "endpoints Api { get \"/\" () => \"hi\"; }\nfn Main() {}\n" + server;

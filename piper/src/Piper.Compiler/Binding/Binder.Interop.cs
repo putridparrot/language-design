@@ -320,11 +320,14 @@ public sealed partial class Binder
         var chosen = resolved.Candidate;
         CheckClrObsolete(nameSpan ?? span, chosen.Member);
         CheckFieldNames(chosen, argumentSyntax, leadingArguments.Length);
+        // `log.LogInformation($"Reserved {quantity}")`: a template with named fields (Binder.Logging.cs).
+        var (arguments, logLevel) = LoggingTemplate(chosen.Member, resolved.Arguments, resolved.Names);
         var call = new BoundClrInvocationExpression(
-            receiver, chosen.Container, chosen.Member, resolved.Arguments,
+            receiver, chosen.Container, chosen.Member, arguments,
             BoundaryInnerType((chosen.ReturnType, chosen.ReturnBoundary)), chosen.TypeArguments)
         {
             ArgumentNames = resolved.Names,
+            LogLevel = logLevel,
         };
         // `await db.Users.FirstOrDefaultAsync(…)`: a task of a possibly-null result is a task of an Option.
         if (chosen.ReturnBoundary == ClrBoundary.None && NullableTaskResult(chosen) is { } optionTask)

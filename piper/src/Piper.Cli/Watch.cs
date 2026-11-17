@@ -66,7 +66,9 @@ static class Watch
     {
         var changed = new SemaphoreSlim(0);
         var lastChange = "";
-        var watchers = inputs.Select(input => Watcher(input, path =>
+        // The projects a folder shares code with are watched too, as a change to them changes the program.
+        var watched = inputs.Concat(inputs.Where(Directory.Exists).SelectMany(input => Piper.LoadedProject.SharedFoldersOf(input))).Distinct().ToList();
+        var watchers = watched.Select(input => Watcher(input, path =>
         {
             lastChange = path;
             changed.Release();

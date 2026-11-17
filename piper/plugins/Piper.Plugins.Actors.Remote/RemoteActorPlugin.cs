@@ -40,6 +40,9 @@ public sealed class RemoteActorPlugin : IPiperPlugin
 
     public IReadOnlyList<string> Frameworks => ["Microsoft.AspNetCore.App"];
 
+    /// <summary>Piper.Actors.Remote: sending and handling messages with their trace context (see PiperActorTracing).</summary>
+    public IReadOnlyList<string> References => ["Piper.Actors.Remote.dll"];
+
     public IReadOnlyList<PluginKeyword> Keywords { get; } =
     [
         new DeclarationKeyword("actor", Actor)
@@ -76,6 +79,40 @@ public sealed class RemoteActorPlugin : IPiperPlugin
                     $"'{field.Name}' holds a {part}, which can't be sent to another process as data, or could change after it's sent. " +
                     "Send records, enums, Piper's builtin types or immutable .NET types; for another actor, send its name.");
         }
+        CheckShapes(analysis);
+    }
+
+    /// <summary>
+    /// Checks each actor's messages against the shape recorded beside it, <c>Counter.shape.json</c>: during a rolling
+    /// update old and new processes send each other messages, so a handler removed, a value it newly needs, a field
+    /// changed or a reply of another type breaks them mid-rollout (see <see cref="WireShapes"/>).
+    /// </summary>
+    private static void CheckShapes(PluginAnalysis analysis)
+    {
+        foreach (var expansion in analysis.Expansions)
+        {
+            bool Generated(Syntax.SyntaxNode? node) => node is not null && expansion.Result.Any(r => ReferenceEquals(r, node));
+            if (analysis.Program.Types.OfType<Binding.EnumSymbol>().FirstOrDefault(e => Generated(e.Declaration)) is not { } messages ||
+                analysis.Program.Types.OfType<Binding.RecordSymbol>().FirstOrDefault(r => Generated(r.Declaration) && r.Name + "Message" == messages.Name) is not { } actor)
+                continue;
+            // An ask's method answers a Task of its reply; a tell's answers nothing.
+            var methods = analysis.Program.Methods
+                .Select(m => m.Symbol)
+                .OfType<Binding.MethodSymbol>()
+                .Where(m => ReferenceEquals(m.ContainingType.OriginalDefinition, actor))
+                .GroupBy(m => m.Name)
+                .ToDictionary(g => g.Key, g => g.First());
+            var operations = messages.Variants.Select(variant =>
+            {
+                var reply = methods.TryGetValue(variant.Name, out var method) && method.ReturnType.TypeArguments is [var answer] ? answer : null;
+                return new WireOperation(
+                    $"{actor.Name}.{variant.Name}", $"{actor.Name}.{variant.Name}",
+                    [.. variant.Fields.Select(f => (f.Name, f.Type))],
+                    reply?.ToString() ?? "nothing (a tell)",
+                    reply is null ? [] : [reply]);
+            });
+            analysis.CheckWireShape(expansion.File, actor.Declaration.Name.Span, actor.Name, operations);
+        }
     }
 
     private static ImmutableArray<DeclarationSyntax> Expand(PluginParser p, ActorDeclaration declaration)
@@ -85,6 +122,7 @@ public sealed class RemoteActorPlugin : IPiperPlugin
         var message = actor + "Message";
         var fault = actor + "Fault";
         const string Tasks = "System.Threading.Tasks";
+        const string Tracing = "Piper.Actors.Remote.PiperActorTracing";
 
         var variants = new List<string>();
         var arms = new List<string>();
@@ -103,13 +141,14 @@ public sealed class RemoteActorPlugin : IPiperPlugin
                         try {
                             {{hole[handler.Body]}};
                         } catch (__error: System.Exception) {
+                            {{Tracing}}.Failed(__error);
                             System.Console.Error.WriteLine("{{actor}}: {__error.Message}");
                         }
                     }
                     """);
                 methods.Add($$"""
                     fn {{hole[handler.Name]}}({{hole[handler.Parameters]}}: unit) {
-                        this.__system.Root.Send(this.__pid, {{message}}.{{handler.Name.Text}}{{arguments}});
+                        {{Tracing}}.Send(this.__system, this.__pid, {{message}}.{{handler.Name.Text}}{{arguments}});
                     }
                     """);
             }
@@ -122,14 +161,15 @@ public sealed class RemoteActorPlugin : IPiperPlugin
                             let __result: {{hole[handler.Result]}} = {{hole[handler.Body]}};
                             __context.Respond(__result);
                         } catch (__error: System.Exception) {
+                            {{Tracing}}.Failed(__error);
                             __context.Respond({{fault}}(__error.Message));
                         }
                     }
                     """);
                 methods.Add($$"""
                     async fn {{hole[handler.Name]}}({{hole[handler.Parameters]}}: unit) => {{Tasks}}.Task<{{hole[handler.Result]}}> {
-                        let __reply = await Proto.SenderContextExtensions.RequestAsync<object>(
-                            this.__system.Root, this.__pid, {{message}}.{{handler.Name.Text}}{{arguments}}, this.__timeout);
+                        let __reply = await {{Tracing}}.RequestAsync(
+                            this.__system, this.__pid, {{message}}.{{handler.Name.Text}}{{arguments}}, this.__timeout);
                         match __reply {
                             {{fault}}(__error) => throw System.InvalidOperationException(__error),
                             _ => ({{hole[handler.Result]}})__reply,
@@ -142,9 +182,11 @@ public sealed class RemoteActorPlugin : IPiperPlugin
         // A receive function that awaits must be async; one that doesn't returns a finished task (an async lambda
         // without an await would be warned about).
         bool awaits = declaration.Handlers.Any(handler => SyntaxWalker.Awaits(handler.Body));
+        // Each of the actor's messages is handled in a span continuing its sender's trace (from its headers), and timed.
+        var span = $"using let __span = {Tracing}.Start<{message}>(__context, \"{actor}\");";
         var receive = awaits
-            ? $"async __context => {{ match __context.Message {{ {string.Join("\n", arms)} _ => {{}} }} }}"
-            : $"__context => {{ match __context.Message {{ {string.Join("\n", arms)} _ => {{}} }} {Tasks}.Task.CompletedTask }}";
+            ? $"async __context => {{ {span} match __context.Message {{ {string.Join("\n", arms)} _ => {{}} }} }}"
+            : $"__context => {{ {span} match __context.Message {{ {string.Join("\n", arms)} _ => {{}} }} {Tasks}.Task.CompletedTask }}";
 
         var template = $$"""
             enum {{message}} {

@@ -6,8 +6,29 @@ namespace Piper.Runtime;
 /// <c>{ IsSome: true, Value: var v }</c>.
 /// </summary>
 [System.Text.Json.Serialization.JsonConverter(typeof(OptionJsonConverterFactory))]
-public readonly record struct Option<T> : IComparable<Option<T>>, IComparable
+public readonly record struct Option<T> : IComparable<Option<T>>, IComparable, IDisposable, IAsyncDisposable
 {
+    /// <summary>
+    /// <c>using let span = source.StartActivity("x");</c>: an Option in a <c>using</c> disposes its value if it's Some,
+    /// as C#'s <c>using</c> skips a null. Explicit, so it isn't a member Piper code sees; the compiler only allows it
+    /// for an Option of something disposable.
+    /// </summary>
+    void IDisposable.Dispose()
+    {
+        if (IsSome && Value is IDisposable disposable)
+            disposable.Dispose();
+    }
+
+    /// <summary><c>await using</c>: the value's <c>DisposeAsync</c> if it's Some (or its <c>Dispose</c>, as C# falls back).</summary>
+    ValueTask IAsyncDisposable.DisposeAsync()
+    {
+        if (IsSome && Value is IAsyncDisposable asynchronous)
+            return asynchronous.DisposeAsync();
+        if (IsSome && Value is IDisposable disposable)
+            disposable.Dispose();
+        return ValueTask.CompletedTask;
+    }
+
     /// <summary>
     /// Orders as C# orders a nullable: None before any value, and values as <typeparamref name="T"/> orders them, so
     /// <c>items.OrderBy(i =&gt; i.name)</c> works with an optional key. A T that can't be compared throws, as in C#.

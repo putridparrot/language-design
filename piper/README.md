@@ -34,6 +34,7 @@ piper build app.piper --exe   # compile to bin/app.exe (plus app.dll, its .pdb a
 piper build src/ --library    # compile to bin/src.dll; --name and -o choose the name and folder
 piper build api/ --publish    # compile for a container: bin/publish, with a Dockerfile; then docker build bin/publish
 piper test src/               # run the program's test blocks (--filter picks some by name)
+piper build src/ --accept-breaking   # record an api's shape over a deliberate breaking change (see docs/plugins.md)
 piper emit hello.piper        # print the C#
 ```
 
@@ -47,6 +48,7 @@ follows (flags override it):
   "packages": { "Humanizer.Core": "2.14.1" },
   "frameworks": ["Microsoft.AspNetCore.App"],
   "references": ["lib/My.Library.dll"],
+  "projects": ["../shared"],
   "plugins": ["web", "../plugins/My.Plugin.dll"]
 }
 ```
@@ -57,11 +59,16 @@ follows (flags override it):
 - **`frameworks`** are shared frameworks such as ASP.NET Core, which come with .NET rather than as packages. On .NET 10,
   `Microsoft.Extensions.DependencyInjection` and the other `Microsoft.Extensions` libraries are part of ASP.NET Core's.
 - **`references`** are .NET assemblies, with paths relative to the folder.
+- **`projects`** are other program folders whose code this one shares, such as a server and its clients sharing
+  their records and API. Their source is compiled in (Piper's Options, newtypes and enums don't survive a trip
+  through a compiled assembly), with their plugins, packages and references, but not their tests, which are theirs;
+  and theirs in turn, each once. [apps/tracker-core](apps/tracker-core) is one, shared by the tracker's server and its
+  desktop client.
 - **`plugins`** add keywords to the language (see [docs/plugins.md](docs/plugins.md)). Those that come with piper are
-  named: `services` (dependency injection), `web` (ASP.NET Core endpoints), `openapi` (OpenAPI documents for them),
-  `args` (command-line options), `actors`, `remote-actors`, `parallel` and `state-machines`. Any other is the path of
-  its assembly, relative to the folder, or a name given with `piper plugin add <folder>`, which copies it to
-  `~/.piper/plugins`.
+  named: `services` (dependency injection), `web` (ASP.NET Core endpoints), `api` (an API's shape and typed client),
+  `openapi` (OpenAPI documents for them), `telemetry` (OpenTelemetry), `args` (command-line options), `actors`,
+  `remote-actors`, `parallel` and `state-machines`. Any other is the path of its assembly, relative to the folder, or
+  a name given with `piper plugin add <folder>`, which copies it to `~/.piper/plugins`.
 
 Every key is optional; an empty file is fine. Any other key is an error, so future versions can add keys without
 changing what today's files mean. `piper run`, `piper test` and the editor use the packages, frameworks and references

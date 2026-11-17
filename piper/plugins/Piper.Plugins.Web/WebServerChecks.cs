@@ -81,10 +81,11 @@ public sealed partial class WebPlugin
                 }
             }
 
-            // A check's or hook's parameters all come from DI, records too.
+            // A check's, hook's or worker's parameters all come from DI, records too.
             var checks = HandlerLambdas(function.Body, call => IsPiperWebCall(call, "PiperHealth", "AddCheck"));
-            var hooks = HandlerLambdas(function.Body, call => IsPiperWebCall(call, "PiperServer", "OnStopping"));
-            foreach (var (syntax, lambda) in Pair(server.Checks, checks).Concat(Pair(server.Hooks, hooks)))
+            var hooks = HandlerLambdas(function.Body, call => IsHostCall(call, "OnStopping"));
+            var workers = HandlerLambdas(function.Body, call => IsHostCall(call, "Worker"));
+            foreach (var (syntax, lambda) in Pair(server.Checks, checks).Concat(Pair(server.Hooks, hooks)).Concat(Pair(server.Workers, workers)))
             {
                 foreach (var (parameter, type) in Parameters(syntax, lambda))
                 {
@@ -178,6 +179,10 @@ public sealed partial class WebPlugin
 
     private static bool IsPiperWebCall(BoundClrInvocationExpression call, string type, string method) =>
         call.Member.DeclaringType?.FullName == $"Piper.Web.{type}" && call.Member.Name == method;
+
+    /// <summary>A call to Piper.Hosting's <c>PiperHost</c>, which a server's workers and stopping hooks share with a <c>host</c>'s.</summary>
+    private static bool IsHostCall(BoundClrInvocationExpression call, string method) =>
+        call.Member.DeclaringType?.FullName == "Piper.Hosting.PiperHost" && call.Member.Name == method;
 
     /// <summary>The handler each matching call is given (its first lambda argument), in order.</summary>
     private static List<BoundLambdaExpression> HandlerLambdas(BoundNode body, Func<BoundClrInvocationExpression, bool> matches) =>

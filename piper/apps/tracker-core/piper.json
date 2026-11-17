@@ -1,0 +1,9 @@
+{
+  // Tracker Core: what the tracker's server (apps/tracker) and its clients (apps/tracker-desktop) share: issues and
+  // their workflow, the records the API exchanges, and the API itself, `api TrackerApi`, which is the server's shape
+  // and the clients' typed client. Each names it in "projects", so it's compiled into both. `piper test
+  // apps/tracker-core` runs its tests.
+  "name": "tracker-core",
+  "output": "library",
+  "plugins": ["state-machines", "api"]
+}

@@ -1,0 +1,34 @@
+{
+  "name": "Account",
+  "calls": {
+    "Account.Deposit": {
+      "name": "Account.Deposit",
+      "inputs": {
+        "transfer": "Transfer"
+      },
+      "output": "nothing (a tell)"
+    },
+    "Account.Summary": {
+      "name": "Account.Summary",
+      "inputs": {},
+      "output": "string"
+    },
+    "Account.Withdraw": {
+      "name": "Account.Withdraw",
+      "inputs": {
+        "amount": "decimal"
+      },
+      "output": "decimal"
+    }
+  },
+  "types": {
+    "Transfer": {
+      "sent": "request",
+      "kind": "record",
+      "fields": {
+        "amount": "decimal",
+        "note": "string"
+      }
+    }
+  }
+}

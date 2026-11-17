@@ -36,6 +36,7 @@ them too.
 ## Language
 
 - **`const` declarations,** usable in patterns and attribute arguments (`const` is reserved).
+- ~~**`using` on an Option**~~ (found writing the actor tracing test), done: `using let span = source.StartActivity("x");` (an `Activity?`) disposes it if there is one, as C#'s `using` skips a null.
 - **Spans:** `Span<T>` and `ReadOnlySpan<T>` (and ref structs generally), so APIs such as `AsSpan` and span overloads can be called. They can't be captured by lambdas or live across `await`, as in C#.
 - **Namespace-qualified variants in patterns** (`Library.Loans.LoanError.UnknownBook(code)`).
 - **Explicit attribute targets** (`[return: …]`), and `[Obsolete]` warnings for using an obsolete enum variant.
@@ -154,7 +155,11 @@ Results answered as 200, 404 or ProblemDetails (see [JSON](language.md#json) and
      a server (a console program's `ServiceCollection`), which would need its own idea of what's resolved.
    - ~~**Configuration in the server**~~, done: `config Smtp;` reads a `config` record as the app starts and registers
      it (and as `IOptions<Smtp>`). Still to come: reloading it when appsettings.json changes (`IOptionsMonitor`).
-   - **HTTPS:** a certificate from configuration, and redirecting HTTP to it.
+   - ~~**HTTPS**~~, done: `https;` redirects HTTP to HTTPS (with HSTS outside Development), and `https certificate
+     path password p;` or `… key keyPath;` serves a .pfx or PEM certificate, from a `config` if wanted. ~~Trusting a
+     TLS-ending proxy's forwarded headers~~ is done too: `forwarded;` (or `forwarded from "10.0.0.0/8";`), so `https`
+     works behind an ingress. Still to come: `X-Forwarded-Host` and a path prefix (`X-Forwarded-Prefix`), for an app
+     served under a path of another's host.
    - ~~**The other apps on it**~~, done: every web app is now a `server`. apps/stock and apps/grid moved their routes
      into `endpoints`, and their hand-written `/healthz` became liveness and readiness checks (their Kubernetes
      readiness probes use `/ready`); apps/auction's server takes its auctioneer, which Main and the tests make.
@@ -175,17 +180,18 @@ Server-side HTML belongs with [UI](#ui) (htmx over plain endpoints), not Razor.
 - **Keyed services** (`singleton Cache["fast"] => MemoryCache;`, injected with `[FromKeyedServices("fast")]`) and
   **open generics** (`scoped Repository<> => SqlRepository<>;`).
 - **Configuration and options:** typed configuration is done (the `config` plugin), and a `server` registers one with
-  `config Smtp;` (as `IOptions<Smtp>` too). Still to come: the same in a `services` block, for programs without a web
-  server, and reloading it when appsettings.json changes.
+  `config Smtp;` (as `IOptions<Smtp>` too), and so does a `host`, for programs without a web server. Still to come:
+  reloading it when appsettings.json changes.
 - **Databases:** the `data` plugin covers EF Core models and queries. Still to come: registering a database with DI
   (`AddDbContext`, its connection string from a `config`), migrations from `piper` (`piper db migrate`), relationships
   between tables (navigation properties), and comparing an optional column with an optional variable in a query.
-- **Background work:** `hosted Worker;` (`AddHostedService`), and a Piper-friendly worker: a class with an
-  `async fn Run(stopping: CancellationToken)`.
+- ~~**Background work**~~ in a `server`, done: `hosted Mailer;` (`AddHostedService`), and `worker` handlers whose
+  parameters are services, run for the app's life or `every` period (apps/auction's clock is one), and in a `host` too.
 - **Composition and testing:** a `services` block including another (a library's), and replacing a registration in a
   test (`services Test: AppServices { singleton Clock = FixedClock("noon"); }`).
-- **Hosts beyond the web:** `Host.CreateApplicationBuilder` for console programs and workers, so they get configuration,
-  logging and lifetime as a web app does, rather than a bare `ServiceCollection`.
+- ~~**Hosts beyond the web**~~, done: the `hosting` plugin's `host`, over `Host.CreateApplicationBuilder`, gives console
+  programs and workers configuration, logging and a lifetime, with a server's clauses (apps/grid's worker nodes are
+  hosts). Still to come: checking the services its handlers take, as a server's are.
 
 ## Cloud and distributed
 
@@ -201,10 +207,28 @@ finishing it), container publishing, and hosted workers; and of actor clustering
    mid-rollout. Piper knows every message type, so `piper build` could keep their shapes in a checked-in file and report
    breaking changes against it: a field removed or retyped, a new field without a default, a handler removed. The same
    check suits records sent as JSON by an API. Cheap, and a check only the compiler is placed to make.
+   ~~**For an `api`**~~, done: its shape is recorded in `Name.shape.json` and each change checked against it (see
+   [plugins](plugins.md#api-an-apis-shape-and-a-typed-client)), through the compiler's `WireShapes`, which
+   `PluginAnalysis.CheckWireShape` gives any plugin. Still to come:
+   - ~~the remote actors plugin's messages and replies~~, done: each actor's in `Name.shape.json` (apps/stock and
+     apps/grid record theirs);
+   - `requires` tightened on a record callers send (old clients' values may now be refused);
+   - generic records, whose fields are recorded in terms of their type parameters;
+   - a server answering clients of more than one shape (versioned routes).
 2. **Tracing through actors** (OpenTelemetry). The stock and grid apps needed hand-built dashboards and `servedBy`
    fields to see which node did what. The plugin generates each remote message's envelope, so it can carry the trace
    context: one request becomes one trace through HTTP, node A and the product actor on node B, with handler times and
    mailbox depth as metrics. Locally, .NET Aspire's dashboard shows them with no setup.
+   ~~Done~~, mostly: a message carries its sender's trace in Proto.Actor's headers, and each handler runs in a span
+   continuing it, timed as `piper.actor.handler.duration` (Piper.Actors.Remote, on .NET's `Activity` and `Meter`). The
+   new `telemetry` plugin's `telemetry;` (in a `server` or `host`) exports traces, metrics and logs over OTLP;
+   apps/stock and apps/grid use it, and a request to stock is one trace through HTTP, the warehouse and the product.
+   Still to come:
+   - mailbox depth (Proto.Actor's mailbox statistics), and spans for sends too (Producer and Client), so a tell that's
+     lost still shows;
+   - a grid chunk as a trace of its own, from the coordinator lending it to the worker's result, with links between them;
+   - leaving health probes (`/healthz`, `/ready`) out of the traces, which Kubernetes calls every few seconds;
+   - ~~`log.Info($"…")` as structured logs with named fields~~, done (see structured logging, below).
 3. **Actors that keep their state** (event sourcing). Both apps lose their state when a pod restarts: stock's counts,
    grid's jobs. Actors' handlers already take commands, so an actor could declare its events, save each as it's handled,
    and replay them when it starts:
@@ -286,12 +310,17 @@ More, around the services themselves:
   plugins already warn about a message's mutable fields; a check like Swift's `Sendable` would make each of these an
   error where the message type is declared, rather than a failure when it's first sent.
 
-- **Typed clients generated from `endpoints`.** [apps/tracker-desktop](../apps/tracker-desktop/README.md)'s
-  `TrackerClient` was written by hand, with its own copies of the API's records; when the tracker's ids became
-  newtypes, the copies didn't follow, and only stayed working because the JSON didn't change. Piper knows every route,
-  parameter and result type, so it can generate the client, sharing the record types, and a change to the API breaks
-  its clients at compile time rather than in production. Between services too, as OpenAPI does, but checked. The most
-  valuable of these.
+- ~~**Typed clients generated from `endpoints`**~~, done as the `api` plugin (see [plugins](plugins.md#api-an-apis-shape-and-a-typed-client)):
+  `api TrackerApi { fn Issue(id: IssueId) => IssueView? = get "/issues/{id:int}"; … }` is the API's shape and its
+  typed client, and `endpoints Api: TrackerApi` is checked against it, so a change to either that the other doesn't
+  follow is a compile error. Shared through piper.json's new `"projects"` (source compiled into each program),
+  [apps/tracker-core](../apps/tracker-core) holds it with the tracker's domain; apps/tracker-desktop's hand-written
+  `TrackerClient` and its copies of the records are gone. Still to come:
+  - calls answering nothing (`unit`), or `Result<T?, E>`;
+  - generating the `api` from existing `endpoints` (or the reverse), for an API that has no clients in Piper yet;
+  - per-call headers and cancellation (a `CancellationToken` parameter passed to the request);
+  - `"projects"` in a Piper.Build project (MSBuild), which compiles only its own folder's files today;
+  - between services: a client for another team's API from its OpenAPI document, checked the same way.
 - **Ids made anywhere** (`newtype OrderId = Guid`, as UUIDv7). The tracker's ids are numbered by the database, so an
   issue has none until it's saved; with messaging and an outbox, an event needs one first. Time-ordered GUIDs
   (`Guid.CreateVersion7()`, in .NET) index well and are made on any node. With newtypes this is small: a standard way
@@ -299,10 +328,11 @@ More, around the services themselves:
 - **Secrets that can't leak.** A `Secret<T>`, or a `secret` field of a `config` record (the tracker's webhook URL, a
   connection string), prints and serializes as `***`; the compiler stops it being interpolated into a string or a
   log, and `.reveal()` is the one way to its value. It could come from Azure Key Vault through the config plugin.
-- **Structured logging from interpolation.** The apps logged with `Console.Error.WriteLine($"…")`.
-  `log.Info($"Reserved {quantity} of {sku}")` could compile to a logging template with named fields, as C#'s
-  `LoggerMessage` generator does, so logs are queried by field (in Application Insights, Seq) while staying natural
-  Piper. It goes with tracing (item 2).
+- ~~**Structured logging from interpolation**~~, done (see [Logging](language.md#logging)):
+  `log.LogInformation($"Reserved {quantity} of {sku}")` is a template with named fields, checking the level first,
+  and the telemetry plugin exports the logs with their traces. apps/tracker's webhook failures are logged so. Still
+  to come: a high-performance form (`LoggerMessage.Define`, cached per call site, as C#'s generator makes), and event
+  ids.
 - **Serverless hosts, and Native AOT.** A `consumer` or an endpoint could also run as an Azure Function (a queue or
   HTTP trigger), the code unchanged and only the host different. That wants Native AOT and trimming, for fast starts
   when scaling from zero, and Piper's runtime uses reflection in places (enum JSON, the data plugin's converters,

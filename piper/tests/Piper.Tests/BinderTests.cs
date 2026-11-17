@@ -194,6 +194,7 @@ public class BinderTests
     [InlineData("PIP0295", "fn Main() { let x = (int)\"1\"; }")]
     [InlineData("PIP0294", "fn Main() { using let s = \"text\"; }")]
     [InlineData("PIP0294", "fn Main() { using (1) { } }")]
+    [InlineData("PIP0294", "fn Main() { let s: string? = None; using let t = s; }")]
     [InlineData("PIP0207", "fn Main() { using mut s = System.IO.MemoryStream(); s = System.IO.MemoryStream(); }")]
     [InlineData("PIP0108", "fn Main() { using let (a, b) = (1, 2); }")]
     [InlineData("PIP0292", "fn Main() { let x = int.MaxValue + 1; }")]

@@ -7,6 +7,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Themes.Fluent;
+using Tracker;
 
 args Options "Tracker Desktop: a window on the Tracker API. Start the API first, with `piper run apps/tracker`." {
     api: string = "http://localhost:5080" "Where the API is";
@@ -31,6 +32,13 @@ fn Main(args: string[]) {
     let options = Options.FromArgs(args);
     let user = options.user ?? Environment.UserName;
     let http = HttpClient() { BaseAddress: Uri(options.api) };
-    let model = MainViewModel.Create(TrackerClient(http, user), user);
+    let model = MainViewModel.Create(SignedIn(http, user), user);
     AppBuilder.Configure<App>(() => App(() => MainWindow(model))).UsePlatformDetect().StartWithClassicDesktopLifetime(args);
+}
+
+/// The API's client (apps/tracker-core's `api TrackerApi`), calling it as `user`: the API signs in whoever its `X-User`
+/// header names.
+fn SignedIn(http: HttpClient, user: string) => TrackerApi {
+    http.DefaultRequestHeaders.Add("X-User", user);
+    TrackerApi(http)
 }

@@ -738,6 +738,12 @@ public sealed class BoundClrInvocationExpression(
     /// <summary>The names of named arguments (`count: 2`), by position; empty when all are positional.</summary>
     public ImmutableArray<string?> ArgumentNames { get; init; } = [];
 
+    /// <summary>
+    /// A logging call whose message was a <c>$"…"</c>, now a template with its holes as arguments: the level
+    /// (<c>Information</c>) it logs at, so the statement can check <c>IsEnabled</c> first and skip the holes when it's off.
+    /// </summary>
+    public string? LogLevel { get; init; }
+
     public BoundExpression? Receiver { get; } = receiver;
 
     public TypeSymbol ContainerType { get; } = containerType;

@@ -5,6 +5,8 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Hosting;
+using Proto;
 using Proto.Remote;
 
 args Options "Grid: a coordinator shares a Monte Carlo Value at Risk among workers that ask it for work. Commands: coordinator; worker; or none, for a coordinator and three workers in this process." {
@@ -45,16 +47,17 @@ async fn Coordinate(options: Options) => Task<int> {
 async fn Worker(options: Options) => Task<int> {
     let node = await StartNode(options.host, options.port ?? 0);
     let name = options.name ?? $"{Environment.MachineName.ToLowerInvariant()}:{node.Address.Split(':')[^1]}";
-    using let stop = CancellationTokenSource();
-    Console.CancelKeyPress += (_, e) => {
-        e.Cancel = true;
-        stop.Cancel();
-    };
-    AppDomain.CurrentDomain.ProcessExit += (_, _) => stop.Cancel();
     Print($"Worker {name} ({options.workers} at once) at {node.Address}, asking {options.coordinator}");
-    await RunWorkers(node, options.coordinator, name, options.workers, stop.Token);
+    await WorkerNode(node, options, name).RunAsync();
     await node.Remote().ShutdownAsync(true);
     0
+}
+
+/// A worker node's workers, run until the host is asked to stop, which cancels them and waits for them to finish.
+host WorkerNode(node: ActorSystem, options: Options, name: string) {
+    logging off;
+    telemetry "grid-worker";
+    worker (stopping: CancellationToken) => RunWorkers(node, options.coordinator, name, options.workers, stopping);
 }
 
 /// A coordinator and three workers, each on its own node in this process, so the work still goes over gRPC: the

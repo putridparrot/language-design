@@ -1,0 +1,44 @@
+// The tracker's HTTP API, as its server answers it and its clients call it: the records it exchanges, and its calls.
+namespace Tracker;
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+record Project(id: ProjectId, code: string, name: string);
+
+record NewProject(code: string, name: string)
+    requires code.Length >= 2 && code.Length <= 10 && code.All(c => char.IsAsciiLetterUpper(c))
+    requires name.Trim().Length > 0;
+
+/// An issue as the API shows it, with what can be done to it next (`["Submit", "Unassign", "Close"]`).
+record IssueView(
+    id: IssueId, projectId: ProjectId, title: string, description: string, priority: Priority, status: WorkflowState,
+    assignee: string?, resolution: string?, created: DateTime, updated: DateTime, next: List<string>);
+
+record Comment(id: CommentId, issueId: IssueId, author: string, text: string, created: DateTime)
+    requires text.Trim().Length > 0;
+
+record NewComment(text: string) requires text.Trim().Length > 0;
+
+/// The calls, each as its handler answers it. The server's `endpoints Api: TrackerApi` must answer every one, taking
+/// what it sends; a client calls it as `TrackerApi(http)`, signed in by the `X-User` header its HttpClient sends.
+api TrackerApi "/api" {
+    fn Health() => string = get "/health";
+
+    fn Projects() => List<Project> = get "/projects";
+    /// Admins only.
+    fn AddProject(project: NewProject) => Result<Project, IssueError> = post "/projects";
+
+    /// A project's issues, with the status (`InProgress`) and words in the title asked for, if they are.
+    fn Issues(projectId: ProjectId, status: string?, q: string?) => Result<List<IssueView>, IssueError> = get "/projects/{projectId:int}/issues";
+    fn AddIssue(projectId: ProjectId, issue: NewIssue) => Result<IssueView, IssueError> = post "/projects/{projectId:int}/issues";
+
+    fn Issue(id: IssueId) => IssueView? = get "/issues/{id:int}";
+    /// Moves an issue through its workflow, if its status allows it.
+    fn Act(id: IssueId, event: WorkflowEvent) => Result<IssueView, IssueError> = post "/issues/{id:int}/events";
+
+    /// An issue's comments, oldest first.
+    fn Comments(id: IssueId) => List<Comment> = get "/issues/{id:int}/comments";
+    fn AddComment(id: IssueId, comment: NewComment) => Result<Comment, IssueError> = post "/issues/{id:int}/comments";
+}

@@ -45,9 +45,10 @@ endpoints Site layout Page {
     };
 }
 
-/// The site, listening on `url`, with `auction`, which Main (and the tests) also drive directly: listing lots, and
-/// telling them the time. Becomes `fn AuctionServer(url, auction) => WebApplication`.
-server AuctionServer(url: string, auction: Auctioneer) {
+/// The site, listening on `url`, with `auction`, which Main (and the tests) also drive directly, listing lots. It tells
+/// the lots the time once each `tick` (their countdowns move, and they end on time); the tests tell them themselves.
+/// Becomes `fn AuctionServer(url, auction, tick) => WebApplication`.
+server AuctionServer(url: string, auction: Auctioneer, tick: TimeSpan) {
     urls url;
     logging off;
     // Forms carry an anti-forgery token, which Form<T> checks.
@@ -57,4 +58,5 @@ server AuctionServer(url: string, auction: Auctioneer) {
     singleton Auctioneer = auction;
     endpoints Site;
     health "/healthz";
+    worker every tick (auction: Auctioneer) => auction.Tick(DateTime.UtcNow);
 }

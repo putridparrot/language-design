@@ -43,11 +43,11 @@ public sealed class PluginRegistry
     /// Runs each plugin's <see cref="IPiperPlugin.Analyze"/> over the bound <paramref name="program"/>. A plugin that
     /// throws is reported, and the others still run.
     /// </summary>
-    public void Analyze(BoundProgram program, DiagnosticBag diagnostics)
+    public void Analyze(BoundProgram program, DiagnosticBag diagnostics, WireShapeMode shapes = WireShapeMode.Check)
     {
         foreach (var plugin in _plugins)
         {
-            var analysis = new PluginAnalysis(plugin, program, [.. _expansions.Where(e => e.Plugin == plugin).Select(e => e.Expansion)], diagnostics);
+            var analysis = new PluginAnalysis(plugin, program, [.. _expansions.Where(e => e.Plugin == plugin).Select(e => e.Expansion)], diagnostics) { ShapeMode = shapes };
             try
             {
                 plugin.Analyze(analysis);

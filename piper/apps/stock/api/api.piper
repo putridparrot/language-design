@@ -70,6 +70,9 @@ endpoints StockApi {
 server StockServer(shards: Shards, url: string) {
     urls url;
     logging off;
+    // Traces (a request through the nodes and the product actor it reaches), metrics and logs, when
+    // OTEL_EXPORTER_OTLP_ENDPOINT says where: Aspire's dashboard, Jaeger, a collector.
+    telemetry "stock";
     singleton Shards = shards;
 
     // A product's node that doesn't answer (stopped, restarting, or too slow) is a 503, which a client can retry,

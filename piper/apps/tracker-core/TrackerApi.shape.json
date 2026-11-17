@@ -1,0 +1,205 @@
+{
+  "name": "TrackerApi",
+  "calls": {
+    "GET /api/health": {
+      "name": "Health",
+      "inputs": {},
+      "output": "string"
+    },
+    "GET /api/issues/{int}": {
+      "name": "Issue",
+      "inputs": {
+        "{1}": "IssueId"
+      },
+      "output": "IssueView?"
+    },
+    "GET /api/issues/{int}/comments": {
+      "name": "Comments",
+      "inputs": {
+        "{1}": "IssueId"
+      },
+      "output": "List<Comment>"
+    },
+    "GET /api/projects": {
+      "name": "Projects",
+      "inputs": {},
+      "output": "List<Project>"
+    },
+    "GET /api/projects/{int}/issues": {
+      "name": "Issues",
+      "inputs": {
+        "q": "string?",
+        "status": "string?",
+        "{1}": "ProjectId"
+      },
+      "output": "Result<List<IssueView>, IssueError>"
+    },
+    "POST /api/issues/{int}/comments": {
+      "name": "AddComment",
+      "inputs": {
+        "comment": "NewComment",
+        "{1}": "IssueId"
+      },
+      "output": "Result<Comment, IssueError>"
+    },
+    "POST /api/issues/{int}/events": {
+      "name": "Act",
+      "inputs": {
+        "event": "WorkflowEvent",
+        "{1}": "IssueId"
+      },
+      "output": "Result<IssueView, IssueError>"
+    },
+    "POST /api/projects": {
+      "name": "AddProject",
+      "inputs": {
+        "project": "NewProject"
+      },
+      "output": "Result<Project, IssueError>"
+    },
+    "POST /api/projects/{int}/issues": {
+      "name": "AddIssue",
+      "inputs": {
+        "issue": "NewIssue",
+        "{1}": "ProjectId"
+      },
+      "output": "Result<IssueView, IssueError>"
+    }
+  },
+  "types": {
+    "Comment": {
+      "sent": "response",
+      "kind": "record",
+      "fields": {
+        "id": "CommentId",
+        "issueId": "IssueId",
+        "author": "string",
+        "text": "string",
+        "created": "DateTime"
+      }
+    },
+    "CommentId": {
+      "sent": "response",
+      "kind": "newtype",
+      "value": "int"
+    },
+    "IssueError": {
+      "sent": "response",
+      "kind": "enum",
+      "variants": {
+        "NoIssue": {
+          "id": "IssueId"
+        },
+        "NoProject": {
+          "id": "ProjectId"
+        },
+        "NotAllowed": {
+          "action": "string",
+          "current": "WorkflowState"
+        },
+        "Invalid": {
+          "detail": "string"
+        }
+      }
+    },
+    "IssueId": {
+      "sent": "both",
+      "kind": "newtype",
+      "value": "int"
+    },
+    "IssueView": {
+      "sent": "response",
+      "kind": "record",
+      "fields": {
+        "id": "IssueId",
+        "projectId": "ProjectId",
+        "title": "string",
+        "description": "string",
+        "priority": "Priority",
+        "status": "WorkflowState",
+        "assignee": "string?",
+        "resolution": "string?",
+        "created": "DateTime",
+        "updated": "DateTime",
+        "next": "List<string>"
+      }
+    },
+    "NewComment": {
+      "sent": "request",
+      "kind": "record",
+      "fields": {
+        "text": "string"
+      }
+    },
+    "NewIssue": {
+      "sent": "request",
+      "kind": "record",
+      "fields": {
+        "title": "string",
+        "description": "string",
+        "priority": "Priority"
+      }
+    },
+    "NewProject": {
+      "sent": "request",
+      "kind": "record",
+      "fields": {
+        "code": "string",
+        "name": "string"
+      }
+    },
+    "Priority": {
+      "sent": "both",
+      "kind": "enum",
+      "variants": {
+        "Low": {},
+        "Normal": {},
+        "High": {},
+        "Urgent": {}
+      }
+    },
+    "Project": {
+      "sent": "response",
+      "kind": "record",
+      "fields": {
+        "id": "ProjectId",
+        "code": "string",
+        "name": "string"
+      }
+    },
+    "ProjectId": {
+      "sent": "both",
+      "kind": "newtype",
+      "value": "int"
+    },
+    "WorkflowEvent": {
+      "sent": "request",
+      "kind": "enum",
+      "variants": {
+        "Start": {
+          "assignee": "string"
+        },
+        "Close": {
+          "resolution": "string"
+        },
+        "Submit": {},
+        "Unassign": {},
+        "Approve": {},
+        "Reject": {
+          "reason": "string"
+        },
+        "Reopen": {}
+      }
+    },
+    "WorkflowState": {
+      "sent": "response",
+      "kind": "enum",
+      "variants": {
+        "Open": {},
+        "InProgress": {},
+        "InReview": {},
+        "Closed": {}
+      }
+    }
+  }
+}

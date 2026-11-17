@@ -12,16 +12,6 @@ using Piper.Runtime;
 namespace Piper.Web;
 
 /// <summary>
-/// <c>[Status(409)]</c> on an enum variant: the HTTP status a handler's <c>Err</c> holding it answers. On a whole enum
-/// (or a record), the status of all its errors, which a variant's own overrides. Without one, an error is a 400.
-/// </summary>
-[AttributeUsage(AttributeTargets.Class, Inherited = true)]
-public sealed class StatusAttribute(int code) : Attribute
-{
-    public int Code { get; } = code;
-}
-
-/// <summary>
 /// Answers a handler's Option or Result as HTTP: <c>Some(x)</c> and <c>Ok(x)</c> are 200 with <c>x</c>, <c>None</c> is
 /// 404, and <c>Err(e)</c> is ProblemDetails with the status <see cref="StatusAttribute"/> gives. Markup (<see cref="Html"/>),
 /// alone or inside either, is a page: <c>text/html</c>. The web plugin wraps

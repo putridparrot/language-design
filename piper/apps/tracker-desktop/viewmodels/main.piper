@@ -6,12 +6,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Tracker;
 
 [Notify]
-class MainViewModel(client: TrackerClient, user: string) {
+class MainViewModel(client: TrackerApi, user: string) {
     /// A view model that reads the issues again when the project or the status filter changes, and the comments when
     /// the issue does. (The search text waits for Refresh, rather than asking the API at each key.)
-    static fn Create(client: TrackerClient, user: string) => MainViewModel {
+    static fn Create(client: TrackerApi, user: string) => MainViewModel {
         let model = MainViewModel(client, user);
         // Through the commands, which run the async methods: an event handler can't be an async lambda in Piper.
         model.PropertyChanged += (_, e) => {
@@ -46,8 +47,8 @@ class MainViewModel(client: TrackerClient, user: string) {
     prop Reason: string { get; set; } = "";
 
     /// The chosen issue's comments, and the one being written.
-    prop Comments: List<CommentView> { get; set; } = [];
-    prop NewComment: string { get; set; } = "";
+    prop Comments: List<Comment> { get; set; } = [];
+    prop CommentText: string { get; set; } = "";
 
     /// What happened last, or what went wrong.
     prop Message: string { get; set; } = "";
@@ -57,7 +58,7 @@ class MainViewModel(client: TrackerClient, user: string) {
 
     /// The chosen issue, described for the details pane.
     prop Details => string = match SelectedIssue {
-        Some(i) => $"{i.title}\n\n{i.description}\n\nStatus: {i.status}   Priority: {i.priority}\nAssigned to: {i.assignee ?? "nobody"}\nResolution: {i.resolution ?? "-"}\nCan do next: {string.Join(", ", i.next)}",
+        Some(i) => $"{i.title}\n\n{i.description}\n\nStatus: {i.status.Name}   Priority: {i.priority.Name}\nAssigned to: {i.assignee ?? "nobody"}\nResolution: {i.resolution ?? "-"}\nCan do next: {string.Join(", ", i.next)}",
         None => "Choose an issue.",
     };
 
@@ -70,7 +71,7 @@ class MainViewModel(client: TrackerClient, user: string) {
     prop CanClose => bool = (SelectedIssue?.next.Contains("Close")) ?? false;
     prop CanReopen => bool = (SelectedIssue?.next.Contains("Reopen")) ?? false;
     prop CanAddIssue => bool = SelectedProjectIndex >= 0 && NewTitle.Trim().Length > 0;
-    prop CanAddComment => bool = SelectedIssueIndex >= 0 && NewComment.Trim().Length > 0;
+    prop CanAddComment => bool = SelectedIssueIndex >= 0 && CommentText.Trim().Length > 0;
 
     /// The comments, for the details pane: who wrote each, and when.
     prop CommentsText => string = if Comments.Count == 0 {
@@ -93,7 +94,7 @@ class MainViewModel(client: TrackerClient, user: string) {
                 if found.Count > 0 && SelectedProjectIndex < 0 { SelectedProjectIndex = 0; }
                 await RefreshIssues();
             },
-            Err(problem) => Message = problem.message,
+            Err(problem) => Message = problem.Message,
         }
     }
 
@@ -103,7 +104,8 @@ class MainViewModel(client: TrackerClient, user: string) {
     [Command]
     async fn AddIssueAsync() {
         let Some(project) = SelectedProject else { return; };
-        match await client.AddIssue(project.id, NewIssue(NewTitle.Trim(), NewDescription.Trim(), NewPriority)) {
+        let priority = Priority.Parse(NewPriority) ?? Priority.Normal;
+        match await client.AddIssue(project.id, NewIssue(NewTitle.Trim(), NewDescription.Trim(), priority)) {
             Ok(added) => {
                 NewTitle = "";
                 NewDescription = "";
@@ -111,17 +113,17 @@ class MainViewModel(client: TrackerClient, user: string) {
                 await RefreshIssues();
                 Select(added.id);
             },
-            Err(problem) => Message = problem.message,
+            Err(problem) => Message = problem.Message,
         }
     }
 
-    [Command] async fn StartAsync() { await Act("Start", ["assignee": Assignee]); }
-    [Command] async fn SubmitAsync() { await Act("Submit", []); }
-    [Command] async fn UnassignAsync() { await Act("Unassign", []); }
-    [Command] async fn ApproveAsync() { await Act("Approve", []); }
-    [Command] async fn RejectAsync() { await Act("Reject", ["reason": Reason]); }
-    [Command] async fn CloseAsync() { await Act("Close", ["resolution": if Reason == "" { "closed" } else { Reason }]); }
-    [Command] async fn ReopenAsync() { await Act("Reopen", []); }
+    [Command] async fn StartAsync() { await Act(WorkflowEvent.Start(Assignee)); }
+    [Command] async fn SubmitAsync() { await Act(WorkflowEvent.Submit); }
+    [Command] async fn UnassignAsync() { await Act(WorkflowEvent.Unassign); }
+    [Command] async fn ApproveAsync() { await Act(WorkflowEvent.Approve); }
+    [Command] async fn RejectAsync() { await Act(WorkflowEvent.Reject(Reason)); }
+    [Command] async fn CloseAsync() { await Act(WorkflowEvent.Close(if Reason == "" { "closed" } else { Reason })); }
+    [Command] async fn ReopenAsync() { await Act(WorkflowEvent.Reopen); }
 
     /// Reads the chosen issue's comments. An answer for an issue no longer chosen (the user moved on while it was on
     /// its way) is dropped.
@@ -135,33 +137,33 @@ class MainViewModel(client: TrackerClient, user: string) {
             Ok(found) => {
                 if SelectedIssue is Some(still) && still.id == issue.id { Comments = found; }
             },
-            Err(problem) => Message = problem.message,
+            Err(problem) => Message = problem.Message,
         }
     }
 
     [Command]
     async fn AddCommentAsync() {
         let Some(issue) = SelectedIssue else { return; };
-        match await client.AddComment(issue.id, NewComment.Trim()) {
+        match await client.AddComment(issue.id, NewComment(CommentText.Trim())) {
             Ok(_) => {
-                NewComment = "";
+                CommentText = "";
                 Message = $"Commented on #{issue.id}.";
                 await LoadCommentsAsync();
             },
-            Err(problem) => Message = problem.message,
+            Err(problem) => Message = problem.Message,
         }
     }
 
-    /// Does `action` to the chosen issue, then shows it as it is now.
-    async fn Act(action: string, fields: Dictionary<string, string>) {
+    /// Does `event` to the chosen issue, then shows it as it is now.
+    async fn Act(event: WorkflowEvent) {
         let Some(issue) = SelectedIssue else { return; };
-        match await client.Act(issue.id, action, fields) {
+        match await client.Act(issue.id, event) {
             Ok(changed) => {
-                Message = $"{action}: {changed.title} is {changed.status}.";
+                Message = $"{event.Name}: {changed.title} is {changed.status.Name}.";
                 await RefreshIssues();
                 Select(changed.id);
             },
-            Err(problem) => Message = problem.message,
+            Err(problem) => Message = problem.Message,
         }
     }
 
@@ -175,12 +177,12 @@ class MainViewModel(client: TrackerClient, user: string) {
                 Issues = found;
                 SelectedIssueIndex = -1;
             },
-            Err(problem) => Message = problem.message,
+            Err(problem) => Message = problem.Message,
         }
     }
 
     /// Chooses the issue numbered `id`, if it's shown.
-    fn Select(id: int) {
+    fn Select(id: IssueId) {
         SelectedIssueIndex = Issues.FindIndex(i => i.id == id);
     }
 }

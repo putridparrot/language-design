@@ -18,6 +18,13 @@
     <!-- What the code the plugin writes calls (IPiperPlugin.References): built first, and copied beside the plugin. -->
     <ProjectReference Include="..\Piper.Web\Piper.Web.csproj" ReferenceOutputAssembly="false" />
     <None Include="..\Piper.Web\bin\runtime\Piper.Web.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <ProjectReference Include="..\Piper.Hosting\Piper.Hosting.csproj" ReferenceOutputAssembly="false" />
+    <None Include="..\Piper.Hosting\bin\runtime\Piper.Hosting.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <!-- The server's clauses shared with the hosting plugin's `host`. -->
+  <ItemGroup>
+    <Compile Include="..\Shared\HostClauses.cs" Link="HostClauses.cs" />
   </ItemGroup>
 
 </Project>
