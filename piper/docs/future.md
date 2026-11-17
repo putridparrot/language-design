@@ -291,7 +291,9 @@ finishing it), container publishing, and hosted workers; and of actor clustering
 6. **Testing distributed programs.** Both apps wrote their own `StartCluster` and `StopCluster`, and the grid's
    "vanished worker" test was put together by hand. A test helper could give a cluster in one process, with faults to
    inject: stop a node, drop or delay messages to one, split the network. Property-based tests (above) suit it, with
-   the faults among the generated inputs.
+   the faults among the generated inputs. ~~The helper~~ is done: Piper.Actors.Remote's `PiperCluster` (see
+   [plugins](plugins.md#testing-a-cluster-in-one-process)), which stock's and grid's tests use. Still to come: faults as
+   generated inputs, and deterministic simulation (below).
 
    **Deterministic simulation** goes further, as FoundationDB and TigerBeetle test themselves, but built in: the whole
    cluster (actors, remote actors, messaging, timers) runs in one process on one thread, with a simulated clock and

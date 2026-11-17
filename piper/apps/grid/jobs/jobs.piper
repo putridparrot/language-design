@@ -72,19 +72,6 @@ actor Jobs(id: string) persisted by id {
     on Status() => View { Describe(Heard(board, asked), DateTime.UtcNow) }
 }
 
-/// Starts a node: an actor system the others reach at `host:port` (port 0 for any free one). A loopback host binds to
-/// it alone; any other (a service's name, or a pod's IP address) binds to every interface and tells the others that.
-async fn StartNode(host: string, port: int) => Task<ActorSystem> {
-    let config = if host == "127.0.0.1" || host == "localhost" {
-        RemoteConfig.BindToLocalhost(port)
-    } else {
-        RemoteConfig.BindToAllInterfaces(host, port)
-    };
-    let system = ActorSystem().WithRemote(config);
-    await system.Remote().StartAsync();
-    system
-}
-
 /// Runs `count` workers on this node, called `name` (with a number after it, for more than one), each taking chunks
 /// from the coordinator at `coordinator` until `stop` is cancelled.
 async fn RunWorkers(system: ActorSystem, coordinator: string, name: string, count: int, stop: CancellationToken) {

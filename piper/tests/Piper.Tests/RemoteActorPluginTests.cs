@@ -75,6 +75,84 @@ public class RemoteActorPluginTests
         Assert.Equal("15\n0\nfault: no\n", run.Output.Replace("\r\n", "\n"));
     }
 
+    /// <summary>
+    /// A cluster in one process (Piper.Actors.Remote's PiperCluster), with faults injected: a node cut off, two split
+    /// from each other, messages dropped one way, a slow node, a stopped one, one added; and healed again. Each ask
+    /// goes from one node to another's counter over gRPC; one that can't get through times out.
+    /// </summary>
+    [Fact]
+    public void A_cluster_in_one_process_takes_injected_faults()
+    {
+        var result = Compile("""
+            using System;
+            using System.Collections.Generic;
+            using System.Linq;
+            using System.Threading.Tasks;
+            using Piper.Actors.Remote;
+            using Proto;
+
+            actor Counter(node: int) {
+                mut count = 0;
+                on Add() => string { count += 1; $"node {node}: {count}" }
+            }
+
+            /// Asks node `to`'s counter from node `from`, within a quarter of a second.
+            async fn Ask(cluster: PiperCluster, from: int, to: int) => Task<string> {
+                try {
+                    return await Counter.Connect(cluster[from], cluster.Addresses[to], "counter").WithTimeout(TimeSpan.FromMilliseconds(250)).Add();
+                } catch (_: TimeoutException) {
+                    return $"node {to}: timed out";
+                }
+            }
+
+            async fn Line(cluster: PiperCluster, asks: List<(int, int)>) => Task<string> {
+                mut answers: List<string> = [];
+                for (from, to) in asks {
+                    answers.Add($"{from}->{await Ask(cluster, from, to)}");
+                }
+                string.Join(", ", answers)
+            }
+
+            async fn Main() {
+                mut started = 0;
+                let cluster = await PiperCluster.StartAsync(3, node => {
+                    Counter.Spawn(node, "counter", started);
+                    started += 1;
+                });
+                Print(await Line(cluster, [(0, 1), (1, 2), (2, 0)]));
+                cluster.Isolate(1);
+                Print(await Line(cluster, [(0, 1), (2, 1), (1, 0), (1, 1), (0, 2)]));
+                cluster.Heal();
+                cluster.Partition(0, 2);
+                Print(await Line(cluster, [(0, 2), (2, 0), (1, 2)]));
+                cluster.Heal();
+                cluster.Drop(0, 1);
+                Print(await Line(cluster, [(0, 1), (1, 0)]));
+                cluster.Heal();
+                cluster.Slow(2, TimeSpan.FromMilliseconds(400));
+                Print(await Line(cluster, [(0, 2)]));
+                cluster.Heal();
+                await cluster.StopAsync(2);
+                let added = await cluster.AddNodeAsync();
+                Print(await Line(cluster, [(0, 2), (0, 3)]));
+                Print(cluster.Nodes.Count);
+                await cluster.StopAsync();
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal(
+            "0->node 1: 1, 1->node 2: 1, 2->node 0: 1\n" +
+            "0->node 1: timed out, 2->node 1: timed out, 1->node 0: timed out, 1->node 1: 2, 0->node 2: 2\n" +
+            "0->node 2: timed out, 2->node 0: timed out, 1->node 2: 3\n" +
+            "0->node 1: timed out, 1->node 0: 2\n" +
+            "0->node 2: timed out\n" +
+            "0->node 2: timed out, 0->node 3: 1\n" +
+            "4\n",
+            run.Output.Replace("\r\n", "\n"));
+    }
+
     /// <summary>A remote actor's own functions, shared by its handlers, as a local actor's are.</summary>
     [Fact]
     public void A_remote_actor_can_have_functions_its_handlers_share()

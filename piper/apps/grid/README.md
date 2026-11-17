@@ -82,7 +82,8 @@ Events__Provider=sqlite Events__Connection="Data Source=grid.db" piper run apps/
 [docs/plugins.md](../../docs/plugins.md)).
 
 **`piper test apps/grid`** tests the risk figures, the rules for handing out chunks, and a job over gRPC on three
-worker nodes, where a fourth worker takes a chunk and vanishes. Some are property tests: a job's figures are the same
+worker nodes (a cluster in one process), where a fourth worker takes a chunk and is cut off by the network (its chunk is done by another, and
+its answer, once it's back, ignored). Some are property tests: a job's figures are the same
 for any number of chunks coming back in any order, and a sample counts every scenario, for any count and seed.
 
 ## On Docker Desktop's Kubernetes

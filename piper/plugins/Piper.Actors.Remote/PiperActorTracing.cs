@@ -28,6 +28,18 @@ public static class PiperActorTracing
     /// <summary>Tells the actor at <paramref name="pid"/> <paramref name="message"/>, with the trace it's part of.</summary>
     public static void Send(ActorSystem system, PID pid, object message)
     {
+        // A test's faults (PiperCluster): dropped, or sent later.
+        if (PiperFaults.For(system.Address, pid.Address) is { } fault)
+        {
+            if (fault > TimeSpan.Zero)
+                Task.Delay(fault).ContinueWith(_ => Deliver(system, pid, message), TaskScheduler.Default);
+            return;
+        }
+        Deliver(system, pid, message);
+    }
+
+    private static void Deliver(ActorSystem system, PID pid, object message)
+    {
         if (Headers() is { } headers)
             system.Root.Send(pid, new MessageEnvelope(message, null, headers));
         else
@@ -41,6 +53,18 @@ public static class PiperActorTracing
     /// </summary>
     public static async Task<object> RequestAsync(ActorSystem system, PID pid, object message, TimeSpan timeout)
     {
+        // A test's faults (PiperCluster): a dropped ask times out, as one whose message was lost does; a delayed one
+        // waits first, out of its time.
+        if (PiperFaults.For(system.Address, pid.Address) is { } fault)
+        {
+            if (fault == TimeSpan.Zero || fault >= timeout)
+            {
+                await Task.Delay(timeout);
+                throw new TimeoutException($"Request didn't receive any Response within the expected time ({timeout}).");
+            }
+            await Task.Delay(fault);
+            timeout -= fault;
+        }
         if (Headers() is not { } headers)
             return await system.Root.RequestAsync<object>(pid, message, timeout);
         using var cancel = new CancellationTokenSource(timeout);

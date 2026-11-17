@@ -3,21 +3,44 @@ namespace StockApp;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Piper.Actors.Remote;
 using Piper.Runtime;
 using Proto;
 using Proto.Remote;
 
-/// Three nodes in this process, on free ports, each knowing all three: as three pods would be, but on localhost.
-async fn StartCluster() => Task<List<Shards>> {
-    let systems = await Task.WhenAll(Enumerable.Range(0, 3).Select(_ => StartNode("127.0.0.1", 0, MemoryEventStore())));
-    let addresses: List<string> = [...systems.Select(s => s.Address)];
-    [...systems.Select(s => Shards(s, addresses))]
-}
+/// Three nodes in this process (Piper.Actors.Remote's PiperCluster), each with its warehouse and its products' events
+/// in memory: as three pods would be, but on localhost.
+async fn StartNodes() => Task<PiperCluster> =
+    await PiperCluster.StartAsync(3, node => { Warehouse.Spawn(node, "warehouse", node, MemoryEventStore()); });
+
+/// Each node's view of the products, all knowing all three nodes.
+fn Sharded(cluster: PiperCluster) => List<Shards> = [...cluster.Nodes.Select(node => Shards(node, [...cluster.Addresses]))];
+
+async fn StartCluster() => Task<List<Shards>> = Sharded(await StartNodes());
 
 async fn StopCluster(cluster: List<Shards>) {
     for shards in cluster {
         await shards.Node().Remote().ShutdownAsync(true);
     }
+}
+
+async test "a node cut off from the others shows as down, and as up again with its products once it's back" {
+    let cluster = await StartNodes();
+    let shards = Sharded(cluster);
+    let level = await shards[0].Ask("bolt", p => p.Receive(5));
+    let owner = [...cluster.Addresses].IndexOf(level.node);
+    let other = (owner + 1) % 3;
+
+    cluster.Isolate(owner);
+    let split = await shards[other].Cluster();
+    AssertEqual(2, split.Count(v => v.up));
+    Assert(!split.Single(v => v.address == level.node).up);
+
+    cluster.Heal();
+    let healed = await shards[other].Cluster();
+    Assert(healed.All(v => v.up));
+    AssertEqual(5, healed.Single(v => v.address == level.node).products.Single().onHand);
+    await cluster.StopAsync();
 }
 
 test "every node picks the same owner for a product, and products spread over the nodes" {

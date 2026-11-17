@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **A cluster in one process, with faults, for tests:** Piper.Actors.Remote's `PiperCluster.StartAsync(3, setup)`
+  starts nodes on free loopback ports talking over gRPC, and injects a network's faults: `Isolate(node)`,
+  `Partition(a, b)`, `Drop(from, to)`, `Slow(node, by)`, `Heal()`, `StopAsync(node)` (a pod deleted) and
+  `AddNodeAsync()`. Faults apply to the messages the remote actors plugin's code sends between nodes, by address; a
+  lost ask times out, as a real one would. `PiperNode.StartAsync(host, port)` replaces the `StartNode` stock and grid
+  each wrote. Stock's tests now use the helper, with a new one for a node cut off and healed (its dashboard view of
+  other nodes now waits two seconds for each, not ten); grid's gRPC test cuts a worker off mid-chunk, and checks its
+  late answer is ignored once it's back.
+
 - **Snapshots for persisted actors:** `snapshot every 100;` keeps a persisted actor's state every 100 events, and an
   actor starting again restores the latest and replays only the events since. Each value is kept with a fingerprint
   of its type's shape, so a snapshot from before the state's types changed is ignored and every event replayed.

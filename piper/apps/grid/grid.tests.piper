@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Piper.Actors.Remote;
 using Piper.Runtime;
 using Proto.Remote;
 
@@ -18,32 +19,35 @@ async fn WaitForJob(jobs: Jobs, job: int) => Task<View> {
     view
 }
 
-async test "workers on three nodes share a job over gRPC, and a chunk whose worker vanished is done by another" {
-    let coordinator = await StartNode("127.0.0.1", 0);
+async test "workers on three nodes share a job over gRPC; a worker cut off mid-chunk has it done by another, and its late answer is ignored" {
+    // Five nodes in this process (Piper.Actors.Remote's PiperCluster): the coordinator, a worker to cut off, three more.
+    let cluster = await PiperCluster.StartAsync(5);
+    let coordinator = cluster[0];
     let jobs = Jobs.Spawn(coordinator, "jobs", MemoryEventStore(), "grid");
     Assert(await jobs.Start(JobSpec(12, 2_000, 5)));
 
-    // A worker that takes a chunk and is never heard from again, as a deleted pod would.
-    let vanished = await StartNode("127.0.0.1", 0);
-    let taken = await Jobs.Connect(vanished, coordinator.Address, "jobs").Take("vanished");
-    AssertEqual(0, Given(taken));
-    await vanished.Remote().ShutdownAsync(true);
+    // A worker on node 1 takes a chunk, and then the network cuts its node off, as a failing machine's would.
+    let cutOff = Jobs.Connect(cluster[1], coordinator.Address, "jobs");
+    AssertEqual(0, Given(await cutOff.Take("cut-off")));
+    cluster.Isolate(1);
 
     using let stop = CancellationTokenSource();
-    let nodes = [await StartNode("127.0.0.1", 0), await StartNode("127.0.0.1", 0), await StartNode("127.0.0.1", 0)];
-    let workers: List<Task> = [...nodes.Select((node, i) => RunWorkers(node, coordinator.Address, $"w{i}", 1, stop.Token))];
-
+    let workers: List<Task> = [...Enumerable.Range(2, 3).Select(i => RunWorkers(cluster[i], coordinator.Address, $"w{i}", 1, stop.Token))];
     let view = await WaitForJob(jobs, 1);
     stop.Cancel();
     await Task.WhenAll(workers);
-    for node in [...nodes, coordinator] {
-        await node.Remote().ShutdownAsync(true);
-    }
+
+    // Back again, it sends its chunk's answer: after the job finished without it, so it's ignored.
+    cluster.Heal();
+    Assert(!(await cutOff.Done(Tally(1, 0, "cut-off", Simulate(2_000, ChunkSeed(5, 0)), 10L))));
+    let after = await jobs.Status();
+    await cluster.StopAsync();
 
     Assert(!view.running, "the job didn't finish within a minute");
+    AssertEqual(1, after.late);
     let run = view.history.Single();
     AssertEqual(1, run.retried);
-    Assert(view.cells[0].worker != "vanished");
+    Assert(view.cells[0].worker != "cut-off");
     let expected = Combine(Enumerable.Range(0, 12).Select(id => Simulate(2_000, ChunkSeed(5, id))));
     AssertEqual(expected.var99, run.valuation.var99);
     AssertEqual(expected.mean, run.valuation.mean);
@@ -55,7 +59,7 @@ fn Small(id: int, worker: string) => Tally = Tally(1, id, worker, Simulate(50, C
 
 async test "a coordinator that restarts carries on with its job, from its snapshot and the events since" {
     let store = MemoryEventStore();
-    let first = await StartNode("127.0.0.1", 0);
+    let first = await PiperNode.StartAsync("127.0.0.1", 0);
     let jobs = Jobs.Spawn(first, "jobs", store, "grid");
     Assert(await jobs.Start(JobSpec(60, 50, 4)));
     for id in 0..57 {   // two events each, so a snapshot is taken after the 100th
@@ -70,7 +74,7 @@ async test "a coordinator that restarts carries on with its job, from its snapsh
         None => Assert(false, "no snapshot was taken"),
     }
 
-    let second = await StartNode("127.0.0.1", 0);
+    let second = await PiperNode.StartAsync("127.0.0.1", 0);
     let again = Jobs.Spawn(second, "jobs", store, "grid");
     let view = await again.Status();
     Assert(view.running);

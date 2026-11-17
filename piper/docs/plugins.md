@@ -1423,6 +1423,35 @@ How it behaves:
 
 The syntax describes what an actor is, not how it runs, so another plugin can run the same declarations differently.
 
+#### Testing a cluster in one process
+
+The remote actors' runtime (Piper.Actors.Remote) starts a cluster in a test's process: nodes on free loopback
+ports, each its own actor system talking to the others over gRPC as separate processes would. And it injects the
+faults a real network has, so a test can show what happens when a node is lost or cut off:
+
+```piper
+let cluster = await PiperCluster.StartAsync(3, node => { Warehouse.Spawn(node, "warehouse", node); });
+let shards = [...cluster.Nodes.Select(node => Shards(node, [...cluster.Addresses]))];
+
+cluster.Isolate(2);                          // node 2 can't reach the others, nor they it
+cluster.Partition(0, 1);                     // 0 and 1 can't reach each other
+cluster.Drop(0, 1);                          // 0's messages to 1 are lost, but not 1's to 0
+cluster.Slow(1, TimeSpan.FromSeconds(1));    // every message to 1 arrives a second late
+cluster.Heal();                              // all reach each other again
+await cluster.StopAsync(2);                  // node 2 stops, as a deleted pod
+let added = await cluster.AddNodeAsync();    // another starts, set up as the others were
+await cluster.StopAsync();                   // all of them, faults healed
+```
+
+- **What's affected:** the messages the plugin's code sends and asks between nodes, by address, so tests running at
+  once on other clusters aren't. A lost tell is gone; a lost ask times out (after the handle's timeout, which
+  `WithTimeout` sets), as one whose message the network lost does. A node's messages to its own actors aren't
+  network traffic, so they still arrive.
+- **`PiperNode.StartAsync(host, port)`** starts one node outside a test, as a program does: a loopback host binds to
+  it alone, any other (a service's name, a pod's IP address) to every interface.
+- apps/stock tests a node cut off from the rest (its dashboard shows it down, then up again with its products), and
+  apps/grid a worker cut off mid-chunk (another does its chunk, and its late answer is ignored).
+
 #### Keeping state: persisted actors
 
 An actor's state lives only in memory, so a process that stops loses it. A `persisted` actor keeps it as events

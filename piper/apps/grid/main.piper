@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Piper.Hosting;
+using Piper.Actors.Remote;
 using Piper.Runtime;
 using Proto;
 using Proto.Remote;
@@ -37,7 +38,7 @@ async fn Main(args: string[]) {
 
 /// The coordinator: hosts the jobs, and serves the dashboard.
 async fn Coordinate(options: Options) => Task<int> {
-    let node = await StartNode(options.host, options.port ?? 8000);
+    let node = await PiperNode.StartAsync(options.host, options.port ?? 8000);
     let jobs = Jobs.Spawn(node, "jobs", EventStore(), "grid");
     let url = HttpUrl(options);
     Print($"Coordinator {node.Address}, dashboard on {url}");
@@ -48,7 +49,7 @@ async fn Coordinate(options: Options) => Task<int> {
 
 /// A worker node: asks the coordinator for work until it's stopped (Ctrl+C, or Kubernetes stopping the pod).
 async fn Worker(options: Options) => Task<int> {
-    let node = await StartNode(options.host, options.port ?? 0);
+    let node = await PiperNode.StartAsync(options.host, options.port ?? 0);
     let name = options.name ?? $"{Environment.MachineName.ToLowerInvariant()}:{node.Address.Split(':')[^1]}";
     Print($"Worker {name} ({options.workers} at once) at {node.Address}, asking {options.coordinator}");
     await WorkerNode(node, options, name).RunAsync();
@@ -66,12 +67,12 @@ host WorkerNode(node: ActorSystem, options: Options, name: string) {
 /// A coordinator and three workers, each on its own node in this process, so the work still goes over gRPC: the
 /// quickest way to see it.
 async fn Everything(options: Options) => Task<int> {
-    let node = await StartNode("127.0.0.1", options.port ?? 8000);
+    let node = await PiperNode.StartAsync("127.0.0.1", options.port ?? 8000);
     let jobs = Jobs.Spawn(node, "jobs", EventStore(), "grid");
     using let stop = CancellationTokenSource();
     let workers: List<Task> = [];
     for i in 1..3 {
-        let worker = await StartNode("127.0.0.1", 0);
+        let worker = await PiperNode.StartAsync("127.0.0.1", 0);
         workers.Add(RunWorkers(worker, node.Address, $"worker-{i}", 1, stop.Token));
     }
     let url = HttpUrl(options);
