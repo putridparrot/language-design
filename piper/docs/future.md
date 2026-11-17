@@ -191,7 +191,7 @@ Server-side HTML belongs with [UI](#ui) (htmx over plain endpoints), not Razor.
   test (`services Test: AppServices { singleton Clock = FixedClock("noon"); }`).
 - ~~**Hosts beyond the web**~~, done: the `hosting` plugin's `host`, over `Host.CreateApplicationBuilder`, gives console
   programs and workers configuration, logging and a lifetime, with a server's clauses (apps/grid's worker nodes are
-  hosts). Still to come: checking the services its handlers take, as a server's are.
+  hosts). ~~Checking the services its handlers take~~, as a server's are, is done too (the checks are shared).
 
 ## Cloud and distributed
 
@@ -249,6 +249,14 @@ finishing it), container publishing, and hosted workers; and of actor clustering
    same policies. And supervision, as Erlang's: an actor that throws is restarted by a policy its parent declares
    (restart it, restart its siblings too, or give up after so many failures in a minute), rather than each handler
    catching what it can; deterministic simulation (item 6) tests the policies.
+   ~~`[Timeout]` and `[CircuitBreaker]`~~ are done (the aspects plugin, on Piper.Runtime's PiperPolicies), and so are
+   ~~failure policies for actors~~: `on failure resume|rollback|restart [n per minute]|stop;` (see
+   [plugins](plugins.md#actor-the-actor-model)), with `rollback` and `restart` checked to keep only immutable state.
+   Still to come:
+   - supervision trees (a `supervisor` owning child actors, restarting one or all of them), once something needs a
+     hierarchy; Piper's actors have no parent yet;
+   - `restart` recovering the actor's last state rather than starting empty, once actors keep their state (item 3);
+   - asks to remote actors taking `[Retry]`, `[Timeout]` and `[CircuitBreaker]` as functions do.
 5. **An outbox, and queues.** The tracker tells its webhook after saving a change; if the process dies in between, the
    notification is lost. An outbox writes the message in the change's own transaction and sends it afterwards, so it
    can't be lost, which suits the data plugin. A queue plugin would give jobs that must survive a restart somewhere to

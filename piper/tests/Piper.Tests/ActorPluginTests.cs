@@ -253,4 +253,139 @@ public class ActorPluginTests
         Assert.NotEqual("PIP0503", error.Code);
         Assert.Equal(text.IndexOf("s; }", StringComparison.Ordinal), error.Span.Start);
     }
+
+    /// <summary>
+    /// `on failure rollback`: a handler that throws changes nothing, as its state is put back as it was before the
+    /// message, for a tell (logged) and an ask (whose caller gets the error). Without a policy, the change stays.
+    /// </summary>
+    [Fact]
+    public void Rollback_puts_the_state_back_as_it_was_before_the_failed_message()
+    {
+        var output = Run("""
+            using System;
+
+            actor Account(name: string) {
+                mut balance = 0;
+                mut last = "none";
+                on failure rollback;
+                on Deposit(amount: int) {
+                    balance += amount;
+                    last = $"deposit {amount}";
+                    if amount < 0 { throw InvalidOperationException("negative"); }
+                }
+                on Withdraw(amount: int) => int {
+                    balance -= amount;
+                    last = $"withdraw {amount}";
+                    if balance < 0 { throw InvalidOperationException("overdrawn"); }
+                    balance
+                }
+                on Show() => string { $"{name}: {balance} after {last}" }
+            }
+
+            actor Loose {
+                mut count = 0;
+                on Add(n: int) { count += n; if n == 0 { throw InvalidOperationException("zero"); } }
+                on Get() => int { count }
+            }
+
+            async fn Main() {
+                let account = Account.Spawn("ada");
+                account.Deposit(10);
+                account.Deposit(-5);
+                Print(await account.Show());
+                try {
+                    await account.Withdraw(20);
+                } catch (e: InvalidOperationException) {
+                    Print(e.Message);
+                }
+                Print(await account.Show());
+                Print(await account.Withdraw(4));
+
+                let loose = Loose.Spawn();
+                loose.Add(3);
+                loose.Add(0);
+                Print(await loose.Get());
+            }
+            """);
+        Assert.Equal("ada: 10 after deposit 10\noverdrawn\nada: 10 after deposit 10\n6\n3\n", output);
+    }
+
+    /// <summary>
+    /// `on failure restart`: the state goes back to how Spawn made it. With a limit, more restarts than that in the
+    /// window stop the actor: a message sent to it then fails at once, and one already waiting is answered with an error.
+    /// </summary>
+    [Fact]
+    public void Restart_resets_the_state_and_stops_after_its_limit()
+    {
+        var output = Run("""
+            using System;
+
+            actor Counter(start: int) {
+                mut count = start;
+                on failure restart 1 per minute;
+                on Add(n: int) { count += n; if n == 0 { throw InvalidOperationException("zero"); } }
+                on Get() => int { count }
+            }
+
+            async fn Main() {
+                let counter = Counter.Spawn(5);
+                counter.Add(2);
+                Print(await counter.Get());
+                counter.Add(0);
+                Print(await counter.Get());
+                counter.Add(1);
+                counter.Add(0);
+                let waiting = counter.Get();
+                try {
+                    Print(await waiting);
+                } catch (e: InvalidOperationException) {
+                    Print(e.Message);
+                }
+                try {
+                    counter.Add(1);
+                } catch (e: InvalidOperationException) {
+                    Print(e.Message);
+                }
+            }
+            """);
+        Assert.Equal("7\n5\nCounter has stopped.\nCounter has stopped.\n", output);
+    }
+
+    [Fact]
+    public void Stop_ends_the_actor_at_its_first_failure()
+    {
+        var output = Run("""
+            using System;
+
+            actor Fragile {
+                on failure stop;
+                on Check(ok: bool) => string { if !ok { throw InvalidOperationException("broken"); } "fine" }
+            }
+
+            async fn Main() {
+                let fragile = Fragile.Spawn();
+                Print(await fragile.Check(true));
+                try { await fragile.Check(false); } catch (e: InvalidOperationException) { Print(e.Message); }
+                try { await fragile.Check(true); } catch (e: InvalidOperationException) { Print(e.Message); }
+            }
+            """);
+        Assert.Equal("fine\nbroken\nFragile has stopped.\n", output);
+    }
+
+    [Theory]
+    [InlineData("mut items: System.Collections.Generic.List<int> = [];\non failure rollback;", "rollback",
+        "'rollback' puts A's state back by keeping its values, but 'items' holds a List<int>")]
+    [InlineData("let seen: System.Collections.Generic.List<int> = [];\non failure restart;", "restart",
+        "'restart' puts A's state back by keeping its values, but 'seen' holds a List<int>")]
+    [InlineData("mut n = 0;\non failure explode;", "explode", "Expected what the actor does when a handler throws")]
+    [InlineData("mut n = 0;\non failure restart 3;", ";\non Get", "Expected the window the restarts are counted in")]
+    [InlineData("mut n = 0;\non failure restart 3 per week;", "week", "Expected 'second', 'minute' or 'hour'")]
+    [InlineData("mut n = 0;\non failure stop;\non failure resume;", "resume", "Actor 'A' already says what it does on failure")]
+    [InlineData("let (a, b) = (1, 2);\non failure rollback;", "let (a", "'rollback' puts the actor's state back, so declare it one name at a time")]
+    public void Failure_policies_are_checked(string body, string at, string message)
+    {
+        var text = $"fn Main() {{}}\nactor A {{\n{body}\non Get() => int {{ 1 }}\n}}";
+        var error = Assert.Single(Compile(text).Diagnostics, d => d.Message.Contains(message));
+        Assert.Equal(text.IndexOf(at, StringComparison.Ordinal), error.Span.Start);
+    }
 }

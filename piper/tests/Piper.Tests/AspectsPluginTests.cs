@@ -6,7 +6,8 @@ using Piper.Text;
 namespace Piper.Tests;
 
 /// <summary>
-/// The aspects plugin (plugins/Piper.Plugins.Aspects): the decorators [Trace], [Timed] and [Retry]. The plugin is
+/// The aspects plugin (plugins/Piper.Plugins.Aspects): the decorators [Trace], [Timed], [Retry], [Timeout] and
+/// [CircuitBreaker]. The plugin is
 /// loaded from its build output, as a program's piper.json would load it.
 /// </summary>
 public class AspectsPluginTests
@@ -640,5 +641,122 @@ public class AspectsPluginTests
             fn Main() { }
             """).Diagnostics);
         Assert.Contains("not private", error.Message);
+    }
+
+    [Fact]
+    public void Timeout_stops_waiting_for_a_slow_async_function()
+    {
+        var output = Run("""
+            using System;
+            using System.Threading.Tasks;
+
+            [Timeout(50)]
+            async fn Slow() => Task<int> {
+                await Task.Delay(2000);
+                1
+            }
+
+            [Timeout(1000)]
+            async fn Quick() => Task<int> {
+                await Task.Yield();
+                2
+            }
+
+            [Timeout(50)]
+            async fn Nothing() => Task {
+                await Task.Delay(2000);
+            }
+
+            async fn Main() {
+                Print(await Quick());
+                try {
+                    await Slow();
+                } catch (e: TimeoutException) {
+                    Print(e.Message);
+                }
+                try {
+                    await Nothing();
+                } catch (e: TimeoutException) {
+                    Print(e.Message);
+                }
+            }
+            """);
+        Assert.Equal("2\nSlow took more than 50 ms.\nNothing took more than 50 ms.\n", output);
+    }
+
+    [Theory]
+    [InlineData("[Timeout(50)]\nfn Sync() => int = 1;", "Timeout needs an async function")]
+    [InlineData("[Timeout]\nasync fn A() => System.Threading.Tasks.Task { }", "Timeout takes the milliseconds to wait")]
+    [InlineData("[CircuitBreaker(5)]\nfn A() => int = 1;", "CircuitBreaker takes the failures in a row that open it")]
+    public void Policies_are_given_what_they_need(string function, string message)
+    {
+        Assert.Single(Compile("fn Main() {}\n" + function).Diagnostics, d => d.Message.Contains(message));
+    }
+
+    /// <summary>
+    /// A circuit opens after its failures in a row, refusing calls at once (not calling the function) until it's been
+    /// open long enough; then one call tries, and a success closes it. A success before then resets the count.
+    /// </summary>
+    [Fact]
+    public void A_circuit_breaker_refuses_calls_while_what_they_call_is_failing()
+    {
+        var output = Run("""
+            using System;
+            using System.Threading;
+
+            class State { public static mut calls = 0; public static mut up = false; }
+
+            [CircuitBreaker(2, 200)]
+            fn Fetch() => string {
+                State.calls += 1;
+                if !State.up { throw InvalidOperationException("down"); }
+                "ok"
+            }
+
+            fn Try() => string {
+                try {
+                    return Fetch();
+                } catch (e: Piper.Runtime.CircuitOpenException) {
+                    return "refused";
+                } catch (e: InvalidOperationException) {
+                    return e.Message;
+                }
+            }
+
+            fn Main() {
+                Print($"{Try()} {Try()} {Try()} calls={State.calls}");
+                Thread.Sleep(300);
+                Print($"{Try()} {Try()} calls={State.calls}");
+                Thread.Sleep(300);
+                State.up = true;
+                Print($"{Try()} {Try()} calls={State.calls}");
+            }
+            """);
+        // Two failures open it; the third is refused without a call. After the wait one call tries, fails, and opens it
+        // again; once what it calls is up, the trial succeeds and the circuit closes.
+        Assert.Equal("down down refused calls=2\ndown refused calls=3\nok ok calls=5\n", output);
+    }
+
+    [Fact]
+    public void A_circuit_breaker_works_on_async_functions_and_with_retry()
+    {
+        var output = Run("""
+            using System;
+            using System.Threading.Tasks;
+
+            class State { public static mut calls = 0; }
+
+            [Retry(3)]
+            [CircuitBreaker(5, 60000)]
+            async fn Ping() => Task<int> {
+                State.calls += 1;
+                await Task.Yield();
+                if State.calls < 3 { throw InvalidOperationException("not yet"); }
+                State.calls
+            }
+
+            async fn Main() { Print(await Ping()); }
+            """);
+        Assert.Equal("3\n", output);
     }
 }

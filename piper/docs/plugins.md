@@ -417,11 +417,11 @@ Only the statements that await become async tasks, so Piper doesn't warn about a
 The same could be a library function with a trailing closure taking a list of actions. The plugin's benefit is that
 each statement is a task, with no lambdas to write.
 
-### `aspects` (decorators: `[Trace]`, `[Timed]`, `[Retry]` and `[Notify]`)
+### `aspects` (decorators: `[Trace]`, `[Timed]`, `[Retry]`, `[Timeout]`, `[CircuitBreaker]` and `[Notify]`)
 
-[Piper.Plugins.Aspects](../plugins/Piper.Plugins.Aspects/AspectsPlugin.cs) adds four [decorators](#decorators).
-`[Trace]`, `[Timed]` and `[Retry]` go on functions and methods; `[Trace]` also goes on a class, tracing each of its
-methods. `[Notify]` goes on classes:
+[Piper.Plugins.Aspects](../plugins/Piper.Plugins.Aspects/AspectsPlugin.cs) adds [decorators](#decorators).
+`[Trace]`, `[Timed]`, `[Retry]`, `[Timeout]` and `[CircuitBreaker]` go on functions and methods; `[Trace]` also goes on a
+class, tracing each of its methods. `[Notify]` goes on classes:
 
 ```piper
 [Trace]                       // writes "→ Fetch(url = …)" and "← Fetch" to standard error
@@ -452,6 +452,28 @@ fn Load() => string {
     return __attempt_1();                     // the last attempt, whose exception escapes
 }
 ```
+
+Two more policies, for calls to something that can be slow or down (both in Piper.Runtime's
+[PiperPolicies](../src/Piper.Runtime/PiperPolicies.cs)):
+
+```piper
+[Retry(3, 200)]                 // outermost: a refused or timed-out attempt is tried again
+[CircuitBreaker(5, 30000)]      // 5 failures in a row: refuse calls at once for 30 s
+[Timeout(2000)]                 // innermost: each attempt waits at most 2 s
+async fn Quote(sku: string) => Task<Price> { … }
+```
+
+- **`[Timeout(ms)]`:** an async function that hasn't finished in `ms` milliseconds throws a `TimeoutException` ("Quote
+  took more than 2000 ms.") to its caller. The work isn't stopped, only waited for no longer, since nothing outside
+  it can stop it safely; a function that should stop takes a `CancellationToken` and passes it on. A synchronous
+  function can't have one: its caller can't stop waiting for it.
+- **`[CircuitBreaker(failures, openMs)]`:** after `failures` failures in a row, calls throw a `CircuitOpenException`
+  at once for `openMs` milliseconds, rather than waiting on what's failing and adding to its load. Its `RetryAfter`
+  says how long is left. Then one call is let through to try: if it succeeds the circuit closes, and if it throws it
+  opens again. A success resets the count. Each decorated function has one circuit, shared by all its callers (a
+  service that's down is down for everyone); it works on async and synchronous functions.
+- **Together,** decorators nest with the first written outermost, so the order above retries a refused or timed-out
+  attempt, counts each timeout as a failure, and times each attempt on its own.
 
 **`[Notify]`** makes a class implement `INotifyPropertyChanged`, which WPF and Avalonia data binding use. This is
 what C# gets from a source generator:
@@ -1130,7 +1152,9 @@ async fn Main(args: string[]) => Task = await WorkerNode(await StartNode(), Opti
   between the two by changing the word and adding or removing the web's clauses. Both call Piper.Hosting, which comes
   with each plugin.
 - **Checks:** a clause given twice that can only be given once, an unknown clause and a handler parameter without a
-  type are errors. A server checks the services its handlers take against what it registers; a host doesn't yet.
+  type are errors. As a server's are, its workers' and stopping hooks' services are checked against what it
+  registers: one nothing registers, a class DI makes needing one, and a singleton taking a scoped service are errors
+  (warnings where a registration could be out of sight).
 - **Packages:** it brings `Microsoft.Extensions.Hosting`. [apps/grid](../apps/grid/main.piper)'s worker nodes are hosts.
 
 ### `telemetry` (OpenTelemetry)
@@ -1301,7 +1325,35 @@ It becomes ordinary Piper, on .NET's `System.Threading.Channels`:
 How it behaves:
 
 - **Faults:** if an ask's handler throws, the caller's `await` throws. If a tell's handler throws, the exception is
-  written to the error output and the actor carries on with the next message.
+  written to the error output. Then the actor does what its failure policy says.
+- **Failure policies:** `on failure …;` in the actor says what a handler that throws does to it (both plugins):
+
+  ```piper
+  actor Account(owner: string) {
+      mut balance = 0;
+      on failure rollback;                 // or: resume, restart, restart 3 per minute, stop
+      on Withdraw(amount: int) => int {
+          balance -= amount;
+          if balance < 0 { throw InvalidOperationException("overdrawn"); }   // balance is put back
+          balance
+      }
+  }
+  ```
+
+  - `resume` (the default) carries on with the state as the failed handler left it, which may be half-changed.
+  - `rollback` puts the state back as it was before the message, so a handler either finishes or changes nothing,
+    and nothing else is lost.
+  - `restart` puts the state back as `Spawn` made it. With `3 per minute` (or `per second`, `per hour`), more
+    restarts than that in the window stop the actor instead. Until actors keep their state (see
+    [future](future.md#cloud-and-distributed)), a restart starts again from empty.
+  - `stop` ends the actor. In one process, a message sent to it then throws "Account has stopped." at once, and asks
+    already waiting fail with that error; across processes, Proto.Actor stops it, and an ask gets a
+    `DeadLetterException`.
+
+  `rollback` and `restart` work by keeping the state's values and putting them back, so the state must be immutable
+  values throughout: numbers, strings, records, enums, `ImmutableList` and the like, checked at compile time. A
+  `List`, kept, would be the same list with its changes, so it's an error, suggesting an immutable one or `stop`.
+  Each state variable is declared on its own (`mut count = 0;`) for them.
 - **Async handlers:** handlers can `await`. The actor takes its next message only when the current one is done, so a
   handler that asks another actor waits for the reply first. Two actors asking each other would deadlock.
 - **Stopping:** `Stop()` or disposing stops taking messages and finishes those already sent. Sending to a stopped actor
@@ -1351,6 +1403,8 @@ What's different from in-process actors:
   - An ask with no reply within 10 seconds throws a `TimeoutException`; `actor.WithTimeout(TimeSpan.FromSeconds(30))`
     gives a copy with another limit.
   - Asking an actor that doesn't exist throws Proto.Actor's `DeadLetterException` at once.
+  - `on failure …` works as in one process (see the actor plugin above); `stop` stops the actor through Proto.Actor,
+    so later messages to it are dead letters.
   - A tell that's lost (its node is down) is lost silently, as a message over a network can be.
 - **The same program, run or built:** a message's type is named with the program's assembly name, so the nodes must
   run the same program. `piper run` names it as `piper build` does (after its piper.json `name`, or its folder), so a

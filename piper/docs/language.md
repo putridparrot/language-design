@@ -748,7 +748,7 @@ ada.Deposit(25m);
   - **Interfaces:** a class implements a .NET interface's event, such as `INotifyPropertyChanged.PropertyChanged`
     (which WPF and Avalonia data binding use), by declaring it with the same name and type.
   - **`[Notify]`:** the `aspects` plugin's `[Notify]` writes all of the above for a class, raising `PropertyChanged`
-    from each property's setter (see [plugins](plugins.md#aspects-decorators-trace-timed-retry-and-notify)).
+    from each property's setter (see [plugins](plugins.md#aspects-decorators-trace-timed-retry-timeout-circuitbreaker-and-notify)).
 
 ### Null safety: `Option` and `T?`
 

@@ -1,6 +1,7 @@
 using Piper.Binding;
 using Piper.Plugins;
 using Piper.Syntax;
+using static Piper.Plugins.Shared.ServiceChecks;
 
 namespace Piper.Plugins.Web;
 

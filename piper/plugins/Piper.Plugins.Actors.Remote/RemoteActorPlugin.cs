@@ -61,6 +61,7 @@ public sealed class RemoteActorPlugin : IPiperPlugin
         var clashing = actor.Parameters.Where(parameter => ReservedParameters.Contains(parameter.Name.Text)).ToList();
         foreach (var parameter in clashing)
             p.Report(parameter.Span, $"'Spawn' takes '{parameter.Name.Text}' itself, so the actor's own parameter needs another name.");
+        p.Data = new ActorData(actor.Name, actor.Failure, [.. actor.State.OfType<VariableDeclarationSyntax>().Select(v => v.Name.Text)]);
         return clashing.Count == 0 ? Expand(p, actor) : [];
     }
 
@@ -80,6 +81,7 @@ public sealed class RemoteActorPlugin : IPiperPlugin
                     "Send records, enums, Piper's builtin types or immutable .NET types; for another actor, send its name.");
         }
         CheckShapes(analysis);
+        ActorSyntax.CheckPolicies(analysis, traitsAreOpaque: true);
     }
 
     /// <summary>
@@ -123,6 +125,8 @@ public sealed class RemoteActorPlugin : IPiperPlugin
         var fault = actor + "Fault";
         const string Tasks = "System.Threading.Tasks";
         const string Tracing = "Piper.Actors.Remote.PiperActorTracing";
+        // What a throwing handler does to the actor (`on failure …`): stopping it is Proto.Actor's, here.
+        var (setup, before, onFailure) = ActorSyntax.PolicyCode(declaration, hole, "__context.Stop(__context.Self);");
 
         var variants = new List<string>();
         var arms = new List<string>();
@@ -143,6 +147,7 @@ public sealed class RemoteActorPlugin : IPiperPlugin
                         } catch (__error: System.Exception) {
                             {{Tracing}}.Failed(__error);
                             System.Console.Error.WriteLine("{{actor}}: {__error.Message}");
+                            {{onFailure}}
                         }
                     }
                     """);
@@ -163,6 +168,7 @@ public sealed class RemoteActorPlugin : IPiperPlugin
                         } catch (__error: System.Exception) {
                             {{Tracing}}.Failed(__error);
                             __context.Respond({{fault}}(__error.Message));
+                            {{onFailure}}
                         }
                     }
                     """);
@@ -185,8 +191,8 @@ public sealed class RemoteActorPlugin : IPiperPlugin
         // Each of the actor's messages is handled in a span continuing its sender's trace (from its headers), and timed.
         var span = $"using let __span = {Tracing}.Start<{message}>(__context, \"{actor}\");";
         var receive = awaits
-            ? $"async __context => {{ {span} match __context.Message {{ {string.Join("\n", arms)} _ => {{}} }} }}"
-            : $"__context => {{ {span} match __context.Message {{ {string.Join("\n", arms)} _ => {{}} }} {Tasks}.Task.CompletedTask }}";
+            ? $"async __context => {{ {span} {before} match __context.Message {{ {string.Join("\n", arms)} _ => {{}} }} }}"
+            : $"__context => {{ {span} {before} match __context.Message {{ {string.Join("\n", arms)} _ => {{}} }} {Tasks}.Task.CompletedTask }}";
 
         var template = $$"""
             enum {{message}} {
@@ -202,6 +208,7 @@ public sealed class RemoteActorPlugin : IPiperPlugin
                 /// Starts the actor in this process under `name`, so other processes can reach it with `Connect`.
                 static fn Spawn(system: Proto.ActorSystem, name: string, {{hole[declaration.Parameters]}}: unit) => {{actor}} {
                     {{hole[declaration.State]}};
+                    {{setup}}
                     let __props = Proto.Props.FromFunc({{receive}});
                     {{actor}}(system, system.Root.SpawnNamed(__props, name), System.TimeSpan.FromSeconds(10))
                 }

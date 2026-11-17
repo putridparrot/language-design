@@ -25,6 +25,7 @@
   <!-- The server's clauses shared with the hosting plugin's `host`. -->
   <ItemGroup>
     <Compile Include="..\Shared\HostClauses.cs" Link="HostClauses.cs" />
+    <Compile Include="..\Shared\ServiceChecks.cs" Link="ServiceChecks.cs" />
   </ItemGroup>
 
 </Project>

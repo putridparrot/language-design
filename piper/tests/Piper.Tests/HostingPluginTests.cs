@@ -110,4 +110,41 @@ public class HostingPluginTests
         Assert.Equal("PIP0503", error.Code);
         Assert.Equal(text.LastIndexOf(at, StringComparison.Ordinal), error.Span.Start);
     }
+
+    private const string Services = """
+        fn Main() {}
+        trait Clock { fn Now() => string; }
+        record FixedClock();
+        extend FixedClock: Clock { fn Now() => string = "noon"; }
+        class Store() { }
+        class Session() { }
+        class Cache(session: Session) { }
+        """;
+
+    /// <summary>
+    /// A host's workers and stopping hooks take services, which it's checked registers, as a server is: one nothing
+    /// registers, and a singleton DI makes needing a scoped service (a captive dependency), are errors where they're
+    /// written; registered ones are fine, and so is .NET's own (a CancellationToken).
+    /// </summary>
+    [Theory]
+    [InlineData("host H { singleton Store; worker (store: Store, stopping: System.Threading.CancellationToken) => {}; stopping (store: Store) => {}; }", null, null)]
+    [InlineData("host H { worker (store: Store) => {}; }", "store:", "H registers no Store, but it's given to this")]
+    [InlineData("host H { singleton Store; stopping (clock: Clock) => {}; }", "clock:", "H registers no Clock, but it's given to this")]
+    [InlineData("host H { singleton Clock => FixedClock; worker every 1 minute (clock: Clock) => {}; }", null, null)]
+    [InlineData("host H { scoped Session; singleton Cache; worker (cache: Cache) => {}; }", "H {", "Cache is a singleton, but takes Session, which is scoped")]
+    [InlineData("host H { singleton Cache; worker (cache: Cache) => {}; }", "H {", "Cache (registered for Cache) takes a Session, which H doesn't register")]
+    public void A_hosts_handlers_need_services_it_registers(string host, string? at, string? message)
+    {
+        var text = Services + host;
+        var result = Compile(text);
+        if (message is null)
+        {
+            Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+            Assert.Empty(result.Diagnostics);
+            return;
+        }
+        var error = Assert.Single(result.Diagnostics, d => d.Message.Contains(message));
+        Assert.Equal("PIP0503", error.Code);
+        Assert.Equal(text.LastIndexOf(at!, StringComparison.Ordinal), error.Span.Start);
+    }
 }

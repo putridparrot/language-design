@@ -60,17 +60,31 @@ public sealed class ActorPlugin : IPiperPlugin
                 analysis.ReportWarning(file, syntax.Span,
                     $"'{field.Name}' holds a {mutable}, which the sender and the actor could both change at once. Send something immutable instead, such as a record or an ImmutableList.");
         }
+        ActorSyntax.CheckPolicies(analysis, traitsAreOpaque: false);
     }
 
     private static ImmutableArray<DeclarationSyntax> Expand(PluginParser p, ActorDeclaration declaration)
+    {
+        p.Data = new ActorData(declaration.Name, declaration.Failure, [.. declaration.State.OfType<VariableDeclarationSyntax>().Select(v => v.Name.Text)]);
+        return Generate(p, declaration);
+    }
+
+    private static ImmutableArray<DeclarationSyntax> Generate(PluginParser p, ActorDeclaration declaration)
     {
         var hole = new TemplateHoles();
         var actor = declaration.Name.Text;
         var message = actor + "Message";
         const string Tasks = "System.Threading.Tasks";
+        // What a throwing handler does to the actor (`on failure …`). Stopping closes the mailbox: messages already in it
+        // aren't handled, and asks among them fail rather than wait for ever.
+        bool canStop = declaration.Failure is { Kind: "stop" } or { Kind: "restart", Limit: not null };
+        var (setup, before, onFailure) = ActorSyntax.PolicyCode(declaration, hole, "__stopped = true; __channel.Writer.TryComplete();");
+        if (canStop)
+            setup += "mut __stopped = false;\n";
 
         var variants = new List<string>();
         var arms = new List<string>();
+        var stoppedArms = new List<string>();
         var methods = new List<string>();
         foreach (var handler in declaration.Handlers)
         {
@@ -100,9 +114,12 @@ public sealed class ActorPlugin : IPiperPlugin
                             __reply.SetResult(__result);
                         } catch (__error: System.Exception) {
                             __reply.SetException(__error);
+                            {{onFailure}}
                         }
                     },
                     """);
+                var ignored = string.Join(", ", names.Select(_ => "_").Append("__reply"));
+                stoppedArms.Add($"{handler.Name.Text}({ignored}) => __reply.SetException(System.InvalidOperationException(\"{actor} has stopped.\")),");
                 methods.Add($$"""
                     async fn {{hole[handler.Name]}}({{hole[handler.Parameters]}}: unit) => {{Tasks}}.Task<{{hole[handler.Result]}}> {
                         let __reply = {{Tasks}}.TaskCompletionSource<{{hole[handler.Result]}}>({{Tasks}}.TaskCreationOptions.RunContinuationsAsynchronously);
@@ -112,6 +129,8 @@ public sealed class ActorPlugin : IPiperPlugin
                     """);
             }
         }
+        // A stopped actor's tells are dropped; a match of only asks needs no catch-all (it would be unreachable).
+        var ignoreTells = stoppedArms.Count < declaration.Handlers.Count ? "_ => {}" : "";
 
         var template = $$"""
             enum {{message}} {
@@ -124,14 +143,18 @@ public sealed class ActorPlugin : IPiperPlugin
                 static fn Spawn({{hole[declaration.Parameters]}}: unit) => {{actor}} {
                     let __channel = System.Threading.Channels.Channel.CreateUnbounded<{{message}}>();
                     {{hole[declaration.State]}};
+                    {{setup}}
                     let __loop = {{Tasks}}.Task.Run(async () => {
                         await for __message in __channel.Reader.ReadAllAsync() {
+                            {{(canStop ? $"if __stopped {{ match __message {{ {string.Join("\n", stoppedArms)} {ignoreTells} }} continue; }}" : "")}}
+                            {{before}}
                             try {
                                 match __message {
                                     {{string.Join("\n", arms)}}
                                 }
                             } catch (__error: System.Exception) {
                                 System.Console.Error.WriteLine("{{actor}}: {__error.Message}");
+                                {{onFailure}}
                             }
                         }
                     });

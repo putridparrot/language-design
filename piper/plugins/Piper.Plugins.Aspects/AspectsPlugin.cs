@@ -13,6 +13,9 @@ namespace Piper.Plugins.Aspects;
 /// <item><c>[Timed]</c> writes how long the call took: a <c>Stopwatch</c> and a <c>defer</c>.</item>
 /// <item><c>[Retry(times)]</c> or <c>[Retry(times, delayMs)]</c> runs the body again when it throws, up to
 /// <c>times</c> attempts in all, the last attempt's exception escaping. The body becomes a local function called in a loop.</item>
+/// <item><c>[Timeout(ms)]</c> makes an async function's caller stop waiting after <c>ms</c>, with a TimeoutException.</item>
+/// <item><c>[CircuitBreaker(failures, openMs)]</c> refuses calls at once, with a CircuitOpenException, for <c>openMs</c>
+/// after <c>failures</c> failures in a row, then lets one through to try.</item>
 /// </list>
 /// <c>[Trace]</c> and <c>[Timed]</c> write to standard error, or to the <c>TextWriter</c> given:
 /// <c>[Trace(Console.Out)]</c>.
@@ -55,6 +58,14 @@ public sealed class AspectsPlugin : IPiperPlugin
         new Decorator("Retry", Retry)
         {
             Description = "`[Retry(times)]` or `[Retry(times, delayMs)]` runs the function again when it throws, up to `times` attempts in all. The last attempt's exception escapes. Preconditions are checked once, before the first attempt.",
+        },
+        new Decorator("Timeout", Timeout)
+        {
+            Description = "`[Timeout(ms)]`: an async function that hasn't finished in `ms` milliseconds throws a TimeoutException to its caller. The work isn't stopped, only waited for no longer; to stop it, pass a CancellationToken.",
+        },
+        new Decorator("CircuitBreaker", CircuitBreaker)
+        {
+            Description = "`[CircuitBreaker(failures, openMs)]`: after `failures` failures in a row, calls throw a CircuitOpenException at once for `openMs` milliseconds, rather than waiting on what's failing; then one is let through to try, closing the circuit if it succeeds. One circuit per function.",
         },
     ];
 
@@ -446,6 +457,81 @@ public sealed class AspectsPlugin : IPiperPlugin
                     }
                 }
                 {{lastCall}}
+            }
+            """, [.. holes]);
+        return d.WithBody(body);
+    }
+
+    /// <summary>
+    /// <c>[Timeout(500)]</c>: an async function that hasn't finished in 500 ms throws a TimeoutException to its caller
+    /// (Piper.Runtime's PiperTimeout). Only an async function: a synchronous one can't be stopped waiting for.
+    /// </summary>
+    private static FunctionDeclarationSyntax Timeout(DecoratorContext d)
+    {
+        if (d.Arguments is not [var milliseconds])
+        {
+            d.Report(d.Attribute.Span, "Timeout takes the milliseconds to wait: [Timeout(500)].");
+            return d.Function;
+        }
+        if (!d.IsAsync || d.IsIterator)
+        {
+            d.Report(d.Attribute.Span, "Timeout needs an async function: a call to a synchronous one can't be stopped waiting for. Make it async, returning a Task.");
+            return d.Function;
+        }
+        return Wrapped(d, ("ms", milliseconds), call => d.ReturnsUnit
+            ? $"await Piper.Runtime.PiperTimeout.RunAsync(() => {call}, $ms, $name);"
+            : $"return await Piper.Runtime.PiperTimeout.CallAsync(() => {call}, $ms, $name);");
+    }
+
+    /// <summary>
+    /// <c>[CircuitBreaker(5, 30000)]</c>: after 5 failures in a row, calls throw CircuitOpenException at once for 30 s,
+    /// then one is let through to try (Piper.Runtime's PiperCircuit). One circuit for the function, shared by its callers.
+    /// </summary>
+    private static FunctionDeclarationSyntax CircuitBreaker(DecoratorContext d)
+    {
+        if (d.Arguments is not [var failures, var open])
+        {
+            d.Report(d.Attribute.Span, "CircuitBreaker takes the failures in a row that open it, and the milliseconds it stays open: [CircuitBreaker(5, 30000)].");
+            return d.Function;
+        }
+        if (d.IsIterator)
+        {
+            d.Report(d.Attribute.Span, "An iterator can't have a circuit breaker: it runs as it's read, after the call has returned.");
+            return d.Function;
+        }
+        // The circuit is found by a name unique to this function, so each decorated function has its own.
+        var circuit = d.FreshName("circuit");
+        var key = Text(d.Attribute.Span, $"{d.Name}#{circuit.Text}");
+        var (method, prefix) = (d.IsAsync, d.ReturnsUnit) switch
+        {
+            (true, true) => ("RunAsync", "await "),
+            (true, false) => ("CallAsync", "return await "),
+            (false, true) => ("Run", ""),
+            (false, false) => ("Call", "return "),
+        };
+        return Wrapped(d, ("failures", failures), call =>
+            $"let $circuit = Piper.Runtime.PiperCircuit.For($key, $name, $failures, $open);\n{prefix}$circuit.{method}(() => {call});",
+            ("circuit", circuit), ("key", key), ("open", open));
+    }
+
+    /// <summary>
+    /// The function's body as a local function (so its <c>return</c>s still return its value), called as
+    /// <paramref name="around"/> says, given the call's text. Holes: <c>$name</c> is the function's name, as text.
+    /// </summary>
+    private static FunctionDeclarationSyntax Wrapped(
+        DecoratorContext d, (string, object) argument, Func<string, string> around, params (string, object)[] more)
+    {
+        var attempt = d.FreshName("call");
+        var holes = new List<(string, object)> { ("attempt", attempt), ("body", d.Body), ("name", Text(d.Attribute.Span, d.Name)), argument };
+        holes.AddRange(more);
+        if (d.ReturnType is { } type)
+            holes.Add(("T", type));
+        var modifier = d.IsAsync ? "async " : "";
+        var signature = d.ReturnType is null ? "" : " => $T";
+        var body = (BlockExpressionSyntax)d.Template.Expression($$"""
+            {
+                {{modifier}}fn $attempt(){{signature}} { $body }
+                {{around("$attempt()")}}
             }
             """, [.. holes]);
         return d.WithBody(body);

@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **Failure policies for actors (both actor plugins):** `on failure …;` says what a handler that throws does to its
+  actor: `resume` (the default, as before), `rollback` (the state is put back as it was before the message, so a
+  handler finishes or changes nothing), `restart` (back to how `Spawn` made it; `restart 3 per minute` stops it past
+  that), or `stop`. `rollback` and `restart` need immutable state, checked at compile time. In one process a stopped
+  actor refuses messages, and fails asks already waiting; across processes Proto.Actor stops it. See
+  [plugins](docs/plugins.md#actor-the-actor-model).
+
+- **`[Timeout]` and `[CircuitBreaker]` (aspects plugin):** `[Timeout(ms)]` makes an async function's caller stop
+  waiting after `ms`, with a `TimeoutException`. `[CircuitBreaker(failures, openMs)]` refuses calls at once, with a
+  `CircuitOpenException`, for `openMs` after `failures` failures in a row, then lets one through to try. They nest
+  with `[Retry]`, the first written outermost. See [plugins](docs/plugins.md#aspects-decorators-trace-timed-retry-timeout-circuitbreaker-and-notify).
+
+- **A `host`'s services are checked (hosting plugin),** as a server's are: a worker or stopping hook taking a service
+  of the program's own that nothing in the host registers, a class DI makes needing one, and a singleton taking a
+  scoped service are errors at compile time (warnings where a registration could be out of sight). The checks are
+  shared between the two plugins (plugins/Shared/ServiceChecks.cs).
+
 - **`using` on an Option:** `using let span = source.StartActivity("x");` (an `Activity?`), `using (…)` and `await
   using` dispose the value if it's Some, as C#'s `using` skips a null; an Option of something not disposable is still
   an error. (Piper.Runtime's `Option<T>` implements `IDisposable` and `IAsyncDisposable` explicitly to do it.)

@@ -41,6 +41,29 @@ public sealed class HostingPlugin : IPiperPlugin
         },
     ];
 
+    /// <summary>What a <c>host</c> noted for the analysis: its name, and its stopping hooks' and workers' handlers.</summary>
+    private sealed record HostData(Token Name, System.Collections.Immutable.ImmutableArray<LambdaExpressionSyntax> Hooks,
+        System.Collections.Immutable.ImmutableArray<LambdaExpressionSyntax> Workers);
+
+    /// <summary>
+    /// A host's workers and stopping hooks take services: one taking a service of the program's own that nothing in the
+    /// host registers would fail as it starts or stops, so it's reported now, as a server's are; and so is a singleton
+    /// needing a scoped service, or a service nothing registers (see ServiceChecks).
+    /// </summary>
+    public void Analyze(PluginAnalysis analysis)
+    {
+        foreach (var expansion in analysis.Expansions.Where(e => e.Data is HostData))
+        {
+            var host = (HostData)expansion.Data!;
+            if (ServiceChecks.FunctionOf(analysis, expansion) is not { } function)
+                continue;
+            var hooks = ServiceChecks.HandlerLambdas(function.Body, call => ServiceChecks.IsHostCall(call, "OnStopping"));
+            var workers = ServiceChecks.HandlerLambdas(function.Body, call => ServiceChecks.IsHostCall(call, "Worker"));
+            ServiceChecks.CheckServices(analysis, expansion.File, host.Name, ServiceChecks.RegisteredBy(analysis.Program, function),
+                ServiceChecks.Pair(host.Hooks, hooks).Concat(ServiceChecks.Pair(host.Workers, workers)));
+        }
+    }
+
     /// <summary>
     /// host   = "host" IDENT [ lambdaParameters ] "{" { clause } "}" ;
     /// clause = "logging" "off" ";" | "services" IDENT [ arguments ] ";" | "config" [ IDENT ":" ] IDENT ";"
@@ -84,6 +107,7 @@ public sealed class HostingPlugin : IPiperPlugin
             }
         }
         p.Expect(TokenKind.CloseBrace);
+        p.Data = new HostData(name, [.. parts.Hooks], [.. parts.Workers]);
 
         return p.Template.Declarations($$"""
             fn $name({{(parameters.Count == 0 ? "" : "$parameters: unit")}}) => Microsoft.Extensions.Hosting.IHost {

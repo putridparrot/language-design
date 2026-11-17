@@ -256,6 +256,54 @@ public class RemoteActorPluginTests
         Assert.Contains("piper.actor.handler.duration Back", timed);
     }
 
+    /// <summary>
+    /// Failure policies across nodes: a remote actor with `rollback` changes nothing when a handler throws (its caller
+    /// still gets the error); one with `stop` is stopped by Proto.Actor, so a later ask fails at once with a dead letter.
+    /// </summary>
+    [Fact]
+    public void A_remote_actors_failure_policy_applies_across_nodes()
+    {
+        var result = Compile(Node + """
+            actor Shelf {
+                mut count = 0;
+                on failure rollback;
+                on Take(n: int) => int {
+                    count -= n;
+                    if count < 0 { throw System.InvalidOperationException("not enough"); }
+                    count
+                }
+                on Put(n: int) => int { count += n; count }
+            }
+            actor Fuse {
+                on failure stop;
+                on Check(ok: bool) => string { if !ok { throw System.InvalidOperationException("blown"); } "fine" }
+            }
+            async fn Main() {
+                let host = await StartNode();
+                let client = await StartNode();
+                Shelf.Spawn(host, "shelf");
+                Fuse.Spawn(host, "fuse");
+                let shelf = Shelf.Connect(client, host.Address, "shelf");
+                Print(await shelf.Put(3));
+                try { await shelf.Take(5); } catch (e: System.InvalidOperationException) { Print(e.Message); }
+                Print(await shelf.Take(1));
+
+                let fuse = Fuse.Connect(client, host.Address, "fuse");
+                Print(await fuse.Check(true));
+                try { await fuse.Check(false); } catch (e: System.InvalidOperationException) { Print(e.Message); }
+                await Task.Delay(100);
+                try { await fuse.Check(true); } catch (e: Proto.DeadLetterException) { Print("stopped"); }
+                await client.Remote().ShutdownAsync(true);
+                await host.Remote().ShutdownAsync(true);
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Empty(result.Diagnostics);
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("3\nnot enough\n2\nfine\nblown\nstopped\n", run.Output.Replace("\r\n", "\n"));
+    }
+
     private const string Stock = """
         record Level(sku: string, onHand: int);
         enum Refusal { TooMany(asked: int), Unknown }
