@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- **Snapshots for persisted actors:** `snapshot every 100;` keeps a persisted actor's state every 100 events, and an
+  actor starting again restores the latest and replays only the events since. Each value is kept with a fingerprint
+  of its type's shape, so a snapshot from before the state's types changed is ignored and every event replayed.
+  `IEventStore` gains `LoadSnapshotAsync`, `SaveSnapshotAsync` and `LoadAsync(stream, from)`, as default methods, so
+  existing stores still work, without snapshots; `MemoryEventStore` and `DatabaseEventStore` (a new `PiperSnapshots`
+  table, made as the store opens, in a database from before too) keep them. apps/grid's `Jobs` takes one every 100.
+  A snapshot the store fails to keep doesn't fail the message, but is reported: logged under `Piper.Events` (through
+  Piper.Runtime's new `PiperDiagnostics.Log`, which servers and hosts point at their `ILogger`, and standard error
+  otherwise), once until it recovers; added to the current span; and counted on the `Piper.Events` meter.
+
+- **`transient` state in a persisted actor, and grid's jobs kept as events:** `transient mut asked = …;` is state
+  a persisted actor's handlers change themselves, with no event: not kept, started afresh whenever the actor starts,
+  but put back like the rest when a handler fails (an event's body can't change it). apps/grid's `Jobs` is now
+  persisted: its events are its rules' inputs with their times, so a coordinator that restarts carries on with its
+  job and history, and workers told to wait (every half second) are only noted in transient state. Its store is
+  configuration (`Events__Provider=sqlite`), in memory if none.
+
+- **The `messaging` plugin (commands and events between services):** `messages Orders { command PlaceOrder(…) queue
+  "orders"; event OrderPlaced(…) topic "order-events" key orderId; }` declares the messages, and
+  `consumer Shop(bus: Bus) { on PlaceOrder(order) { …; Handled.Done } }` handles them. A handler says what became of
+  its message: `Handled.Done`, `Handled.RetryLater(after)` or `Handled.Reject(reason)` (dead-lettered); one that
+  throws is retried with backoff, then dead-lettered. A command has one receiver and an event goes to every consumer
+  of it. The transport is a provider (`IMessageTransport`), chosen by configuration; `memory` is the local one, with
+  `Sent`, `DeadLetters` and `Idle()` for tests. Checked as it compiles: a message's fields must be immutable, a
+  handler's message must be declared, a command is handled by one consumer, and a messages block's shape is recorded
+  (`Orders.shape.json`) so a change that breaks senders or readers is an error.
+
 - **Providers, chosen by configuration:** a cloud-type service is a trait or interface whose implementations a program
   chooses among by configuration at startup. Piper.Runtime's `PiperProviders` holds each service's providers by name,
   its local one (used when nothing is configured) built in, and others registered by the plugins a program brings

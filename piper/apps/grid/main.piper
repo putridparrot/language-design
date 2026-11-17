@@ -5,7 +5,10 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
+using Piper.Hosting;
+using Piper.Runtime;
 using Proto;
 using Proto.Remote;
 
@@ -35,7 +38,7 @@ async fn Main(args: string[]) {
 /// The coordinator: hosts the jobs, and serves the dashboard.
 async fn Coordinate(options: Options) => Task<int> {
     let node = await StartNode(options.host, options.port ?? 8000);
-    let jobs = Jobs.Spawn(node, "jobs");
+    let jobs = Jobs.Spawn(node, "jobs", EventStore(), "grid");
     let url = HttpUrl(options);
     Print($"Coordinator {node.Address}, dashboard on {url}");
     await GridServer(jobs, url).RunAsync();
@@ -64,7 +67,7 @@ host WorkerNode(node: ActorSystem, options: Options, name: string) {
 /// quickest way to see it.
 async fn Everything(options: Options) => Task<int> {
     let node = await StartNode("127.0.0.1", options.port ?? 8000);
-    let jobs = Jobs.Spawn(node, "jobs");
+    let jobs = Jobs.Spawn(node, "jobs", EventStore(), "grid");
     using let stop = CancellationTokenSource();
     let workers: List<Task> = [];
     for i in 1..3 {
@@ -82,3 +85,12 @@ async fn Everything(options: Options) => Task<int> {
 /// Where the dashboard listens: on loopback alone for a loopback host, otherwise on every interface.
 fn HttpUrl(options: Options) => string =
     if options.host == "127.0.0.1" || options.host == "localhost" { $"http://127.0.0.1:{options.http}" } else { $"http://*:{options.http}" };
+
+/// Where the coordinator keeps its jobs' events, as its configuration says: `Events:Provider` and that provider's
+/// settings, from appsettings.json or the environment (`Events__Provider=sqlite`, `Events__Connection=Data
+/// Source=grid.db`; or `sqlserver`, `postgres` for a database in a cloud). In memory if it says nothing, so a
+/// coordinator that restarts starts afresh.
+fn EventStore() => IEventStore {
+    let configuration = ConfigurationBuilder().AddJsonFile("appsettings.json", true).AddEnvironmentVariables().Build();
+    PiperHost.Provider<IEventStore>(configuration, "Events")
+}

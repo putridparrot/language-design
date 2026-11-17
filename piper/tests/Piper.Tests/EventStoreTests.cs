@@ -45,6 +45,7 @@ public class EventStoreTests
 
                 actor Tally(id: string) persisted by id {
                     mut total = 0;
+                    snapshot every 2;
                     event Added(n: int) { total += n; }
                     on Add(n: int) => int { emit Added(n); total }
                     on Total() => int { total }
@@ -79,13 +80,32 @@ public class EventStoreTests
                     Print(await again.Add(1));
                     try { await rival.Add(100); } catch (e: EventStreamConflictException) { Print("conflict"); }
                     Print(await Tally.Spawn(store, "visits").Total());
+
+                    // Its snapshot, after two events (the third came since), which a new actor restores before
+                    // replaying the third.
+                    match await store.LoadSnapshotAsync("Tally/visits") {
+                        Some(kept) => Print($"snapshot after {kept.Version}: {kept.State}"),
+                        None => Print("no snapshot"),
+                    }
+                    // A database whose events were kept before snapshots gains their table as it's opened.
+                    {
+                        using let sqlite = SqliteConnection(connection);
+                        sqlite.Open();
+                        using let command = sqlite.CreateCommand();
+                        command.CommandText = "drop table PiperSnapshots";
+                        command.ExecuteNonQuery();
+                    }
+                    let reopened = await DatabaseEventStore.OpenAsync(options);
+                    Print(await Tally.Spawn(reopened, "visits").Add(2));
+                    Print(await reopened.LoadSnapshotAsync("Tally/visits") is Some(_));
                 }
                 """, "main.piper")],
                 new CompilationOptions { Plugins = Plugins.Value.Plugins, References = Plugins.Value.References });
             Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
             var run = Runner.Run(result.Files, references: result.References);
             Assert.True(run.Success, string.Join("\n", run.Errors));
-            Assert.Equal("2\n7\n7\n0\n7\n8\nconflict\n8\n", run.Output.Replace("\r\n", "\n"));
+            Assert.Matches("^2\n7\n7\n0\n7\n8\nconflict\n8\nsnapshot after 2: \\{\"total\":\\{\"shape\":\"[0-9A-F]{16}\",\"value\":7\\}\\}\n10\nTrue\n$",
+                run.Output.Replace("\r\n", "\n"));
         }
         finally
         {

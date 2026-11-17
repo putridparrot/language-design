@@ -269,6 +269,7 @@ public sealed partial class WebPlugin
                 let builder = Microsoft.AspNetCore.Builder.WebApplication.CreateBuilder();
                 $building;
                 let app = builder.Build();
+                Piper.Hosting.PiperHost.UseLogging(app.Services);
                 $pipeline;
                 app
             }

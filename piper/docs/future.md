@@ -265,8 +265,9 @@ finishing it), container publishing, and hosted workers; and of actor clustering
    (`persisted by sku`, `event`, `emit`; see [plugins](plugins.md#keeping-state-persisted-actors)), with an in-memory
    store and checks that state changes only through events, and so is ~~a durable store~~ (Piper.Data's
    `DatabaseEventStore`, through EF Core), and ~~stock using it~~ (each product persisted, its node's events in a SQLite
-   file on the pod's own volume). Still to come: grid's jobs, a store the nodes share (so a product could move
-   between them), and snapshots for long streams.
+   file on the pod's own volume), ~~grid's jobs~~ (with `transient` state, for what isn't worth keeping) and
+   ~~snapshots for long streams~~ (`snapshot every 100;`). Still to come: a store the nodes share (so a product could move
+   between them).
    With clustering, it would replace the stock app's fixed
    `--nodes` list, `hash % count` and StatefulSet. The largest of these.
 4. **Failure policies.** The same patterns were written by hand several times: stock retries once after a dead letter,
@@ -454,9 +455,12 @@ await bus.Publish(OrderPlaced(id, total));
 **Messages or actors:** actors are fast request and reply within one cluster; messages are durable and asynchronous,
 between services. Both stay, and the docs say when to use which.
 
-**In order:** the transport trait and the runtime with the in-memory transport and a first broker's adapter, `messages`
-and `consumer` with `Handled`, and the compile-time checks; then the outbox and topology; then more adapters; then
-versions and sagas.
+**In order:** ~~the transport trait and the runtime with the in-memory transport, `messages` and `consumer` with
+`Handled`, the compile-time checks, and versions (recorded shapes)~~, done (see
+[plugins](plugins.md#messaging-commands-and-events-between-services)); then the outbox; then brokers' adapters, each a
+provider (RabbitMQ first, open source and local in a container; then Azure Service Bus, Amazon SQS, Google Pub/Sub),
+and topology (queues and topics made from the declarations); then consumers started by a server's or host's clause;
+then sagas.
 
 **To decide:** whether Piper services must interoperate with existing C# services on the same bus. Their envelope
 (headers, type names, correlation) is a protocol; if they use MassTransit's or NServiceBus's, the transports would need

@@ -75,17 +75,43 @@ public sealed class DatabaseEventStore : IEventStore
             await creator.CreateAsync();
             await creator.CreateTablesAsync();
         }
-        else if (!await TableExists(db))
+        else if (!await TableExists(db.Events))
         {
             await creator.CreateTablesAsync();
         }
+        // Snapshots have a table of their own, made apart, so a database whose events were kept before them gains it.
+        await using var snapshots = new SnapshotsDb(options);
+        if (!await TableExists(snapshots.Snapshots))
+            await snapshots.GetService<IRelationalDatabaseCreator>().CreateTablesAsync();
         return store;
     }
 
-    public async Task<IReadOnlyList<string>> LoadAsync(string stream)
+    public Task<IReadOnlyList<string>> LoadAsync(string stream) => LoadAsync(stream, 0);
+
+    public async Task<IReadOnlyList<string>> LoadAsync(string stream, int from)
     {
         await using var db = Open();
-        return await db.Events.Where(e => e.Stream == stream).OrderBy(e => e.Version).Select(e => e.Json).ToListAsync();
+        return await db.Events.Where(e => e.Stream == stream && e.Version >= from).OrderBy(e => e.Version).Select(e => e.Json).ToListAsync();
+    }
+
+    public async Task<StoredSnapshot?> LoadSnapshotAsync(string stream)
+    {
+        await using var db = new SnapshotsDb(_options);
+        return await db.Snapshots.Where(s => s.Stream == stream).Select(s => new StoredSnapshot(s.Version, s.Json)).FirstOrDefaultAsync();
+    }
+
+    /// <summary>Keeps the stream's latest snapshot, one row for each stream, replacing an earlier one.</summary>
+    public async Task SaveSnapshotAsync(string stream, StoredSnapshot snapshot)
+    {
+        await using var db = new SnapshotsDb(_options);
+        var kept = await db.Snapshots.FirstOrDefaultAsync(s => s.Stream == stream);
+        if (kept is not null && kept.Version >= snapshot.Version)
+            return;
+        if (kept is null)
+            db.Snapshots.Add(new StoredState { Stream = stream, Version = snapshot.Version, Json = snapshot.State, Saved = DateTime.UtcNow });
+        else
+            (kept.Version, kept.Json, kept.Saved) = (snapshot.Version, snapshot.State, DateTime.UtcNow);
+        await db.SaveChangesAsync();
     }
 
     public async Task AppendAsync(string stream, int expected, IReadOnlyList<string> events)
@@ -117,11 +143,11 @@ public sealed class DatabaseEventStore : IEventStore
     /// <summary>A context for one operation: actors use the store at once, and a DbContext is for one at a time.</summary>
     private EventsDb Open() => new(_options);
 
-    private static async Task<bool> TableExists(EventsDb db)
+    private static async Task<bool> TableExists<T>(IQueryable<T> table)
     {
         try
         {
-            await db.Events.AnyAsync();
+            await table.AnyAsync();
             return true;
         }
         catch (DbException)
@@ -148,6 +174,28 @@ public sealed class DatabaseEventStore : IEventStore
             events.ToTable("PiperEvents");
             events.HasKey(e => new { e.Stream, e.Version });
             events.Property(e => e.Stream).HasMaxLength(400);
+        }
+    }
+
+    /// <summary>A stream's latest snapshot: its actor's state after its first <c>Version</c> events.</summary>
+    private sealed class StoredState
+    {
+        public string Stream { get; set; } = "";
+        public int Version { get; set; }
+        public string Json { get; set; } = "";
+        public DateTime Saved { get; set; }
+    }
+
+    private sealed class SnapshotsDb(DbContextOptions options) : DbContext(options)
+    {
+        public DbSet<StoredState> Snapshots => Set<StoredState>();
+
+        protected override void OnModelCreating(ModelBuilder model)
+        {
+            var snapshots = model.Entity<StoredState>();
+            snapshots.ToTable("PiperSnapshots");
+            snapshots.HasKey(s => s.Stream);
+            snapshots.Property(s => s.Stream).HasMaxLength(400);
         }
     }
 }

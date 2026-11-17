@@ -2,6 +2,7 @@ namespace GridApp;
 
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 
 /// The chunk a worker was given, or -1 for none.
@@ -95,4 +96,16 @@ test "the dashboard's view: who's working on what" {
     Assert(view.workers.All(w => w.active));
     Assert(!Describe(board, now.AddMinutes(1)).workers.Any(w => w.active));
     AssertEqual(0, Describe(board, now.AddMinutes(3)).workers.Count);
+}
+
+test "workers told to wait are heard from, without being kept on the board" {
+    let now = DateTime(2026, 1, 1);
+    let board = TakeWork(Started(1, now), "a", now).board;
+    let asked = ImmutableDictionary.Create<string, DateTime>().Add("a", now.AddSeconds(3)).Add("idle", now.AddSeconds(4));
+    let heard = Heard(board, asked);
+    AssertEqual(now.AddSeconds(3), heard.workers["a"].last);
+    AssertEqual(0, heard.workers["a"].current);   // still the chunk it was given
+    AssertEqual(-1, heard.workers["idle"].current);
+    AssertEqual(now, Heard(board, ImmutableDictionary.Create<string, DateTime>().Add("a", now.AddSeconds(-1))).workers["a"].last);
+    AssertEqual("a,idle", string.Join(",", Describe(heard, now.AddSeconds(5)).workers.Select(w => w.name)));
 }

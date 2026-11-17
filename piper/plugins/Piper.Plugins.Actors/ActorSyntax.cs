@@ -23,6 +23,12 @@ internal sealed record ActorDeclaration(Token Name, ImmutableArray<ParameterSynt
 
     /// <summary>Its events (`event Received(quantity: int) { onHand += quantity; }`), the only way a persisted actor's state changes.</summary>
     public List<ActorEvent> Events { get; init; } = [];
+
+    /// <summary>The names of its `transient mut` state, which isn't kept with its events or in its snapshots.</summary>
+    public HashSet<string> Transient { get; init; } = [];
+
+    /// <summary>`snapshot every 100;`: how many events between the snapshots of its state; null for none.</summary>
+    public ExpressionSyntax? SnapshotEvery { get; init; }
 }
 
 /// <summary>An event of a persisted actor: its fields, and how it changes the state (replayed as the actor starts).</summary>
@@ -119,6 +125,8 @@ internal static class ActorSyntax
         var handlers = new List<ActorHandler>();
         var events = new List<ActorEvent>();
         var functions = new List<StatementSyntax>();
+        var transient = new HashSet<string>();
+        ExpressionSyntax? snapshotEvery = null;
         FailurePolicy? failure = null;
         while (p.Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
         {
@@ -128,6 +136,43 @@ internal static class ActorSyntax
                 var eventName = p.Expect(TokenKind.Identifier);
                 var fields = Parameters(p, ref valid);
                 events.Add(new ActorEvent(eventName, fields, p.ParseBlock()));
+                continue;
+            }
+            // `transient mut seen = …;`: a persisted actor's state that isn't kept, which its handlers change themselves.
+            if (p.AtWord("transient") && p.Peek(1).Kind is TokenKind.MutKeyword)
+            {
+                var word = p.ReadWord();
+                var declaration = p.ParseVariableDeclaration();
+                state.Add(declaration);
+                if (persisted is null)
+                {
+                    p.Report(word.Span, $"Only a persisted actor's state can be transient: none of {name.Text}'s is kept.");
+                    valid = false;
+                }
+                else if (declaration is VariableDeclarationSyntax { Name: { IsMissing: false } transientName })
+                {
+                    transient.Add(transientName.Text);
+                }
+                continue;
+            }
+            // `snapshot every 100;`: keep the state now and then, so starting replays only the events since.
+            if (p.AtWord("snapshot") && p.Peek(1) is { Kind: TokenKind.Identifier, Text: "every" })
+            {
+                var word = p.ReadWord();
+                p.ReadWord();
+                var every = p.ParseExpression();
+                p.Expect(TokenKind.Semicolon);
+                if (persisted is null)
+                {
+                    p.Report(word.Span, $"Only a persisted actor takes snapshots, of the state its events make: 'actor {name.Text}(…) persisted by id {{ … }}'.");
+                    valid = false;
+                }
+                else if (snapshotEvery is not null)
+                {
+                    p.Report(word.Span, $"Actor '{name.Text}' already says how often it takes snapshots.");
+                    valid = false;
+                }
+                snapshotEvery ??= every;
                 continue;
             }
             if (p.Current.Kind is TokenKind.LetKeyword or TokenKind.MutKeyword)
@@ -215,12 +260,12 @@ internal static class ActorSyntax
                 valid = false;
             }
         }
-        if (!CheckEvents(p, name, persisted, events, handlers, mutable, failure))
+        if (!CheckEvents(p, name, persisted, events, handlers, mutable, transient, failure))
             valid = false;
         // After all the state, which they may use.
         state.AddRange(functions);
         return valid
-            ? new ActorDeclaration(name, parameters, state, handlers) { Failure = failure, Mutable = mutable, PersistedBy = persistedBy, Events = events }
+            ? new ActorDeclaration(name, parameters, state, handlers) { Failure = failure, Mutable = mutable, PersistedBy = persistedBy, Events = events, Transient = transient, SnapshotEvery = snapshotEvery }
             : null;
     }
 
@@ -231,7 +276,8 @@ internal static class ActorSyntax
     /// persisted actor.
     /// </summary>
     private static bool CheckEvents(
-        PluginParser p, Token name, Token? persisted, List<ActorEvent> events, List<ActorHandler> handlers, List<string> mutable, FailurePolicy? failure)
+        PluginParser p, Token name, Token? persisted, List<ActorEvent> events, List<ActorHandler> handlers, List<string> mutable, HashSet<string> transient,
+        FailurePolicy? failure)
     {
         bool valid = true;
         void Error(TextSpan span, string message)
@@ -263,8 +309,9 @@ internal static class ActorSyntax
         foreach (var emit in emits.Where(e => !known.Contains(e.Identifier.Text[EmitPrefix.Length..])))
             Error(emit.Span, $"{name.Text} has no event '{emit.Identifier.Text[EmitPrefix.Length..]}'; its events are {string.Join(", ", known.Order())}.");
 
-        // A handler that changed the state itself would change it in a way replaying the events can't repeat.
-        var state = mutable.ToHashSet();
+        // A handler that changed the state itself would change it in a way replaying the events can't repeat. Transient
+        // state isn't replayed, so handlers change it, and events can't (replaying would change it again).
+        var state = mutable.Where(m => !transient.Contains(m)).ToHashSet();
         foreach (var assignment in handlers.SelectMany(h => SyntaxWalker.DescendantsAndSelf(h.Body)).OfType<AssignmentExpressionSyntax>())
         {
             if (assignment.Target is NameExpressionSyntax target && state.Contains(target.Identifier.Text))
@@ -274,7 +321,9 @@ internal static class ActorSyntax
         {
             foreach (var node in SyntaxWalker.DescendantsAndSelf(@event.Body))
             {
-                if (node is AwaitExpressionSyntax wait)
+                if (node is AssignmentExpressionSyntax { Target: NameExpressionSyntax target } changed && transient.Contains(target.Identifier.Text))
+                    Error(changed.Span, $"'{target.Identifier.Text}' is transient, so it isn't kept, and an event's body can't change it: replaying the events would. Change it in the handler.");
+                else if (node is AwaitExpressionSyntax wait)
                     Error(wait.Span, "An event's body changes the state, and is replayed as the actor starts, so it can't await: do that in the handler, before it emits.");
                 else if (node is NameExpressionSyntax emitted && emitted.Identifier.Text.StartsWith(EmitPrefix, StringComparison.Ordinal))
                     Error(emitted.Span, "An event's body can't emit another: replaying it would emit again. Emit both from the handler.");
@@ -388,7 +437,7 @@ internal static class ActorSyntax
         if (actor.Failure is { Kind: "restart", Limit: { } limit, Window: var window })
             setup.Append($"let __restarts = Piper.Runtime.PiperRestarts({hole[limit]}, System.TimeSpan.From{Capitalized(window!)}s(1));\n");
 
-        var restart = Restore("__initial_") + (persisted ? Replay : "");
+        var restart = Restore("__initial_") + (persisted ? Replay(actor) : "");
         var action = kind switch
         {
             "rollback" => Restore("__saved_"),
@@ -400,11 +449,25 @@ internal static class ActorSyntax
         return (setup.ToString(), before, (persisted ? "__events.Discard(); " : "") + action);
     }
 
-    /// <summary>Rebuilds a persisted actor's state from its saved events (after putting it back as Spawn made it).</summary>
-    public const string Replay = "for __event in await __events.ReplayAsync() { __apply(__event); } ";
+    /// <summary>
+    /// Rebuilds a persisted actor's state from its saved events (after putting it back as Spawn made it); one that
+    /// takes snapshots restores its latest first, and replays only the events after it.
+    /// </summary>
+    public static string Replay(ActorDeclaration actor) =>
+        (actor.SnapshotEvery is null ? "" : "__restore(await __events.LoadSnapshotAsync()); ") +
+        "for __event in await __events.ReplayAsync() { __apply(__event); } ";
 
-    /// <summary>Saves the events the handled message emitted, together, before its reply is sent.</summary>
-    public static string Commit(ActorDeclaration actor) => actor.PersistedBy is null ? "" : "await __events.CommitAsync();";
+    /// <summary>
+    /// Saves the events the handled message emitted, together, before its reply is sent; and for an actor that takes
+    /// snapshots, its state once enough events have been saved since the last.
+    /// </summary>
+    public static string Commit(ActorDeclaration actor, TemplateHoles hole) =>
+        actor.PersistedBy is null ? "" :
+        actor.SnapshotEvery is { } every ? $"await __events.CommitAsync(); if __events.SnapshotDue({hole[every]}) {{ await __events.SaveSnapshotAsync(__capture()); }}" :
+        "await __events.CommitAsync();";
+
+    /// <summary>The state a snapshot keeps: a persisted actor's `mut` state that isn't transient.</summary>
+    private static IEnumerable<string> Kept(ActorDeclaration actor) => actor.Mutable.Where(name => !actor.Transient.Contains(name));
 
     /// <summary>
     /// A persisted actor's events, for its plugin's template: <c>Enum</c>, the <c>{Actor}Event</c> enum (a variant for
@@ -436,9 +499,31 @@ internal static class ActorSyntax
             $"let __events = Piper.Runtime.PiperEventLog<{type}>(store, System.String.Concat(\"{actor.Name.Text}/\", " +
             $"System.Convert.ToString({hole[identity]}, System.Globalization.CultureInfo.InvariantCulture)));\n" +
             $"fn __apply(__applied: {type}) {{\n    match __applied {{\n{string.Join("\n", arms)}\n    }}\n}}\n" +
-            string.Concat(emits);
+            string.Concat(emits) +
+            (actor.SnapshotEvery is null ? "" : SnapshotCode(actor));
         // Indented: a `fn` that starts a line is read as the next top-level declaration, not a local function.
         return ($"enum {type} {{\n{string.Join(",\n", variants)}\n}}\n", string.Join("\n", setup.Split('\n').Select(line => "    " + line)));
+    }
+
+    /// <summary>
+    /// <c>__capture</c>, the state as a snapshot; and <c>__restore</c>, which puts a snapshot's state back, all of it
+    /// or (if it was kept as other types than the state's now) none, and then the events are replayed from the first.
+    /// </summary>
+    private static string SnapshotCode(ActorDeclaration actor)
+    {
+        var kept = Kept(actor).ToList();
+        var capture = "Piper.Runtime.PiperSnapshot()" + string.Concat(kept.Select(name => $".With(\"{name}\", {name})"));
+        var read = string.Concat(kept.Select(name => $"            let __kept_{name} = __snapshot.Get(\"{name}\", {name});\n"));
+        var assign = string.Concat(kept.Select(name => $"            {name} = __kept_{name};\n"));
+        return $"fn __capture() => Piper.Runtime.PiperSnapshot = {capture};\n" +
+               "fn __restore(__snapshot: Piper.Runtime.PiperSnapshot) {\n" +
+               "    if __snapshot.Found {\n" +
+               "        try {\n" + read + assign +
+               "        } catch (_: System.Exception) {\n" +
+               "            __events.ForgetSnapshot();\n" +
+               "        }\n" +
+               "    }\n" +
+               "}\n";
     }
 
     private static string Capitalized(string word) => char.ToUpperInvariant(word[0]) + word[1..];

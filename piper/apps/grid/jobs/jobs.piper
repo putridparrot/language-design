@@ -3,44 +3,73 @@
 namespace GridApp;
 
 using System;
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Piper.Runtime;
 using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
 
 /// The coordinator's jobs, hosted under the name "jobs". It holds the board and applies the rules in board.piper one
 /// message at a time, so workers asking at once on many nodes are given different chunks.
-actor Jobs {
+///
+/// It keeps the board as events, each the input to one of those rules with the time it happened, so a coordinator
+/// that restarts replays them and carries on with its job: the chunks done stay done, the ones out are still lent
+/// (a worker sends its chunk back to the new coordinator, as workers retry), and the history is kept. A worker told
+/// to wait is only noted in `asked`, which is transient: idle workers ask every half second, which isn't worth keeping.
+actor Jobs(id: string) persisted by id {
     mut board = NewBoard(DateTime.UtcNow);
+    transient mut asked = ImmutableDictionary.Create<string, DateTime>();
+    snapshot every 100;
+
+    event Started(spec: JobSpec, at: DateTime) { board = StartJob(board, spec, at).board; }
+    event Taken(worker: string, at: DateTime) { board = TakeWork(board, worker, at).board; }
+    event Completed(tally: Tally, at: DateTime) { board = Complete(board, tally, at).board; }
+    event Cancelled(at: DateTime) { board = CancelJob(board, at).board; }
 
     on Start(spec: JobSpec) => bool {
-        let (next, started) = StartJob(board, spec, DateTime.UtcNow);
-        board = next;
+        let now = DateTime.UtcNow;
+        let started = StartJob(board, spec, now).started;
+        if started {
+            emit Started(spec, now);
+        }
         started
     }
 
     on Take(worker: string) => Assignment {
-        let (next, assignment) = TakeWork(board, worker, DateTime.UtcNow);
-        board = next;
+        let now = DateTime.UtcNow;
+        let assignment = TakeWork(board, worker, now).assignment;
+        match assignment {
+            Work(_) => {
+                emit Taken(worker, now);
+            },
+            Wait => {
+                asked = asked.SetItem(worker, now);
+            },
+        }
         assignment
     }
 
     on Done(tally: Tally) => bool {
-        let (next, kept) = Complete(board, tally, DateTime.UtcNow);
-        board = next;
+        let now = DateTime.UtcNow;
+        let kept = Complete(board, tally, now).kept;
+        emit Completed(tally, now);
         kept
     }
 
     on Cancel() => bool {
-        let (next, cancelled) = CancelJob(board, DateTime.UtcNow);
-        board = next;
+        let now = DateTime.UtcNow;
+        let cancelled = CancelJob(board, now).cancelled;
+        if cancelled {
+            emit Cancelled(now);
+        }
         cancelled
     }
 
-    on Status() => View { Describe(board, DateTime.UtcNow) }
+    on Status() => View { Describe(Heard(board, asked), DateTime.UtcNow) }
 }
 
 /// Starts a node: an actor system the others reach at `host:port` (port 0 for any free one). A loopback host binds to

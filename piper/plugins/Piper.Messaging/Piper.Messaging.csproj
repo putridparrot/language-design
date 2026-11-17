@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    What the code the messaging plugin (plugins/Piper.Plugins.Messaging) writes calls at run time: the transport
+    interface every broker's provider implements, the in-memory transport (the local one), and the Bus that sends,
+    publishes and hands messages to consumers. No dependencies beyond .NET and Piper.Runtime; a broker's adapter comes
+    as its own provider, with its own client package. It comes with the plugin, beside its assembly.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Piper.Messaging</RootNamespace>
+    <!-- One place whatever the configuration, so the plugin can copy it beside itself. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\runtime\</OutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- A program has its own Piper.Runtime (providers, JSON for Piper's types); this must use that one. -->
+    <ProjectReference Include="..\..\src\Piper.Runtime\Piper.Runtime.csproj" Private="false" />
+  </ItemGroup>
+
+</Project>

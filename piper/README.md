@@ -67,8 +67,8 @@ follows (flags override it):
   desktop client.
 - **`plugins`** add keywords to the language (see [docs/plugins.md](docs/plugins.md)). Those that come with piper are
   named: `services` (dependency injection), `web` (ASP.NET Core endpoints), `api` (an API's shape and typed client),
-  `openapi` (OpenAPI documents for them), `telemetry` (OpenTelemetry), `args` (command-line options), `actors`,
-  `remote-actors`, `parallel` and `state-machines`. Any other is the path of its assembly, relative to the folder, or
+  `openapi` (OpenAPI documents for them), `telemetry` (OpenTelemetry), `messaging` (commands and events), `args`
+  (command-line options), `actors`, `remote-actors`, `parallel` and `state-machines`. Any other is the path of its assembly, relative to the folder, or
   a name given with `piper plugin add <folder>`, which copies it to `~/.piper/plugins`.
 
 Every key is optional; an empty file is fine. Any other key is an error, so future versions can add keys without

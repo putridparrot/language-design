@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Piper.Runtime;
 using Proto.Remote;
 
 async fn WaitForJob(jobs: Jobs, job: int) => Task<View> {
@@ -19,7 +20,7 @@ async fn WaitForJob(jobs: Jobs, job: int) => Task<View> {
 
 async test "workers on three nodes share a job over gRPC, and a chunk whose worker vanished is done by another" {
     let coordinator = await StartNode("127.0.0.1", 0);
-    let jobs = Jobs.Spawn(coordinator, "jobs");
+    let jobs = Jobs.Spawn(coordinator, "jobs", MemoryEventStore(), "grid");
     Assert(await jobs.Start(JobSpec(12, 2_000, 5)));
 
     // A worker that takes a chunk and is never heard from again, as a deleted pod would.
@@ -47,4 +48,45 @@ async test "workers on three nodes share a job over gRPC, and a chunk whose work
     AssertEqual(expected.var99, run.valuation.var99);
     AssertEqual(expected.mean, run.valuation.mean);
     Assert(expected.histogram.SequenceEqual(run.valuation.histogram));
+}
+
+/// What chunk `id` of a job with seed 4 and 50 scenarios sends back.
+fn Small(id: int, worker: string) => Tally = Tally(1, id, worker, Simulate(50, ChunkSeed(4, id)), 10L);
+
+async test "a coordinator that restarts carries on with its job, from its snapshot and the events since" {
+    let store = MemoryEventStore();
+    let first = await StartNode("127.0.0.1", 0);
+    let jobs = Jobs.Spawn(first, "jobs", store, "grid");
+    Assert(await jobs.Start(JobSpec(60, 50, 4)));
+    for id in 0..57 {   // two events each, so a snapshot is taken after the 100th
+        AssertEqual(id, Given(await jobs.Take("a")));
+        Assert(await jobs.Done(Small(id, "a")));
+    }
+    AssertEqual(58, Given(await jobs.Take("b")));   // lent to b and c, which are still working on them
+    AssertEqual(59, Given(await jobs.Take("c")));
+    await first.Remote().ShutdownAsync(true);
+    match await store.LoadSnapshotAsync("Jobs/grid") {
+        Some(kept) => AssertEqual(100, kept.Version),   // Started, 49 chunks taken and done, and the 50th taken
+        None => Assert(false, "no snapshot was taken"),
+    }
+
+    let second = await StartNode("127.0.0.1", 0);
+    let again = Jobs.Spawn(second, "jobs", store, "grid");
+    let view = await again.Status();
+    Assert(view.running);
+    AssertEqual(58, view.done);
+    AssertEqual(2, view.outstanding);
+    AssertEqual("b", view.cells[58].worker);
+    Assert(!(await again.Start(JobSpec(5, 10, 1))), "a second job started while the first was still running");
+
+    // b and c send their chunks back to the new coordinator, and the job finishes with every chunk's sample.
+    for (id, worker) in [(58, "b"), (59, "c")] {
+        Assert(await again.Done(Small(id, worker)));
+    }
+    let done = await again.Status();
+    await second.Remote().ShutdownAsync(true);
+    Assert(!done.running);
+    let expected = Combine(Enumerable.Range(0, 60).Select(id => Simulate(50, ChunkSeed(4, id))));
+    AssertEqual(expected.var99, done.history.Single().valuation.var99);
+    Assert(expected.histogram.SequenceEqual(done.history.Single().valuation.histogram));
 }

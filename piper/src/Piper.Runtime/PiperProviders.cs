@@ -23,6 +23,9 @@ public sealed class ProviderSettings
         }
     }
 
+    /// <summary>No settings: the local provider, for a test or a program choosing it in code.</summary>
+    public static ProviderSettings Empty(string section) => new(section, []);
+
     /// <summary>The section the settings were read from, for messages: <c>Events</c>.</summary>
     public string Section { get; }
 

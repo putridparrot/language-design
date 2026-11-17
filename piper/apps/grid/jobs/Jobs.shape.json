@@ -1,6 +1,13 @@
 {
   "name": "Jobs",
   "calls": {
+    "Jobs events": {
+      "name": "Jobs events",
+      "inputs": {
+        "event": "JobsEvent"
+      },
+      "output": null
+    },
     "Jobs.Cancel": {
       "name": "Jobs.Cancel",
       "inputs": {},
@@ -72,6 +79,27 @@
         "chunks": "int",
         "scenarios": "int",
         "seed": "int"
+      }
+    },
+    "JobsEvent": {
+      "sent": "request",
+      "kind": "enum",
+      "variants": {
+        "Started": {
+          "spec": "JobSpec",
+          "at": "DateTime"
+        },
+        "Taken": {
+          "worker": "string",
+          "at": "DateTime"
+        },
+        "Completed": {
+          "tally": "Tally",
+          "at": "DateTime"
+        },
+        "Cancelled": {
+          "at": "DateTime"
+        }
       }
     },
     "Run": {

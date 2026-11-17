@@ -34,6 +34,11 @@ pieces have no state of their own, so any worker can do any one, and what matter
   coordinator's rules (start, hand out, take back, cancel) are functions from one board to the next. The `Jobs` actor
   holds the board and applies them one message at a time, which is what makes workers asking at once get different
   chunks. Being functions, they're tested with a pretend clock and no actors at all.
+- **A coordinator that restarts carries on** ([jobs/jobs.piper](jobs/jobs.piper)). `Jobs` is a persisted actor: its
+  events are the rules' inputs with the time they happened (`Started`, `Taken`, `Completed`, `Cancelled`), so
+  replaying them rebuilds the board exactly: chunks done stay done, chunks out are still lent to their workers (who
+  send them back to the new coordinator, as workers retry), and the history is kept. A worker told to wait is only
+  noted in `transient` state, as idle workers ask every half second, which isn't worth keeping.
 
 ## The dashboard
 
@@ -65,8 +70,16 @@ piper run apps/grid -- worker --name two --workers 4       # four chunks at once
 
 Stop a worker with Ctrl+C mid-job and its chunk is done by another; start another and it joins in.
 
-**Stopping it:** Ctrl+C in each terminal, the coordinator's included. Nothing is kept on disk: the jobs and their
-history live in the coordinator's memory.
+**Stopping it:** Ctrl+C in each terminal, the coordinator's included. Where the jobs' events are kept is
+configuration: in memory unless it says otherwise, so a coordinator that's stopped starts afresh. To keep them in a
+SQLite file, so a coordinator stopped mid-job carries on with it:
+
+```
+Events__Provider=sqlite Events__Connection="Data Source=grid.db" piper run apps/grid -- coordinator
+```
+
+(or `sqlserver`, `postgres`, for a database in a cloud; see the Providers section of
+[docs/plugins.md](../../docs/plugins.md)).
 
 **`piper test apps/grid`** tests the risk figures, the rules for handing out chunks, and a job over gRPC on three
 worker nodes, where a fourth worker takes a chunk and vanishes. Some are property tests: a job's figures are the same
@@ -110,9 +123,9 @@ to the cluster adds room for more.
 
 ## What it doesn't do
 
-- **The coordinator keeps its jobs in memory.** If it restarts, the job it was running is lost (the workers carry on
-  asking, and pick up the next one). Recording jobs and finished chunks somewhere durable, such as the data plugin's
-  database, would let it carry on where it left off, for jobs that run for hours.
+- **Its events are kept for ever.** Every chunk handed out and sent back is two events. A restart doesn't replay
+  them all, as `Jobs` keeps a snapshot of its board every 100 events (`snapshot every 100;`) and replays only those
+  since, but nothing removes the old ones from the store.
 - **One coordinator.** It does little work (it hands out chunks and adds up samples), so one goes a long way, but it's
   the one pod that can't be lost mid-job.
 - **The model is simple:** independent holdings with normally distributed daily returns. A real VaR would use

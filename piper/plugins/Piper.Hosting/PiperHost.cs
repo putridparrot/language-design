@@ -32,6 +32,23 @@ public static class PiperHost
     /// <summary><c>logging off;</c>: no logging providers, so the program writes nothing to the console.</summary>
     public static void LoggingOff(IHostApplicationBuilder builder) => builder.Logging.ClearProviders();
 
+    /// <summary>
+    /// What Piper.Runtime reports (a persisted actor's snapshot that wasn't kept) goes to the program's logger, under
+    /// <c>Piper.Events</c>, rather than standard error: a server or host calls it once it's built.
+    /// </summary>
+    public static void UseLogging(IServiceProvider services)
+    {
+        if (services.GetService<ILoggerFactory>()?.CreateLogger(Piper.Runtime.PiperDiagnostics.Name) is not { } logger)
+            return;
+        Piper.Runtime.PiperDiagnostics.Log = (message, exception) =>
+        {
+            if (exception is null)
+                logger.LogInformation("{Message}", message);
+            else
+                logger.LogWarning(exception, "{Message}", message);
+        };
+    }
+
     /// <summary><c>shutdown 30 seconds;</c>: how long workers, <c>stopping</c> hooks and requests have to finish once it's asked to stop.</summary>
     public static void ShutdownTimeout(IHostApplicationBuilder builder, TimeSpan timeout) =>
         builder.Services.Configure<HostOptions>(options => options.ShutdownTimeout = timeout);

@@ -474,9 +474,101 @@ public class ActorPluginTests
         Assert.Equal("tea: 0 on hand, 0 reserved\ntea: 0 on hand, 0 reserved\ntea: 5 on hand, 0 reserved\nconflict\ntea: 5 on hand, 0 reserved\n", output);
     }
 
+    /// <summary>
+    /// `transient` state isn't kept with the events: handlers change it themselves, it's put back when a handler fails
+    /// like the rest, and an actor starting again (or restarting) starts it afresh.
+    /// </summary>
+    [Fact]
+    public void A_persisted_actors_transient_state_isnt_kept()
+    {
+        var output = Run("""
+            using System;
+            using Piper.Runtime;
+
+            actor Counter(id: string) persisted by id {
+                mut total = 0;
+                transient mut asked = 0;
+                event Added(k: int) { total += k; }
+                on Add(k: int) { emit Added(k); }
+                on Ask() => string { asked += 1; $"{total} after {asked} asks" }
+                on Broken() => int { asked += 100; throw InvalidOperationException("broken") }
+            }
+
+            async fn Main() {
+                let store = MemoryEventStore();
+                let first = Counter.Spawn(store, "c");
+                first.Add(5);
+                Print(await first.Ask());
+                try { await first.Broken(); } catch (e: InvalidOperationException) { Print(e.Message); }
+                Print(await first.Ask());
+                await first.Stop();
+                Print(await Counter.Spawn(store, "c").Ask());
+            }
+            """);
+        Assert.Equal("5 after 1 asks\nbroken\n5 after 2 asks\n5 after 1 asks\n", output);
+    }
+
+    /// <summary>
+    /// `snapshot every 2;` keeps the state after every second event saved, and an actor starting again restores the
+    /// latest and replays only the events after it: shown by planting one whose state the events couldn't make. One
+    /// kept as other types than the state's now is ignored, and every event replayed.
+    /// </summary>
+    [Fact]
+    public void A_persisted_actor_starts_from_its_latest_snapshot()
+    {
+        var output = Run("""
+            using System;
+            using System.Collections.Immutable;
+            using System.Linq;
+            using Piper.Runtime;
+
+            record Tally(total: int, items: ImmutableList<string>);
+
+            actor Counter(id: string) persisted by id {
+                mut tally = Tally(0, ImmutableList.Create<string>());
+                transient mut asked = 0;
+                snapshot every 2;
+                event Added(k: int) { tally = Tally(tally.total + k, tally.items.Add($"{k}")); }
+                on Add(k: int) => int { emit Added(k); tally.total }
+                on Show() => string { asked += 1; $"{tally.total} from {string.Join("+", tally.items)}, asked {asked}" }
+            }
+
+            async fn Main() {
+                let store = MemoryEventStore();
+                let first = Counter.Spawn(store, "c");
+                for k in [1, 2, 3] { await first.Add(k); }
+                Print(await first.Show());
+                await first.Stop();
+                match await store.LoadSnapshotAsync("Counter/c") {
+                    Some(kept) => Print($"snapshot after {kept.Version} events"),
+                    None => Print("no snapshot"),
+                }
+                Print(await Counter.Spawn(store, "c").Show());
+
+                let planted = MemoryEventStore();
+                await planted.AppendAsync("Counter/c", 0, [...[1, 2, 3].Select(k => $"{{\"kind\":\"Added\",\"k\":{k}}}")]);
+                let state = PiperSnapshot().With("tally", Tally(100, ImmutableList.Create("planted"))).Write();
+                await planted.SaveSnapshotAsync("Counter/c", StoredSnapshot(2, state));
+                Print(await Counter.Spawn(planted, "c").Show());
+
+                let other = MemoryEventStore();
+                await Counter.Spawn(other, "c").Add(5);
+                await other.SaveSnapshotAsync("Counter/c", StoredSnapshot(1, PiperSnapshot().With("tally", 100).Write()));
+                Print(await Counter.Spawn(other, "c").Show());
+            }
+            """);
+        Assert.Equal(
+            "6 from 1+2+3, asked 1\nsnapshot after 2 events\n6 from 1+2+3, asked 1\n103 from planted+3, asked 1\n5 from 5, asked 1\n",
+            output);
+    }
+
     [Theory]
     [InlineData("mut n = 0;\nevent Added(k: int) { n += k; }\non Add(k: int) { n += k; }", "n += k; }\non Get",
         "A persisted actor's state changes only through its events")]
+    [InlineData("mut n = 0;\ntransient mut seen = 0;\nevent Added(k: int) { n += k; seen += 1; }\non Add(k: int) { emit Added(k); }", "seen += 1",
+        "'seen' is transient, so it isn't kept, and an event's body can't change it")]
+    [InlineData("mut n = 0;\ntransient mut seen: System.Collections.Generic.List<int> = [];\nevent Added(k: int) { n += k; }\non Add(k: int) { emit Added(k); }", "A",
+        "but 'seen' holds a List<int>")]
     [InlineData("mut n = 0;\nevent Added(k: int) { n += k; }\non Add(k: int) { emit Lost(k); }", "__emit_Lost",
         "A has no event 'Lost'; its events are Added")]
     [InlineData("mut n = 0;\non Add(k: int) { }", "persisted", "A is persisted but has no events")]
@@ -497,6 +589,10 @@ public class ActorPluginTests
     [InlineData("actor A(store: string) persisted by store { mut n = 0; event Added(k: int) { n += k; } on Get() => int { n } }",
         "A persisted actor's Spawn takes 'store' itself")]
     [InlineData("actor A(id: string) persisted { mut n = 0; on Get() => int { n } }", "Expected what identifies each A")]
+    [InlineData("actor A { transient mut n = 0; on Get() => int { n } }", "Only a persisted actor's state can be transient")]
+    [InlineData("actor A { mut n = 0; snapshot every 10; on Get() => int { n } }", "Only a persisted actor takes snapshots")]
+    [InlineData("actor A(id: string) persisted by id { mut n = 0; snapshot every 10; snapshot every 5; event Added(k: int) { n += k; } on Get() => int { n } }",
+        "already says how often it takes snapshots")]
     public void Events_need_a_persisted_actor(string actor, string message)
     {
         Assert.Contains(Compile("fn Main() {}\n" + actor).Diagnostics, d => d.Message.Contains(message));

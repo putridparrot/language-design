@@ -87,9 +87,9 @@ public sealed class ActorPlugin : IPiperPlugin
         // message's once its handler has finished (before an ask's answer is sent).
         bool persisted = declaration.PersistedBy is not null;
         var (eventEnum, eventSetup) = ActorSyntax.EventCode(declaration, hole);
-        var commit = ActorSyntax.Commit(declaration);
+        var commit = ActorSyntax.Commit(declaration, hole);
         var store = persisted ? "store: Piper.Runtime.IEventStore, " : "";
-        var replay = persisted ? ActorSyntax.Replay : "";
+        var replay = persisted ? ActorSyntax.Replay(declaration) : "";
 
         var variants = new List<string>();
         var arms = new List<string>();

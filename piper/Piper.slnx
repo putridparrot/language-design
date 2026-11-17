@@ -18,6 +18,8 @@
     <Project Path="plugins/Piper.Hosting/Piper.Hosting.csproj" />
     <Project Path="plugins/Piper.Plugins.Actors.Remote/Piper.Plugins.Actors.Remote.csproj" />
     <Project Path="plugins/Piper.Plugins.Telemetry/Piper.Plugins.Telemetry.csproj" />
+    <Project Path="plugins/Piper.Plugins.Messaging/Piper.Plugins.Messaging.csproj" />
+    <Project Path="plugins/Piper.Messaging/Piper.Messaging.csproj" />
     <Project Path="plugins/Piper.Telemetry/Piper.Telemetry.csproj" />
     <Project Path="plugins/Piper.Actors.Remote/Piper.Actors.Remote.csproj" />
     <Project Path="plugins/Piper.Plugins.OpenApi/Piper.Plugins.OpenApi.csproj" />

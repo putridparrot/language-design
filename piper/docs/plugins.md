@@ -65,7 +65,7 @@ syntax**, which then goes through the binder, lowering and C# emitter like anyth
 ### Using a plugin
 
 List the plugin in the program folder's `piper.json`. The plugins in this repository's [plugins](../plugins) folder
-come with piper (in a `plugins` folder beside it), and are named: `actors`, `api`, `args`, `aspects`, `config`, `data`, `hosting`, `openapi`, `remote-actors`, `parallel`,
+come with piper (in a `plugins` folder beside it), and are named: `actors`, `api`, `args`, `aspects`, `config`, `data`, `hosting`, `messaging`, `openapi`, `remote-actors`, `parallel`,
 `services`, `state-machines` and `web`. Any other is given as the path of its assembly, relative to the folder:
 
 ```json
@@ -1205,6 +1205,7 @@ let store = PiperHost.Provider<IEventStore>(configuration, "Events");
 | Service | Local | Others |
 |---|---|---|
 | `IEventStore` (persisted actors) | `memory` | `sqlite`, `sqlserver`, `postgres` (the data plugin; each with its EF Core package) |
+| `IMessageTransport` (messaging) | `memory` | broker adapters to come (RabbitMQ, Azure Service Bus, Amazon SQS, Google Pub/Sub) |
 
 - **Code doesn't depend on this:** an actor, a function or a test takes the service as a value
   (`Shelf.Spawn(store, …)`), so nothing outside a program's startup knows about configuration or dependency injection;
@@ -1449,6 +1450,22 @@ let tea = Shelf.Spawn(store, "tea");          // Spawn(system, name, store, …)
   at once (the handler sees its effect) and keeps it. When the handler finishes, the message's events are saved
   together, before an ask's answer is sent. When an actor with the same identity starts, in this process or after a
   restart, it replays its events to rebuild the state, before it handles any message.
+- **State that isn't kept:** `transient mut asked = ImmutableDictionary.Create<string, DateTime>();` is state the
+  handlers change themselves, with no event: what isn't worth keeping, such as when each client last asked (a poll
+  every half second would make the stream grow without end). It starts again from its initial value whenever the
+  actor starts or restarts, and, like the rest, it's put back when a handler fails. An event's body can't change it,
+  as replaying the events would.
+- **Snapshots, for long streams:** `snapshot every 100;` keeps the actor's state (all but its transient state) after
+  every 100 events saved, so an actor starting again restores the latest and replays only the events since. Each
+  value is kept with a fingerprint of its type's shape: a snapshot taken before the state's types changed (a field
+  added to a record) is ignored, and every event replayed, rather than read with the new field made up. The events
+  are what's kept; a snapshot is only a quicker way to the state they make, so a store that fails to keep one
+  doesn't fail the message. It isn't silent either: the failure is logged as a warning under `Piper.Events` (to a
+  server's or host's logger, or standard error; the first failure, and the recovery, not every message while the
+  store is down), added to the span it happened in, and counted (`piper.actor.snapshot.failures`, on the
+  `Piper.Events` meter the telemetry plugin collects). The store keeps them (`IEventStore`'s `LoadSnapshotAsync` and `SaveSnapshotAsync`):
+  `MemoryEventStore` and the data plugin's database store do (a `PiperSnapshots` table, made beside `PiperEvents`),
+  and a store of your own that doesn't is still correct, only slower to start.
 - **Identity:** `persisted by sku` names each actor's stream of events, `Shelf/tea`. The store is the `store` that
   `Spawn` takes, first: Piper.Runtime's `MemoryEventStore`, or another `IEventStore` (`LoadAsync`, `AppendAsync`).
   Events are kept as JSON, as Piper's enums are written: `{"kind":"Received","quantity":10}`.
@@ -1574,6 +1591,57 @@ each pod a stable DNS name, through a headless service, for the other nodes to r
 
 Still to come: actors that move between nodes when one fails, and finding nodes without addresses. That's
 Proto.Actor's clustering, or Orleans's virtual actors, which need Piper to have classes.
+
+### `messaging` (commands and events between services)
+
+[Piper.Plugins.Messaging](../plugins/Piper.Plugins.Messaging/MessagingPlugin.cs) declares the messages services send
+each other, and the consumers handling them, over Piper.Messaging's bus and whichever transport the app chooses by
+configuration ([Providers](#providers-chosen-by-configuration)): the in-memory one locally, a broker's in the cloud.
+
+```piper
+// piper.json: { "plugins": ["messaging"] }
+messages Orders {
+    command PlaceOrder(orderId: OrderId, quantity: int) queue "orders";              // for one receiver
+    event OrderPlaced(orderId: OrderId, total: decimal) topic "order-events" key orderId;   // for every subscriber
+}
+
+consumer Billing(db: BillingDb) {
+    on OrderPlaced(e) {
+        if await AlreadyBilled(db, e.orderId) { return Handled.Done; }      // handlers are idempotent
+        match await Charge(e) {
+            Ok(_) => Handled.Done,
+            Err(Declined(reason)) => Handled.Reject(reason),                // dead-lettered: retrying won't help
+            Err(Unavailable) => Handled.RetryLater(TimeSpan.FromSeconds(30)),
+        }
+    }
+}
+
+let bus = Bus(PiperProviders.Create<IMessageTransport>(settings));          // or a server's `provider`
+let billing = await Billing(db).Start(bus);                                  // until disposed
+await bus.Send(PlaceOrder(id, 2));
+await bus.Publish(OrderPlaced(id, total));
+```
+
+- **Messages** are records, marked as a **command** (sent to its queue, where one consumer's instance handles it,
+  once) or an **event** (published to its topic, where every consumer gets its own copy). A destination defaults to
+  the message's name in kebab-case. An event's `key` names a field: those with the same key are handled in order.
+- **A handler's result is the message's fate:** `Handled.Done`, `Handled.RetryLater(after)` (handled again after a
+  while) or `Handled.Reject(reason)` (to the dead letters). A handler that throws is retried, waiting
+  `BusOptions.Backoff` doubled each time, and dead-lettered after `BusOptions.Attempts` (5 by default). A handler may
+  await.
+- **A consumer** is a class: its parameters are what its handlers use, and `Start(bus)` subscribes to the queues of
+  its commands and to its events' topics (a subscription named for the consumer), until the result is disposed.
+- **Checked as it compiles:** a message's fields are data that can cross to another service (records, enums,
+  newtypes, immutable collections; not a `List`); a command has one handler in the program; a handler's message is
+  declared; a key is a field; a command goes to a queue and an event to a topic. Each `messages` block's shape is
+  recorded in `Name.shape.json`, so a change that breaks its consumers, or messages already waiting in a queue (a new
+  field they don't send, a message moved to another queue), is an error, as an api's is.
+- **The local transport:** Piper.Messaging's `MemoryTransport` (the `memory` provider, used when nothing is
+  configured) keeps queues and topics in memory, each subscription handling one message at a time. For tests, it keeps
+  what was `Sent` and its `DeadLetters`, and `await transport.Idle()` waits until every message has been handled.
+- **Not yet:** brokers' adapters (each a provider, chosen by configuration), the outbox (a message saved in the
+  change's own transaction), creating queues and topics from the declarations, starting consumers from a server's or
+  host's clause, and sagas. See [future](future.md#a-messaging-plugin).
 
 ### `statemachine` (state machines)
 

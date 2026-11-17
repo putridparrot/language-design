@@ -114,6 +114,7 @@ public sealed class HostingPlugin : IPiperPlugin
                 let builder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder();
                 $building;
                 let $host = builder.Build();
+                Piper.Hosting.PiperHost.UseLogging($host.Services);
                 $built;
                 $host
             }

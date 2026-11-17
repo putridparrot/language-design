@@ -138,6 +138,20 @@ fn Saw(board: Board, worker: string, now: DateTime) => Board {
     { ...board, workers: board.workers.SetItem(worker, seen) }
 }
 
+/// The board with when each worker last asked: `asked` holds the times a worker was told to wait, which aren't kept
+/// with the board's events (workers ask every half second when idle), so the board knows the times it was given work.
+fn Heard(board: Board, asked: ImmutableDictionary<string, DateTime>) => Board {
+    mut workers = board.workers;
+    for (worker, at) in asked {
+        workers = if workers.TryGetValue(worker, out let seen) {
+            if at > seen.last { workers.SetItem(worker, { ...seen, last: at }) } else { workers }
+        } else {
+            workers.Add(worker, Seen(worker, at, -1, 0, 0L))
+        };
+    }
+    { ...board, workers: workers }
+}
+
 /// A worker for the dashboard: whether it's asked lately (busy workers ask between chunks, and idle ones every half
 /// second), the chunk it's on, how many it's done and how long they took on average.
 record WorkerView(name: string, active: bool, current: int, done: int, averageMs: long);
