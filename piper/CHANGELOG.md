@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Editor help for persisted actors:** hovering `transient`, `snapshot` and `every` in an actor describes them, as
+  `persisted` and `on failure` were. samples/actors gains a persisted actor (`Visits`) using all three, which the
+  samples' test runs and the hover tests point at.
+
 - **A cluster in one process, with faults, for tests:** Piper.Actors.Remote's `PiperCluster.StartAsync(3, setup)`
   starts nodes on free loopback ports talking over gRPC, and injects a network's faults: `Isolate(node)`,
   `Partition(a, b)`, `Drop(from, to)`, `Slow(node, by)`, `Heal()`, `StopAsync(node)` (a pod deleted) and

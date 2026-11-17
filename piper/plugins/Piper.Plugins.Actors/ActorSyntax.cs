@@ -71,6 +71,11 @@ internal static class ActorSyntax
         ["persisted"] = "The actor keeps its state as events, saved in the store its Spawn takes and replayed as it starts: `persisted by sku` names each one's stream.",
         ["by"] = "What identifies each actor, naming the stream its events are kept in: `persisted by sku` keeps Product/tea's.",
         ["event"] = "Something that happened to a persisted actor, and how it changes the state: `event Received(quantity: int) { onHand += quantity; }`. Handlers `emit` them; replaying them rebuilds the state.",
+        ["transient"] = "A persisted actor's state that isn't kept: `transient mut asked = …;`. Its handlers change it themselves (no event), it starts afresh whenever the actor starts, " +
+                        "and it's put back like the rest when a handler fails. For what isn't worth keeping, such as when each client last asked.",
+        ["snapshot"] = "`snapshot every 100;`: keep the persisted actor's state (all but its transient state) after every 100 events saved, so starting again restores the latest " +
+                       "and replays only the events since. One kept as other types than the state's now is ignored, and every event replayed.",
+        ["every"] = "How many events between a persisted actor's snapshots: `snapshot every 100;`.",
     };
 
     private static readonly string[] Policies = ["resume", "rollback", "restart", "stop"];

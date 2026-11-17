@@ -342,6 +342,26 @@ public sealed class LanguageServerTests : IDisposable
         Assert.DoesNotContain(await CompletionAt("let order = Order("), i => i!["label"]!.GetValue<string>() == "statemachine");
     }
 
+    /// <summary>A persisted actor's words (`persisted`, `transient`, `snapshot`) are described on hover.</summary>
+    [Theory]
+    [InlineData("persisted by page", "**persisted** (in 'actor'", "keeps its state as events")]
+    [InlineData("transient mut", "**transient** (in 'actor'", "isn't kept")]
+    [InlineData("snapshot every", "**snapshot** (in 'actor'", "replays only the events since")]
+    [InlineData("every 50;", "**every** (in 'actor'", "How many events between")]
+    public async Task A_persisted_actors_words_are_described(string marker, string start, string part)
+    {
+        var path = Path.GetFullPath(Path.Combine(SamplesDirectory(), "actors", "main.piper"));
+        var text = (await File.ReadAllTextAsync(path)).Replace("\r\n", "\n");
+        var uri = PiperLanguageServer.UriOf(path);
+        await _server.HandleAsync("textDocument/didOpen", new JsonObject
+        {
+            ["textDocument"] = new JsonObject { ["uri"] = uri, ["languageId"] = "piper", ["version"] = 1, ["text"] = text },
+        });
+        var hover = (await _server.HandleAsync("textDocument/hover", At(uri, text, marker)))!["contents"]!["value"]!.GetValue<string>();
+        Assert.StartsWith(start, hover);
+        Assert.Contains(part, hover);
+    }
+
     private static string SamplesDirectory([System.Runtime.CompilerServices.CallerFilePath] string thisFile = "") =>
         Path.Combine(Path.GetDirectoryName(thisFile)!, "..", "..", "samples");
 

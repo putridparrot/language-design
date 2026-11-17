@@ -1,9 +1,12 @@
 // Actors, from the actors plugin: each has private state and handles one message at a time, so many tasks can use
 // it at once without locks. See docs/plugins.md.
 
+using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Threading.Tasks;
+using Piper.Runtime;
 
 record Transfer(amount: decimal, note: string);
 
@@ -37,6 +40,25 @@ actor Account(owner: string, opening: decimal) {
     }
 }
 
+/// A persisted actor keeps its state as events, saved in a store and replayed when an actor with the same identity
+/// starts again: a process that restarts carries on with its visitors rather than losing them.
+actor Visits(page: string) persisted by page {
+    mut total = 0;
+    mut referrers = ImmutableSortedSet.Create<string>();
+    // Not kept: started afresh whenever the actor starts, so it only counts this run's asks.
+    transient mut asked = 0;
+    // Keep the state every 50 events, so starting again replays only the events since the latest.
+    snapshot every 50;
+
+    event Visited(from: string) { total += 1; referrers = referrers.Add(from); }
+
+    on Visit(from: string) => int { emit Visited(from); total }
+    on Report() => string {
+        asked += 1;
+        $"{page}: {total} visits from {string.Join(", ", referrers)} (report {asked})"
+    }
+}
+
 async fn Main() {
     await using let account = Account.Spawn("Ada", 100m);
 
@@ -52,4 +74,14 @@ async fn Main() {
         Print($"refused: {e.Message}");
     }
     Print(await account.Statement());
+
+    // Its events, in memory here; a program chooses its store by configuration (see docs/plugins.md, Providers).
+    let store = MemoryEventStore();
+    let home = Visits.Spawn(store, "home");
+    for from in ["search", "news", "search", "mail"] {
+        await home.Visit(from);
+    }
+    Print(await home.Report());
+    await home.Stop();
+    Print(await Visits.Spawn(store, "home").Report());   // as after a restart: the visits, from its events
 }
