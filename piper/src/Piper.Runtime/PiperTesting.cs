@@ -11,6 +11,15 @@ public sealed class PiperTestAttribute(string name) : Attribute
 
     /// <summary>A property test's <c>runs 500</c>: how many cases must pass; 0 for the default (<see cref="PiperProperty.Runs"/>).</summary>
     public int Runs { get; set; }
+
+    /// <summary>
+    /// <c>simulate</c>: each run in a deterministic simulation (<see cref="PiperSimulation"/>): a plain test over
+    /// <see cref="Runs"/> seeds (<see cref="SimulatedRuns"/> by default), a property test with each case's own seed.
+    /// </summary>
+    public bool Simulate { get; set; }
+
+    /// <summary>How many seeds a simulated test without <c>for</c> tries, unless it says.</summary>
+    public const int SimulatedRuns = 100;
 }
 
 /// <summary>Thrown when a Piper <c>Assert</c> or <c>AssertEqual</c> fails.</summary>

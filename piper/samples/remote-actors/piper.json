@@ -1,5 +1,5 @@
 {
-  // The remote actors plugin reads the same `actor` syntax as the actors plugin, on Proto.Actor, and brings in
-  // Proto.Remote and ASP.NET Core itself.
+  // The remote actors plugin reads the same `actor` syntax as the actors plugin, on Piper.Actors.Remote's actor
+  // system, and brings in ASP.NET Core itself (whose Kestrel carries the nodes' HTTP/2).
   "plugins": ["remote-actors"]
 }

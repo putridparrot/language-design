@@ -440,7 +440,8 @@ public sealed partial class Parser
         Peek(offset + 1).Kind is TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral;
 
     /// <summary>
-    /// test     = [ "async" ] "test" STRING [ "for" "(" property { "," property } ")" [ "runs" INT ] requires ] block ;
+    /// test     = [ "async" ] "test" STRING [ "for" "(" property { "," property } ")" [ "runs" INT ] requires ]
+    ///            [ "simulate" [ "runs" INT ] ] block ;   (* "runs" after "simulate" only without "for" *)
     /// property = IDENT ":" type [ "in" expression ] ;   (* a range, a collection, or a PiperGen *)
     /// </summary>
     private TestDeclarationSyntax ParseTest()
@@ -481,23 +482,19 @@ public sealed partial class Parser
                 if (properties[i].Source is { } source)
                     generators.Add(GeneratorFunction($"{functionName}_{i}", properties[i].Parameter.Type, source));
             }
-            // `runs 500`: how many cases must pass, a whole number written out.
-            if (Current is { Kind: TokenKind.Identifier, Text: "runs" })
-            {
-                var word = NextToken();
-                if (Current is { Kind: TokenKind.IntegerLiteral, Value: int count } && count > 0)
-                {
-                    NextToken();
-                    runs = count;
-                }
-                else
-                {
-                    _diagnostics.ReportInvalidTestRuns(Current.Kind == TokenKind.IntegerLiteral ? Current.Span : word.Span);
-                    if (Current.Kind == TokenKind.IntegerLiteral)
-                        NextToken();
-                }
-            }
+            runs = ParseRuns();
             requires = ParseRequires();
+        }
+
+        // `simulate`: each run in a deterministic simulation (Piper.Runtime's PiperSimulation), its seed shown with a
+        // failure. Without `for`, it may say how many runs (seeds) after it.
+        var simulate = false;
+        if (Current is { Kind: TokenKind.Identifier, Text: "simulate" } && Peek(1).Kind is TokenKind.OpenBrace or TokenKind.Identifier)
+        {
+            NextToken();
+            simulate = true;
+            if (parameters.IsEmpty)
+                runs = ParseRuns();
         }
 
         var (outerAsync, outerContext) = (_inAsync, _asyncContext);
@@ -519,7 +516,29 @@ public sealed partial class Parser
         var testName = name.Value as string ?? name.Text;
         // The body becomes a function that nothing can call, since its name isn't declared in any scope.
         var function = new FunctionDeclarationSyntax(SpanFrom(first), new Token(TokenKind.Identifier, name.Span, functionName), [], null, parameters, null, body, null) { Async = @async };
-        return new TestDeclarationSyntax(SpanFrom(first), name, testName, function) { Generators = generators.ToImmutable(), Runs = runs };
+        return new TestDeclarationSyntax(SpanFrom(first), name, testName, function)
+        {
+            Generators = generators.ToImmutable(),
+            Runs = runs,
+            Simulate = simulate,
+        };
+    }
+
+    /// <summary>A test's <c>runs 500</c>: how many cases must pass (or seeds be simulated), a whole number written out.</summary>
+    private int? ParseRuns()
+    {
+        if (Current is not { Kind: TokenKind.Identifier, Text: "runs" })
+            return null;
+        var word = NextToken();
+        if (Current is { Kind: TokenKind.IntegerLiteral, Value: int count } && count > 0)
+        {
+            NextToken();
+            return count;
+        }
+        _diagnostics.ReportInvalidTestRuns(Current.Kind == TokenKind.IntegerLiteral ? Current.Span : word.Span);
+        if (Current.Kind == TokenKind.IntegerLiteral)
+            NextToken();
+        return null;
     }
 
     /// <summary>

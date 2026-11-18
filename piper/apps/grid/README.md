@@ -57,7 +57,7 @@ From the `piper` folder, with a `piper` tool built from this repository (see
 [the tracker's README](../tracker/README.md#getting-the-piper-tool)).
 
 **In one process:** `piper run apps/grid` starts a coordinator and three workers, each on its own node, so the work
-still goes over gRPC. Open http://127.0.0.1:8090 and press Start.
+still goes over the network. Open http://127.0.0.1:8090 and press Start.
 
 **As separate processes:** a coordinator, then as many workers as you like, in other terminals or on other machines
 (give `--host` an address the others can reach):
@@ -81,7 +81,7 @@ Events__Provider=sqlite Events__Connection="Data Source=grid.db" piper run apps/
 (or `sqlserver`, `postgres`, for a database in a cloud; see the Providers section of
 [docs/plugins.md](../../docs/plugins.md)).
 
-**`piper test apps/grid`** tests the risk figures, the rules for handing out chunks, and a job over gRPC on three
+**`piper test apps/grid`** tests the risk figures, the rules for handing out chunks, and a job over HTTP/2 on three
 worker nodes (a cluster in one process), where a fourth worker takes a chunk and is cut off by the network (its chunk is done by another, and
 its answer, once it's back, ignored). Some are property tests: a job's figures are the same
 for any number of chunks coming back in any order, and a sample counts every scenario, for any count and seed.

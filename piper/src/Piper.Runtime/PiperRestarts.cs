@@ -11,7 +11,7 @@ public sealed class PiperRestarts(int limit, TimeSpan window)
     /// <summary>Counts a restart, if one more is allowed in the window; false if the actor should stop instead.</summary>
     public bool Allow()
     {
-        var now = DateTime.UtcNow;
+        var now = PiperRuntime.Current.UtcNow;
         lock (_restarts)
         {
             while (_restarts.Count > 0 && now - _restarts.Peek() >= window)

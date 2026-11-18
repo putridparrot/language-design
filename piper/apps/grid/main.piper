@@ -10,12 +10,10 @@ using Microsoft.Extensions.Hosting;
 using Piper.Hosting;
 using Piper.Actors.Remote;
 using Piper.Runtime;
-using Proto;
-using Proto.Remote;
 
 args Options "Grid: a coordinator shares a Monte Carlo Value at Risk among workers that ask it for work. Commands: coordinator; worker; or none, for a coordinator and three workers in this process." {
     host: string = "127.0.0.1" "This node's name, as the others reach it: the coordinator's service name, or a worker pod's IP address";
-    port: int? "The port the nodes talk on (gRPC); default 8000 for the coordinator, and any free one for a worker";
+    port: int? "The port the nodes talk on (HTTP/2); default 8000 for the coordinator, and any free one for a worker";
     http: int = 8090 "coordinator: the port of the dashboard and API";
     coordinator: string = "127.0.0.1:8000" "worker: the coordinator's host:port";
     name: string? "worker: what the dashboard calls it (default: the machine's name and the port)";
@@ -43,7 +41,7 @@ async fn Coordinate(options: Options) => Task<int> {
     let url = HttpUrl(options);
     Print($"Coordinator {node.Address}, dashboard on {url}");
     await GridServer(jobs, url).RunAsync();
-    await node.Remote().ShutdownAsync(true);
+    await node.StopAsync();
     0
 }
 
@@ -53,7 +51,7 @@ async fn Worker(options: Options) => Task<int> {
     let name = options.name ?? $"{Environment.MachineName.ToLowerInvariant()}:{node.Address.Split(':')[^1]}";
     Print($"Worker {name} ({options.workers} at once) at {node.Address}, asking {options.coordinator}");
     await WorkerNode(node, options, name).RunAsync();
-    await node.Remote().ShutdownAsync(true);
+    await node.StopAsync();
     0
 }
 
@@ -64,7 +62,7 @@ host WorkerNode(node: ActorSystem, options: Options, name: string) {
     worker (stopping: CancellationToken) => RunWorkers(node, options.coordinator, name, options.workers, stopping);
 }
 
-/// A coordinator and three workers, each on its own node in this process, so the work still goes over gRPC: the
+/// A coordinator and three workers, each on its own node in this process, so the work still goes over the network: the
 /// quickest way to see it.
 async fn Everything(options: Options) => Task<int> {
     let node = await PiperNode.StartAsync("127.0.0.1", options.port ?? 8000);

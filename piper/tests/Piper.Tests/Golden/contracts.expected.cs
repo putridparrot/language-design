@@ -116,7 +116,7 @@ internal static class Contracts
     internal static async global::System.Threading.Tasks.Task<int> Delay(int ms)
     {
         global::Piper.Runtime.PiperContract.Require(ms >= 0, "ms >= 0", $"ms = {ms}", "ms");
-        await global::System.Threading.Tasks.Task.Delay(ms);
+        await global::Piper.Runtime.PiperRouting.Delay(ms);
         return ms;
     }
 

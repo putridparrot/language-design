@@ -39,7 +39,8 @@ declaration     = function | record | class | enum | trait | extend | typeAlias 
 typeAlias       = "type" IDENT "=" type ";" ;                 (* another name for the type; "type" is a keyword only here *)
 newtype         = "newtype" IDENT "=" type { requires } ";" ; (* a distinct type over the value; a keyword only here *)
 pluginDeclaration = KEYWORD … ;                               (* a plugin's syntax: see plugins.md *)
-test            = [ "async" ] "test" STRING [ "for" "(" property { "," property } ")" { requires } ] block ;   (* run by piper test, left out of other builds *)
+test            = [ "async" ] "test" STRING [ "for" "(" property { "," property } ")" [ "runs" INT ] { requires } ]
+                  [ "simulate" [ "runs" INT ] ] block ;   (* run by piper test, left out of other builds; "runs" after "simulate" only without "for" *)
 property        = IDENT ":" type [ "in" expression ] ;          (* a property test's input: from a range, a collection, or its type *)
 attributes      = { "[" attribute { "," attribute } [ "," ] "]" } ;
 attribute       = qualifiedName [ "(" [ expression { "," expression } [ "," ] ] ")" ] ;   (* constants, then Name = value *)
@@ -1810,6 +1811,68 @@ FAIL small sums
 
 The values come from Piper.Runtime's own generator (`PiperGen`), with no other library.
 
+#### Simulated tests
+
+A test marked `simulate` runs in a deterministic simulation. Everything runs on one thread with a simulated clock,
+and every choice is made from one seed: which ready continuation or message runs next, each network message's
+latency and loss. So a race that shows only in some orders of events is found by trying many seeds, a failing seed
+repeats exactly, and hours of timeouts pass at once. It tries 100 seeds, or as many as `runs` says:
+
+```piper
+class Counter {
+    public mut value = 0;
+}
+
+async fn Bump(counter: Counter) {
+    let seen = counter.value;
+    await Task.Yield();                      // others may run here
+    counter.value = seen + 1;
+}
+
+async test "no update is lost" simulate runs 200 {
+    let counter = Counter();
+    await Task.WhenAll(Task.Run(() => Bump(counter)), Task.Run(() => Bump(counter)));
+    AssertEqual(2, counter.value);
+}
+```
+
+```
+FAIL no update is lost
+     Simulation failed (seed 1849; piper test --seed 1849 repeats it, shrunk 1 time to 0 choices from the calmest run):
+     Expected 2 but got 1
+          Timeline (simulated time):
+          ...
+        at sim.piper:line 16
+```
+
+- **Shrinking:** a failing run is made as simple as it can be while it still fails the same way, as a property test's
+  values are, and that's the run reported. Every choice a run makes (what runs next, a message lost, a latency, a
+  fault the run chose) is one of a list, in which 0 is always the calmest: the work ready longest runs next, nothing is
+  lost, the shortest latency, no fault. The list is shortened and lowered, so what's left is what the failure needs.
+  "0 choices from the calmest run" says it fails with no unusual order or fault at all, as here, where both bumps read
+  before either writes; a race needing one particular order shows that one choice, and a failure needing one lost
+  message shows that message, `LOST`, in its timeline. Shrinking is part of the run, so `--seed` repeats it too.
+
+- **What's simulated:** the compiler routes a program's own `DateTime.Now`, `UtcNow` and `Today`,
+  `DateTimeOffset.Now` and `UtcNow`, `Task.Delay`, `Task.Run`, `Random()`, `Random.Shared`, `Guid.NewGuid()` and
+  `Stopwatch.GetTimestamp` / `GetElapsedTime` through Piper.Runtime (`PiperRouting`). In every build, so code is
+  simulated as written; outside a simulation each does just what .NET's does. Piper's runtime libraries are simulated
+  too: actors, clusters and their network (see the [remote actors plugin](plugins.md#simulating-a-cluster-every-run-repeatable-many-runs-in-seconds)),
+  and the failure policies.
+- **What isn't:** `Thread.Sleep`, a `Stopwatch` (`StartNew`), `Environment.TickCount`, `TimeProvider.System`, real
+  threads (`new Thread`, `ThreadPool`, `Task.Factory.StartNew`, `Parallel`), real timers, and waiting by blocking
+  (`.Wait()`, `.Result`, `GetResult()`), which would stop the simulation's one thread. Each that a simulated test
+  reaches, through any of the program's functions and methods, is a warning (PIP0512) where it's called, naming the
+  test, the functions leading there, and what to use instead. Real I/O and a library's own threads still work, but
+  outside the simulation's choices, so a run may not repeat; the timeline notes work that came from outside.
+- **`PiperSimulation.Running`** is the running simulation (no `using` is needed): `Log(line)` adds to its timeline,
+  which a failure shows the end of; `Elapsed`, `Random`, `Chance(p)` and `Delay(t)`.
+- **With `for`:** a property test can be simulated too: `test "x" for (n: int in 1..10) simulate { … }`. Each case's
+  run goes on making its choices from the list its values came from, so the values and the run are shrunk together,
+  and repeat with the property's seed (shown as `simulation = (the simulated run, shrunk with the values)`).
+- **Limits:** a run fails if it's stuck (waiting, with nothing left to happen), passes seven days of simulated time,
+  or takes ten million steps.
+
 ### Builtins
 
 `Print(value)` writes any value followed by a newline, using its C# `ToString`: Bools print as `True`/`False`,
@@ -1905,6 +1968,7 @@ As in C#, functions and methods are PascalCase (`Print`, `Main`, `Area()`), and 
 | `defer d; rest` | `try { rest } finally { d }`, with the block's value stored in a temporary inside the `try` |
 | `$"…{e}…"`, `"…{e}…"` | `$"…{e}…"`, `"…{e}…"`: the same; only a `$` string interpolates |
 | `test "adds" { … }` | with `piper test`, `[global::Piper.Runtime.PiperTestAttribute("adds")] public static void PiperTest_N() { … }` in the module class; otherwise nothing |
+| `DateTime.UtcNow`, `Task.Delay(t)`, `Task.Run(f)`, `Random()`, `Guid.NewGuid()` | `global::Piper.Runtime.PiperRouting.DateTimeUtcNow`, `.Delay(t)`, `.Run(f)`, `.NewRandom()`, `.NewGuid()`: the same, unless in a [simulation](#simulated-tests) |
 | `Assert(c)`, `AssertEqual(a, b)` | `global::Piper.Runtime.PiperAssert.True(c, "c")`, `global::Piper.Runtime.PiperAssert.Equal<T>(a, b)` |
 | `fn F(x: int) => int requires x > 0 = …` | `internal static int F(int x) { global::Piper.Runtime.PiperContract.Require(x > 0, "x > 0", $"x = {x}", "x"); return …; }` |
 | `record P(v: int) requires v >= 0;` | `record P(int v) { public int v { get; init; } = global::Piper.Runtime.PiperContract.Invariant(v, v >= 0, "v >= 0", …); }`, and copies construct a new P instead of using `with` |

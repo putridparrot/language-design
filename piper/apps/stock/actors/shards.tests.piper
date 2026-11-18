@@ -1,30 +1,31 @@
 namespace StockApp;
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Piper.Actors.Remote;
 using Piper.Runtime;
-using Proto;
-using Proto.Remote;
 
-/// Three nodes in this process (Piper.Actors.Remote's PiperCluster), each with its warehouse and its products' events
-/// in memory: as three pods would be, but on localhost.
-async fn StartNodes() => Task<PiperCluster> =
-    await PiperCluster.StartAsync(3, node => { Warehouse.Spawn(node, "warehouse", node, MemoryEventStore()); });
+/// Three nodes in this process (Piper.Actors.Remote's PiperCluster), in a cluster, sharing one store of events in
+/// memory: as three pods sharing a database would be, but on localhost.
+async fn StartNodes() => Task<PiperCluster> {
+    let store = MemoryEventStore();
+    await PiperCluster.StartAsync(3, node => { Host(node, store); })
+}
 
-/// Each node's view of the products, all knowing all three nodes.
-fn Sharded(cluster: PiperCluster) => List<Shards> = [...cluster.Nodes.Select(node => Shards(node, [...cluster.Addresses]))];
+/// Each node's view of the products.
+fn Sharded(cluster: PiperCluster) => List<Shards> = [...cluster.Nodes.Select(node => Shards(node))];
 
 async fn StartCluster() => Task<List<Shards>> = Sharded(await StartNodes());
 
 async fn StopCluster(cluster: List<Shards>) {
     for shards in cluster {
-        await shards.Node().Remote().ShutdownAsync(true);
+        await shards.Node().StopAsync();
     }
 }
 
-async test "a node cut off from the others shows as down, and as up again with its products once it's back" {
+async test "a node cut off from the others shows as down, its products served by the rest meanwhile, and as up again once it's back" {
     let cluster = await StartNodes();
     let shards = Sharded(cluster);
     let level = await shards[0].Ask("bolt", p => p.Receive(5));
@@ -32,22 +33,32 @@ async test "a node cut off from the others shows as down, and as up again with i
     let other = (owner + 1) % 3;
 
     cluster.Isolate(owner);
+    await cluster.WaitForMembersAsync(other, 2);
     let split = await shards[other].Cluster();
+    AssertEqual(3, split.Count);
     AssertEqual(2, split.Count(v => v.up));
     Assert(!split.Single(v => v.address == level.node).up);
+    let moved = await shards[other].Ask("bolt", p => p.Show());
+    AssertEqual(5, moved.onHand);
+    Assert(moved.node != level.node);
 
     cluster.Heal();
+    await cluster.WaitForMembersAsync(other, 3);
+    await cluster.WaitForMembersAsync(owner, 3);
     let healed = await shards[other].Cluster();
     Assert(healed.All(v => v.up));
     AssertEqual(5, healed.Single(v => v.address == level.node).products.Single().onHand);
     await cluster.StopAsync();
 }
 
-test "every node picks the same owner for a product, and products spread over the nodes" {
-    AssertEqual(OwnerIndex("widget", 3), OwnerIndex("widget", 3));
-    let counts = Enumerable.Range(0, 300).Select(i => OwnerIndex($"sku-{i}", 3)).GroupBy(n => n).ToDictionary(g => g.Key, g => g.Count());
+async test "every node picks the same owner for a product, and products spread over the nodes" {
+    let cluster = await StartCluster();
+    let skus = [...Enumerable.Range(0, 300).Select(i => $"sku-{i}")];
+    Assert(skus.All(sku => cluster[0].Owner(sku) == cluster[1].Owner(sku) && cluster[1].Owner(sku) == cluster[2].Owner(sku)));
+    let counts = skus.GroupBy(sku => cluster[0].Owner(sku)).ToDictionary(g => g.Key, g => g.Count());
     AssertEqual(3, counts.Count);
     Assert(counts.Values.All(n => n > 60), string.Join(", ", counts.Values));
+    await StopCluster(cluster);
 }
 
 async test "a product is kept by one node, whichever node asks" {
@@ -59,6 +70,7 @@ async test "a product is kept by one node, whichever node asks" {
     }
     let owner = cluster.First(s => s.address == level.node);
     AssertEqual("bolt", (await owner.Products()).Single());
+    AssertEqual(1, cluster.Sum(s => s.Products().Result.Count));
     await StopCluster(cluster);
 }
 
@@ -77,6 +89,25 @@ async test "any node shows every node, each with the products it keeps" {
     await StopCluster(cluster);
 }
 
+async test "a node that leaves hands its products to the others, with their counts" {
+    let cluster = await StartNodes();
+    let shards = Sharded(cluster);
+    let skus = [...Enumerable.Range(0, 12).Select(i => $"part-{i}")];
+    for sku in skus {
+        await shards[0].Ask(sku, p => p.Receive(7));
+    }
+    let leaving = [...cluster.Addresses].IndexOf(shards[0].Owner(skus[0]));
+    let staying = (leaving + 1) % 3;
+    await cluster.StopAsync(leaving);
+    await cluster.WaitForMembersAsync(staying, 2);
+    for sku in skus {
+        let level = await shards[staying].Ask(sku, p => p.Reserve(1));
+        AssertEqual(6, level.left);
+        Assert(level.node != cluster.Addresses[leaving]);
+    }
+    await cluster.StopAsync();
+}
+
 async test "reservations from every node at once never oversell" {
     let cluster = await StartCluster();
     await cluster[0].Ask("widget", p => p.Receive(50));
@@ -86,4 +117,41 @@ async test "reservations from every node at once never oversell" {
     AssertEqual(0, level.onHand);
     AssertEqual(50, level.reserved);
     await StopCluster(cluster);
+}
+
+/// Reserves one of `sku` from node `from` after a while (if it's up): whether the reservation was answered, granted.
+async fn ReserveLater(cluster: SimulatedCluster, from: int, after: TimeSpan, sku: string) => Task<bool> {
+    await Task.Delay(after);
+    mut granted = false;
+    if cluster.IsUp(from) {
+        try {
+            granted = (await Shards(cluster[from]).Ask(sku, p => p.Reserve(1))).granted;
+        } catch (e: Exception) {
+            // Lost, timed out, or its node went down: whether it was reserved isn't known.
+        }
+    }
+    granted
+}
+
+async test "no product is oversold, whatever the network and the nodes do" simulate runs 40 {
+    let store = MemoryEventStore();
+    let cluster = await SimulatedCluster.StartAsync(3, node => { Host(node, store); }, NetworkFaults.None);
+    await Shards(cluster[0]).Ask("bolt", p => p.Receive(10));
+
+    // Thirty reservations of ten bolts, from any node, over twelve seconds, on a network losing one message in twenty,
+    // while the run crashes and restarts nodes, and cuts them off and heals the network, as it chooses.
+    cluster.Network.Faults = NetworkFaults.Lossy(0.05);
+    cluster.StartChaos();
+    let random = PiperSimulation.Running.Random;
+    let reservations = [...Enumerable.Range(0, 30).Select(i =>
+        ReserveLater(cluster, random.Next(3), TimeSpan.FromMilliseconds(random.Next(12_000)), "bolt"))];
+    let granted = (await Task.WhenAll(reservations)).Count(answered => answered);
+
+    cluster.Network.Faults = NetworkFaults.None;
+    Assert(await cluster.CalmAsync(), "every node back, and agreeing on the members");
+    let level = await Shards(cluster[2]).Ask("bolt", p => p.Show());
+    PiperSimulation.Running.Log($"granted {granted}: {level}");
+    Assert(level.onHand >= 0, "never oversold");
+    AssertEqual(10, level.onHand + level.reserved);
+    Assert(granted <= level.reserved, "every reservation granted was kept");
 }

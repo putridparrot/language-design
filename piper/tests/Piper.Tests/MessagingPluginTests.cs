@@ -49,6 +49,53 @@ public class MessagingPluginTests
         """;
 
     /// <summary>
+    /// Messaging in a simulation: the in-memory transport, the outbox's relay and a handler's RetryLater run on the
+    /// simulation's clock and scheduling, so an hour's retry passes at once, nothing leaves for a real thread, and a
+    /// seed's run is the same every time.
+    /// </summary>
+    [Fact]
+    public void Messaging_runs_in_a_simulation()
+    {
+        var result = Compile(Orders + """
+            consumer Patient(log: Log, tries: Counter) {
+                on Ping(ping) {
+                    tries.n += 1;
+                    if tries.n == 1 {
+                        return Handled.RetryLater(TimeSpan.FromHours(1));
+                    }
+                    log.lines.Enqueue($"pinged {ping.n} after {PiperSimulation.Running.Elapsed.TotalHours:0}h");
+                    Handled.Done
+                }
+            }
+
+            async fn Scenario(sim: PiperSimulation) => Task<string> {
+                let transport = MemoryTransport();
+                let bus = Bus(transport);
+                let log = Log();
+                await using let patient = await Patient(log, Counter()).Start(bus);
+                let outbox = MemoryOutbox();
+                await using let relay = bus.Relay(outbox);
+                await bus.In(outbox).Send(Ping(7));
+                while log.lines.IsEmpty {
+                    await sim.Delay(TimeSpan.FromSeconds(1));
+                }
+                await transport.Idle();
+                $"{string.Join(", ", log.lines)} | {sim.Timeline.Any(line => line.Contains("outside the simulation"))}"
+            }
+
+            fn Main() {
+                let first = PiperSimulation.Run(4, Scenario);
+                Print(first);
+                Print(first == PiperSimulation.Run(4, Scenario));
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("pinged 7 after 1h | False\nTrue\n", run.Output.Replace("\r\n", "\n"));
+    }
+
+    /// <summary>
     /// A command goes to one handler and an event to every consumer; a handler's Handled says what became of its
     /// message (rejected ones are dead-lettered); one that throws is retried, with backoff, until it's handled.
     /// </summary>

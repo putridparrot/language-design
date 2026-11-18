@@ -4,7 +4,7 @@ using Piper.Text;
 namespace Piper.Tests;
 
 /// <summary>
-/// The remote actors plugin (plugins/Piper.Plugins.Actors.Remote): what it checks, and actors talking over gRPC.
+/// The remote actors plugin (plugins/Piper.Plugins.Actors.Remote): what it checks, and actors talking over the network.
 /// samples/remote-actors runs too. The plugin and its packages are loaded through that sample's piper.json, as the
 /// CLI would load them.
 /// </summary>
@@ -26,13 +26,10 @@ public class RemoteActorPluginTests
 
     private const string Node = """
         using System.Threading.Tasks;
-        using Proto;
-        using Proto.Remote;
-        using Proto.Remote.GrpcNet;
+        using Piper.Actors.Remote;
 
         async fn StartNode() => Task<ActorSystem> {
-            let system = ActorSystem().WithRemote(RemoteConfig.BindToLocalhost(0));
-            await system.Remote().StartAsync();
+            let system = await PiperNode.StartAsync("127.0.0.1", 0);
             system
         }
 
@@ -64,8 +61,8 @@ public class RemoteActorPluginTests
                     Print($"fault: {e.Message}");
                 }
                 await counter.Stop();
-                await client.Remote().ShutdownAsync(true);
-                await host.Remote().ShutdownAsync(true);
+                await client.StopAsync();
+                await host.StopAsync();
             }
             """);
         Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
@@ -78,18 +75,20 @@ public class RemoteActorPluginTests
     /// <summary>
     /// A cluster in one process (Piper.Actors.Remote's PiperCluster), with faults injected: a node cut off, two split
     /// from each other, messages dropped one way, a slow node, a stopped one, one added; and healed again. Each ask
-    /// goes from one node to another's counter over gRPC; one that can't get through times out.
+    /// goes from one node to another's counter, in memory or over HTTP/2 on loopback ports; one that can't get through
+    /// times out.
     /// </summary>
-    [Fact]
-    public void A_cluster_in_one_process_takes_injected_faults()
+    [Theory]
+    [InlineData("StartAsync")]
+    [InlineData("StartOverNetworkAsync")]
+    public void A_cluster_in_one_process_takes_injected_faults(string start)
     {
-        var result = Compile("""
+        var result = Compile($$"""
             using System;
             using System.Collections.Generic;
             using System.Linq;
             using System.Threading.Tasks;
             using Piper.Actors.Remote;
-            using Proto;
 
             actor Counter(node: int) {
                 mut count = 0;
@@ -115,7 +114,7 @@ public class RemoteActorPluginTests
 
             async fn Main() {
                 mut started = 0;
-                let cluster = await PiperCluster.StartAsync(3, node => {
+                let cluster = await PiperCluster.{{start}}(3, node => {
                     Counter.Spawn(node, "counter", started);
                     started += 1;
                 });
@@ -172,7 +171,7 @@ public class RemoteActorPluginTests
                 Print(await ledger.Deposit(50));
                 Print(await ledger.Balance());
                 await ledger.Stop();
-                await host.Remote().ShutdownAsync(true);
+                await host.StopAsync();
             }
             """);
         Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
@@ -199,11 +198,11 @@ public class RemoteActorPluginTests
                 }
                 try {
                     await Slow.Connect(client, host.Address, "nobody").Get();
-                } catch (e: Proto.DeadLetterException) {
+                } catch (e: DeadLetterException) {
                     Print("no such actor");
                 }
-                await client.Remote().ShutdownAsync(true);
-                await host.Remote().ShutdownAsync(true);
+                await client.StopAsync();
+                await host.StopAsync();
             }
             """);
         Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
@@ -298,19 +297,19 @@ public class RemoteActorPluginTests
                 // Within a trace an ask is sent with its headers, and still fails at once for an actor that isn't there.
                 try {
                     await Back.Connect(client, b.Address, "nobody").Where();
-                } catch (e: Proto.DeadLetterException) {
+                } catch (e: DeadLetterException) {
                     Print("no such actor");
                 }
                 // Within a trace an ask is sent with its headers, and still fails at once for an actor that isn't there.
                 try {
                     await Back.Connect(client, b.Address, "nobody").Where();
-                } catch (e: Proto.DeadLetterException) {
+                } catch (e: DeadLetterException) {
                     Print("no such actor");
                 }
                 await System.Threading.Tasks.Task.Delay(200);
-                await client.Remote().ShutdownAsync(true);
-                await a.Remote().ShutdownAsync(true);
-                await b.Remote().ShutdownAsync(true);
+                await client.StopAsync();
+                await a.StopAsync();
+                await b.StopAsync();
             }
             """);
         Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
@@ -336,7 +335,7 @@ public class RemoteActorPluginTests
 
     /// <summary>
     /// Failure policies across nodes: a remote actor with `rollback` changes nothing when a handler throws (its caller
-    /// still gets the error); one with `stop` is stopped by Proto.Actor, so a later ask fails at once with a dead letter.
+    /// still gets the error); one with `stop` is stopped, so a later ask fails at once with a dead letter.
     /// </summary>
     [Fact]
     public void A_remote_actors_failure_policy_applies_across_nodes()
@@ -370,9 +369,9 @@ public class RemoteActorPluginTests
                 Print(await fuse.Check(true));
                 try { await fuse.Check(false); } catch (e: System.InvalidOperationException) { Print(e.Message); }
                 await Task.Delay(100);
-                try { await fuse.Check(true); } catch (e: Proto.DeadLetterException) { Print("stopped"); }
-                await client.Remote().ShutdownAsync(true);
-                await host.Remote().ShutdownAsync(true);
+                try { await fuse.Check(true); } catch (e: DeadLetterException) { Print("stopped"); }
+                await client.StopAsync();
+                await host.StopAsync();
             }
             """);
         Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
@@ -384,7 +383,7 @@ public class RemoteActorPluginTests
 
     /// <summary>
     /// A persisted remote actor keeps its state through its events: stopped on one node and spawned again on another
-    /// (as a pod restarting does), it replays them as Proto.Actor starts it and carries on where it was. A handler that
+    /// (as a pod restarting does), it replays them as it starts and carries on where it was. A handler that
     /// throws saves none of its events.
     /// </summary>
     [Fact]
@@ -417,9 +416,9 @@ public class RemoteActorPluginTests
 
                 Tally.Spawn(second, "tally", store, "visits");
                 Print(await Tally.Connect(client, second.Address, "tally").Total());
-                await client.Remote().ShutdownAsync(true);
-                await first.Remote().ShutdownAsync(true);
-                await second.Remote().ShutdownAsync(true);
+                await client.StopAsync();
+                await first.StopAsync();
+                await second.StopAsync();
             }
             """);
         Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
@@ -427,6 +426,231 @@ public class RemoteActorPluginTests
         var run = Runner.Run(result.Files, references: result.References);
         Assert.True(run.Success, string.Join("\n", run.Errors));
         Assert.Equal("3\n7\nnegative\n7\n", run.Output.Replace("\r\n", "\n"));
+    }
+
+    /// <summary>
+    /// The proto-actor plugin's transport: the same actors, with Proto.Actor's remoting carrying their messages. Asks,
+    /// faults and dead letters behave as on the built-in transport, and the plugin registers <c>proto</c> beside
+    /// <c>http</c> and <c>memory</c>, so configuration can choose it.
+    /// </summary>
+    [Fact]
+    public void Actors_can_talk_over_proto_actors_remoting_instead()
+    {
+        var folder = Directory.CreateTempSubdirectory("piper-proto-actor").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, PiperProject.FileName), """{ "plugins": ["remote-actors", "proto-actor"] }""");
+            var (project, errors) = LoadedProject.Load(folder);
+            Assert.True(errors.IsEmpty, string.Join("\n", errors.Select(e => e.Format())));
+            var result = Compilation.Compile([new SourceText("""
+                using System.Threading.Tasks;
+                using Piper.Actors.Remote;
+                using Piper.Actors.Proto;
+                using Piper.Runtime;
+
+                actor Counter(start: int) {
+                    mut count = start;
+                    on Increment(by: int) { count += by; }
+                    on Get() => int { count }
+                    on Fail() => Result<int, string> { throw System.ArgumentException("no") }
+                }
+                async fn Main() {
+                    let host = await PiperNode.StartAsync(ProtoActorTransport("127.0.0.1", 0));
+                    let client = await PiperNode.StartAsync(ProtoActorTransport("127.0.0.1", 0));
+                    Counter.Spawn(host, "counter", 10);
+                    let counter = Counter.Connect(client, host.Address, "counter");
+                    counter.Increment(5);
+                    Print(await counter.Get());
+                    try { await counter.Fail(); } catch (e: System.InvalidOperationException) { Print($"fault: {e.Message}"); }
+                    try { await Counter.Connect(client, host.Address, "nobody").Get(); } catch (e: DeadLetterException) { Print("no such actor"); }
+                    Print(string.Join(", ", PiperProviders.Names<IActorTransport>()));
+                    await client.StopAsync();
+                    await host.StopAsync();
+                }
+                """, "main.piper")], new CompilationOptions { Plugins = project!.Plugins, References = project.References });
+            Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+            var run = Runner.Run(result.Files, references: result.References);
+            Assert.True(run.Success, string.Join("\n", run.Errors));
+            Assert.Equal("15\nfault: no\nno such actor\nhttp, memory, proto\n", run.Output.Replace("\r\n", "\n"));
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Replies of every kind cross the network as their declared types: Option, Result (both ways), enums, records with
+    /// immutable collections, and tuples.
+    /// </summary>
+    [Fact]
+    public void Answers_of_every_kind_cross_the_network()
+    {
+        var result = Compile(Node + """
+            record Line(sku: string, quantity: int);
+            enum Refusal { TooMany(asked: int), Unknown }
+            actor Shop {
+                on Find(sku: string) => string? { if sku == "tea" { Some("Earl Grey") } else { None } }
+                on Reserve(quantity: int) => Result<Line, Refusal> { if quantity > 3 { Err(Refusal.TooMany(quantity)) } else { Ok(Line("tea", quantity)) } }
+                on Lines() => System.Collections.Immutable.ImmutableList<Line> { System.Collections.Immutable.ImmutableList.Create(Line("tea", 1), Line("cake", 2)) }
+                on Pair() => (string, int) { ("tea", 2) }
+                on Status(open: bool) => Refusal { if open { Refusal.Unknown } else { Refusal.TooMany(0) } }
+            }
+            async fn Main() {
+                let host = await StartNode();
+                let client = await StartNode();
+                Shop.Spawn(host, "shop");
+                let shop = Shop.Connect(client, host.Address, "shop");
+                Print(await shop.Find("tea"));
+                Print(await shop.Find("cheese"));
+                Print(await shop.Reserve(2));
+                Print(await shop.Reserve(9));
+                Print(string.Join(", ", await shop.Lines()));
+                Print(await shop.Pair());
+                Print(await shop.Status(true));
+                Print(await shop.Status(false));
+                await client.StopAsync();
+                await host.StopAsync();
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal(
+            "Some(Earl Grey)\nNone\nOk(Line { sku = tea, quantity = 2 })\nErr(TooMany { asked = 9 })\n" +
+            "Line { sku = tea, quantity = 1 }, Line { sku = cake, quantity = 2 }\n(tea, 2)\nUnknown\nTooMany { asked = 0 }\n",
+            run.Output.Replace("\r\n", "\n"));
+    }
+
+    private const string Tallies = """
+        using System;
+        using System.Collections.Generic;
+        using System.Linq;
+        using System.Threading.Tasks;
+        using Piper.Actors.Remote;
+        using Piper.Runtime;
+
+        actor Tally(id: string) persisted by id {
+            mut total = 0;
+            event Added(amount: int) { total += amount; }
+            on Add(amount: int) => int { emit Added(amount); total }
+        }
+
+        /// The nodes running `key`'s tally.
+        fn Where(cluster: PiperCluster, key: string) => List<int> =
+            [...Enumerable.Range(0, cluster.Nodes.Count).Where(i => cluster[i].Cluster.Hosted("Tally").Contains(key))];
+
+        /// A cluster of three, sharing one store of events, each hosting tallies.
+        async fn Start(store: IEventStore) => Task<PiperCluster> =
+            await PiperCluster.StartAsync(3, node => {
+                Tally.HostInCluster(node.Cluster, (n, name, key) => Tally.Spawn(n, name, store, key));
+            });
+
+        """;
+
+    /// <summary>
+    /// Actors in a cluster: asked from any node, each runs once, on the owner every node agrees on, and the actors are
+    /// shared out. A node leaving hands its actors over; one crashing is found down and its actors start elsewhere; one
+    /// joining takes its share. Persisted, they carry on from their events wherever they start. Simulated, over twenty
+    /// seeds (twenty orders of messages, pings and timeouts), so it doesn't depend on how busy the machine is, and a
+    /// failure names the seed that repeats it.
+    /// </summary>
+    [Fact]
+    public void Actors_in_a_cluster_run_once_and_move_as_nodes_come_and_go()
+    {
+        var result = Compile(Tallies + """
+            /// The nodes of a simulated cluster running `key`'s tally.
+            fn Running(cluster: SimulatedCluster, key: string) => List<int> =
+                [...Enumerable.Range(0, cluster.Count).Where(i => cluster.IsUp(i) && cluster[i].Cluster.Hosted("Tally").Contains(key))];
+
+            async fn AddToAll(cluster: SimulatedCluster, from: int, keys: List<string>) => Task<List<int>> =
+                [...await Task.WhenAll(keys.Select(key => Tally.InCluster(cluster[from], key).Add(1)))];
+
+            fn Check(what: string, holds: bool) {
+                if !holds { throw InvalidOperationException($"Not so: {what}"); }
+            }
+
+            async fn ComeAndGo(sim: PiperSimulation) {
+                let store = MemoryEventStore();
+                let cluster = await SimulatedCluster.StartAsync(sim, 3, node => {
+                    Tally.HostInCluster(node.Cluster, (n, name, key) => Tally.Spawn(n, name, store, key));
+                }, NetworkFaults.None);
+                Check("the nodes agree", await cluster.SettleAsync());
+                let keys = [...Enumerable.Range(0, 30).Select(i => $"key-{i}")];
+                for from in 0..<3 {
+                    await AddToAll(cluster, from, keys);
+                }
+                Check("each runs once", keys.All(key => Running(cluster, key).Count == 1));
+                Check("every node picks the same owner",
+                    keys.All(key => Enumerable.Range(0, 3).Select(i => cluster[i].Cluster.OwnerOf($"Tally/{key}")).Distinct().Count() == 1));
+                Check("each runs on its owner", keys.All(key => cluster.Addresses[Running(cluster, key)[0]] == cluster[0].Cluster.OwnerOf($"Tally/{key}")));
+                Check("they're shared out", Enumerable.Range(0, 3).All(i => cluster[i].Cluster.Hosted("Tally").Count > 0));
+
+                // Node 1 leaves: its tallies stop, and start again on the others, from their events.
+                await cluster.StopAsync(1);
+                Check("the others see it gone", await cluster.SettleAsync());
+                Check("they carry on from their events", (await AddToAll(cluster, 0, keys)).All(total => total == 4));
+                Check("none is left on node 1", keys.All(key => Running(cluster, key).Count == 1 && Running(cluster, key)[0] != 1));
+
+                // Node 2 crashes: once it's found down, its tallies start again on node 0.
+                await cluster.CrashAsync(2);
+                Check("node 0 finds it down", await cluster.WaitForMembersAsync(0, 1));
+                Check("they carry on on node 0", (await AddToAll(cluster, 0, keys)).All(total => total == 5));
+
+                // A node joins and takes its share.
+                let joined = await cluster.AddNodeAsync();
+                Check("it joins", await cluster.SettleAsync());
+                Check("they carry on there too", (await AddToAll(cluster, joined, keys)).All(total => total == 6));
+                Check("it takes its share", cluster[joined].Cluster.Hosted("Tally").Count > 0);
+            }
+
+            fn Main() {
+                PiperSimulation.Explore(20, ComeAndGo, 1);
+                Print("held");
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("held\n", run.Output.Replace("\r\n", "\n"));
+    }
+
+    /// <summary>
+    /// A split network: both sides think they own an actor. The majority's copy starts from the events and carries on;
+    /// the cut-off node's copy is behind, so the store refuses its events and it stops. Healed, the actor is back on its
+    /// owner, from everything that was saved.
+    /// </summary>
+    [Fact]
+    public void A_split_cluster_cant_write_an_actors_events_twice()
+    {
+        var result = Compile(Tallies + """
+            async fn Main() {
+                let cluster = await Start(MemoryEventStore());
+                let key = [...Enumerable.Range(0, 200).Select(i => $"key-{i}")].First(k => cluster[0].Cluster.OwnerOf($"Tally/{k}") == cluster.Addresses[2]);
+                Print(await Tally.InCluster(cluster[0], key).Add(1));
+
+                cluster.Isolate(2);
+                await cluster.WaitForMembersAsync(0, 2);
+                await cluster.WaitForMembersAsync(2, 1);
+                Print(await Tally.InCluster(cluster[0], key).Add(10));
+                try {
+                    await Tally.InCluster(cluster[2], key).Add(100);
+                } catch (e: InvalidOperationException) {
+                    Print(if e.Message.StartsWith("The events of") { "refused" } else { e.Message });
+                }
+
+                cluster.Heal();
+                await cluster.WaitForMembersAsync(0, 3);
+                await cluster.WaitForMembersAsync(2, 3);
+                Print(await Tally.InCluster(cluster[2], key).Add(1));
+                Print(Where(cluster, key).SequenceEqual([2]));
+                await cluster.StopAsync();
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("1\n11\nrefused\n12\nTrue\n", run.Output.Replace("\r\n", "\n"));
     }
 
     private const string Stock = """

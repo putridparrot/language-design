@@ -16,8 +16,12 @@ public sealed class MemoryTransport : IMessageTransport
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, Channel<Envelope>>> _topics = new();
     private readonly ConcurrentQueue<Envelope> _sent = new();
     private readonly ConcurrentQueue<DeadLetter> _deadLetters = new();
+    // The runtime it was made in: a simulation's, in one, whose clock and scheduling it then runs on.
+    private readonly PiperRuntime _runtime = PiperRuntime.Current;
     private int _pending;
-    private TaskCompletionSource _idle = NewIdle();
+    private TaskCompletionSource _idle;
+
+    public MemoryTransport() => _idle = NewIdle();
 
     /// <summary>Registers the in-memory transport as the local provider of <see cref="IMessageTransport"/>, <c>memory</c>.</summary>
     public static void RegisterProviders() =>
@@ -46,18 +50,21 @@ public sealed class MemoryTransport : IMessageTransport
             ? Queue(subscription.Destination)
             : _topics.GetOrAdd(subscription.Destination, _ => new()).GetOrAdd(subscription.Name, _ => Channel.CreateUnbounded<Envelope>());
         var stop = new CancellationTokenSource();
-        var loop = Task.Run(async () =>
+        var loop = _runtime.Start(async () =>
         {
             try
             {
-                await foreach (var envelope in channel.Reader.ReadAllAsync(stop.Token))
+                // Not ReadAllAsync, which leaves for the thread pool between messages: in a simulation, nothing may.
+                while (await channel.Reader.WaitToReadAsync(stop.Token))
                 {
+                    if (!channel.Reader.TryRead(out var envelope))
+                        continue;
                     try
                     {
                         switch (await handle(envelope, stop.Token))
                         {
                             case Handled.RetryHandled { After: var after }:
-                                Deliver(channel, envelope with { Attempt = envelope.Attempt + 1, NotBefore = DateTimeOffset.UtcNow + after });
+                                Deliver(channel, envelope with { Attempt = envelope.Attempt + 1, NotBefore = _runtime.Time.GetUtcNow() + after });
                                 break;
                             case Handled.RejectHandled { Reason: var reason }:
                                 _deadLetters.Enqueue(new DeadLetter(subscription, envelope, reason));
@@ -94,11 +101,11 @@ public sealed class MemoryTransport : IMessageTransport
             if (_pending++ == 0)
                 _idle = NewIdle();
         }
-        var wait = envelope.NotBefore is { } at ? at - DateTimeOffset.UtcNow : TimeSpan.Zero;
+        var wait = envelope.NotBefore is { } at ? at - _runtime.Time.GetUtcNow() : TimeSpan.Zero;
         if (wait <= TimeSpan.Zero)
             channel.Writer.TryWrite(envelope);
         else
-            _ = Task.Delay(wait).ContinueWith(_ => channel.Writer.TryWrite(envelope), TaskScheduler.Default);
+            _ = _runtime.Start(async () => { await _runtime.Delay(wait); channel.Writer.TryWrite(envelope); });
     }
 
     private void MarkHandled()
@@ -110,13 +117,14 @@ public sealed class MemoryTransport : IMessageTransport
         }
     }
 
-    private static TaskCompletionSource NewIdle() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TaskCompletionSource NewIdle() => new(_runtime.Continuations);
 
     private sealed class Running(CancellationTokenSource stop, Task loop) : IAsyncDisposable
     {
         public async ValueTask DisposeAsync()
         {
-            await stop.CancelAsync();
+            // Not CancelAsync, which runs what waits on it on the thread pool: in a simulation, nothing may.
+            stop.Cancel();
             await loop;
             stop.Dispose();
         }

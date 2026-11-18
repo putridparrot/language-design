@@ -21,6 +21,9 @@ public sealed class Lowerer
     {
     }
 
+    /// <summary>Where calls to .NET's clock, delays, background work and randomness go instead (see <see cref="Piper.Runtime.PiperRouting"/>).</summary>
+    private static readonly TypeSymbol Routing = ClrTypeSymbol.For(typeof(Piper.Runtime.PiperRouting));
+
     public static BoundProgram Lower(BoundProgram program)
     {
         var lowerer = new Lowerer();
@@ -517,13 +520,19 @@ public sealed class Lowerer
             }
 
             case BoundClrInvocationExpression invocation:
+            {
+                // DateTime.Now, Task.Delay, Task.Run, Random(), Guid.NewGuid…: through the runtime, so a simulation can
+                // run them (Piper.Runtime's PiperRouting, with the same parameters and result).
+                var (container, member) = Piper.Runtime.PiperRouting.For(invocation.Member) is System.Reflection.MethodBase routed
+                    ? (Routing, routed) : (invocation.ContainerType, invocation.Member);
                 return new BoundClrInvocationExpression(
-                    null, invocation.ContainerType, invocation.Member, LowerOperands(invocation.Arguments, prelude), invocation.Type,
+                    null, container, member, LowerOperands(invocation.Arguments, prelude), invocation.Type,
                     invocation.TypeArguments)
                 {
                     ArgumentNames = invocation.ArgumentNames,
                     LogLevel = invocation.LogLevel,
                 };
+            }
 
             case BoundLambdaExpression lambda:
                 return new BoundLambdaExpression(
@@ -691,6 +700,9 @@ public sealed class Lowerer
                 };
                 return new BoundClrAssignmentExpression(loweredTarget, assignment.CompoundOperator, operands[^1]);
             }
+
+            case BoundClrMemberExpression { Receiver: null } member when Piper.Runtime.PiperRouting.For(member.Member) is { } routed:
+                return new BoundClrMemberExpression(null, Routing, routed, member.Type);
 
             case BoundClrMemberExpression member:
                 return new BoundClrMemberExpression(

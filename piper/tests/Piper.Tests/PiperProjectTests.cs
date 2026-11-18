@@ -112,7 +112,7 @@ public class PiperProjectTests
             File.WriteAllText(Path.Combine(folder, PiperProject.FileName), """{ "plugins": ["webb"] }""");
             (_, errors) = LoadedProject.Load(folder);
             var error = Assert.Single(errors);
-            Assert.Contains("isn't one that comes with piper (actors, api, args, aspects, config, data, hosting, messaging, openapi, parallel, remote-actors, services, state-machines, telemetry, web)", error.Message);
+            Assert.Contains("isn't one that comes with piper (actors, api, args, aspects, config, data, hosting, messaging, openapi, parallel, proto-actor, rabbitmq, remote-actors, services, state-machines, telemetry, web, workflows)", error.Message);
         }
         finally
         {

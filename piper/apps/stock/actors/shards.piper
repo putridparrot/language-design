@@ -1,74 +1,59 @@
-// Which node keeps each product, and reaching its actor there from any node.
+// The nodes as a cluster: which node keeps each product, and reaching its actor there from any node.
 namespace StockApp;
 
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Piper.Runtime;
-using Proto;
-using Proto.Remote;
-using Proto.Remote.GrpcNet;
 using Piper.Actors.Remote;
 
-/// Which of `count` nodes keeps `sku`. Every node lists the nodes in the same order, so they all agree. The hash is
-/// FNV-1a over the code's bytes, not `string.GetHashCode`, which .NET seeds differently in each process.
-fn OwnerIndex(sku: string, count: int) => int {
-    mut hash = 2166136261L;
-    for b in System.Text.Encoding.UTF8.GetBytes(sku) {
-        hash = ((hash ^ b) * 16777619L) & 4294967295L;
-    }
-    (int)(hash % count)
+/// Starts this node: an actor system the other nodes reach at `host:port` (PiperNode.StartAsync: a loopback host binds
+/// to it alone, and any other, a container's or pod's name, binds to every interface and tells the others that name),
+/// joined to the cluster `membership` lists, hosting the products, whose events are in `store`.
+async fn StartNode(host: string, port: int, membership: IClusterMembership, store: IEventStore) => Task<ActorSystem> {
+    let system = await PiperNode.StartAsync(host, port);
+    await Cluster.JoinAsync(system, membership, "stock");
+    Host(system, store);
+    system
 }
 
-/// Starts this node: an actor system the other nodes reach at `host:port`, hosting this node's warehouse, whose products
-/// keep their events in `store` (PiperNode.StartAsync: a loopback host binds to it alone, and any other, a container's
-/// or pod's name, binds to every interface and tells the others that name).
-async fn StartNode(host: string, port: int, store: IEventStore) => Task<ActorSystem> {
-    let system = await PiperNode.StartAsync(host, port);
-    Warehouse.Spawn(system, "warehouse", system, store);
-    system
+/// Makes `node` host products, each started on its owner as the first message for it arrives, carrying on from its
+/// events in `store`; and its warehouse, which lists them. The nodes share the store, as a product moves between them.
+fn Host(node: ActorSystem, store: IEventStore) {
+    Product.HostInCluster(node.Cluster, (n, name, sku) => Product.Spawn(n, name, store, sku, n.Address));
+    Warehouse.Spawn(node, "warehouse", node);
 }
 
 /// A node as the dashboard shows it: whether it answered, and the products it keeps.
 record NodeView(address: string, up: bool, products: List<Level>);
 
-/// The products, as one node sees them: each kept by one of `nodes` (host:port, in the same order on every node), and
-/// asked wherever that is, this node included.
-class Shards(system: ActorSystem, nodes: List<string>) {
-    /// The products whose actors this node knows have been started, so it asks the warehouse only the first time.
-    let opened = ConcurrentDictionary<string, bool>();
-
+/// The products, as one node sees them: each kept by the node of the cluster that owns it, and asked wherever that is,
+/// this node included.
+class Shards(system: ActorSystem) {
     public let address: string = system.Address;
 
-    fn Nodes() => List<string> = nodes;
+    /// The nodes that are up, as this node sees them.
+    fn Nodes() => List<string> = [...system.Cluster.Members];
 
     /// This node's actor system.
     fn Node() => ActorSystem = system;
 
-    /// The node keeping `sku`.
-    fn Owner(sku: string) => string = nodes[OwnerIndex(sku, nodes.Count)];
+    /// The node keeping `sku`: its owner in the cluster.
+    fn Owner(sku: string) => string = system.Cluster.OwnerOf(ProductName(sku));
 
-    /// What this node's warehouse has started.
-    async fn Products() => Task<List<string>> = [...await Warehouse.Connect(system, address, "warehouse").Products()];
+    /// The products running on this node.
+    fn Products() => Task<List<string>> = Task.FromResult<List<string>>([...system.Cluster.Hosted("Product").Order()]);
 
-    /// Every node, asked at once, with the products it keeps: what the dashboard shows. A node that doesn't answer is
-    /// shown as down (after two seconds) rather than failing the whole view.
-    async fn Cluster() => Task<List<NodeView>> = [...await Task.WhenAll(nodes.Select(node => View(node)))];
+    /// Every node this one knows of, asked at once, with the products it keeps: what the dashboard shows. A node that
+    /// doesn't answer is shown as down (after two seconds) rather than failing the whole view.
+    async fn Cluster() => Task<List<NodeView>> = [...await Task.WhenAll(system.Cluster.Known.Select(node => View(node)))];
 
-    /// Asks `sku`'s actor, on its node. If the actor isn't there (its node restarted, losing it, as nothing stores
-    /// the counts), it's started again, empty, and asked once more.
-    async fn Ask<T>(sku: string, ask: (Product) => Task<T>) => Task<T> {
-        try {
-            return await ask(await Find(sku));
-        } catch (_: DeadLetterException) {
-            opened[sku] = false;
-            return await ask(await Find(sku));
-        }
-    }
+    /// Asks `sku`'s actor, on its owner: the cluster starts it there, from its events, if it isn't running, and asks
+    /// again if it's moving between nodes.
+    async fn Ask<T>(sku: string, ask: (Product) => Task<T>) => Task<T> = await ask(Product.InCluster(system, sku));
 
-    /// One node: the products its warehouse has started, and each one's level.
+    /// One node: the products running on it, and each one's level.
     private async fn View(node: string) => Task<NodeView> {
         try {
             let skus = await Warehouse.Connect(system, node, "warehouse").WithTimeout(TimeSpan.FromSeconds(2)).Products();
@@ -77,15 +62,5 @@ class Shards(system: ActorSystem, nodes: List<string>) {
         } catch (_: Exception) {
             return NodeView(node, false, []);
         }
-    }
-
-    /// `sku`'s actor, started on its node if this node hasn't seen it started.
-    private async fn Find(sku: string) => Task<Product> {
-        let owner = Owner(sku);
-        if !(opened.TryGetValue(sku, out let known) && known) {
-            await Warehouse.Connect(system, owner, "warehouse").Open(sku);
-            opened[sku] = true;
-        }
-        Product.Connect(system, owner, ProductName(sku))
     }
 }

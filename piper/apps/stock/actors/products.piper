@@ -1,9 +1,10 @@
-// The actors: a product's stock, and the warehouse on each node that starts the products it keeps.
+// The actors: a product's stock, kept by whichever node of the cluster owns it, and each node's warehouse.
 namespace StockApp;
 
 using System.Collections.Immutable;
+using System.Linq;
 using Piper.Runtime;
-using Proto;
+using Piper.Actors.Remote;
 
 /// How much of a product there is, and the node keeping its count.
 record Level(sku: string, onHand: int, reserved: int, node: string);
@@ -40,22 +41,11 @@ actor Product(sku: string, node: string) persisted by sku {
     on Show() => Level { Level(sku, onHand, reserved, node) }
 }
 
-/// Every node hosts one, named "warehouse". It starts each product this node keeps the first time it's asked for, so
-/// a product's actor exists once, on its node, however many nodes ask at the same moment. Each starts with its events
-/// from `store`, so one that ran here before carries on.
-actor Warehouse(host: ActorSystem, store: IEventStore) {
-    mut skus = ImmutableSortedSet.Create<string>();
-
-    on Open(sku: string) => bool {
-        if !skus.Contains(sku) {
-            Product.Spawn(host, ProductName(sku), store, sku, host.Address);
-            skus = skus.Add(sku);
-        }
-        true
-    }
-
-    on Products() => ImmutableList<string> { skus.ToImmutableList() }
+/// Every node hosts one, named "warehouse", which says which products are running on its node: for the dashboard,
+/// which asks every node. (Starting them is the cluster's: each on its owner, as the first message for it arrives.)
+actor Warehouse(host: ActorSystem) {
+    on Products() => ImmutableList<string> { host.Cluster.Hosted("Product").Order().ToImmutableList() }
 }
 
-/// The name a product's actor has on its node.
-fn ProductName(sku: string) => string = $"product-{sku}";
+/// The name a product's actor has on its node: the cluster's, its kind and its key.
+fn ProductName(sku: string) => string = $"Product/{sku}";

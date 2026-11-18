@@ -14,7 +14,7 @@ public static class PiperTimeout
         var task = call();
         try
         {
-            return await task.WaitAsync(TimeSpan.FromMilliseconds(milliseconds));
+            return await task.WaitAsync(TimeSpan.FromMilliseconds(milliseconds), PiperRuntime.Current.Time);
         }
         catch (TimeoutException) when (!task.IsCompleted)
         {
@@ -27,7 +27,7 @@ public static class PiperTimeout
         var task = call();
         try
         {
-            await task.WaitAsync(TimeSpan.FromMilliseconds(milliseconds));
+            await task.WaitAsync(TimeSpan.FromMilliseconds(milliseconds), PiperRuntime.Current.Time);
         }
         catch (TimeoutException) when (!task.IsCompleted)
         {
@@ -82,7 +82,7 @@ public sealed class PiperCircuit
         get
         {
             lock (_gate)
-                return _openUntil is { } until && (DateTime.UtcNow < until || _trying);
+                return _openUntil is { } until && (PiperRuntime.Current.UtcNow < until || _trying);
         }
     }
 
@@ -129,7 +129,7 @@ public sealed class PiperCircuit
         {
             if (_openUntil is not { } until)
                 return;
-            var now = DateTime.UtcNow;
+            var now = PiperRuntime.Current.UtcNow;
             if (now < until || _trying)
                 throw new CircuitOpenException(_name, until > now ? until - now : TimeSpan.Zero);
             _trying = true;
@@ -152,7 +152,7 @@ public sealed class PiperCircuit
         {
             _failed++;
             if (_trying || _failed >= _failures)
-                _openUntil = DateTime.UtcNow + _open;
+                _openUntil = PiperRuntime.Current.UtcNow + _open;
             _trying = false;
         }
     }

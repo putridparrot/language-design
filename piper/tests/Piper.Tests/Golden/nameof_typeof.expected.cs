@@ -71,7 +71,7 @@ internal static class Nameof_typeof
 
     internal static async global::System.Threading.Tasks.Task<int> Two()
     {
-        await global::System.Threading.Tasks.Task.Delay(1);
+        await global::Piper.Runtime.PiperRouting.Delay(1);
         return 2;
     }
 

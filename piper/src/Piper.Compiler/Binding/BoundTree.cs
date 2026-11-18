@@ -68,6 +68,9 @@ public sealed class BoundProgram(
 public sealed record BoundTest(string Name, BoundFunction Function)
 {
     public ImmutableArray<BoundFunction> Generators { get; init; } = [];
+
+    /// <summary><c>simulate</c>: run in a deterministic simulation.</summary>
+    public bool Simulate { get; init; }
 }
 
 /// <summary>

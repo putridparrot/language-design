@@ -367,7 +367,7 @@ public sealed partial class Binder
             check();
 
         // Tests are functions no scope declares, so nothing can call them, marked for `piper test` to find.
-        var tests = new List<(string Name, FunctionInfo Info, List<FunctionInfo> Generators)>();
+        var tests = new List<(string Name, FunctionInfo Info, List<FunctionInfo> Generators, bool Simulate)>();
         var testNames = new HashSet<string>();
         foreach (var file in _files)
         {
@@ -382,7 +382,10 @@ public sealed partial class Binder
                 info.Symbol.Attributes =
                 [
                     new BoundAttribute(ClrTypeSymbol.For(typeof(Piper.Runtime.PiperTestAttribute)), [new BoundLiteralExpression(test.TestName, TypeSymbol.String)],
-                        test.Runs is { } runs ? [("Runs", new BoundLiteralExpression(runs, TypeSymbol.Int))] : []),
+                        [
+                            .. test.Runs is { } runs ? [("Runs", (BoundExpression)new BoundLiteralExpression(runs, TypeSymbol.Int))] : Array.Empty<(string, BoundExpression)>(),
+                            .. test.Simulate ? [("Simulate", (BoundExpression)new BoundLiteralExpression(true, TypeSymbol.Bool))] : Array.Empty<(string, BoundExpression)>(),
+                        ]),
                 ];
                 var generators = new List<FunctionInfo>();
                 foreach (var generator in test.Generators)
@@ -401,7 +404,7 @@ public sealed partial class Binder
                     generatorInfo.Symbol.Namespace = file.Namespace;
                     generators.Add(generatorInfo);
                 }
-                tests.Add((test.TestName, info, generators));
+                tests.Add((test.TestName, info, generators, test.Simulate));
             }
         }
 
@@ -411,10 +414,12 @@ public sealed partial class Binder
 
         var boundFunctions = functions.Select(BindFunctionBody).OfType<BoundFunction>().ToImmutableArray();
         var boundMethods = methods.Select(BindFunctionBody).OfType<BoundFunction>().ToImmutableArray();
-        var boundTests = tests.Select(t => (t.Name, Function: BindFunctionBody(t.Info), Generators: t.Generators.Select(BindFunctionBody).ToList()))
+        var boundTests = tests.Select(t => (t.Name, Function: BindFunctionBody(t.Info), Generators: t.Generators.Select(BindFunctionBody).ToList(), t.Simulate))
             .Where(t => t.Function is not null && t.Generators.All(g => g is not null))
-            .Select(t => new BoundTest(t.Name, t.Function!) { Generators = [.. t.Generators.Select(g => g!)] })
+            .Select(t => new BoundTest(t.Name, t.Function!) { Generators = [.. t.Generators.Select(g => g!)], Simulate = t.Simulate })
             .ToImmutableArray();
+        CheckSimulated(boundTests.Where(t => t.Simulate).Select(t => (t.Name, t.Function)), boundFunctions.Concat(boundMethods));
+        CheckDeterministic(boundFunctions.Concat(boundMethods));
 
         var mains = functions.Select(f => f.Symbol).Where(f => f.Name == "Main").ToList();
         foreach (var extra in mains.Skip(1))
@@ -521,9 +526,10 @@ public sealed partial class Binder
 
     /// <summary>
     /// Piper.Runtime's names a program uses without `using Piper.Runtime;`: <c>PiperGen</c> and <c>PiperGen&lt;T&gt;</c>, for
-    /// property tests' generators. Only these, so the rest of Piper.Runtime (the compiler's helpers) stays out of sight.
+    /// property tests' generators, and <c>PiperSimulation</c>, for simulated ones. Only these, so the rest of Piper.Runtime
+    /// (the compiler's helpers) stays out of sight.
     /// </summary>
-    private static readonly HashSet<string> ImplicitRuntimeNames = ["PiperGen"];
+    private static readonly HashSet<string> ImplicitRuntimeNames = ["PiperGen", "PiperSimulation"];
 
     private NamespaceSymbol? RuntimeNamespace() =>
         _globalNamespace.LookupMember("Piper", _option, NewMembers) is NamespaceSymbol piper &&

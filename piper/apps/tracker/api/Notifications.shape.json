@@ -1,0 +1,19 @@
+{
+  "name": "Notifications",
+  "calls": {
+    "issue-changes: IssueChanged": {
+      "name": "event IssueChanged",
+      "inputs": {
+        "id": "IssueId"
+      },
+      "output": null
+    }
+  },
+  "types": {
+    "IssueId": {
+      "sent": "request",
+      "kind": "newtype",
+      "value": "int"
+    }
+  }
+}

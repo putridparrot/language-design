@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    What the workflows plugin (plugins/Piper.Plugins.Workflows) runs: durable workflows, each a function replayed from
+    its history (kept in an IEventStore, the persisted actors' store) so it survives restarts, with activities whose
+    results are recorded once and durable timers. No dependencies beyond .NET and Piper.Runtime. It comes with the
+    plugin, beside its assembly.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Piper.Workflows</RootNamespace>
+    <!-- One place whatever the configuration, so the plugin can copy it beside itself. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\runtime\</OutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- A program has its own Piper.Runtime (the event store, the runtime's clock); this must use that one. -->
+    <ProjectReference Include="..\..\src\Piper.Runtime\Piper.Runtime.csproj" Private="false" />
+  </ItemGroup>
+
+</Project>

@@ -2,6 +2,173 @@
 
 ## Unreleased
 
+- **Workflows in a server or host:** `workflows Fulfil(shop), Returns(shop) from store;` makes a `WorkflowEngine` over
+  the store, registers each workflow with its dependencies, registers the engine for handlers to start them, resumes
+  the unfinished as the app starts, and stops them as it stops (`WorkflowEngine.RunUntil`). Given twice, an error.
+- **Signals (sagas):** `await flow.Signal<T>(name)` waits for a signal from outside, and `flow.Signal<T>(name, within)`
+  waits up to a recorded deadline, giving an Option, so a workflow can compensate when it doesn't come.
+  `engine.SignalAsync(type, id, name, value)`, or the generated `Fulfil.Signal(engine, id, name, value)`, sends one (a
+  consumer passing a message on). Signals wait in the instance's inbox stream until taken, and which was taken is
+  recorded, so a replay takes the same.
+- **Fixed, in simulations:** .NET's `Task.Delay(t, TimeProvider)` finishes on the thread pool for anything but an
+  `await`, so `Task.WhenAny` of one left the simulation and runs stopped repeating (found by exploring a workflow's
+  signals: a seed that failed only after others had run). `PiperRuntime.Delay(t, token)` is a simulation's own timer
+  in one; the program's routed `Task.Delay`, and the actors', clusters', messaging's and workflows' waits, use it.
+
+- **`workflow`, `activity` and `timer`:** the workflows plugin's syntax. `workflow Fulfil(shop: Shop) { start (order:
+  Order) => Receipt { … } }` declares a workflow (its dependencies, its input, saved as `FulfilStart`, and its result),
+  becoming a class with `Register(engine)`, `Start(engine, id, …)` and `Outcome(engine, id)`; in its `start` block,
+  `activity x = call;` (or `activity call;`) is a step run once, named after what it calls, and `timer t;` a durable
+  wait, both errors elsewhere; `flow` is its context.
+- **PIP0513:** a workflow's code must replay the same, so in its `start` block, and what it calls, reading the clock,
+  `Task.Delay` and `Thread.Sleep`, random numbers, new GUIDs, background work, threads, timers, blocking, the
+  environment and I/O (files, the network, EF Core) are errors, each saying what to use instead (`flow.Now()`,
+  `timer`, `flow.Record`, `flow.NewGuid()`, an activity) and the way there. What's in an activity isn't checked. It
+  applies to any function marked `[Piper.Runtime.PiperDeterministic]`, skipping arguments to `[PiperEffects]`
+  parameters (new in Piper.Runtime); the simulated tests' check (PIP0512) shares its walk.
+  - `WorkflowContext.Activity` takes a function that's async or not, with a result or without.
+
+- **Durable workflows (the runtime):** the new `workflows` plugin brings Piper.Workflows' `WorkflowEngine`, for
+  processes that take minutes or weeks and survive restarts by replaying their history, kept as a stream of an
+  `IEventStore` (`Workflow/Type/id`). `Register<TIn, TOut>(type, async (flow, input) => …)`, `StartAsync` (idempotent
+  per id), `ResumeAsync` (unfinished instances, from the `Workflows` index stream), `ResultAsync`, `StatusAsync` and
+  `StepsAsync`. In a workflow: `flow.Activity(name, run, options)` runs once and its result replays (retried by
+  `ActivityOptions`, then thrown as `ActivityFailedException`, recorded, to compensate), `flow.Delay(t)` is a durable
+  timer, and `flow.Record`, `flow.Now()` and `flow.NewGuid()` record values. A replay asking for a different step than
+  the history has fails the instance (`NonDeterministicWorkflowException`, naming the step); a second runner is refused
+  by the store. Time comes from the runtime, so it runs in simulations. No syntax yet: `workflow` and `activity`
+  declarations, checked for determinism as they compile, come next.
+
+- **Messaging in a server or host:** three clauses, shared by `server` and `host`. `bus from "Messaging";` makes the
+  transport the configuration chooses (the in-memory one if none) and a `Bus` over it, registering both
+  (`IMessageTransport`, `Bus`); `consume Billing(settings);` runs a consumer, and `relay store;` an outbox's relay, each
+  for the app's life and stopped with it (`Bus.RunUntil`, `Bus.RelayUntil`). `consume` and `relay` without a `bus`
+  before them are errors. apps/tracker's server uses them, in place of its hand-written `Notifications` worker.
+- **A cluster test made deterministic:** `Actors_in_a_cluster_run_once_and_move_as_nodes_come_and_go` runs in a
+  simulation over twenty seeds (`SimulatedCluster`), rather than on real time with fast heartbeats, which a busy
+  machine could make miss its waits.
+
+- **RabbitMQ:** the new `rabbitmq` plugin carries the messaging plugin's bus over RabbitMQ (RabbitMQ.Client 7.1.2, open
+  source), chosen by configuration (`Messaging:Provider=rabbitmq`, `Messaging:Connection=amqp://…`, optionally
+  `Messaging:Prefetch`) or in code (`Bus(RabbitMqTransport(uri))`). A command is a durable queue; an event a fanout
+  exchange with a queue per consumer (`topic.Consumer`), single-active-consumer and one at a time when it has a `key`;
+  a delay or `RetryLater` a delay queue per step (about a quarter apart; no broker plugin) dead-lettering to where the
+  message is going; a reject the consumer's `.dead` queue, with `piper-reason`. Persistent messages, publisher
+  confirms, and acknowledgement after the handler: at least once. Queues and exchanges are declared as first used.
+  - `Subscription.Ordered`, set by the bus for an event with a key, tells a transport to keep its order.
+  - apps/tracker lists the plugin, so `Messaging__Provider=rabbitmq` sends its notifications through RabbitMQ.
+  - `RabbitMqTests` run against `rabbitmq:4-alpine` in Docker (or `PIPER_RABBITMQ`), saying they didn't run without one.
+
+- **The outbox:** a change and its messages saved together. The data plugin's `outbox;` in a `database` adds a
+  `PiperOutbox` table and an `Outbox` property; the messaging plugin's `bus.In(db.Outbox).Send(…)` / `.Publish(…)` add
+  each message to the database's unit of work, so `SaveChangesAsync()` saves the change and its messages, or none of
+  them. `bus.Relay(DatabaseOutbox.Store(() => Db(options)), options)` sends what's saved, oldest first, in the
+  background (`OutboxOptions`: `Batch`, `Lease`, `Poll`, `Background`), with `FlushAsync()` for tests and
+  `DatabaseOutbox.WaitingAsync(db)` for the backlog. Relays in several pods share a table, each claiming a batch for a
+  lease timed by the database's clock; delivery is at least once (a message keeps its id). Piper.Runtime's
+  `IOutbox`, `IOutboxStore` and `MemoryOutbox` (for tests) are the contract between the two plugins.
+  - Piper.Data's leases (cluster membership and the outbox) share one `DatabaseClock`.
+  - apps/tracker's webhook uses it: a transition saves an `IssueChanged` with the change (`TrackerDb`'s `outbox;`),
+    and the server's worker runs a relay and a `Webhook` consumer, which posts the issue as it is when sent. A webhook
+    down for longer than `[Retry]`'s three quick tries is retried by the bus with backoff, then dead-lettered; the
+    old `Notify`, which logged and gave up, is gone. `Transition` takes the bus. Messages go over the in-memory
+    transport unless `Messaging:Provider` says otherwise.
+- **Messaging in simulations:** the in-memory transport, the bus's message ids and delays, and the outbox's relay take
+  their clock and scheduling from the runtime, so they run in a `simulate` test: a `RetryLater` of an hour passes at
+  once, and a run repeats by its seed. Neither cancels with `CancelAsync` (which runs what waits on a real thread),
+  and PIP0512 now reports a program's own `CancelAsync` in what a simulated test reaches.
+
+- **Simulated failures are shrunk:** a run's choices (what runs next, each frame's latency and loss, the run's own
+  faults) are a list (`PiperChoices`, as a property test's), in which 0 is always the calmest: the work ready longest
+  runs next, nothing lost, the shortest latency, no fault. A failing run is shrunk while it still fails the same way
+  (the same exception type and message, numbers aside), in up to 500 runs (`SimulationOptions.ShrinkAttempts`), and
+  the shrunk run is what's reported, with "shrunk N times to K choices from the calmest run" and its timeline.
+  `--seed` repeats the shrinking too. `SimulationFailedException` has `Shrinks` and `Departures`.
+  - A simulated property test's run draws on the choices its values came from, so they're shrunk together (shown as
+    `simulation = (the simulated run, shrunk with the values)` rather than a seed).
+  - The scheduler takes the work ready longest for choice 0 (it took any, and swapped the list's last into its place),
+    `Chance` is false for choice 0, and a simulation's `Random()` is the run's own. So seeds' runs differ from before.
+- **Faults the run chooses:** `SimulatedCluster.StartChaos(options)` crashes and restarts nodes, cuts them off and
+  heals the network at times the run chooses (`ChaosOptions`: pauses, and which kinds), until `CalmAsync()` stops it,
+  heals, restarts every node that's down and settles. Each is a choice whose calmest is nothing, so shrinking keeps
+  only the faults a failure needs. apps/stock's simulated test uses it rather than faults written into the test.
+- **PIP0512:** a warning where a `simulate` test reaches, through the program's functions and methods, what its
+  simulation can't run: `Thread.Sleep`, a `Stopwatch` (`StartNew`), `Environment.TickCount`, `TimeProvider.System`,
+  real threads (`new Thread`, `ThreadPool`, `Task.Factory.StartNew`, `Parallel`), real timers, and blocking waits
+  (`.Wait()`, `.Result`, `GetResult()`), naming the test, the functions leading there, and what to use instead.
+
+- **Deterministic simulation:** `PiperSimulation` (Piper.Runtime) runs a test on one thread with a simulated clock,
+  every choice (what runs next, each network frame's latency and loss) from one seed, so a seed's run is the same every
+  time and simulated minutes pass in milliseconds. `PiperSimulation.Explore(runs, body)` tries seeds until one fails,
+  naming it with the run's timeline; `PiperSimulation.Run(seed, body)` repeats it. Piper.Actors.Remote adds
+  `SimulatedNetwork` (`NetworkFaults`: latency, loss, duplication, reordering; splits) and `SimulatedCluster`
+  (`PiperCluster` in a simulation, with `CrashAsync`, `RestartAsync`, `SettleAsync`).
+  - `PiperRuntime.Current` is where Piper's runtime takes its clock, randomness and background work from: the real
+    ones, or a simulation's. The actor system, clusters, `[Timeout]`, `[CircuitBreaker]` and `restart n per minute`
+    use it.
+  - An actor's mailbox no longer reads with `ReadAllAsync` (which leaves for the thread pool), and the cluster's
+    pings list nodes in order, so runs repeat.
+  - `test "…" simulate { … }` (and `simulate runs 50`) runs a test over that many seeds (100 by default), each in a
+    simulation; a failure names its seed, which `piper test --seed` repeats, with the end of its timeline. A property
+    test can be simulated too, each case with a generated seed shown with its values. `PiperSimulation.Running` is the
+    running simulation, usable without a `using`, as `PiperGen` is.
+  - The compiler routes a program's `DateTime.Now`/`UtcNow`/`Today`, `DateTimeOffset.Now`/`UtcNow`, `Task.Delay`,
+    `Task.Run`, `Random()`, `Random.Shared`, `Guid.NewGuid()` and `Stopwatch.GetTimestamp`/`GetElapsedTime` through
+    Piper.Runtime's `PiperRouting`, in every build: the same as .NET's, except in a simulation. Generated C# shows
+    `global::Piper.Runtime.PiperRouting.Delay(…)` where it showed `Task.Delay(…)`.
+  - apps/stock has a simulated test: reservations from every node over a lossy network while a node crashes, the
+    network splits and heals, and the node comes back; none is ever oversold.
+- **Asks fail when their node is found down:** an ask waiting on a node the cluster finds down fails then, with a
+  `NodeDownException` (a `TimeoutException`), rather than at its timeout. It isn't retried, as the node may have handled
+  the message before it went. A stopped node's own asks no longer retry, nor does it start actors.
+
+- **Cluster membership in a shared database:** the data plugin's `DatabaseClusterMembership` keeps each node's lease as
+  a row of `PiperMembers`, so nodes find each other with no seed list. Chosen by configuration as the event store is
+  (`Cluster:Provider` `sqlite`, `sqlserver` or `postgres`, with `Cluster:Connection`, and `Cluster:Lease` in seconds,
+  thirty by default). A lease is renewed every third of its length and given up as the node leaves; a crashed node's
+  runs out. Members are read at most every sixth of the lease (pings, not the table, find a node down quickly).
+  Leases are timed by the database's clock (`DateTime.UtcNow` in the queries, which EF Core turns into the database's
+  own), so nodes whose clocks disagree still agree on them; this node's clock is used if a provider can't translate it.
+  - `IClusterMembership` moved to Piper.Runtime (namespace `Piper.Runtime`), beside `IEventStore`. A cluster now calls
+    its `JoinAsync` every round as well as on joining, so a provider can renew a lease there.
+  - A leaving node stops its heartbeats before giving up its membership, so a round under way can't renew it after.
+  - apps/stock finds its nodes this way in Docker Compose and Kubernetes, where it's now a Deployment (each pod known
+    by its IP) rather than a StatefulSet with a headless service and a list of seeds. `--nodes` still works.
+
+- **Clusters of actors:** nodes join a cluster (`Cluster.JoinAsync(node, membership, name)`), which shares actors out
+  among them: each (a kind and a key, `Product/tea`) runs on one node, its owner, by rendezvous hashing over the members
+  up, and moves when a node stops, crashes or joins. `Product.InCluster(node, key)` is a handle with no fixed node, and
+  `Product.HostInCluster(node.Cluster, (n, name, key) => Product.Spawn(…))` lets a node run them, each started on its
+  owner as the first message for it arrives. Asks through such a handle retry dead letters on the owner while it moves.
+  - Membership is a provider, `IClusterMembership` (`Cluster:Provider`): `memory` (local) and `static` (seed nodes). The
+    nodes ping each other over their transport (`ClusterOptions`: every second, down after five), and share whom they
+    know, so a node needs only one seed. Stopping a node leaves the cluster first, handing its actors over.
+  - A persisted actor that its store refuses (`EventStreamConflictException`: two copies, while nodes disagree on the
+    members) stops, so the next message starts it again from what was saved.
+  - `PiperCluster`'s nodes are now in a cluster of their own (pinging every tenth of a second), with `KillAsync(node)`
+    for a crash and `WaitForMembersAsync(node, count)`; faults now apply to every message between nodes, pings
+    included, as they're applied in the actor system rather than the plugin's code.
+  - apps/stock is a cluster: no `hash % count`, fixed node list or warehouse starting products; its products' events
+    are in PostgreSQL the nodes share (in Docker Compose and Kubernetes), so a pod stopped, lost or added moves products
+    with their counts. `--nodes` is now the seed nodes.
+  - Fixed: `DatabaseEventStore` opened by several processes at once (nodes starting together on one database) raced to
+    create its tables, and all but one crashed.
+
+- **Remote actors on Piper's own runtime, with Proto.Actor optional:** the remote actors plugin no longer brings in
+  Proto.Actor. Piper.Actors.Remote has its own `ActorSystem` (mailboxes, asks, stopping, dead letters), with nodes
+  talking over an `IActorTransport` chosen by the program: `http` (HTTP/2 on ASP.NET Core's Kestrel, one long-lived
+  stream to each node, so messages arrive in order; no packages) and `memory` (nodes in one process, messages still
+  crossing as JSON), registered as providers (`Actors:Provider`). The new `proto-actor` plugin adds a `proto`
+  transport on Proto.Remote's gRPC, for a program that lists it. Delivery is at most once on every transport.
+  - Messages and answers cross as JSON of their declared types (the message enum, the handler's result type) rather
+    than .NET type names, so nodes needn't run the same build, only compatible shapes, as `Name.shape.json` checks.
+  - `Result` now reads and writes JSON (`{"ok": …}` or `{"err": …}`), so it can be an ask's answer.
+  - `PiperNode.StartAsync(host, port)` starts a node over the network, `PiperNode.StartInMemoryAsync()` one in memory,
+    and `node.StopAsync()` stops one (was `node.Remote().ShutdownAsync(true)`). `DeadLetterException` is
+    Piper.Actors.Remote's. A handler that throws answers with its message (no `CounterFault` record).
+  - `PiperCluster.StartAsync` runs its nodes in memory, and `StartOverNetworkAsync` over HTTP/2 on loopback.
+    apps/stock and apps/grid, both samples and the tests are moved over; grid's cluster test runs over HTTP/2.
+
 - **Editor help for persisted actors:** hovering `transient`, `snapshot` and `every` in an actor describes them, as
   `persisted` and `on failure` were. samples/actors gains a persisted actor (`Visits`) using all three, which the
   samples' test runs and the hover tests point at.

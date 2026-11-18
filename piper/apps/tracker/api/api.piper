@@ -12,6 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Piper.Messaging;
 
 /// The tracker's settings, from the "Tracker" section of appsettings.json or the environment (Tracker__Connection).
 config Settings from "Tracker" {
@@ -63,11 +64,9 @@ endpoints Api: TrackerApi "/api" authorize {
         await AddIssue(db, projectId, issue, clock.Now()) ?> View;
 
     get "/issues/{id:int}" async (id: IssueId, db: TrackerDb) => await FindIssue(db, id) ?> View;
-    post "/issues/{id:int}/events" async (id: IssueId, event: WorkflowEvent, db: TrackerDb, clock: Clock, notifier: Notifier, log: ILogger<Notifier>) => {
-        let result = await Transition(db, id, event, clock.Now()) ?> View;
-        if result is Ok(view) { await Notify(notifier, view, log); }
-        result
-    }
+    // Saved with an IssueChanged for the webhook, which the app's Notifications worker sends.
+    post "/issues/{id:int}/events" async (id: IssueId, event: WorkflowEvent, db: TrackerDb, clock: Clock, bus: Bus) =>
+        await Transition(db, id, event, clock.Now(), bus) ?> View;
 
     get "/issues/{id:int}/comments" async (id: IssueId, db: TrackerDb) => await CommentsOn(db, id);
     post "/issues/{id:int}/comments" async (id: IssueId, comment: NewComment, user: ClaimsPrincipal, db: TrackerDb, clock: Clock) =>

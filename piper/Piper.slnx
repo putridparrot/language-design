@@ -17,11 +17,17 @@
     <Project Path="plugins/Piper.Plugins.Hosting/Piper.Plugins.Hosting.csproj" />
     <Project Path="plugins/Piper.Hosting/Piper.Hosting.csproj" />
     <Project Path="plugins/Piper.Plugins.Actors.Remote/Piper.Plugins.Actors.Remote.csproj" />
+    <Project Path="plugins/Piper.Plugins.Actors.Proto/Piper.Plugins.Actors.Proto.csproj" />
     <Project Path="plugins/Piper.Plugins.Telemetry/Piper.Plugins.Telemetry.csproj" />
     <Project Path="plugins/Piper.Plugins.Messaging/Piper.Plugins.Messaging.csproj" />
     <Project Path="plugins/Piper.Messaging/Piper.Messaging.csproj" />
+    <Project Path="plugins/Piper.Messaging.RabbitMq/Piper.Messaging.RabbitMq.csproj" />
+    <Project Path="plugins/Piper.Plugins.Messaging.RabbitMq/Piper.Plugins.Messaging.RabbitMq.csproj" />
+    <Project Path="plugins/Piper.Workflows/Piper.Workflows.csproj" />
+    <Project Path="plugins/Piper.Plugins.Workflows/Piper.Plugins.Workflows.csproj" />
     <Project Path="plugins/Piper.Telemetry/Piper.Telemetry.csproj" />
     <Project Path="plugins/Piper.Actors.Remote/Piper.Actors.Remote.csproj" />
+    <Project Path="plugins/Piper.Actors.Proto/Piper.Actors.Proto.csproj" />
     <Project Path="plugins/Piper.Plugins.OpenApi/Piper.Plugins.OpenApi.csproj" />
     <Project Path="plugins/Piper.Plugins.Parallel/Piper.Plugins.Parallel.csproj" />
     <Project Path="plugins/Piper.Plugins.Services/Piper.Plugins.Services.csproj" />

@@ -77,6 +77,9 @@ public sealed record TestDeclarationSyntax(TextSpan Span, Token Name, string Tes
 
     /// <summary>A property test's <c>runs 500</c>: how many cases must pass, or null for the default.</summary>
     public int? Runs { get; init; }
+
+    /// <summary><c>simulate</c>: each run (each case, for a property test) in a deterministic simulation.</summary>
+    public bool Simulate { get; init; }
 }
 
 /// <summary>

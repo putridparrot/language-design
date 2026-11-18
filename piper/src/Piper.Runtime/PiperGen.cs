@@ -36,6 +36,13 @@ public sealed class PiperChoices
 
     internal IReadOnlyList<ulong> Drawn => _drawn;
 
+    /// <summary>As a simulated property test shows its run among its values.</summary>
+    public override string ToString() => "(the simulated run, shrunk with the values)";
+
+    /// <summary>How many choices this case may make: <see cref="MaxChoices"/>, or more for a simulation, which makes one
+    /// at every step.</summary>
+    internal int Limit { get; set; } = MaxChoices;
+
     /// <summary>A choice in [0, <paramref name="bound"/>), or any ulong for a bound of 0.</summary>
     public ulong Draw(ulong bound)
     {
@@ -50,7 +57,7 @@ public sealed class PiperChoices
     /// </summary>
     private ulong Shaped(Func<Random, ulong> random)
     {
-        if (_drawn.Count >= MaxChoices)
+        if (_drawn.Count >= Limit)
             throw new PiperDiscardException();
         var value = _drawn.Count < _prefix.Count ? _prefix[_drawn.Count] : _random is not null ? random(_random) : 0;
         _drawn.Add(value);
@@ -638,8 +645,19 @@ public static class PiperProperty
         }
     }
 
-    private static string Describe(Exception failure) =>
-        failure is PiperAssertionException ? failure.Message : $"Unhandled exception: {failure.GetType().FullName}: {failure.Message}";
+    private static string Describe(Exception failure) => failure switch
+    {
+        // A simulated case: why its run failed, and the end of its timeline.
+        SimulationFailedException { InnerException: { } why } simulation =>
+            Describe(why) + (simulation.Timeline.Count == 0 ? "" : "\nIts timeline (simulated time):\n" +
+                string.Join("\n", simulation.Timeline.Count > 30 ? ["...", .. simulation.Timeline.TakeLast(30)] : simulation.Timeline)),
+        PiperAssertionException => failure.Message,
+        _ => $"Unhandled exception: {failure.GetType().FullName}: {failure.Message}",
+    };
+
+    /// <summary>What kind of failure it is, for shrinking to keep: a simulated case's is its run's.</summary>
+    private static Type Kind(Exception failure) =>
+        failure is SimulationFailedException { InnerException: { } why } ? why.GetType() : failure.GetType();
 
     /// <summary>A case's outcome: passed (neither set), discarded, or failed with <see cref="Failure"/>.</summary>
     private readonly record struct Outcome(bool Discarded, Exception? Failure);
@@ -692,7 +710,7 @@ public static class PiperProperty
             var outcome = Run(choices, generators, test);
             // Replaying may read past the candidate (as zeros), so it's what was really drawn that must be simpler.
             List<ulong> drawn = [.. choices.Drawn];
-            if (outcome.Failure is not { } failed || failed.GetType() != failure.GetType() || !Simpler(drawn, best))
+            if (outcome.Failure is not { } failed || Kind(failed) != Kind(failure) || !Simpler(drawn, best))
                 return false;
             best = drawn;
             failure = failed;

@@ -1,27 +1,78 @@
-# The stock app on Kubernetes (AKS, or any other cluster): three pods in a StatefulSet, so each has a stable name
-# (stock-0, stock-1, stock-2), which the headless service stock-nodes turns into a DNS name (stock-0.stock-nodes) the
-# nodes reach each other by. A LoadBalancer service puts their HTTP APIs behind one address. Each pod keeps its
-# products' events in a SQLite file on a volume of its own, so a restarted pod carries on with their counts.
+# The stock app on Kubernetes (AKS, or any other cluster): pods in a Deployment, which form a cluster: each product runs
+# on one of them, its owner, and moves to another when a pod stops, fails or is added. They share one database
+# (PostgreSQL, below) for two things: their products' events, so a product carries on from its events wherever it
+# starts; and the cluster's members, each pod holding a lease there under its own IP, so they find each other with no
+# list of nodes and no stable names. A LoadBalancer service puts their HTTP APIs behind one address.
 #
 # Set the image to yours (see README.md), then:  kubectl apply -f apps/stock/k8s/stock.yaml
 #
-# To change the number of nodes, change `replicas` and the --nodes list together: every node must list them all, in
-# the same order.
+# To change the number of nodes, change `replicas` (or kubectl scale deployment stock --replicas=5). For a managed
+# database in your cloud (Azure Database for PostgreSQL, Amazon RDS, Cloud SQL), drop the stock-db parts and put its
+# connection string in the stock-db Secret.
 
+apiVersion: v1
+kind: Secret
+metadata:
+  name: stock-db
+type: Opaque
+stringData:
+  password: change-me
+  connection: Host=stock-db;Database=stock;Username=stock;Password=change-me
+---
 apiVersion: v1
 kind: Service
 metadata:
-  name: stock-nodes
-  labels:
-    app: stock
+  name: stock-db
 spec:
-  clusterIP: None                  # headless: a DNS name per pod, rather than one address for them all
-  publishNotReadyAddresses: true   # so the nodes can reach each other while they start
   selector:
-    app: stock
+    app: stock-db
   ports:
-    - name: actors
-      port: 8000
+    - port: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: stock-db
+spec:
+  serviceName: stock-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stock-db
+  template:
+    metadata:
+      labels:
+        app: stock-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17
+          env:
+            - name: POSTGRES_DB
+              value: stock
+            - name: POSTGRES_USER
+              value: stock
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: stock-db
+                  key: password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  # The products' events, kept when the database's pod restarts or moves. (Delete the claim to clear the counts.)
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
 ---
 apiVersion: v1
 kind: Service
@@ -39,13 +90,11 @@ spec:
       targetPort: http
 ---
 apiVersion: apps/v1
-kind: StatefulSet
+kind: Deployment
 metadata:
   name: stock
 spec:
-  serviceName: stock-nodes
   replicas: 3
-  podManagementPolicy: Parallel    # start them together: none waits for another
   selector:
     matchLabels:
       app: stock
@@ -54,28 +103,35 @@ spec:
       labels:
         app: stock
     spec:
+      # Time to leave the cluster when stopped, handing its products to the others, before Kubernetes kills it.
+      terminationGracePeriodSeconds: 30
       containers:
         - name: stock
           image: REGISTRY/stock:1
           args:
-            - --host
-            - $(POD_NAME).stock-nodes
-            - --nodes
-            - stock-0.stock-nodes:8000,stock-1.stock-nodes:8000,stock-2.stock-nodes:8000
-          volumeMounts:
-            - name: events             # this pod's own volume (below), so its products' counts outlive it
-              mountPath: /data
+            - --host                   # how the other nodes reach this one: its pod's IP
+            - $(POD_IP)
           env:
-            # Where its products' events are kept: a SQLite file on the pod's own volume. A database in your cloud
-            # (sqlserver, postgres) is only a change of these, with Events__Connection from a Secret.
-            - name: Events__Provider
-              value: sqlite
-            - name: Events__Connection
-              value: Data Source=/data/events.db
-            - name: POD_NAME
+            - name: POD_IP
               valueFrom:
                 fieldRef:
-                  fieldPath: metadata.name
+                  fieldPath: status.podIP
+            # Where the products' events are kept: the database every node shares.
+            - name: Events__Provider
+              value: postgres
+            - name: Events__Connection
+              valueFrom:
+                secretKeyRef:
+                  name: stock-db
+                  key: connection
+            # How the nodes find each other: leases in that same database.
+            - name: Cluster__Provider
+              value: postgres
+            - name: Cluster__Connection
+              valueFrom:
+                secretKeyRef:
+                  name: stock-db
+                  key: connection
           ports:
             - name: actors
               containerPort: 8000
@@ -97,13 +153,3 @@ spec:
               memory: 128Mi
             limits:
               memory: 256Mi
-  # A volume for each pod, kept when the pod restarts or moves, and given back to the pod of the same name: stock-1's
-  # products' events stay stock-1's. (Deleting the StatefulSet keeps them; delete the claims to clear the counts.)
-  volumeClaimTemplates:
-    - metadata:
-        name: events
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests:
-            storage: 1Gi

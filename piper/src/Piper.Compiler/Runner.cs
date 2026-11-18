@@ -275,7 +275,15 @@ public static class Runner
         try
         {
             var parameters = method.GetParameters();
-            if (parameters.Length == 0)
+            var attribute = method.GetCustomAttribute<Piper.Runtime.PiperTestAttribute>();
+            var simulate = attribute?.Simulate == true;
+            if (parameters.Length == 0 && simulate)
+            {
+                // `simulate`: a run in a simulation for each of so many seeds, from --seed's on (so it repeats one).
+                var runs = attribute!.Runs > 0 ? attribute.Runs : Piper.Runtime.PiperTestAttribute.SimulatedRuns;
+                Piper.Runtime.PiperSimulation.Explore(runs, _ => InvokeSimulated(method, null), Piper.Runtime.PiperProperty.Seed);
+            }
+            else if (parameters.Length == 0)
             {
                 Invoke(method, null);
             }
@@ -287,8 +295,21 @@ public static class Runner
                     method.DeclaringType!.GetMethod($"{method.Name}_{i}", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static) is { } make
                         ? (Piper.Runtime.IPiperGen)Invoke(make, null)!
                         : Piper.Runtime.PiperGen.For(p.ParameterType)).ToList();
-                var runs = method.GetCustomAttribute<Piper.Runtime.PiperTestAttribute>()?.Runs is > 0 and var own ? own : Piper.Runtime.PiperProperty.Runs;
-                Piper.Runtime.PiperProperty.Check([.. parameters.Select(p => p.Name ?? "")], generators, values => Invoke(method, values), runs);
+                List<string> names = [.. parameters.Select(p => p.Name ?? "")];
+                var runs = attribute?.Runs is > 0 and var own ? own : Piper.Runtime.PiperProperty.Runs;
+                if (simulate)
+                {
+                    // Simulated, each case's run goes on drawing from the choices its values were made from, so the
+                    // values and the run are shrunk together, and repeat with the property's seed.
+                    generators.Add(Piper.Runtime.PiperSimulation.Choices);
+                    names.Add("simulation");
+                    Piper.Runtime.PiperProperty.Check(names, generators,
+                        values => Piper.Runtime.PiperSimulation.Run((Piper.Runtime.PiperChoices)values[^1]!, _ => InvokeSimulated(method, values[..^1])), runs);
+                }
+                else
+                {
+                    Piper.Runtime.PiperProperty.Check(names, generators, values => Invoke(method, values), runs);
+                }
             }
             return new TestResult(name, null);
         }
@@ -320,22 +341,50 @@ public static class Runner
             return result;
         }
 
+        // Calls a test inside a simulation: its Task is awaited there, not waited for, as the simulation runs on this thread.
+        static Task InvokeSimulated(MethodInfo method, object?[]? arguments)
+        {
+            try
+            {
+                return method.Invoke(null, arguments) as Task ?? Task.CompletedTask;
+            }
+            catch (TargetInvocationException ex) when (ex.InnerException is { } inner)
+            {
+                return Task.FromException(inner);
+            }
+        }
+
         static string Failure(Exception exception)
         {
+            // A simulated run: its seed, which repeats it, why it failed, and the end of what happened, in simulated time.
+            if (exception is Piper.Runtime.SimulationFailedException simulation)
+            {
+                var timeline = simulation.Timeline.Count > 30 ? ["...", .. simulation.Timeline.TakeLast(30)] : simulation.Timeline;
+                var why = simulation.InnerException ?? simulation;
+                var reason = why is Piper.Runtime.PiperAssertionException ? why.Message : $"{why.GetType().FullName}: {why.Message}";
+                var shrunk = simulation.Shrinks == 0 ? ""
+                    : $", shrunk {simulation.Shrinks} {(simulation.Shrinks == 1 ? "time" : "times")} to {simulation.Departures} {(simulation.Departures == 1 ? "choice" : "choices")} from the calmest run";
+                return $"Simulation failed (seed {simulation.Seed}; piper test --seed {simulation.Seed} repeats it{shrunk}): {reason}" +
+                    (timeline.Count == 0 ? "" : "\n     Timeline (simulated time):\n" + string.Join("\n", timeline.Select(line => "     " + line))) +
+                    Frames(why);
+            }
+
             // A property test's message names the values; the stack is the smallest failing case's.
             var message = exception is Piper.Runtime.PiperAssertionException or Piper.Runtime.PiperPropertyException
                 ? exception.Message
                 : $"Unhandled exception: {exception.GetType().FullName}: {exception.Message}";
             if (exception is Piper.Runtime.PiperPropertyException { InnerException: { } failure })
-                exception = failure;
-            // The test's own frame is named after its position; just give its line.
-            var frames = new System.Diagnostics.StackTrace(exception, fNeedFileInfo: true).GetFrames()
+                exception = failure is Piper.Runtime.SimulationFailedException { InnerException: { } why } ? why : failure;
+            return message + Frames(exception);
+        }
+
+        // The Piper lines the exception passed through. The test's own frame is named after its position; just its line.
+        static string Frames(Exception exception) => string.Concat(
+            new System.Diagnostics.StackTrace(exception, fNeedFileInfo: true).GetFrames()
                 .Where(f => f.GetFileName() is { } file && file.EndsWith(".piper", StringComparison.OrdinalIgnoreCase))
                 .Select(f => f.GetMethod()?.Name is { } method && !method.StartsWith("PiperTest_", StringComparison.Ordinal) && method != "MoveNext"
                     ? $"\n   at {method} in {f.GetFileName()}:line {f.GetFileLineNumber()}"
-                    : $"\n   at {f.GetFileName()}:line {f.GetFileLineNumber()}");
-            return message + string.Concat(frames);
-        }
+                    : $"\n   at {f.GetFileName()}:line {f.GetFileLineNumber()}"));
     }
 
     private static RunResult RunCaptured(MethodInfo entryPoint, string[] args)

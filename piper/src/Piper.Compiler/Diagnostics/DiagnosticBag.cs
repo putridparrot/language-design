@@ -162,6 +162,12 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportNotAField(TextSpan span, string name, string record, IReadOnlyList<string> fields) =>
         Error("PIP0511", span, $"'{name}' isn't a field of {record}; its fields are {string.Join(", ", fields.Select(f => $"'{f}'"))}.");
 
+    public void ReportNotSimulated(TextSpan span, string test, string path, string why) =>
+        Warning("PIP0512", span, $"The simulated test '{test}' reaches this{(path.Length == 0 ? "" : $" (through {path})")}, which its simulation can't run: {why}.");
+
+    public void ReportNotDeterministic(TextSpan span, string function, string path, string why) =>
+        Error("PIP0513", span, $"{function} must do the same every time it's replayed{(path.Length == 0 ? "" : $" (this is reached through {path})")}, but {why}.");
+
     public void ReportNotMarkup(TextSpan span, TypeSymbol type, bool attribute)
     {
         bool function = type is ClrTypeSymbol { Type.FullName: "System.Delegate" } or ClrTypeSymbol { Type.BaseType.FullName: "System.MulticastDelegate" };

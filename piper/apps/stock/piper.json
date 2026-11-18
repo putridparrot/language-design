@@ -1,9 +1,13 @@
 {
-  // Stock: a stock service whose products are actors spread over several nodes (processes, Docker containers or
-  // Kubernetes pods), on the remote actors plugin. See README.md for running it locally, in Docker and on AKS.
+  // Stock: a stock service whose products are actors in a cluster of nodes (processes, Docker containers or Kubernetes
+  // pods), on the remote actors plugin. See README.md for running it locally, in Docker and on AKS.
   // `piper test apps/stock` runs its tests, which start three nodes in one process. Each product keeps its count as
-  // events (a persisted actor), in a SQLite file per node with --events (the data plugin's DatabaseEventStore).
+  // events (a persisted actor), in a store the nodes share, chosen by configuration (the data plugin's
+  // DatabaseEventStore): PostgreSQL deployed, SQLite or memory locally.
   "name": "stock",
   "plugins": ["remote-actors", "args", "web", "telemetry", "data"],
-  "packages": { "Microsoft.EntityFrameworkCore.Sqlite": "10.0.14" }
+  "packages": {
+    "Microsoft.EntityFrameworkCore.Sqlite": "10.0.14",
+    "Npgsql.EntityFrameworkCore.PostgreSQL": "10.0.3"
+  }
 }

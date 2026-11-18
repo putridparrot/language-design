@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    A sample Piper compiler plugin: `actor` declarations on Proto.Actor, so actors can run on several machines and talk
+    A sample Piper compiler plugin: `actor` declarations on Piper.Actors.Remote, so actors can run on several machines and talk
     over the network. It's listed in a program's piper.json ("plugins": [".../Piper.Plugins.Actors.Remote.dll"]) and
     loaded by the compiler, which never references it. It reads the same syntax as Piper.Plugins.Actors.
   -->

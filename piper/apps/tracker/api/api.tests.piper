@@ -13,13 +13,16 @@ using Piper.Web;
 /// `keepAlive`, as SQLite drops a shared in-memory database when its last connection closes), and a client calling it.
 record Running(client: TestClient<WebApplication>, keepAlive: SqliteConnection);
 
-async fn StartTracker(searchesPerMinute: int) => Task<Running> {
+async fn StartTracker(searchesPerMinute: int) => Task<Running> = await StartTrackerTelling(searchesPerMinute, NoNotifier());
+
+/// The same, telling `notifier` of changed issues.
+async fn StartTrackerTelling(searchesPerMinute: int, notifier: Notifier) => Task<Running> {
     let connection = $"Data Source=file:tracker-{Guid.NewGuid()}?mode=memory&cache=shared";
     let keepAlive = SqliteConnection(connection);
     await keepAlive.OpenAsync();
     let settings = Settings(connection, searchesPerMinute, None);
     await Prepare(settings);
-    let client = await TestClient.Start(() => TrackerServer(settings, FixedClock(Noon()), NoNotifier(), ""));
+    let client = await TestClient.Start(() => TrackerServer(settings, FixedClock(Noon()), notifier, ""));
     Running(client, keepAlive)
 }
 
@@ -168,4 +171,34 @@ async test "the API's own client works with the server" {
     Assert(missing is None);
     let Err(noProject) = await api.AddIssue(ProjectId(99), NewIssue("Lost", "", Priority.Low)) else { Assert(false, "an issue was added to no project"); return; };
     AssertEqual(Some(IssueError.NoProject(ProjectId(99))), noProject.Error);
+}
+
+/// Records each issue it's told of, as a webhook would be sent it.
+class RecordingNotifier: Notifier {
+    public let told = System.Collections.Concurrent.ConcurrentQueue<IssueView>();
+
+    fn IssueChanged(issue: IssueView) => Task {
+        told.Enqueue(issue);
+        Task.CompletedTask
+    }
+}
+
+async test "a transition over HTTP reaches the webhook, through the outbox" {
+    let notifier = RecordingNotifier();
+    let running = await StartTrackerTelling(60, notifier);
+    defer { Stop(running); }
+    await AddWebProject(running);
+    let _ = await Post(running, "/api/projects/1/issues", """{"title": "Crash on save", "description": "", "priority": "High"}""");
+    let (started, _) = await Post(running, "/api/issues/1/events", """{"kind": "Start", "assignee": "ada"}""");
+    AssertEqual(200, started);
+
+    // Saved with the change, then sent by the app's relay and posted by its consumer, in the background.
+    let deadline = DateTime.UtcNow.AddSeconds(10);
+    while notifier.told.IsEmpty && DateTime.UtcNow < deadline {
+        await Task.Delay(20);
+    }
+    let told = notifier.told.ToArray();
+    AssertEqual(1, told.Length);
+    AssertEqual(IssueId(1), told[0].id);
+    AssertEqual(WorkflowState.InProgress, told[0].status);
 }

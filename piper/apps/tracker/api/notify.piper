@@ -1,11 +1,18 @@
-// Telling the outside world when an issue changes: a webhook, called with the issue after each transition.
+// Telling the outside world when an issue changes: a webhook, called with the issue after each transition. The change
+// and the message telling of it are saved together (the database's outbox), so a notification can't be lost to a
+// crash between saving and sending; a relay sends it, and a consumer posts the issue to the webhook.
 namespace Tracker;
 
 using System;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Logging;
+using Piper.Messaging;
+
+messages Notifications {
+    /// An issue moved through its workflow. Only its id: the webhook is told the issue as it is when it's sent.
+    event IssueChanged(id: IssueId) topic "issue-changes" key id;
+}
 
 /// What's told about changed issues.
 trait Notifier {
@@ -19,8 +26,9 @@ extend NoNotifier: Notifier {
     fn IssueChanged(issue: IssueView) => Task = Task.CompletedTask;
 }
 
-/// Posts each changed issue to a webhook as JSON. A webhook that's briefly down is tried again: three attempts in all,
-/// 50 ms apart ([Retry] rewrites the method at compile time; nothing is intercepted at run time).
+/// Posts each changed issue to a webhook as JSON. A webhook that's briefly down is tried again at once: three attempts
+/// in all, 50 ms apart ([Retry] rewrites the method at compile time; nothing is intercepted at run time). One down for
+/// longer is the bus's to retry, with backoff.
 class WebhookNotifier(client: HttpClient, url: string): Notifier {
     [Retry(3, 50)]
     async fn IssueChanged(issue: IssueView) => Task {
@@ -29,12 +37,14 @@ class WebhookNotifier(client: HttpClient, url: string): Notifier {
     }
 }
 
-/// Tells `notifier` about `issue`. A notification that fails even after its retries is logged (a warning, with the
-/// issue's id as a field), not passed on: the change it's about has happened, and its caller shouldn't be told otherwise.
-async fn Notify(notifier: Notifier, issue: IssueView, log: ILogger) {
-    try {
-        await notifier.IssueChanged(issue);
-    } catch (e: Exception) {
-        log.LogWarning(e, $"Couldn't tell about issue {issue.id}");
+/// Tells the notifier of each changed issue. A webhook that fails is retried by the bus, waiting longer each time, and
+/// after its last attempt the message is dead-lettered (where it can be looked at); the change itself is saved
+/// regardless. An issue that's gone is rejected, as retrying won't bring it back.
+consumer Webhook(settings: Settings, notifier: Notifier) {
+    on IssueChanged(changed) {
+        using let db = Open(settings);
+        let Some(issue) = await FindIssue(db, changed.id) else { return Handled.Reject($"There's no issue {changed.id}."); };
+        await notifier.IssueChanged(View(issue));
+        Handled.Done
     }
 }

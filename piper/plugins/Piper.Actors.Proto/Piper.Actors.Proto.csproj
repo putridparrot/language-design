@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A transport for Piper.Actors.Remote's actor system on Proto.Actor's remoting (gRPC): the `proto` provider of
+    IActorTransport, for a program that wants Proto.Remote carrying its nodes' messages rather than the built-in HTTP/2.
+    Proto.Actor only carries frames; the actors are Piper's, and behave as on any transport. It comes with the
+    proto-actor plugin (plugins/Piper.Plugins.Actors.Proto), beside its assembly, which also brings in Proto.Remote.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Piper.Actors.Proto</RootNamespace>
+    <!-- One place whatever the configuration, so the plugin can copy it beside itself. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\runtime\</OutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The program has Proto.Remote itself (the plugin's Packages), so it isn't copied here. -->
+    <PackageReference Include="Proto.Remote" Version="1.8.0" PrivateAssets="all" ExcludeAssets="runtime" />
+    <!-- The program has these too: Piper.Runtime always, Piper.Actors.Remote from the remote-actors plugin. -->
+    <ProjectReference Include="..\..\src\Piper.Runtime\Piper.Runtime.csproj" Private="false" />
+    <ProjectReference Include="..\Piper.Actors.Remote\Piper.Actors.Remote.csproj" Private="false" />
+  </ItemGroup>
+
+</Project>

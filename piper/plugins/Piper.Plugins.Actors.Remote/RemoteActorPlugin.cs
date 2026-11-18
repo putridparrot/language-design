@@ -5,49 +5,54 @@ using Piper.Syntax;
 namespace Piper.Plugins.Actors;
 
 /// <summary>
-/// Adds <c>actor</c> declarations, as <see cref="ActorPlugin"/> does, but on Proto.Actor, so an actor in one process can
-/// be used from others, on the same machine or across a network:
+/// Adds <c>actor</c> declarations, as <see cref="ActorPlugin"/> does, but on Piper.Actors.Remote's actor system, so an
+/// actor in one process can be used from others, on the same machine or across a network:
 /// <code>
-/// let system = Proto.ActorSystem().WithRemote(Proto.Remote.RemoteConfig.BindToLocalhost(8000));
-/// await system.Remote().StartAsync();
+/// let system = await PiperNode.StartAsync("127.0.0.1", 8000);
 /// let counter = Counter.Spawn(system, "counter", 10);                    // host it here, under a name
 /// let remote = Counter.Connect(system, "127.0.0.1:8000", "counter");     // or reach one hosted elsewhere
 /// remote.Increment(5);  Print(await remote.Get());
 /// </code>
 /// It's rewritten into ordinary Piper:
 /// <list type="bullet">
-/// <item>an enum of the messages, <c>CounterMessage</c>, which Proto.Actor sends between processes as JSON;</item>
-/// <item>a record, <c>Counter</c>, holding the actor system and the actor's address (its PID), with a method for each
-/// handler: a tell sends the message, an ask sends it and awaits the reply, for up to 10 seconds by default
-/// (<c>counter.WithTimeout(TimeSpan.FromSeconds(30))</c> changes that);</item>
-/// <item><c>Counter.Spawn(system, name, …)</c>, which declares the state and makes a Proto.Actor actor whose receive
-/// function matches each message to its handler, and <c>Counter.Connect(system, address, name)</c>.</item>
+/// <item>an enum of the messages, <c>CounterMessage</c>, which is sent between nodes as JSON;</item>
+/// <item>a record, <c>Counter</c>, holding the actor system and the actor's address (its ActorRef), with a method for
+/// each handler: a tell sends the message, an ask sends it and awaits the reply (sent as the handler's declared result
+/// type), for up to 10 seconds by default (<c>counter.WithTimeout(TimeSpan.FromSeconds(30))</c> changes that);</item>
+/// <item><c>Counter.Spawn(system, name, …)</c>, which declares the state and starts an actor whose receive function
+/// matches each message to its handler, and <c>Counter.Connect(system, address, name)</c>.</item>
 /// </list>
-/// An ask whose handler throws sends back a <c>CounterFault</c>, which the caller throws as an exception; a tell's
-/// exception is written to the error output. The plugin brings in Proto.Remote and ASP.NET Core (whose server carries
-/// Proto.Actor's gRPC), and warns about message fields that can't be sent as data (<see cref="Analyze"/>).
+/// An ask whose handler throws answers with the exception's message, which the caller throws as an
+/// InvalidOperationException; a tell's exception is written to the error output. The nodes talk over a transport chosen
+/// by the program (HTTP/2 on ASP.NET Core's Kestrel, in memory, or a plugin's), and the plugin warns about message
+/// fields that can't be sent as data (<see cref="Analyze"/>).
 /// </summary>
 public sealed class RemoteActorPlugin : IPiperPlugin
 {
-    private static readonly HashSet<string> GeneratedNames = ["Spawn", "Connect", "WithTimeout", "Stop"];
+    private static readonly HashSet<string> GeneratedNames = ["Spawn", "Connect", "WithTimeout", "Stop", "InCluster", "HostInCluster"];
 
     /// <summary>Names the generated <c>Spawn</c> and <c>Connect</c> take, which an actor's own parameters can't use.</summary>
     private static readonly HashSet<string> ReservedParameters = ["system", "name", "address"];
 
     public string Name => "remote-actors";
 
-    public IReadOnlyDictionary<string, string> Packages { get; } = new Dictionary<string, string> { ["Proto.Remote"] = "1.8.0" };
-
+    /// <summary>ASP.NET Core, whose Kestrel serves the http transport.</summary>
     public IReadOnlyList<string> Frameworks => ["Microsoft.AspNetCore.App"];
 
-    /// <summary>Piper.Actors.Remote: sending and handling messages with their trace context (see PiperActorTracing).</summary>
+    /// <summary>Piper.Actors.Remote: the actor system, its transports, and tracing through actors (see PiperActorTracing).</summary>
     public IReadOnlyList<string> References => ["Piper.Actors.Remote.dll"];
+
+    /// <summary>
+    /// What a program can choose by configuration: the transport (memory, the local one, and http) and a cluster's
+    /// membership (memory, the local one, and static).
+    /// </summary>
+    public IReadOnlyList<string> Providers => ["Piper.Actors.Remote.PiperNode.RegisterProviders", "Piper.Actors.Remote.Cluster.RegisterProviders"];
 
     public IReadOnlyList<PluginKeyword> Keywords { get; } =
     [
         new DeclarationKeyword("actor", Actor)
         {
-            Description = "Declares an actor that other processes and machines can use, on Proto.Actor: an object with private state that handles one message at a time. " +
+            Description = "Declares an actor that other processes and machines can use: an object with private state that handles one message at a time. " +
                           "`Counter.Spawn(system, \"counter\", …)` hosts one under a name, and `Counter.Connect(system, \"host:port\", \"counter\")` reaches one elsewhere.",
             Snippet = ActorSyntax.Snippet,
             Words = ActorSyntax.Words,
@@ -129,18 +134,21 @@ public sealed class RemoteActorPlugin : IPiperPlugin
         var hole = new TemplateHoles();
         var actor = declaration.Name.Text;
         var message = actor + "Message";
-        var fault = actor + "Fault";
         const string Tasks = "System.Threading.Tasks";
-        const string Tracing = "Piper.Actors.Remote.PiperActorTracing";
-        // What a throwing handler does to the actor (`on failure …`): stopping it is Proto.Actor's, here.
-        var (setup, before, onFailure) = ActorSyntax.PolicyCode(declaration, hole, "__context.Stop(__context.Self);");
-        // A persisted actor's events: its Spawn takes their store, it replays them as Proto.Actor starts it (before any
+        const string Remote = "Piper.Actors.Remote";
+        const string Tracing = Remote + ".PiperActorTracing";
+        // What a throwing handler does to the actor (`on failure …`): stopping it is the actor system's, here.
+        var (setup, before, onFailure) = ActorSyntax.PolicyCode(declaration, hole, "__context.Stop();");
+        // A persisted actor's events: its Spawn takes their store, it replays them as the actor starts (before any
         // message), and saves each message's once its handler has finished (before an ask's answer is sent).
         bool persisted = declaration.PersistedBy is not null;
         var (eventEnum, eventSetup) = ActorSyntax.EventCode(declaration, hole);
         var commit = ActorSyntax.Commit(declaration, hole);
         var store = persisted ? "store: Piper.Runtime.IEventStore, " : "";
-        var replay = persisted ? $"if __context.Message is _: Proto.Started {{ {ActorSyntax.Replay(declaration)}}}" : "";
+        var replay = persisted ? $"if __context.Message is _: {Remote}.Started {{ {ActorSyntax.Replay(declaration)}}}" : "";
+        // Its store refused its events: the same actor is running on another node too (in a cluster, while the nodes
+        // disagree on who owns it). This one stops, so the next message starts it again from what was saved.
+        var conflict = persisted ? "if __error is _: Piper.Runtime.EventStreamConflictException { __context.Stop(); }\n" : "";
 
         var variants = new List<string>();
         var arms = new List<string>();
@@ -162,13 +170,13 @@ public sealed class RemoteActorPlugin : IPiperPlugin
                         } catch (__error: System.Exception) {
                             {{Tracing}}.Failed(__error);
                             System.Console.Error.WriteLine("{{actor}}: {__error.Message}");
-                            {{onFailure}}
+                            {{conflict}}{{onFailure}}
                         }
                     }
                     """);
                 methods.Add($$"""
                     fn {{hole[handler.Name]}}({{hole[handler.Parameters]}}: unit) {
-                        {{Tracing}}.Send(this.__system, this.__pid, {{message}}.{{handler.Name.Text}}{{arguments}});
+                        {{Tracing}}.Send<{{message}}>(this.__system, this.__ref, {{message}}.{{handler.Name.Text}}{{arguments}});
                     }
                     """);
             }
@@ -180,22 +188,19 @@ public sealed class RemoteActorPlugin : IPiperPlugin
                             // The body is the handler's declared result, so `Ok(x)` or `None` infer from it, as in a function.
                             let __result: {{hole[handler.Result]}} = {{hole[handler.Body]}};
                             {{commit}}
-                            __context.Respond(__result);
+                            // Sent to another node as the declared result type, which the asker reads it as.
+                            __context.Respond<{{hole[handler.Result]}}>(__result);
                         } catch (__error: System.Exception) {
                             {{Tracing}}.Failed(__error);
-                            __context.Respond({{fault}}(__error.Message));
-                            {{onFailure}}
+                            __context.Fail(__error.Message);
+                            {{conflict}}{{onFailure}}
                         }
                     }
                     """);
                 methods.Add($$"""
                     async fn {{hole[handler.Name]}}({{hole[handler.Parameters]}}: unit) => {{Tasks}}.Task<{{hole[handler.Result]}}> {
-                        let __reply = await {{Tracing}}.RequestAsync(
-                            this.__system, this.__pid, {{message}}.{{handler.Name.Text}}{{arguments}}, this.__timeout);
-                        match __reply {
-                            {{fault}}(__error) => throw System.InvalidOperationException(__error),
-                            _ => ({{hole[handler.Result]}})__reply,
-                        }
+                        await {{Tracing}}.RequestAsync<{{message}}, {{hole[handler.Result]}}>(
+                            this.__system, this.__ref, {{message}}.{{handler.Name.Text}}{{arguments}}, this.__timeout)
                     }
                     """);
             }
@@ -216,24 +221,32 @@ public sealed class RemoteActorPlugin : IPiperPlugin
                 {{string.Join(",\n", variants)}}
             }
 
-            /// An ask's handler threw: the exception's message, sent back to the caller.
-            record {{fault}}(__error: string);
-
-            record {{hole[declaration.Name]}}(__system: Proto.ActorSystem, __pid: Proto.PID, __timeout: System.TimeSpan);
+            record {{hole[declaration.Name]}}(__system: {{Remote}}.ActorSystem, __ref: {{Remote}}.ActorRef, __timeout: System.TimeSpan);
 
             extend {{actor}} {
-                /// Starts the actor in this process under `name`, so other processes can reach it with `Connect`.
-                static fn Spawn(system: Proto.ActorSystem, name: string, {{store}}{{hole[declaration.Parameters]}}: unit) => {{actor}} {
+                /// Starts the actor on this node under `name`, so other nodes can reach it with `Connect`.
+                static fn Spawn(system: {{Remote}}.ActorSystem, name: string, {{store}}{{hole[declaration.Parameters]}}: unit) => {{actor}} {
                     {{hole[declaration.State]}};
                     {{eventSetup}}
                     {{setup}}
-                    let __props = Proto.Props.FromFunc({{receive}});
-                    {{actor}}(system, system.Root.SpawnNamed(__props, name), System.TimeSpan.FromSeconds(10))
+                    {{actor}}(system, system.Spawn<{{message}}>(name, {{receive}}), System.TimeSpan.FromSeconds(10))
                 }
 
-                /// The actor called `name` in the process at `address` (host:port), which may be this one.
-                static fn Connect(system: Proto.ActorSystem, address: string, name: string) => {{actor}} =
-                    {{actor}}(system, Proto.PID(address, name), System.TimeSpan.FromSeconds(10));
+                /// The actor called `name` on the node at `address` (host:port), which may be this one.
+                static fn Connect(system: {{Remote}}.ActorSystem, address: string, name: string) => {{actor}} =
+                    {{actor}}(system, {{Remote}}.ActorRef(address, name), System.TimeSpan.FromSeconds(10));
+
+                /// The actor with `key` in the cluster `system` has joined, wherever it runs: each message goes to the
+                /// node that owns the key now, which starts the actor as the message arrives (see HostInCluster).
+                static fn InCluster(system: {{Remote}}.ActorSystem, key: string) => {{actor}} =
+                    {{actor}}(system, {{Remote}}.ActorRef.InCluster("{{actor}}", key), System.TimeSpan.FromSeconds(10));
+
+                /// Makes this node host {{actor}}s for its cluster: `activate` starts the one with a key when a message
+                /// for it arrives here, its owner, given the node, the name to spawn it under, and the key:
+                /// `(node, name, key) => {{actor}}.Spawn(node, name, …)`.
+                static fn HostInCluster(cluster: {{Remote}}.Cluster, activate: ({{Remote}}.ActorSystem, string, string) => {{actor}}) {
+                    cluster.Host("{{actor}}", (__node, __name, __key) => { activate(__node, __name, __key); });
+                }
 
                 /// A copy whose asks wait up to `timeout` for a reply before throwing a TimeoutException.
                 fn WithTimeout(timeout: System.TimeSpan) => {{actor}} = { ...this, __timeout: timeout };
@@ -242,7 +255,7 @@ public sealed class RemoteActorPlugin : IPiperPlugin
 
                 /// Stops the actor, wherever it runs.
                 async fn Stop() {
-                    await this.__system.Root.StopAsync(this.__pid);
+                    await this.__system.StopAsync(this.__ref);
                 }
             }
             """;

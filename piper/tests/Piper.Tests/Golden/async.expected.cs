@@ -35,7 +35,7 @@ internal sealed record MemoryStore(global::System.Collections.Generic.List<User>
 {
     public async global::System.Threading.Tasks.Task<Option<User>> Load(int id)
     {
-        await global::System.Threading.Tasks.Task.Delay(1);
+        await global::Piper.Runtime.PiperRouting.Delay(1);
         foreach (User user in this.users)
         {
             if (user.id == id)
@@ -57,7 +57,7 @@ internal static class Async
 
     internal static async global::System.Threading.Tasks.Task Log(string message)
     {
-        await global::System.Threading.Tasks.Task.Delay(1);
+        await global::Piper.Runtime.PiperRouting.Delay(1);
         global::System.Console.WriteLine($"log: {message}");
     }
 
@@ -74,7 +74,7 @@ internal static class Async
 
     internal static async global::System.Threading.Tasks.Task<int> Fail()
     {
-        await global::System.Threading.Tasks.Task.Delay(1);
+        await global::Piper.Runtime.PiperRouting.Delay(1);
         throw new global::System.InvalidOperationException("boom");
     }
 
@@ -92,8 +92,8 @@ internal static class Async
         int[] doubled = await global::System.Threading.Tasks.Task.WhenAll<int>(global::System.Linq.Enumerable.Select<int, global::System.Threading.Tasks.Task<int>>(new global::System.Collections.Generic.List<int> { 1, 2, 3 }, async (int n) => await Twice(n)));
         global::System.Console.WriteLine(string.Join<int>(",", doubled));
         global::System.Console.WriteLine(Sum(await global::System.Threading.Tasks.Task.WhenAll<int>(global::System.Threading.Tasks.Task.FromResult<int>(4), Twice(5))));
-        int squared = await global::System.Threading.Tasks.Task.Run<int>(async () => {
-            await global::System.Threading.Tasks.Task.Delay(1);
+        int squared = await global::Piper.Runtime.PiperRouting.Run<int>(async () => {
+            await global::Piper.Runtime.PiperRouting.Delay(1);
             return 7 * 7;
         });
         global::System.Console.WriteLine(squared);

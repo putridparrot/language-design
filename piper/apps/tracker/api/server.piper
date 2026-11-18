@@ -14,6 +14,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Piper.Data;
+using Piper.Messaging;
 
 /// Sign-in for development and tests: the `X-User` header names the user, and `X-Roles` lists their roles
 /// (`X-Roles: admin`). A real deployment would use cookies or JWT bearer tokens instead.
@@ -48,6 +50,8 @@ server TrackerServer(settings: Settings, clock: Clock, notifier: Notifier, urls:
     scoped TrackerDb = TrackerDb(DbContextOptionsBuilder<TrackerDb>().UseSqlite(settings.connection).Options);
     singleton Clock = clock;
     singleton Notifier = notifier;
+    // Where messages go: the in-memory transport unless "Messaging:Provider" names a broker's (rabbitmq).
+    bus from "Messaging";
 
     policies Security(settings);
     // Logging and sign-in are the app's choices, so they're written against the builder.
@@ -64,6 +68,10 @@ server TrackerServer(settings: Settings, clock: Clock, notifier: Notifier, urls:
     health "/healthz" ready "/ready" {
         check "database" async (db: TrackerDb) => await db.Database.CanConnectAsync();
     }
+
+    // For as long as the app runs: the outbox's notifications sent once they're saved, and the webhook told of each.
+    relay DatabaseOutbox.Store(() => Open(settings));
+    consume Webhook(settings, notifier);
 }
 
 /// Makes the database's tables, if they aren't there.

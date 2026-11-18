@@ -25,6 +25,9 @@ internal sealed class HostParts(string host)
 
     /// <summary>Hosted services named (<c>hosted Mailer;</c>), which run, as workers do.</summary>
     public int Hosted { get; set; }
+
+    /// <summary>The bus a <c>bus from "Messaging";</c> made, for the <c>consume</c> and <c>relay</c> clauses after it.</summary>
+    public Token? Bus { get; set; }
 }
 
 /// <summary>
@@ -61,10 +64,16 @@ internal static class HostClauses
         ["async"] = "The handler awaits, so it runs as an async lambda.",
         ["stopping"] = "Run when it's asked to stop (Ctrl+C, or SIGTERM from Kubernetes), and waited for, before its workers stop: a handler whose parameters are services.",
         ["shutdown"] = "How long workers, `stopping` hooks (and a server's requests) have to finish once it's asked to stop: `shutdown 30 seconds;`.",
+        ["bus"] = "The messaging plugin's bus, over the transport the configuration chooses (`bus from \"Messaging\";` reads Messaging:Provider: memory, rabbitmq…), registered as `Bus` (and its transport as `IMessageTransport`), for endpoints and workers and the `consume` and `relay` clauses after. Needs the messaging plugin.",
+        ["consume"] = "Runs a `consumer` for as long as it runs, on the `bus`: `consume Billing(db);`, with the consumer's arguments. Stopped as it stops.",
+        ["workflows"] = "Runs durable workflows over an event store for as long as it runs: `workflows Fulfil(shop), Returns(shop) from store;` registers each (with its dependencies) on a `WorkflowEngine`, registered for handlers to start them (`Fulfil.Start(engine, id, …)`), resumes the unfinished as it starts, and stops them as it stops. Needs the workflows plugin.",
+        ["relay"] = "Sends an outbox's saved messages on the `bus` for as long as it runs: `relay DatabaseOutbox.Store(() => Shop(options));`. Stopped as it stops.",
     };
 
     /// <summary>The shared clauses' words, for a message listing what may be written.</summary>
-    public const string Listed = "'config', 'sources', 'provider', 'services', 'singleton', 'scoped', 'transient', 'configure', 'logging', 'telemetry', 'hosted', 'worker', 'stopping' or 'shutdown'";
+    public const string Listed = "'config', 'sources', 'provider', 'services', 'singleton', 'scoped', 'transient', 'configure', 'logging', 'telemetry', 'hosted', 'worker', 'stopping', 'shutdown', 'bus', 'consume', 'relay' or 'workflows'";
+
+    private const string Messaging = "Piper.Messaging";
 
     private static readonly Dictionary<string, string> Lifetimes = new()
     {
@@ -226,6 +235,97 @@ internal static class HostClauses
                 parts.Building.Add(p.Template.Statement($"{Host}.ShutdownTimeout(builder, $timeout);", ("timeout", Duration(p, countOptional: false))));
                 p.Expect(TokenKind.Semicolon);
                 return true;
+
+            case "bus":
+            {
+                // `bus from "Messaging";`: the transport the configuration chooses, and a bus over it, both registered.
+                p.ReadWord();
+                once(word);
+                p.ExpectWord("from");
+                var section = p.ParseExpression();
+                p.Expect(TokenKind.Semicolon);
+                var transport = p.FreshName("transport");
+                var bus = p.FreshName("bus");
+                parts.Building.Add(p.Template.Statement($"let $transport = {Host}.Provider<{Messaging}.IMessageTransport>(builder, $section);",
+                    ("transport", transport), ("section", section)));
+                parts.Building.Add(p.Template.Statement($"let $bus = {Messaging}.Bus($transport);", ("bus", bus), ("transport", transport)));
+                parts.Building.Add(p.Template.Statement(
+                    $"{DependencyInjection}.ServiceCollectionServiceExtensions.AddSingleton<{Messaging}.IMessageTransport>(builder.Services, $transport);",
+                    ("transport", transport)));
+                parts.Building.Add(p.Template.Statement(
+                    $"{DependencyInjection}.ServiceCollectionServiceExtensions.AddSingleton<{Messaging}.Bus>(builder.Services, $bus);", ("bus", bus)));
+                parts.Bus = bus;
+                return true;
+            }
+
+            case "consume":
+            {
+                // `consume Billing(db);`: the consumer, started on the bus as it starts, and stopped as it stops.
+                p.ReadWord();
+                var consumer = p.Expect(TokenKind.Identifier);
+                var arguments = Arguments(p);
+                p.Expect(TokenKind.Semicolon);
+                if (parts.Bus is not { } bus)
+                {
+                    p.Report(word.Span, "'consume' needs a bus to consume from: write `bus from \"Messaging\";` before it.");
+                    return true;
+                }
+                parts.Building.Add(p.Template.Statement(
+                    $"{Host}.Worker(builder, async (stopping: System.Threading.CancellationToken) => await $bus.RunUntil(() => $consumer($arguments).Start($bus), stopping));",
+                    ("bus", bus), ("consumer", consumer), ("arguments", arguments)));
+                parts.Hosted++;
+                return true;
+            }
+
+            case "workflows":
+            {
+                // `workflows Fulfil(shop), Returns(shop) from store;`: an engine over the store, running those workflows
+                // (resuming the unfinished as it starts, stopping them as it stops), registered for handlers to start them.
+                p.ReadWord();
+                once(word);
+                var workflows = new List<(Token Name, List<ExpressionSyntax> Arguments)>();
+                do
+                {
+                    if (workflows.Count > 0)
+                        p.NextToken();
+                    workflows.Add((p.Expect(TokenKind.Identifier), Arguments(p)));
+                }
+                while (p.Current.Kind == TokenKind.Comma);
+                p.ExpectWord("from");
+                var store = p.ParseExpression();
+                p.Expect(TokenKind.Semicolon);
+                var engine = p.FreshName("workflows");
+                parts.Building.Add(p.Template.Statement("let $engine = Piper.Workflows.WorkflowEngine($store);", ("engine", engine), ("store", store)));
+                foreach (var (workflow, arguments) in workflows)
+                    parts.Building.Add(p.Template.Statement("$workflow($arguments).Register($engine);",
+                        ("workflow", workflow), ("arguments", arguments), ("engine", engine)));
+                parts.Building.Add(p.Template.Statement(
+                    $"{DependencyInjection}.ServiceCollectionServiceExtensions.AddSingleton<Piper.Workflows.WorkflowEngine>(builder.Services, $engine);",
+                    ("engine", engine)));
+                parts.Building.Add(p.Template.Statement(
+                    $"{Host}.Worker(builder, async (stopping: System.Threading.CancellationToken) => await $engine.RunUntil(stopping));",
+                    ("engine", engine)));
+                parts.Hosted++;
+                return true;
+            }
+
+            case "relay":
+            {
+                // `relay DatabaseOutbox.Store(() => Shop(options));`: the outbox's messages sent on the bus while it runs.
+                p.ReadWord();
+                var store = p.ParseExpression();
+                p.Expect(TokenKind.Semicolon);
+                if (parts.Bus is not { } bus)
+                {
+                    p.Report(word.Span, "'relay' needs a bus to send on: write `bus from \"Messaging\";` before it.");
+                    return true;
+                }
+                parts.Building.Add(p.Template.Statement(
+                    $"{Host}.Worker(builder, async (stopping: System.Threading.CancellationToken) => await $bus.RelayUntil($store, stopping));",
+                    ("bus", bus), ("store", store)));
+                parts.Hosted++;
+                return true;
+            }
 
             default:
                 return false;

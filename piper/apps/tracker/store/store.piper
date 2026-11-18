@@ -6,11 +6,14 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Piper.Messaging;
 
 database TrackerDb {
     table Projects: Project key id index code;
     table Issues: Issue key id index projectId index (projectId, status);
     table Comments: Comment key id index issueId;
+    // Messages saved with the changes they tell of (an issue changed), and sent once they're saved.
+    outbox;
 }
 
 /// A database for <paramref name="connection"/>, with its tables made if they aren't there.
@@ -34,11 +37,13 @@ async fn AddIssue(db: TrackerDb, projectId: ProjectId, request: NewIssue, now: D
     Ok(issue)
 }
 
-/// Moves an issue through its workflow, and saves it.
-async fn Transition(db: TrackerDb, id: IssueId, event: WorkflowEvent, now: DateTime) => Task<Result<Issue, IssueError>> {
+/// Moves an issue through its workflow, and saves it, with the `IssueChanged` that tells of it in the same transaction
+/// (the database's outbox), so the change and its notification are saved together or not at all.
+async fn Transition(db: TrackerDb, id: IssueId, event: WorkflowEvent, now: DateTime, bus: Bus) => Task<Result<Issue, IssueError>> {
     let Some(issue) = await FindIssue(db, id) else { return Err(IssueError.NoIssue(id)); };
     let result = Apply(issue, event, now);
     if result is Ok(_) {
+        await bus.In(db.Outbox).Publish(IssueChanged(issue.id));
         await db.SaveChangesAsync();
     }
     result

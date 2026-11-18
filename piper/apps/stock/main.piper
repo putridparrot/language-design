@@ -8,13 +8,13 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using Piper.Hosting;
 using Piper.Runtime;
-using Proto.Remote;
+using Piper.Actors.Remote;
 
 args Options "Stock: products as actors, spread over several nodes. Commands: serve (the default) starts a node; load URL... reserves one product from many clients at once through those nodes' HTTP APIs." {
     host: string = "127.0.0.1" "This node's name, as the other nodes reach it: a container's or pod's DNS name";
-    port: int = 8000 "The port the nodes talk on (gRPC)";
+    port: int = 8000 "The port the nodes talk on (HTTP/2)";
     http: int = 8080 "The port of this node's HTTP API";
-    nodes: string? "Every node's host:port, comma-separated, in the same order on every node (default: this one alone)";
+    nodes: string? "Seed nodes' host:port, comma-separated: some or all of the cluster's nodes, which this one joins through (default: Cluster:Provider in configuration, such as postgres, the nodes holding leases in a database they share; or this node alone)";
     sku: string? "load: the product to reserve (default: a new one each run)";
     stock: int = 100 "load: how many to put in stock first";
     requests: int = 500 "load: how many reservations to try";
@@ -35,22 +35,20 @@ async fn Main(args: string[]) {
 }
 
 async fn Serve(options: Options) => Task<int> {
-    let node = await StartNode(options.host, options.port, EventStore());
-    let nodes = match options.nodes {
-        Some(list) => [...list.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)],
-        None => [node.Address],
+    let configuration = Configuration();
+    // The seed nodes this one joins through: --nodes, or the configuration's membership provider.
+    let membership: IClusterMembership = match options.nodes {
+        Some(list) => StaticClusterMembership(list.Split(',')),
+        None => PiperHost.Provider<IClusterMembership>(configuration, "Cluster"),
     };
-    if !nodes.Contains(node.Address) {
-        Console.Error.WriteLine($"This node is {node.Address}, which --nodes doesn't list: {string.Join(", ", nodes)}");
-        await node.Remote().ShutdownAsync(true);
-        return 2;
-    }
+    let node = await StartNode(options.host, options.port, membership, PiperHost.Provider<IEventStore>(configuration, "Events"));
     let local = options.host == "127.0.0.1" || options.host == "localhost";
     let url = if local { $"http://127.0.0.1:{options.http}" } else { $"http://*:{options.http}" };
-    let app = StockServer(Shards(node, nodes), url);
-    Print($"Node {node.Address} (node {nodes.IndexOf(node.Address) + 1} of {nodes.Count}), HTTP on {url}");
+    let app = StockServer(Shards(node), url);
+    Print($"Node {node.Address}, one of {node.Cluster.Members.Count} up, HTTP on {url}");
     await app.RunAsync();
-    await node.Remote().ShutdownAsync(true);
+    // Leaves the cluster first, handing its products to the others.
+    await node.StopAsync();
     0
 }
 
@@ -61,10 +59,10 @@ async fn Load(options: Options, urls: List<string>) => Task<int> {
     if report.Exact() { 0 } else { 1 }
 }
 
-/// Where this node's products keep their events, as its configuration says: `Events:Provider` and that provider's
-/// settings, from appsettings.json or the environment (`Events__Provider=sqlite`, `Events__Connection=Data
-/// Source=/data/events.db`; or `sqlserver`, `postgres` for a database in a cloud). In memory if it says nothing.
-fn EventStore() => IEventStore {
-    let configuration = ConfigurationBuilder().AddJsonFile("appsettings.json", true).AddEnvironmentVariables().Build();
-    PiperHost.Provider<IEventStore>(configuration, "Events")
-}
+/// This node's configuration, from appsettings.json and the environment. It says where the products keep their events
+/// (`Events:Provider` and its settings: `Events__Provider=postgres`, `Events__Connection=…`; or `sqlite`, `sqlserver`;
+/// in memory if it says nothing), which every node must share, as products move between them; and, without
+/// --nodes, how the nodes find each other (`Cluster:Provider`: `postgres`, `sqlite` or `sqlserver`, with `Cluster__Connection`,
+/// each node holding a lease in a database they share, as deployed; or `static`, with `Cluster__Members`, the seed nodes).
+fn Configuration() => IConfiguration =
+    ConfigurationBuilder().AddJsonFile("appsettings.json", true).AddEnvironmentVariables().Build();

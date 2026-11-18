@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The proto-actor plugin: no syntax of its own, but the `proto` transport for the remote actors plugin's nodes, on
+    Proto.Actor's remoting (gRPC), which it brings in. A program lists it beside remote-actors in its piper.json
+    ("plugins": ["remote-actors", "proto-actor"]) and chooses it by configuration (Actors:Provider=proto) or in code.
+    Without it, a program has no Proto.Actor packages at all.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!-- One place whatever the configuration, so piper.json files can point at it. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\plugin\</OutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The compiler loads the plugin, so it provides Piper.Compiler; don't copy it next to the plugin. -->
+    <ProjectReference Include="..\..\src\Piper.Compiler\Piper.Compiler.csproj" Private="false" ExcludeAssets="runtime" />
+    <!-- What the program calls (IPiperPlugin.References): built first, and copied beside the plugin. -->
+    <ProjectReference Include="..\Piper.Actors.Proto\Piper.Actors.Proto.csproj" ReferenceOutputAssembly="false" />
+    <None Include="..\Piper.Actors.Proto\bin\runtime\Piper.Actors.Proto.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+</Project>

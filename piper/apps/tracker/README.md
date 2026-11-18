@@ -106,9 +106,15 @@ into this program and into [the desktop client](../tracker-desktop/README.md).
 - **Storage** ([store/store.piper](store/store.piper)): projects, issues and comments in SQLite, through EF Core (the
   data plugin), with LINQ queries for searching.
 - **The API** ([api/](api)): minimal API endpoints (the web plugin), with header sign-in, an admin policy, rate
-  limiting on searches, and settings bound from configuration (the config plugin). After each change, the issue is
-  sent to the webhook if there is one ([api/notify.piper](api/notify.piper)), tried up to three times with the
-  aspects plugin's `[Retry]`.
+  limiting on searches, and settings bound from configuration (the config plugin).
+- **Notifications** ([api/notify.piper](api/notify.piper)): each transition saves an `IssueChanged` message in the
+  same transaction as the change (the database's `outbox;`, and the messaging plugin's `bus.In(db.Outbox)`), so a
+  crash between saving and telling can't lose it. The app's worker runs a relay, which sends saved messages, and a
+  `Webhook` consumer, which posts the issue to the webhook if there is one. A webhook that's briefly down is tried
+  three times at once (`[Retry]`, the aspects plugin), one down for longer is retried by the bus with backoff, and a
+  message still failing after the last attempt is dead-lettered. The change stands either way. Messages go over the
+  in-memory transport unless `Messaging:Provider` names a broker's: with RabbitMQ (the rabbitmq plugin),
+  `Messaging__Provider=rabbitmq Messaging__Connection=amqp://guest:guest@localhost:5672/ piper run apps/tracker`.
 - **The command line** ([cli/cli.piper](cli/cli.piper)): `serve` (the default) and the admin commands, from an `args`
   declaration (the args plugin).
 

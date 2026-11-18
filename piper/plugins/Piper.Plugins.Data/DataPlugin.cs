@@ -22,8 +22,11 @@ public sealed class DataPlugin : IPiperPlugin
     /// <summary>Piper.Data, storing Options as nullable columns.</summary>
     public IReadOnlyList<string> References => ["Piper.Data.dll"];
 
-    /// <summary>Persisted actors' event stores in a database, chosen by configuration: sqlite, sqlserver, postgres.</summary>
-    public IReadOnlyList<string> Providers => ["Piper.Data.DatabaseEventStore.RegisterProviders"];
+    /// <summary>
+    /// Persisted actors' event stores, and clusters' memberships (leases in a shared table), in a database chosen by
+    /// configuration: sqlite, sqlserver, postgres.
+    /// </summary>
+    public IReadOnlyList<string> Providers => ["Piper.Data.DatabaseEventStore.RegisterProviders", "Piper.Data.DatabaseClusterMembership.RegisterProviders"];
 
     public IReadOnlyList<PluginKeyword> Keywords { get; } =
     [
@@ -37,6 +40,8 @@ public sealed class DataPlugin : IPiperPlugin
                 ["table"] = "A table, and the type of its rows: a `DbSet` property of the database. A record or a class with public fields or properties.",
                 ["key"] = "The field (or fields, in parentheses) identifying each row: `HasKey`. Without it, EF Core looks for one named `id` or `<type>Id`.",
                 ["index"] = "An index on the field (or fields, in parentheses), for faster lookups: `HasIndex`.",
+                ["outbox"] = "A table of messages saved with the changes they tell of (`PiperOutbox`), and an `Outbox` property: " +
+                             "`bus.In(db.Outbox).Publish(…)` before `SaveChangesAsync()`, and a relay sends them once saved.",
             },
         },
     ];
@@ -45,7 +50,7 @@ public sealed class DataPlugin : IPiperPlugin
     private sealed record TableColumns(Token Table, TypeSyntax Entity, List<LiteralExpressionSyntax> Columns);
 
     /// <summary>
-    /// database = "database" IDENT "{" { table } "}" ;
+    /// database = "database" IDENT "{" { table | "outbox" ";" } "}" ;
     /// table    = "table" IDENT ":" type { ( "key" | "index" ) columns } ";" ;
     /// columns  = IDENT | "(" IDENT { "," IDENT } ")" ;
     /// </summary>
@@ -59,11 +64,22 @@ public sealed class DataPlugin : IPiperPlugin
         var model = new List<StatementSyntax>();
         var tables = new List<TableColumns>();
         var seen = new HashSet<string>();
+        var outbox = false;
         while (p.Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
         {
+            // `outbox;`: a table of messages saved with the changes they tell of (Piper.Data's DatabaseOutbox).
+            if (p.AtWord("outbox"))
+            {
+                var word = p.ReadWord();
+                p.Expect(TokenKind.Semicolon);
+                if (outbox)
+                    p.Report(word.Span, "There's already an outbox.");
+                outbox = true;
+                continue;
+            }
             if (!p.AtWord("table"))
             {
-                p.Report(p.Current.Span, "Expected 'table', such as table Orders: Order key id;");
+                p.Report(p.Current.Span, "Expected 'table', such as table Orders: Order key id; or outbox;");
                 while (p.Current.Kind is not (TokenKind.Semicolon or TokenKind.CloseBrace or TokenKind.EndOfFile))
                     p.NextToken();
                 if (p.Current.Kind == TokenKind.Semicolon)
@@ -101,6 +117,12 @@ public sealed class DataPlugin : IPiperPlugin
         }
         p.Expect(TokenKind.CloseBrace);
         p.Data = tables;
+        if (outbox)
+        {
+            // `prop Outbox => IOutbox`, which Piper.Messaging's `bus.In(db.Outbox)` adds messages to, and its table.
+            properties.Add("prop Outbox => Piper.Runtime.IOutbox = Piper.Data.DatabaseOutbox.For(this);");
+            model.Add(p.Template.Statement("Piper.Data.DatabaseOutbox.Configure(model);"));
+        }
         holes.Add(("model", model));
 
         return p.Template.Declarations($$"""

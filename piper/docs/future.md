@@ -207,7 +207,9 @@ developer's machine with no cloud at all. What's built so far follows this:
 |---|---|---|---|
 | Secrets and configuration | .NET's configuration sources (`sources`) | appsettings.json, the environment, files | Azure Key Vault, AWS Secrets Manager, GCP Secret Manager, HashiCorp Vault |
 | Persisted actors' events | `IEventStore`, chosen by `Events:Provider` | `memory`; `sqlite` | `sqlserver` (Azure SQL, Amazon RDS), `postgres` (Amazon RDS and Aurora, Cloud SQL, Azure's) |
+| Cluster membership | `IClusterMembership`, chosen by `Cluster:Provider` | `memory`; `static` (seed nodes); `sqlite` | `postgres`, `sqlserver` (leases in a database the nodes share) |
 | Telemetry | OpenTelemetry's protocol (OTLP) | nothing, or Aspire's dashboard | any OTLP backend (Azure Monitor, AWS X-Ray, Google Cloud Trace, Jaeger) |
+| Remote actors' transport | `IActorTransport`, chosen by `Actors:Provider` | `memory` | `http` (HTTP/2 on Kestrel, built in); `proto` (Proto.Actor's gRPC, with the proto-actor plugin) |
 
 The choice is made by Piper.Runtime's provider registry (see [plugins](plugins.md#providers-chosen-by-configuration)):
 a service's providers by name, the local one built in, others registered by the plugins a program brings, chosen by
@@ -239,12 +241,12 @@ finishing it), container publishing, and hosted workers; and of actor clustering
    fields to see which node did what. The plugin generates each remote message's envelope, so it can carry the trace
    context: one request becomes one trace through HTTP, node A and the product actor on node B, with handler times and
    mailbox depth as metrics. Locally, .NET Aspire's dashboard shows them with no setup.
-   ~~Done~~, mostly: a message carries its sender's trace in Proto.Actor's headers, and each handler runs in a span
+   ~~Done~~, mostly: a message carries its sender's trace in its headers, and each handler runs in a span
    continuing it, timed as `piper.actor.handler.duration` (Piper.Actors.Remote, on .NET's `Activity` and `Meter`). The
    new `telemetry` plugin's `telemetry;` (in a `server` or `host`) exports traces, metrics and logs over OTLP;
    apps/stock and apps/grid use it, and a request to stock is one trace through HTTP, the warehouse and the product.
    Still to come:
-   - mailbox depth (Proto.Actor's mailbox statistics), and spans for sends too (Producer and Client), so a tell that's
+   - mailbox depth, and spans for sends too (Producer and Client), so a tell that's
      lost still shows;
    - a grid chunk as a trace of its own, from the coordinator lending it to the worker's result, with links between them;
    - leaving health probes (`/healthz`, `/ready`) out of the traces, which Kubernetes calls every few seconds;
@@ -261,15 +263,24 @@ finishing it), container publishing, and hosted workers; and of actor clustering
    ```
 
    The compiler can check that every event changes state, and that replaying needs nothing but the events. It would be
-   stored through Proto.Persistence or the data plugin. ~~The language part~~ is done, in both actor plugins
+   stored through the data plugin. ~~The language part~~ is done, in both actor plugins
    (`persisted by sku`, `event`, `emit`; see [plugins](plugins.md#keeping-state-persisted-actors)), with an in-memory
    store and checks that state changes only through events, and so is ~~a durable store~~ (Piper.Data's
    `DatabaseEventStore`, through EF Core), and ~~stock using it~~ (each product persisted, its node's events in a SQLite
    file on the pod's own volume), ~~grid's jobs~~ (with `transient` state, for what isn't worth keeping) and
-   ~~snapshots for long streams~~ (`snapshot every 100;`). Still to come: a store the nodes share (so a product could move
-   between them).
-   With clustering, it would replace the stock app's fixed
-   `--nodes` list, `hash % count` and StatefulSet. The largest of these.
+   ~~snapshots for long streams~~ (`snapshot every 100;`), and so is ~~clustering~~, on Piper's own actor runtime
+   (Piper.Actors.Remote, which replaced Proto.Actor so the runtime owns its scheduling and network, as deterministic
+   simulation in item 6 needs): `Cluster.JoinAsync`, a membership provider (`memory`, `static` seeds), pings between
+   the nodes over their transport, owners by rendezvous hashing, actors started on their owner as messages arrive
+   (`Product.InCluster(node, sku)`, `Product.HostInCluster(…)`) and moved as members change, with the store refusing a
+   second writer while nodes disagree (see [plugins](plugins.md#clusters-actors-shared-out-among-nodes-moving-as-they-come-and-go)).
+   apps/stock uses it, its products' events in PostgreSQL the nodes share, with no `hash % count` or fixed node list.
+   Still to come:
+   - ~~membership through leases in the shared database~~, done (the data plugin's `DatabaseClusterMembership`:
+     `Cluster:Provider` `postgres`, `sqlite` or `sqlserver`), which apps/stock uses, so its pods are a Deployment with
+     no list of nodes; still to come, Kubernetes' endpoints, for nodes with no shared database;
+   - tells to an actor that's moving are lost (at most once); queuing them while it starts on its new owner;
+   - placement beyond hashing: keeping an actor near what it uses, or on a node with room.
 4. **Failure policies.** The same patterns were written by hand several times: stock retries once after a dead letter,
    grid lends chunks with a lease and ignores late results, the tracker retries its webhook (with `[Retry]`). The
    aspects plugin could add `[Timeout]` and `[CircuitBreaker]` beside `[Retry]`, and asks to remote actors take the
@@ -286,14 +297,15 @@ finishing it), container publishing, and hosted workers; and of actor clustering
    - asks to remote actors taking `[Retry]`, `[Timeout]` and `[CircuitBreaker]` as functions do.
 5. **An outbox, and queues.** The tracker tells its webhook after saving a change; if the process dies in between, the
    notification is lost. An outbox writes the message in the change's own transaction and sends it afterwards, so it
-   can't be lost, which suits the data plugin. A queue plugin would give jobs that must survive a restart somewhere to
+   can't be lost, which suits the data plugin. ~~The outbox~~ is done (the messaging plugin's, with the data plugin's
+   `outbox;`), and apps/tracker's webhook uses it. A queue plugin would give jobs that must survive a restart somewhere to
    live, as the grid's README suggests for long ones: see [the messaging plugin](#a-messaging-plugin) below.
 6. **Testing distributed programs.** Both apps wrote their own `StartCluster` and `StopCluster`, and the grid's
    "vanished worker" test was put together by hand. A test helper could give a cluster in one process, with faults to
    inject: stop a node, drop or delay messages to one, split the network. Property-based tests (above) suit it, with
    the faults among the generated inputs. ~~The helper~~ is done: Piper.Actors.Remote's `PiperCluster` (see
    [plugins](plugins.md#testing-a-cluster-in-one-process)), which stock's and grid's tests use. Still to come: faults as
-   generated inputs, and deterministic simulation (below).
+   generated inputs, and the rest of deterministic simulation (below).
 
    **Deterministic simulation** goes further, as FoundationDB and TigerBeetle test themselves, but built in: the whole
    cluster (actors, remote actors, messaging, timers) runs in one process on one thread, with a simulated clock and
@@ -314,6 +326,24 @@ finishing it), container publishing, and hosted workers; and of actor clustering
      starts a task or does I/O, so in a simulated test each is routed to the simulator (and one it can't route, such
      as a .NET call doing its own I/O, is reported). Other languages need the program written against a framework from
      the start; Piper's actors, timers and messages would be simulated as written.
+
+   ~~The runtime~~ is done: Piper.Runtime's `PiperSimulation` (one thread, a simulated clock, every choice from a seed;
+   `Explore` over seeds, `Run` to repeat one, a timeline of what happened) and `PiperRuntime.Current`, the ambient
+   runtime Piper's actors, clusters and failure policies take their time and background work from; and
+   Piper.Actors.Remote's `SimulatedNetwork` (latency, loss, duplication, reordering, splits) and `SimulatedCluster`
+   (crash, stop, restart, settle). See [plugins](plugins.md#simulating-a-cluster-every-run-repeatable-many-runs-in-seconds).
+   It found, at once, that a node that hasn't yet noticed another crash sends it asks that time out rather than
+   moving on. Still to come:
+   - ~~the `simulate` clause on `test`~~, done, with `--seed` repeating a failure (see
+     [simulated tests](language.md#simulated-tests)), and so is ~~the compiler routing a program's own clock reads,
+     random numbers, delays and `Task.Run`~~ (Piper.Runtime's `PiperRouting`, in every build), and
+     ~~reporting what can't be~~ (PIP0512: `Thread.Sleep`, blocking waits, real threads and timers, where a simulated
+     test reaches them); still to come, a .NET library's own I/O and threads, which the compiler can't see into;
+   - ~~shrinking a failing run~~, done: its choices are a list in which 0 is the calmest, shrunk as a property test's
+     are (and together with its values, in a simulated property test), and so are ~~faults as the run's own choices~~
+     (`SimulatedCluster.StartChaos` and `CalmAsync`), which apps/stock's simulated test uses;
+   - shrinking to show the failure as the few events that matter, rather than the shrunk run's whole timeline;
+   - the messaging plugin's transport and the data plugin's stores in simulation (an in-memory store already is).
 7. **Deploying without hand-written files.** Each app has a Dockerfile copying the repository to build the compiler,
    and Kubernetes YAML with the same `POD_IP` plumbing. `piper build --publish` (planned above) could use the .NET SDK's
    container publishing, so there's no Dockerfile; and a declaration of the app's roles (a coordinator and workers,
@@ -339,6 +369,21 @@ finishing it), container publishing, and hosted workers; and of actor clustering
    - The compatibility check (item 1) covers workflows too: changing one while instances are mid-way is a breaking
      change unless the new code replays the old history.
    - Deterministic simulation (item 6) runs them, with crashes between their steps.
+
+   ~~The runtime~~ is done: the `workflows` plugin's Piper.Workflows (`WorkflowEngine`, see
+   [plugins](plugins.md#workflows-durable-workflows)), each instance's history a stream of the persisted actors'
+   `IEventStore`, replayed on resuming: activities recorded once (retried, then failed into the workflow, which can
+   compensate), durable timers, recorded values (`flow.Now()`), idempotent starts, one runner per instance, resuming
+   unfinished instances, and a replay that takes another path failing the instance, saying where. Tested in
+   simulations, restarted at random moments. Still to come, in order:
+   - ~~`workflow`, `activity` and `timer`~~, done, with ~~the clock, random numbers, new ids, plain delays, threads,
+     blocking and I/O in a workflow's code a compile error~~ (PIP0513, through what it calls; any function marked
+     `[PiperDeterministic]`); still to come, mutable state shared outside the workflow (a static field) and the order of
+     iterating a `HashSet` or `Dictionary`;
+   - ~~running them from a server's or host's clause~~, done (`workflows Fulfil(shop) from store;`), and so is
+     ~~waiting on signals~~ (`flow.Signal<T>(name, within)`, `Fulfil.Signal(engine, id, name, value)`), which makes
+     sagas, a consumer passing a message on as a signal;
+   - a real app on them (an order's fulfilment), and the compatibility check for a workflow's code.
 
 More, around the services themselves:
 
@@ -459,10 +504,13 @@ between services. Both stay, and the docs say when to use which.
 
 **In order:** ~~the transport trait and the runtime with the in-memory transport, `messages` and `consumer` with
 `Handled`, the compile-time checks, and versions (recorded shapes)~~, done (see
-[plugins](plugins.md#messaging-commands-and-events-between-services)); then the outbox; then brokers' adapters, each a
-provider (RabbitMQ first, open source and local in a container; then Azure Service Bus, Amazon SQS, Google Pub/Sub),
-and topology (queues and topics made from the declarations); then consumers started by a server's or host's clause;
-then sagas.
+[plugins](plugins.md#messaging-commands-and-events-between-services)), and so is ~~the outbox~~ (the data plugin's
+`outbox;`, `bus.In(db.Outbox)` and `bus.Relay(…)`, relays sharing a table by claims; see
+[plugins](plugins.md#the-outbox-a-change-and-its-messages-saved-together)), and so is ~~RabbitMQ~~ (the rabbitmq plugin,
+chosen by `Messaging:Provider`; see [plugins](plugins.md#rabbitmq)); then the other brokers' adapters, each a provider
+(Azure Service Bus, Amazon SQS, Google Pub/Sub), and topology (queues and topics made from the declarations at
+startup, or written out as Bicep or Terraform); ~~consumers and relays started by a server's or host's clauses~~,
+done (`bus from "Messaging";`, `consume`, `relay`); then sagas.
 
 **To decide:** whether Piper services must interoperate with existing C# services on the same bus. Their envelope
 (headers, type names, correlation) is a protocol; if they use MassTransit's or NServiceBus's, the transports would need

@@ -4,6 +4,8 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Piper.Data;
+using Piper.Messaging;
 
 /// An empty in-memory database with one project, "WEB".
 async fn TestDatabase() => Task<TrackerDb> {
@@ -38,7 +40,7 @@ async test "an issue for a missing project is refused" {
 async test "a transition is saved" {
     using let db = await TestDatabase();
     let _ = await AddIssue(db, ProjectId(1), NewIssue("Crash on save", "", Priority.High), Noon());
-    let started = await Transition(db, IssueId(1), WorkflowEvent.Start("ada"), Noon().AddHours(1));
+    let started = await Transition(db, IssueId(1), WorkflowEvent.Start("ada"), Noon().AddHours(1), Bus(MemoryTransport()));
     Assert(started is Ok(_));
     db.ChangeTracker.Clear();
     let stored = await FindIssue(db, IssueId(1));
@@ -51,7 +53,7 @@ async test "search narrows by status and text, in SQL" {
     for title in ["Crash on save", "Crash on load", "Typo in footer"] {
         let _ = await AddIssue(db, ProjectId(1), NewIssue(title, "", Priority.Normal), Noon());
     }
-    let _ = await Transition(db, IssueId(2), WorkflowEvent.Close("fixed"), Noon());
+    let _ = await Transition(db, IssueId(2), WorkflowEvent.Close("fixed"), Noon(), Bus(MemoryTransport()));
 
     AssertEqual(3, (await Search(db, ProjectId(1), None, None)).Count);
     AssertEqual([IssueId(1)], (await Search(db, ProjectId(1), Some(WorkflowState.Open), Some("Crash"))).Select(i => i.id).ToList());
@@ -70,4 +72,19 @@ async test "comments are kept in order" {
 async test "a missing issue isn't found" {
     using let db = await TestDatabase();
     Assert(await FindIssue(db, IssueId(99)) == None);
+}
+
+async test "a transition saves the notification telling of it, and a refused one saves neither" {
+    using let db = await TestDatabase();
+    let transport = MemoryTransport();
+    let bus = Bus(transport);
+    let _ = await AddIssue(db, ProjectId(1), NewIssue("Crash on save", "", Priority.High), Noon());
+    let started = await Transition(db, IssueId(1), WorkflowEvent.Start("ada"), Noon(), bus);
+    Assert(started is Ok(_));
+    AssertEqual(1, await DatabaseOutbox.WaitingAsync(db));
+    AssertEqual(0, transport.Sent.Count);              // saved, not sent: the relay sends it
+
+    let refused = await Transition(db, IssueId(1), WorkflowEvent.Approve, Noon(), bus);
+    Assert(refused is Err(_));
+    AssertEqual(1, await DatabaseOutbox.WaitingAsync(db));
 }

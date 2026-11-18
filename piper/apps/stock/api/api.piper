@@ -86,7 +86,7 @@ server StockServer(shards: Shards, url: string) {
             try {
                 await next(context);
             } catch (e: System.Exception) {
-                let unavailable = e is _: System.TimeoutException || e is _: Proto.DeadLetterException;
+                let unavailable = e is _: System.TimeoutException || e is _: Piper.Actors.Remote.DeadLetterException;
                 context.Response.StatusCode = if unavailable { 503 } else { 500 };
                 await context.Response.WriteAsJsonAsync(Failure(shards.address, e.GetType().Name, e.Message));
             }
@@ -95,12 +95,9 @@ server StockServer(shards: Shards, url: string) {
 
     endpoints StockApi;
 
-    // For Kubernetes: /healthz while the process runs (its liveness probe); /ready once this node's warehouse actor
-    // answers (its readiness probe), so no requests come before the node can serve them.
+    // For Kubernetes: /healthz while the process runs (its liveness probe); /ready once this node is in the cluster,
+    // seeing itself among the members (its readiness probe), so no requests come before the node can serve them.
     health "/healthz" ready "/ready" {
-        check "warehouse" async (shards: Shards) => {
-            let _ = await shards.Products();
-            true
-        }
+        check "cluster" (shards: Shards) => shards.Nodes().Contains(shards.address);
     }
 }

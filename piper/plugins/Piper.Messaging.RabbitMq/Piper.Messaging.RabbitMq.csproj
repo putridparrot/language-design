@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The messaging plugin's RabbitMQ transport: the `rabbitmq` provider of IMessageTransport, over RabbitMQ's official
+    client (RabbitMQ.Client, Apache 2.0 or MPL 2.0). It comes with the rabbitmq plugin (plugins/Piper.Plugins.Messaging.RabbitMq),
+    beside its assembly, which also brings in RabbitMQ.Client; a program without it has no RabbitMQ packages at all.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Piper.Messaging.RabbitMq</RootNamespace>
+    <!-- One place whatever the configuration, so the plugin can copy it beside itself. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\runtime\</OutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The program has RabbitMQ.Client itself (the plugin's Packages), so it isn't copied here. -->
+    <PackageReference Include="RabbitMQ.Client" Version="7.1.2" PrivateAssets="all" ExcludeAssets="runtime" />
+    <!-- The program has these too: Piper.Runtime always, Piper.Messaging from the messaging plugin. -->
+    <ProjectReference Include="..\..\src\Piper.Runtime\Piper.Runtime.csproj" Private="false" />
+    <ProjectReference Include="..\Piper.Messaging\Piper.Messaging.csproj" Private="false" />
+  </ItemGroup>
+
+</Project>

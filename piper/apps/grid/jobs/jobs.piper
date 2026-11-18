@@ -9,9 +9,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Piper.Runtime;
-using Proto;
-using Proto.Remote;
-using Proto.Remote.GrpcNet;
+using Piper.Actors.Remote;
 
 /// The coordinator's jobs, hosted under the name "jobs". It holds the board and applies the rules in board.piper one
 /// message at a time, so workers asking at once on many nodes are given different chunks.

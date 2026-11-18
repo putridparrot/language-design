@@ -5,6 +5,6 @@
   // apps/tracker-core, which it shares with its clients.
   "name": "tracker",
   "projects": ["../tracker-core"],
-  "plugins": ["data", "config", "services", "web", "aspects", "args"],
+  "plugins": ["data", "config", "services", "web", "aspects", "args", "messaging", "rabbitmq"],
   "packages": { "Microsoft.EntityFrameworkCore.Sqlite": "10.0.14" }
 }

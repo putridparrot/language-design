@@ -7,7 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Piper.Actors.Remote;
 using Piper.Runtime;
-using Proto.Remote;
 
 async fn WaitForJob(jobs: Jobs, job: int) => Task<View> {
     let deadline = DateTime.UtcNow.AddSeconds(60);
@@ -19,9 +18,9 @@ async fn WaitForJob(jobs: Jobs, job: int) => Task<View> {
     view
 }
 
-async test "workers on three nodes share a job over gRPC; a worker cut off mid-chunk has it done by another, and its late answer is ignored" {
+async test "workers on three nodes share a job over HTTP/2; a worker cut off mid-chunk has it done by another, and its late answer is ignored" {
     // Five nodes in this process (Piper.Actors.Remote's PiperCluster): the coordinator, a worker to cut off, three more.
-    let cluster = await PiperCluster.StartAsync(5);
+    let cluster = await PiperCluster.StartOverNetworkAsync(5);
     let coordinator = cluster[0];
     let jobs = Jobs.Spawn(coordinator, "jobs", MemoryEventStore(), "grid");
     Assert(await jobs.Start(JobSpec(12, 2_000, 5)));
@@ -68,7 +67,7 @@ async test "a coordinator that restarts carries on with its job, from its snapsh
     }
     AssertEqual(58, Given(await jobs.Take("b")));   // lent to b and c, which are still working on them
     AssertEqual(59, Given(await jobs.Take("c")));
-    await first.Remote().ShutdownAsync(true);
+    await first.StopAsync();
     match await store.LoadSnapshotAsync("Jobs/grid") {
         Some(kept) => AssertEqual(100, kept.Version),   // Started, 49 chunks taken and done, and the 50th taken
         None => Assert(false, "no snapshot was taken"),
@@ -88,7 +87,7 @@ async test "a coordinator that restarts carries on with its job, from its snapsh
         Assert(await again.Done(Small(id, worker)));
     }
     let done = await again.Status();
-    await second.Remote().ShutdownAsync(true);
+    await second.StopAsync();
     Assert(!done.running);
     let expected = Combine(Enumerable.Range(0, 60).Select(id => Simulate(50, ChunkSeed(4, id))));
     AssertEqual(expected.var99, done.history.Single().valuation.var99);

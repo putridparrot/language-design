@@ -76,7 +76,12 @@ public sealed record Envelope(
 /// A consumer's subscription: a queue (shared by every instance of a consumer, each message to one of them), or a
 /// topic with the consumer's name (a copy of each event for every consumer).
 /// </summary>
-public sealed record Subscription(string Destination, DestinationKind Kind, string Name);
+public sealed record Subscription(string Destination, DestinationKind Kind, string Name)
+{
+    /// <summary>Whether its messages must be handled in order: an event with a <c>key</c>. A broker then lets one instance at a
+    /// time take them, one at a time.</summary>
+    public bool Ordered { get; init; }
+}
 
 /// <summary>A message no handler could handle, with why.</summary>
 public sealed record DeadLetter(Subscription Subscription, Envelope Envelope, string Reason);

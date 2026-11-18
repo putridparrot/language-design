@@ -1,41 +1,55 @@
-# Three stock nodes in Docker, each reaching the others by its service name, as pods do by theirs in Kubernetes:
+# Three stock nodes in Docker, each reaching the others by its service name, as pods do by theirs in Kubernetes, and a
+# PostgreSQL database they share, for their products' events (a product moves between nodes as they come and go) and
+# to find each other (each node holds a lease there):
 #
 #   docker compose -f apps/stock/docker-compose.yml up --build
 #
 # Their HTTP APIs are on localhost:8081, 8082 and 8083. Then, from the piper folder:
 #
 #   piper run apps/stock -- load http://localhost:8081 http://localhost:8082 http://localhost:8083
+#
+# Stop one (docker compose stop stock-1) and its products carry on, with their counts, on the other two.
 
 x-node: &node
-  # Where each node keeps its products' events: a SQLite file on its own volume (below). Another provider (sqlserver,
-  # postgres) is only a change of these settings.
   environment:
-    Events__Provider: sqlite
-    Events__Connection: Data Source=/data/events.db
+    Events__Provider: postgres
+    Events__Connection: Host=stock-db;Database=stock;Username=stock;Password=stock
+    # How the nodes find each other: leases in the same database, so none lists the others.
+    Cluster__Provider: postgres
+    Cluster__Connection: Host=stock-db;Database=stock;Username=stock;Password=stock
   build:
     context: ../..
     dockerfile: apps/stock/Dockerfile
   image: stock:local
+  depends_on:
+    stock-db:
+      condition: service_healthy
 
 services:
+  stock-db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: stock
+      POSTGRES_USER: stock
+      POSTGRES_PASSWORD: stock
+    volumes: ["stock-db:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stock -d stock"]
+      interval: 2s
+      retries: 15
   stock-0:
     <<: *node
-    command: ["--host", "stock-0", "--nodes", "stock-0:8000,stock-1:8000,stock-2:8000"]
-    volumes: ["stock-0-data:/data"]
+    command: ["--host", "stock-0"]
     ports: ["8081:8080"]
   stock-1:
     <<: *node
-    command: ["--host", "stock-1", "--nodes", "stock-0:8000,stock-1:8000,stock-2:8000"]
-    volumes: ["stock-1-data:/data"]
+    command: ["--host", "stock-1"]
     ports: ["8082:8080"]
   stock-2:
     <<: *node
-    command: ["--host", "stock-2", "--nodes", "stock-0:8000,stock-1:8000,stock-2:8000"]
-    volumes: ["stock-2-data:/data"]
+    command: ["--host", "stock-2"]
     ports: ["8083:8080"]
 
-# Each node's products' events, kept across restarts (docker compose down -v removes them).
+# The products' events, kept across restarts (docker compose down -v removes them).
 volumes:
-  stock-0-data:
-  stock-1-data:
-  stock-2-data:
+  stock-db:

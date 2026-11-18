@@ -880,6 +880,9 @@ server TrackerServer(settings: Settings, clock: Clock) {
     worker every 1 minute (db: TrackerDb) => Purge(db); // background work: each minute, or for the app's life
     hosted Mailer;                                  // a .NET hosted service (a BackgroundService)
     stopping (jobs: Jobs) => jobs.Finish();         // run as it's asked to stop, and waited for
+    bus from "Messaging";                           // messaging: a bus over the configured transport, then
+    consume Billing(settings);                      // consumers and outbox relays for the app's life
+    relay DatabaseOutbox.Store(() => Db(settings));
     shutdown 30 seconds;
 }
 
@@ -1404,7 +1407,7 @@ How it behaves:
     restarts than that in the window stop the actor instead. Until actors keep their state (see
     [future](future.md#cloud-and-distributed)), a restart starts again from empty.
   - `stop` ends the actor. In one process, a message sent to it then throws "Account has stopped." at once, and asks
-    already waiting fail with that error; across processes, Proto.Actor stops it, and an ask gets a
+    already waiting fail with that error; across processes, its node stops it, and an ask gets a
     `DeadLetterException`.
 
   `rollback` and `restart` work by keeping the state's values and putting them back, so the state must be immutable
@@ -1425,32 +1428,111 @@ The syntax describes what an actor is, not how it runs, so another plugin can ru
 
 #### Testing a cluster in one process
 
-The remote actors' runtime (Piper.Actors.Remote) starts a cluster in a test's process: nodes on free loopback
-ports, each its own actor system talking to the others over gRPC as separate processes would. And it injects the
-faults a real network has, so a test can show what happens when a node is lost or cut off:
+The remote actors' runtime (Piper.Actors.Remote) starts a cluster in a test's process: nodes each with their own
+actor system, talking to the others as separate processes would, their messages crossing as JSON. `StartAsync` has
+them talk in memory; `StartOverNetworkAsync` puts them on free loopback ports, over HTTP/2. And it injects the faults
+a real network has, so a test can show what happens when a node is lost or cut off. The nodes have joined a
+[cluster](#clusters-actors-shared-out-among-nodes-moving-as-they-come-and-go) of their own, pinging each other every
+tenth of a second and taking one unheard for a second to be down, so actors in the cluster move as faults come and go:
 
 ```piper
-let cluster = await PiperCluster.StartAsync(3, node => { Warehouse.Spawn(node, "warehouse", node); });
-let shards = [...cluster.Nodes.Select(node => Shards(node, [...cluster.Addresses]))];
+let store = MemoryEventStore();                // shared by the nodes, as their database would be
+let cluster = await PiperCluster.StartAsync(3, node => {
+    Product.HostInCluster(node.Cluster, (n, name, sku) => Product.Spawn(n, name, store, sku));
+});
 
 cluster.Isolate(2);                          // node 2 can't reach the others, nor they it
+await cluster.WaitForMembersAsync(0, 2);     // until node 0 sees two members up
 cluster.Partition(0, 1);                     // 0 and 1 can't reach each other
 cluster.Drop(0, 1);                          // 0's messages to 1 are lost, but not 1's to 0
 cluster.Slow(1, TimeSpan.FromSeconds(1));    // every message to 1 arrives a second late
 cluster.Heal();                              // all reach each other again
-await cluster.StopAsync(2);                  // node 2 stops, as a deleted pod
-let added = await cluster.AddNodeAsync();    // another starts, set up as the others were
+await cluster.StopAsync(2);                  // node 2 leaves and stops, as a deleted pod
+await cluster.KillAsync(1);                  // node 1 crashes: found down when it stops answering
+let added = await cluster.AddNodeAsync();    // another joins, set up as the others were
 await cluster.StopAsync();                   // all of them, faults healed
 ```
 
-- **What's affected:** the messages the plugin's code sends and asks between nodes, by address, so tests running at
-  once on other clusters aren't. A lost tell is gone; a lost ask times out (after the handle's timeout, which
+- **What's affected:** the messages nodes send and ask each other, the cluster's pings included, by address, so tests
+  running at once on other clusters aren't. A lost tell is gone; a lost ask times out (after the handle's timeout, which
   `WithTimeout` sets), as one whose message the network lost does. A node's messages to its own actors aren't
   network traffic, so they still arrive.
 - **`PiperNode.StartAsync(host, port)`** starts one node outside a test, as a program does: a loopback host binds to
   it alone, any other (a service's name, a pod's IP address) to every interface.
-- apps/stock tests a node cut off from the rest (its dashboard shows it down, then up again with its products), and
-  apps/grid a worker cut off mid-chunk (another does its chunk, and its late answer is ignored).
+- apps/stock tests a node cut off from the rest (its dashboard shows it down while the others serve its products,
+  then up again with them) and one leaving (its products carry on elsewhere, with their counts), and apps/grid a
+  worker cut off mid-chunk (another does its chunk, and its late answer is ignored).
+
+#### Simulating a cluster: every run repeatable, many runs in seconds
+
+A test with real threads and a real clock tries one order of events each run, and a race it finds may not come
+back. Piper.Runtime's `PiperSimulation` runs a test deterministically, as FoundationDB and TigerBeetle test
+themselves:
+- **One thread and a simulated clock:** everything runs on one thread, and simulated time jumps straight to the next
+  timer, so minutes of heartbeats and timeouts pass in milliseconds.
+- **One seed:** every choice is made from it (which ready message or continuation runs next, how long each network
+  frame takes, which frames are lost), so a run with the same seed is the same, to the last message.
+- **Many seeds:** `Explore` tries a seed after another until one fails, and names it; `Run` repeats that seed exactly,
+  under the debugger too.
+- **Shrunk:** a failing run is made as simple as it still fails: each of its choices is one of a list in which 0 is
+  the calmest (the work ready longest runs next, no frame lost, the shortest latency, no fault), and the list is
+  shortened and lowered, as a property test's values are. What's reported is the shrunk run, with how many choices it
+  is from the calmest run: a race needing one order of messages, or one lost frame, or one crash, shows just that.
+
+```piper
+PiperSimulation.Explore(200, async sim => {
+    let store = MemoryEventStore();
+    let cluster = await SimulatedCluster.StartAsync(sim, 3, node => {
+        Product.HostInCluster(node.Cluster, (n, name, sku) => Product.Spawn(n, name, store, sku));
+    }, NetworkFaults.Lossy(0.05));               // each frame lost with probability 0.05, 1 to 10 ms each
+    await Product.InCluster(cluster[0], "tea").Receive(10);
+    await cluster.CrashAsync(1);                   // stops at once, handing nothing over
+    cluster.Partition(0);                          // node 0 apart from the rest
+    cluster.Heal();
+    await cluster.RestartAsync(1);                 // at the same address, with nothing but what's stored
+    await cluster.SettleAsync();                   // until every node sees the same members
+    sim.Log("checking");                           // into the run's timeline
+    …                                              // throw if something isn't true
+});
+// A failure: "The simulation with seed 1234 failed (shrunk 40 times, to 2 choices from the calmest run): …", how to
+// repeat it (PiperSimulation.Run(1234, …)), and the last of its timeline: each frame between nodes (lost ones
+// marked), each crash, split and restart, at its time.
+```
+
+Or the run chooses the faults, rather than the test, so seeds explore crashes and splits at times nobody thought to
+write, and shrinking keeps only those a failure needs:
+
+```piper
+cluster.StartChaos();                    // every half a second to five seconds: a node crashes or comes back, one is
+                                         // cut off, or the network heals, or (most often) nothing (ChaosOptions)
+…                                        // the work, meanwhile
+await cluster.CalmAsync();               // no more; heal, restart every node that's down, and settle
+…                                        // check what must be true however it went
+```
+
+- **What's simulated:** whatever takes its time, randomness and background work from `PiperRuntime.Current`, which
+  inside a simulation is the simulation: Piper's actors (mailboxes, asks and their timeouts), clusters (pings,
+  heartbeats, failure detection), the failure policies (`[Timeout]`, `[CircuitBreaker]`, `restart n per minute`),
+  and `sim.Delay`, `sim.Random`, `sim.Chance`. Nodes run on a `SimulatedNetwork` (`sim:1`, `sim:2`, …), in order
+  between each two nodes unless `NetworkFaults` says they may overtake, and may duplicate frames for protocols that
+  must cope with networks that do. `SimulatedCluster` is `PiperCluster` in a simulation; a single node is
+  `PiperNode.StartAsync(SimulatedNetwork(sim).Transport())`.
+- **The program's own code:** the compiler routes its `DateTime.Now`, `Task.Delay`, `Task.Run`, `Random()` and
+  `Guid.NewGuid()` through the runtime too, so they're simulated (see [simulated tests](language.md#simulated-tests)).
+  What isn't (`Thread.Sleep`, blocking waits, real threads and timers) is a warning, PIP0512, where a simulated test
+  reaches it; real I/O and a library's own threads still run, but outside the simulation's choices, so runs may
+  differ, and the timeline says when work came from outside.
+- **As a test:** `async test "…" simulate runs 50 { … }` runs the body over that many seeds, with `--seed` repeating
+  one; inside, `SimulatedCluster.StartAsync(3, setup, NetworkFaults.None)` starts nodes in the running simulation, and
+  `PiperSimulation.Running` is the simulation. apps/stock's "no product is oversold, whatever the network and the
+  nodes do" is one: reservations from every node over a lossy network while the run crashes, restarts and cuts off
+  nodes as it chooses (`StartChaos`). Given a product that oversells by one, it fails at once, shrunk to the calmest
+  run: the bug needs no fault at all.
+- **A node found down:** asks waiting on it fail at once with a `NodeDownException` (a `TimeoutException`), rather
+  than at their timeout. They aren't retried, as the node may have handled the message before it went; the caller
+  can ask again where that's safe.
+- **Failures:** the body throwing; the run stuck (waiting with nothing left to do, such as an ask with no timeout
+  whose message was lost); seven days of simulated time passing; or ten million steps (`SimulationOptions`).
 
 #### Keeping state: persisted actors
 
@@ -1530,15 +1612,14 @@ let tea = Shelf.Spawn(store, "tea");          // Spawn(system, name, store, …)
 ### `actor` across processes and machines
 
 [Piper.Plugins.Actors.Remote](../plugins/Piper.Plugins.Actors.Remote/RemoteActorPlugin.cs) reads the same `actor`
-syntax, but expands it onto [Proto.Actor](https://proto.actor), whose actors talk over gRPC. An actor hosted in one
-process can then be used from others, on the same machine or across a network. A program picks it instead of the
-in-process plugin in its piper.json; the plugin brings in Proto.Remote and ASP.NET Core (whose server carries the gRPC)
-itself. [samples/remote-actors](../samples/remote-actors/main.piper) runs it:
+syntax, but expands it onto Piper.Actors.Remote's actor system, whose nodes talk over a transport. An actor hosted in
+one process can then be used from others, on the same machine or across a network. A program picks it instead of the
+in-process plugin in its piper.json; the plugin brings in ASP.NET Core itself, and nothing else: no packages.
+[samples/remote-actors](../samples/remote-actors/main.piper) runs it:
 
 ```piper
 // Every process that hosts or uses actors starts a node, an actor system other processes can reach:
-let node = ActorSystem().WithRemote(RemoteConfig.BindToLocalhost(8000));
-await node.Remote().StartAsync();
+let node = await PiperNode.StartAsync("127.0.0.1", 8000);
 
 let account = Account.Spawn(node, "ada", "Ada", 100m);                 // host an actor here, under a name…
 let remote = Account.Connect(node, "127.0.0.1:8000", "ada");           // …or reach one in another process
@@ -1556,20 +1637,40 @@ What's different from in-process actors:
 
 - **Naming:** `Spawn(system, name, …)` hosts the actor under a name, and `Connect(system, address, name)` refers
   to an actor by its node's address (`host:port`) and name, wherever it runs.
-- **Messages travel as JSON:** records, enums, Piper's builtin types and immutable .NET types can be sent. The plugin's
-  analysis warns about fields that can't be sent as data: mutable collections, arrays, traits, and other actors'
-  handles (send an actor's name instead).
+- **Transports:** a node's transport carries its messages to other nodes, and is chosen by the program:
+  - `PiperNode.StartAsync(host, port)`: `http`, HTTP/2 served by ASP.NET Core's Kestrel. Each node keeps one
+    long-lived request open to each node it sends to, so messages arrive in the order they were sent. A loopback host
+    binds to loopback alone; any other (a pod's name or IP address) binds to every interface and tells the others
+    that name.
+  - `PiperNode.StartInMemoryAsync()`: `memory`, nodes in one process, for tests and for running a cluster's code on
+    one machine. Messages still cross as JSON.
+  - `PiperNode.StartAsync(transport)`: any `IActorTransport`, such as one chosen by configuration
+    (`provider transport: IActorTransport from "Actors";`, with `Actors__Provider=http`, `Actors__Host` and
+    `Actors__Port`), or one another plugin registers. A transport only carries bytes, so actors behave the same on
+    every one.
+  - `proto`: Proto.Actor's remoting (gRPC) carrying the messages, for a program that prefers it. List the
+    `proto-actor` plugin beside `remote-actors` (`"plugins": ["remote-actors", "proto-actor"]`), which brings in
+    Proto.Remote and registers the provider; then `Actors__Provider=proto`, or
+    `PiperNode.StartAsync(ProtoActorTransport(host, port))`. Proto.Actor only carries the frames: the actors, their
+    asks, failures, persistence and tracing are Piper's, as on the other transports. Without that plugin a program has
+    no Proto.Actor packages.
+- **Delivery is at most once:** messages from one node to another arrive in order, or not at all (the other node is
+  down, or the connection broke). Nothing is retried; an ask whose message or answer is lost times out.
+- **Messages travel as JSON** of the type they're declared as: the actor's message enum (`{"kind": "Deposit", …}`), and
+  for an ask's answer, the handler's result type. Records, enums, `Option`, `Result`, Piper's builtin types and
+  immutable .NET types can be sent. The plugin's analysis warns about fields that can't be sent as data: mutable
+  collections, arrays, traits, and other actors' handles (send an actor's name instead).
 - **Failures:**
-  - An ask whose handler throws sends back a fault, which the caller throws as an `InvalidOperationException`.
+  - An ask whose handler throws answers with the exception's message, which the caller throws as an
+    `InvalidOperationException`.
   - An ask with no reply within 10 seconds throws a `TimeoutException`; `actor.WithTimeout(TimeSpan.FromSeconds(30))`
     gives a copy with another limit.
-  - Asking an actor that doesn't exist throws Proto.Actor's `DeadLetterException` at once.
-  - `on failure …` works as in one process (see the actor plugin above); `stop` stops the actor through Proto.Actor,
-    so later messages to it are dead letters.
+  - Asking an actor that doesn't exist throws a `DeadLetterException` (Piper.Actors.Remote's) at once.
+  - `on failure …` works as in one process (see the actor plugin above); `stop` stops the actor, so later asks to it
+    are dead letters.
   - A tell that's lost (its node is down) is lost silently, as a message over a network can be.
-- **The same program, run or built:** a message's type is named with the program's assembly name, so the nodes must
-  run the same program. `piper run` names it as `piper build` does (after its piper.json `name`, or its folder), so a
-  built node and a `piper run` one understand each other.
+- **Nodes needn't run the same build:** messages are named by their variants and fields, not by .NET types, so a
+  node built from an older version of the program understands a newer one, as far as the shape check below allows.
 - **Rolling updates are checked:** while a new version deploys, old and new nodes send each other messages. So each
   actor's messages are recorded in `Name.shape.json` beside it, as an [api's shape](#api-an-apis-shape-and-a-typed-client)
   is: each handler, what it takes, what it replies (or that it's a tell), and the records and enums they carry.
@@ -1578,7 +1679,7 @@ What's different from in-process actors:
   `--accept-breaking`. A new handler, or a new optional value, is compatible.
   [apps/stock](../apps/stock/actors/Product.shape.json) and apps/grid record theirs.
 - **Traced:** a message sent within a trace (an HTTP request's, or another handler's) carries its trace context
-  (`traceparent`) in Proto.Actor's message headers, so the message itself doesn't change. Each handler runs in a span
+  (`traceparent`) in the message's headers, so the message itself doesn't change. Each handler runs in a span
   continuing that trace: `Product.Receive`, kind Server for an ask and Consumer for a tell, tagged with the actor, the
   message and the node, and marked failed if it throws. So one request is one trace across nodes. Each handler's time
   is the `piper.actor.handler.duration` metric. This uses .NET's own `Activity` and `Meter` (the `Piper.Actors`
@@ -1614,12 +1715,57 @@ piper run samples/grid -- coordinator 8000 10.0.0.6:8001 10.0.0.7:8001   # then 
 need only its address, and pods can be added or removed mid-job. A chunk not sent back within its lease goes to
 another worker.
 
-[apps/stock](../apps/stock/README.md) runs actors as pods in Kubernetes (AKS). Products are actors shared out among
-the nodes by a hash of their code, and every node's HTTP API reaches any product wherever it is. Its StatefulSet gives
-each pod a stable DNS name, through a headless service, for the other nodes to reach it by.
+#### Clusters: actors shared out among nodes, moving as they come and go
 
-Still to come: actors that move between nodes when one fails, and finding nodes without addresses. That's
-Proto.Actor's clustering, or Orleans's virtual actors, which need Piper to have classes.
+Nodes can form a cluster, which shares actors out among them: each actor (a kind and a key, `Product/tea`) runs on one
+node, its owner, and moves to another when a node stops, crashes or joins. Code asks the actor without knowing where it
+is:
+
+```piper
+let node = await PiperNode.StartAsync(host, 8000);
+// Leases in a database the nodes share (the data plugin); or StaticClusterMembership(seeds), or chosen by configuration.
+await Cluster.JoinAsync(node, await DatabaseClusterMembership.OpenAsync(options), "stock");
+
+// This node can run products: the cluster starts one here when a message for it arrives and this node owns it.
+Product.HostInCluster(node.Cluster, (n, name, sku) => Product.Spawn(n, name, store, sku));
+
+let tea = Product.InCluster(node, "tea");      // a handle with no fixed node
+await tea.Reserve(1);                          // goes to tea's owner now, which starts it if it isn't running
+```
+
+- **Members:** a node joins through a membership provider, `IClusterMembership`, chosen in code or by configuration
+  (`Cluster:Provider`): `memory` (nodes in one process, the local one); `static` (seed nodes, `Cluster__Members`); or,
+  with the data plugin, `sqlite`, `sqlserver` or `postgres` (`Cluster__Connection`, and `Cluster__Lease` in seconds,
+  thirty by default): each node holds a lease, a row of `PiperMembers` in a database the nodes share, renewed every
+  third of the lease and given up as it leaves, so no node names another, and one that crashes drops out as its lease
+  runs out. Leases are timed by the database's clock, so nodes whose clocks disagree still agree on them. Nodes that
+  already share a database for their events can find each other through it too.
+  The membership needn't list every node: the nodes ping each other (once a second, over their transport), share whom they know,
+  and take a node unheard for five seconds to be down (`ClusterOptions` sets both). `node.Cluster.Members` are the
+  nodes up, as this node sees them; `Known` adds those down; `Changed` says when they change.
+- **Owners:** rendezvous hashing over the members up, so every node that sees the same members picks the same owner,
+  and a node joining or leaving moves only the actors it gains or loses. `OwnerOf("Product/tea")` says which;
+  `Hosted("Product")` lists the keys running on this node.
+- **Moving:** when the members change, each node stops the actors it no longer owns (each finishing its message, a
+  persisted one saving its events). A message that reaches a node that isn't the owner is a dead letter, which an ask
+  through an `InCluster` handle retries on the owner, until its timeout. A persisted actor starting on its new owner
+  replays its events, so **the nodes must share their event store** (a database) for it to carry on where it was.
+  Stopping a node (`node.StopAsync()`) leaves the cluster first, handing its actors over; a node that crashes is found
+  down, and its actors start elsewhere.
+- **Not exact:** while nodes disagree on the members (a split network, or the moment one joins), two may each start an
+  actor. A persisted actor's store refuses the second writer (`EventStreamConflictException`), and the plugin's code
+  stops an actor that's refused, so the next message starts it again from what was saved: its events are never
+  written twice. An actor that isn't persisted has no such guard.
+- **Delivery** is as for any remote actor: at most once. A tell to an actor that's moving can be lost.
+
+[apps/stock](../apps/stock/README.md) runs a cluster as pods in Kubernetes (AKS). Products are actors in the cluster,
+and every node's HTTP API reaches any product wherever it is; the products keep their events in PostgreSQL, which
+the nodes share, so a pod stopped or lost has its products carry on, with their counts, on the others. The nodes find
+each other through leases in that database too, so they're a plain Deployment, each known by its pod's IP, with no
+list of nodes.
+
+Still to come: membership through Kubernetes' API (for nodes with no shared database), and TLS between nodes, for
+networks that aren't private.
 
 ### `messaging` (commands and events between services)
 
@@ -1660,6 +1806,18 @@ await bus.Publish(OrderPlaced(id, total));
   await.
 - **A consumer** is a class: its parameters are what its handlers use, and `Start(bus)` subscribes to the queues of
   its commands and to its events' topics (a subscription named for the consumer), until the result is disposed.
+- **In a server or host,** three clauses do it for the app's life, stopping with it:
+
+  ```piper
+  server Shop(settings: Settings) {
+      bus from "Messaging";                               // the transport configured (memory if none), and a Bus,
+                                                          // both registered (IMessageTransport, Bus) for handlers
+      consume Billing(settings);                          // a consumer, with its arguments
+      relay DatabaseOutbox.Store(() => ShopDb(settings.options));   // an outbox's messages, sent (below)
+  }
+  ```
+
+  `consume` and `relay` need the `bus` before them. apps/tracker's server runs its outbox and webhook consumer so.
 - **Checked as it compiles:** a message's fields are data that can cross to another service (records, enums,
   newtypes, immutable collections; not a `List`); a command has one handler in the program; a handler's message is
   declared; a key is a field; a command goes to a queue and an event to a topic. Each `messages` block's shape is
@@ -1668,9 +1826,187 @@ await bus.Publish(OrderPlaced(id, total));
 - **The local transport:** Piper.Messaging's `MemoryTransport` (the `memory` provider, used when nothing is
   configured) keeps queues and topics in memory, each subscription handling one message at a time. For tests, it keeps
   what was `Sent` and its `DeadLetters`, and `await transport.Idle()` waits until every message has been handled.
-- **Not yet:** brokers' adapters (each a provider, chosen by configuration), the outbox (a message saved in the
-  change's own transaction), creating queues and topics from the declarations, starting consumers from a server's or
-  host's clause, and sagas. See [future](future.md#a-messaging-plugin).
+- **In a simulation** (a [`simulate` test](language.md#simulated-tests)), the in-memory transport, a handler's
+  `RetryLater` and the outbox's relay run on the simulation's clock and scheduling: an hour's retry passes at once,
+  and a seed's run repeats.
+- **A broker:** RabbitMQ, with the rabbitmq plugin (below). Others (Azure Service Bus, Amazon SQS, Google Pub/Sub) are
+  to come, each a provider.
+- **Not yet:** creating queues and topics from the declarations at startup (RabbitMQ's are made as they're first
+  used), and sagas. See [future](future.md#a-messaging-plugin).
+
+#### RabbitMQ
+
+The rabbitmq plugin carries the bus over RabbitMQ, through its official client (RabbitMQ.Client, open source), which
+it brings in. It adds no syntax: a program lists it beside messaging and chooses it by configuration, so the same
+code runs on the in-memory transport in tests and on RabbitMQ when deployed:
+
+```piper
+// piper.json: { "plugins": ["messaging", "rabbitmq"] }
+// appsettings.json, or the environment (Messaging__Provider=rabbitmq, Messaging__Connection=amqp://…):
+//   "Messaging": { "Provider": "rabbitmq", "Connection": "amqp://user:password@rabbit:5672/", "Prefetch": "16" }
+provider transport: IMessageTransport from "Messaging";        // in a server or host
+singleton Bus = Bus(transport);
+
+let bus = Bus(RabbitMqTransport("amqp://guest:guest@localhost:5672/"));   // or in code
+```
+
+| In code | In RabbitMQ |
+|---|---|
+| `command … queue "orders"` | a durable queue `orders`, sent to through the default exchange; a consumer's instances share it |
+| `event … topic "order-events"` | a durable fanout exchange `order-events`, and a queue per consumer bound to it, `order-events.Billing` |
+| `… key orderId` | the consumers' queues let one instance at a time take messages (single active consumer), one at a time |
+| a `delay`, or `RetryLater(after)` | a queue whose messages all wait the same time, then dead-letter to where they're going (`piper.delay.orders.5000`) |
+| `Reject(reason)`, or the last attempt failing | the consumer's dead letters, `order-events.Billing.dead`, the reason in the `piper-reason` header |
+
+- **Delays** need no broker plugin: the waits are steps about a quarter apart (1, 1.25, 1.6, 2, 2.5, 3.2, 4, 5, 6.3
+  and 8 times a power of ten milliseconds), each its own queue, so a message waits at least as long as asked and at
+  most a quarter longer, and a long wait never holds up a short one behind it. A step's queue is deleted after an hour
+  unused.
+- **Durable:** messages are persistent and published with confirms, so a send has reached the broker when it returns;
+  a delivery is acknowledged once its handler has finished (and its retry or dead letter is published). One
+  interrupted is delivered again: at least once, as with the outbox.
+- **Queues and exchanges** are declared as they're first used: a destination when it's sent to or subscribed to.
+  The connection recovers by itself, consumers and all.
+- **Tests:** apps/tracker runs on it with `Messaging__Provider=rabbitmq`, and the tests (`RabbitMqTests`) run against
+  a RabbitMQ in a container (`rabbitmq:4-alpine`), or the broker `PIPER_RABBITMQ` names.
+
+#### The outbox: a change and its messages, saved together
+
+A service that saves a change and then publishes an event can't do both at once: if it stops between them, the change
+is saved and the event lost (or, the other way round, an event goes out for a change that failed). With the data
+plugin, a `database` can have an **outbox**, a table its messages are saved in, by the same `SaveChangesAsync` as the
+change, and a **relay** sends them once they're saved:
+
+```piper
+database Shop {
+    table Orders: Order key id;
+    outbox;                                                    // a PiperOutbox table, and an `Outbox` property
+}
+
+shop.Orders.Add(order);
+await bus.In(shop.Outbox).Publish(OrderPlaced(order.id, order.total));   // routed as bus.Publish would be
+await bus.In(shop.Outbox).Send(Ship(order.id));
+await shop.SaveChangesAsync();                                 // the order and both messages, or none of them
+
+await using let relay = bus.Relay(DatabaseOutbox.Store(() => Shop(options)));   // sends them, in the background
+// or, in a server or host: relay DatabaseOutbox.Store(() => Shop(options));
+```
+
+- **Saved together:** `bus.In(outbox)` adds each message to the database's unit of work, as a row of `PiperOutbox`,
+  so it's in the change's transaction: a save that fails (a key already taken, a lost connection) takes its messages
+  with it, and nothing is sent before the save.
+- **The relay** (`bus.Relay(store, options)`) sends saved messages through the bus's transport, oldest first, and
+  marks them sent, every `Poll` (half a second) while there's nothing to do, and at once while there is; `FlushAsync()`
+  sends what's waiting now, and `OutboxOptions() { Background: false }` makes a relay send only then, as a test may
+  want. `DatabaseOutbox.WaitingAsync(db)` is the backlog, for a health check.
+- **Several relays** (one in each of a service's pods) can share a table: each claims a batch for a while (`Lease`,
+  thirty seconds) before sending it, timed by the database's clock, so a message is sent by one of them.
+- **At least once:** a relay that stops after sending a batch but before marking it leaves its claim to run out, and
+  the batch is sent again. A message keeps its id, and handlers should be idempotent (`AlreadyBilled`, above), as
+  they must be for any broker that redelivers.
+- **Without a database:** Piper.Runtime's `MemoryOutbox` is both an outbox and a store, for tests (`Waiting` shows
+  what's not sent). Sent messages are deleted from `PiperOutbox` after a day (`DatabaseOutbox.Store(open, keepSent)`).
+
+### `workflows` (durable workflows)
+
+[Piper.Plugins.Workflows](../plugins/Piper.Plugins.Workflows/WorkflowsPlugin.cs) runs processes that take minutes or
+weeks (an order paid, packed, shipped, refunded if it isn't), surviving restarts by replaying their history of steps, as
+Temporal and Azure Durable Functions do. Those leave it to discipline that a workflow's code takes the same path each
+time it's replayed; Piper checks it as it compiles.
+
+```piper
+// piper.json: { "plugins": ["workflows"] }
+workflow Fulfil(shop: Shop) {                        // what its activities use, as a consumer's parameters
+    start (order: Order) => Receipt {                // its input (saved with it) and its result
+        activity payment = shop.Charge(order);       // run once; its result recorded, and replayed
+        timer TimeSpan.FromDays(2);                  // a durable timer: survives restarts
+        activity shipped = shop.Shipped(order.id);
+        if !shipped {
+            activity shop.Refund(payment);           // no result: recorded as done
+        }
+        Receipt(order.id, payment, shipped)
+    }
+}
+
+let engine = WorkflowEngine(store);                  // an IEventStore: the one persisted actors use
+Fulfil(shop).Register(engine);
+await engine.ResumeAsync();                          // as the program starts: those a restart interrupted
+await Fulfil.Start(engine, order.id, order);         // once per id: starting it again does nothing
+let receipt = await Fulfil.Outcome(engine, order.id);
+```
+
+In a server or host, one clause does the engine's part for the app's life:
+
+```piper
+server Shop(shop: Shop) {
+    provider store: IEventStore from "Events";
+    workflows Fulfil(shop), Returns(shop) from store;   // an engine (registered, for handlers to start them),
+}                                                       // resuming the unfinished as it starts, stopping them as it stops
+
+post "/orders" async (order: Order, engine: WorkflowEngine) => await Fulfil.Start(engine, order.id, order);
+```
+
+**Sagas:** a workflow can wait for a signal from outside (a payment arriving, an approval), for as long as it takes or
+up to a deadline, and compensate if it doesn't come:
+
+```piper
+workflow Checkout(stock: Stock, shop: Shop) {
+    start (order: Order) => string {
+        activity stock.Reserve(order.id);
+        match await flow.Signal<Payment>("paid", TimeSpan.FromDays(1)) {     // Some(payment), or None after a day
+            Some(payment) => { activity shop.Ship(order.id); "shipped" },
+            None => { activity stock.Release(order.id); "cancelled" },      // compensating
+        }
+    }
+}
+
+consumer Payments(engine: WorkflowEngine) {                                 // a message passed on to the workflow
+    on PaymentReceived(paid) {
+        await Checkout.Signal(engine, paid.orderId, "paid", Payment(paid.amount));
+        Handled.Done
+    }
+}
+```
+
+- **Signals** go to the instance's inbox (its own stream, `Workflow/Checkout/o-1/signals`), not its history, so
+  senders never contend with its runner, and one sent before the workflow waits, or while it isn't running anywhere,
+  is kept until it's taken. Which one it took is recorded, so a replay takes the same. `flow.Signal<T>(name)` waits
+  for as long as it takes; with a time, the deadline is recorded (a restart waits only what's left) and it gives an
+  Option. A signal sent through the engine the instance runs on wakes it at once; through another, within a second.
+
+- **What it becomes:** a record of its input (`FulfilStart(order)`), and a class `Fulfil(shop: Shop)` whose `Run` is
+  the `start` block, `Register(engine)` (the engine runs it with these dependencies), and `Start(engine, id, …)` and
+  `Outcome(engine, id)`. Inside the block, `flow` is its context (Piper.Workflows' `WorkflowContext`).
+- **`activity`** runs a call as a step: `activity x = call;` keeps its result, `activity call;` doesn't need one. It's
+  named after what it calls (`shop.Charge`), and checked to be the same step when it's replayed. Async or not, with
+  or without a result.
+- **`timer`** waits durably: its due time is recorded, so a restart meanwhile waits only what's left.
+- **Checked to replay the same (PIP0513, an error):** a workflow decides only by its input and its steps' results. In
+  its `start` block, and anything it calls, these are errors, each saying what to use instead: reading the clock
+  (`await flow.Now()` records it), `Task.Delay` and `Thread.Sleep` (`timer`), random numbers
+  (`await flow.Record("roll", () => Random.Shared.Next(6))`), new GUIDs (`await flow.NewGuid()`), background work,
+  threads, timers and blocking, the environment, and I/O (files, the network, EF Core: in an activity). A function the
+  block calls is followed, and the error says the way there (`reached through Stamp`). What's in an `activity` isn't
+  checked, as it runs once and is recorded. The check works for any function marked
+  `[Piper.Runtime.PiperDeterministic]`, skipping what's passed to a `[PiperEffects]` parameter.
+- **History:** each instance's steps are the events of its stream in the store (`Workflow/Fulfil/order-42`). Running an
+  instance runs its code from the start: a step already in the history gives its recorded result at once, and a new
+  one runs and is added. So after a restart it replays to where it was and carries on, and a timer that came due
+  meanwhile fires at once. `engine.StepsAsync` shows the history; `StatusAsync` says where it is.
+- **Changed code:** a replay asking for another step than the history has (the code changed while an instance was
+  running) fails the instance, saying which step, what it asked for and what the history has.
+- **Activities** run at least once: one interrupted after running but before its result was saved runs again, so
+  they should be idempotent. One that throws is retried (`ActivityOptions`: 3 attempts, backoff from a second,
+  doubling); after its last attempt the failure is recorded, and thrown in the workflow as an `ActivityFailedException`,
+  then and on every replay, which it can catch to compensate (refund, apologise).
+- **One runner:** starting is idempotent, and an instance is run by one engine at a time: another writing its history
+  meanwhile (two processes resuming it) is refused by the store's optimistic concurrency, and stops. `ResumeAsync`
+  finds unfinished instances in an index stream (`Workflows`).
+- **Simulated:** time comes from the runtime, so in a [simulated test](language.md#simulated-tests) a two-day timer
+  passes at once, and an engine can be stopped and another started at any moment the run chooses: the tests restart a
+  workflow twice at random times over thirty seeds, and it always ends the same, each activity recorded once.
+- **The engine from code:** `engine.Register<TIn, TOut>("Name", async (flow, input) => …)`, with `flow.Activity(name, …)`
+  and `flow.Delay(…)`, is what the declaration writes, for a workflow made at run time.
 
 ### `statemachine` (state machines)
 
@@ -1785,4 +2121,4 @@ are loaded for `piper run` and `piper test`, and copied next to the program by `
 - **More for actors:**
   - supervision policies (restart with fresh state after a fault)
   - bounded mailboxes (senders wait when one is full)
-  - clustering (actors placed across nodes and moved when one fails), on Proto.Actor's cluster or Orleans
+  - clustering (actors placed across nodes and moved when one fails), on Piper.Actors.Remote's own runtime

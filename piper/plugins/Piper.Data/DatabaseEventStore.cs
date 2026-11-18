@@ -32,7 +32,7 @@ public sealed class DatabaseEventStore : IEventStore
     /// "Connection": "…" }</c>), each through its EF Core provider, which the app brings as a package: SQLite (a local
     /// file), SQL Server (Azure SQL, Amazon RDS) and PostgreSQL (Amazon RDS and Aurora, Google Cloud SQL, Azure's).
     /// </summary>
-    private static readonly (string Name, string Package, string Extensions, string Method)[] Databases =
+    internal static readonly (string Name, string Package, string Extensions, string Method)[] Databases =
     [
         ("sqlite", "Microsoft.EntityFrameworkCore.Sqlite", "Microsoft.EntityFrameworkCore.SqliteDbContextOptionsBuilderExtensions", "UseSqlite"),
         ("sqlserver", "Microsoft.EntityFrameworkCore.SqlServer", "Microsoft.EntityFrameworkCore.SqlServerDbContextOptionsBuilderExtensions", "UseSqlServer"),
@@ -50,7 +50,7 @@ public sealed class DatabaseEventStore : IEventStore
     }
 
     /// <summary>The options of a database chosen by name, through its EF Core provider's <c>Use…</c>, found in its package.</summary>
-    private static DbContextOptions Options(string name, string package, string extensions, string method, ProviderSettings settings)
+    internal static DbContextOptions Options(string name, string package, string extensions, string method, ProviderSettings settings)
     {
         var connection = settings.Required("Connection");
         var type = Type.GetType($"{extensions}, {package}")
@@ -64,27 +64,42 @@ public sealed class DatabaseEventStore : IEventStore
         return options.Options;
     }
 
-    /// <summary>A store in the database <paramref name="options"/> configure, with its table made if it isn't there.</summary>
+    /// <summary>
+    /// A store in the database <paramref name="options"/> configure, with its table made if it isn't there. Several
+    /// processes can open one database at once (a cluster's nodes starting together, sharing their events): one that
+    /// finds another has just made the database or a table carries on.
+    /// </summary>
     public static async Task<DatabaseEventStore> OpenAsync(DbContextOptions options)
     {
         var store = new DatabaseEventStore(options);
         await using var db = store.Open();
         var creator = db.GetService<IRelationalDatabaseCreator>();
-        if (!await creator.ExistsAsync())
-        {
-            await creator.CreateAsync();
-            await creator.CreateTablesAsync();
-        }
-        else if (!await TableExists(db.Events))
-        {
-            await creator.CreateTablesAsync();
-        }
+        await EnsureAsync(creator.ExistsAsync, () => creator.CreateAsync());
+        await EnsureAsync(() => TableExists(db.Events), () => creator.CreateTablesAsync());
         // Snapshots have a table of their own, made apart, so a database whose events were kept before them gains it.
         await using var snapshots = new SnapshotsDb(options);
-        if (!await TableExists(snapshots.Snapshots))
-            await snapshots.GetService<IRelationalDatabaseCreator>().CreateTablesAsync();
+        await EnsureAsync(() => TableExists(snapshots.Snapshots), () => snapshots.GetService<IRelationalDatabaseCreator>().CreateTablesAsync());
         return store;
     }
+
+    /// <summary>Makes something with <paramref name="create"/> unless it <paramref name="exists"/>, or another process made it meanwhile.</summary>
+    internal static async Task EnsureAsync(Func<CancellationToken, Task<bool>> exists, Func<Task> create)
+    {
+        if (await exists(default))
+            return;
+        try
+        {
+            await create();
+        }
+        catch (Exception)
+        {
+            // Made by another process between the check and this: it's there, which is all that's wanted.
+            if (!await exists(default))
+                throw;
+        }
+    }
+
+    internal static Task EnsureAsync(Func<Task<bool>> exists, Func<Task> create) => EnsureAsync(_ => exists(), create);
 
     public Task<IReadOnlyList<string>> LoadAsync(string stream) => LoadAsync(stream, 0);
 
@@ -143,7 +158,7 @@ public sealed class DatabaseEventStore : IEventStore
     /// <summary>A context for one operation: actors use the store at once, and a DbContext is for one at a time.</summary>
     private EventsDb Open() => new(_options);
 
-    private static async Task<bool> TableExists<T>(IQueryable<T> table)
+    internal static async Task<bool> TableExists<T>(IQueryable<T> table)
     {
         try
         {

@@ -17,10 +17,13 @@
     <BundledPlugin Include="remote-actors" Folder="Piper.Plugins.Actors.Remote" />
     <BundledPlugin Include="openapi" Folder="Piper.Plugins.OpenApi" />
     <BundledPlugin Include="parallel" Folder="Piper.Plugins.Parallel" />
+    <BundledPlugin Include="proto-actor" Folder="Piper.Plugins.Actors.Proto" />
+    <BundledPlugin Include="rabbitmq" Folder="Piper.Plugins.Messaging.RabbitMq" />
     <BundledPlugin Include="services" Folder="Piper.Plugins.Services" />
     <BundledPlugin Include="state-machines" Folder="Piper.Plugins.StateMachines" />
     <BundledPlugin Include="telemetry" Folder="Piper.Plugins.Telemetry" />
     <BundledPlugin Include="web" Folder="Piper.Plugins.Web" />
+    <BundledPlugin Include="workflows" Folder="Piper.Plugins.Workflows" />
     <ProjectReference Include="@(BundledPlugin->'$(MSBuildThisFileDirectory)..\plugins\%(Folder)\%(Folder).csproj')" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 

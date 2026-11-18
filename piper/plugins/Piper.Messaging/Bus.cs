@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text.Json;
+using Piper.Runtime;
 
 namespace Piper.Messaging;
 
@@ -29,22 +30,49 @@ public sealed class Bus(IMessageTransport transport, BusOptions? options = null)
     public IMessageTransport Transport => transport;
 
     /// <summary>Sends a command to its queue, for one receiver; after <paramref name="delay"/>, if given.</summary>
-    public Task Send<T>(T command, TimeSpan? delay = null) where T : notnull
-    {
-        var route = Route.Of(typeof(T));
-        if (route.Kind != DestinationKind.Queue)
-            throw new InvalidOperationException($"{typeof(T).Name} is an event: publish it, rather than send it.");
-        return transport.SendAsync(Envelope(command, route, delay));
-    }
+    public Task Send<T>(T command, TimeSpan? delay = null) where T : notnull =>
+        transport.SendAsync(Envelope(command, DestinationKind.Queue, delay));
 
     /// <summary>Publishes an event to its topic, for every subscriber; after <paramref name="delay"/>, if given.</summary>
-    public Task Publish<T>(T @event, TimeSpan? delay = null) where T : notnull
+    public Task Publish<T>(T @event, TimeSpan? delay = null) where T : notnull =>
+        transport.SendAsync(Envelope(@event, DestinationKind.Topic, delay));
+
+    /// <summary>
+    /// Sends and publishes into <paramref name="outbox"/> instead (a database's, with the data plugin's <c>outbox;</c>):
+    /// each message is saved in the same transaction as the change it tells of, by the database's
+    /// <c>SaveChangesAsync</c>, and sent by a <see cref="Relay"/> once it is.
+    /// </summary>
+    public OutboxSender In(IOutbox outbox) => new(outbox);
+
+    /// <summary>
+    /// Starts sending the messages saved in <paramref name="store"/> through this bus's transport, in the background,
+    /// until the result is disposed.
+    /// </summary>
+    public OutboxRelay Relay(IOutboxStore store, OutboxOptions? options = null) => new(store, transport, options ?? new OutboxOptions());
+
+    /// <summary>
+    /// Starts what <paramref name="start"/> starts (a consumer, a relay), runs it until <paramref name="stopping"/> is
+    /// cancelled, then stops it: what a server's or host's <c>consume</c> and <c>relay</c> clauses run as workers.
+    /// </summary>
+    public async Task RunUntil(Func<Task<IAsyncDisposable>> start, CancellationToken stopping)
     {
-        var route = Route.Of(typeof(T));
-        if (route.Kind != DestinationKind.Topic)
-            throw new InvalidOperationException($"{typeof(T).Name} is a command: send it, rather than publish it.");
-        return transport.SendAsync(Envelope(@event, route, delay));
+        var running = await start();
+        try
+        {
+            await PiperRuntime.Current.Delay(Timeout.InfiniteTimeSpan, stopping);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            await running.DisposeAsync();
+        }
     }
+
+    /// <summary>Relays <paramref name="store"/>'s messages until <paramref name="stopping"/> is cancelled: a <c>relay</c> clause.</summary>
+    public Task RelayUntil(IOutboxStore store, CancellationToken stopping) =>
+        RunUntil(() => Task.FromResult<IAsyncDisposable>(Relay(store)), stopping);
 
     /// <summary>A handler for messages of type <typeparamref name="T"/>, which a consumer gives <see cref="Consume"/>.</summary>
     public static MessageHandler Handler<T>(Func<T, Handled> handle) => new(typeof(T), message => Task.FromResult(handle((T)message)));
@@ -63,7 +91,7 @@ public sealed class Bus(IMessageTransport transport, BusOptions? options = null)
         foreach (var group in handlers.GroupBy(h => Route.Of(h.Type)))
         {
             var byType = group.ToDictionary(h => h.Type.Name);
-            var subscription = new Subscription(group.Key.Destination, group.Key.Kind, consumer);
+            var subscription = new Subscription(group.Key.Destination, group.Key.Kind, consumer) { Ordered = group.Key.Key is not null };
             subscriptions.Add(await transport.SubscribeAsync(subscription, (envelope, _) => Deliver(envelope, byType)));
         }
         return new Subscriptions(subscriptions);
@@ -99,9 +127,21 @@ public sealed class Bus(IMessageTransport transport, BusOptions? options = null)
         }
     }
 
-    private static Envelope Envelope<T>(T message, Route route, TimeSpan? delay) where T : notnull =>
-        new(Guid.CreateVersion7(), route.Destination, route.Kind, typeof(T).Name, JsonSerializer.Serialize(message, Json),
-            route.Key?.GetValue(message)?.ToString(), delay is { } wait ? DateTimeOffset.UtcNow + wait : null);
+    /// <summary>
+    /// A message's envelope, checked to be the <paramref name="kind"/> it's sent as (a command sent, an event published).
+    /// Its id and time come from the runtime, so a simulation's are its own and repeat.
+    /// </summary>
+    internal static Envelope Envelope<T>(T message, DestinationKind kind, TimeSpan? delay) where T : notnull
+    {
+        var route = Route.Of(typeof(T));
+        if (route.Kind != kind)
+            throw new InvalidOperationException(kind == DestinationKind.Queue
+                ? $"{typeof(T).Name} is an event: publish it, rather than send it."
+                : $"{typeof(T).Name} is a command: send it, rather than publish it.");
+        var id = PiperRuntime.Current.IsSimulated ? PiperRouting.NewGuid() : Guid.CreateVersion7();
+        return new(id, route.Destination, route.Kind, typeof(T).Name, JsonSerializer.Serialize(message, Json),
+            route.Key?.GetValue(message)?.ToString(), delay is { } wait ? PiperRuntime.Current.Time.GetUtcNow() + wait : null);
+    }
 
     /// <summary>Where a message type goes, from its declaration's attribute: a queue, or a topic and its key's property.</summary>
     private sealed record Route(string Destination, DestinationKind Kind, PropertyInfo? Key)

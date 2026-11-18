@@ -1,10 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    What the code the remote actors plugin (plugins/Piper.Plugins.Actors.Remote) writes calls at run time: sending,
-    asking and handling messages with the caller's trace context in Proto.Actor's message headers, so one request is one
-    trace across nodes. It comes with the plugin, beside its assembly, and a program using it references it
-    (IPiperPlugin.References). It uses only System.Diagnostics; exporting the traces is the telemetry plugin's.
+    What the code the remote actors plugin (plugins/Piper.Plugins.Actors.Remote) writes calls at run time: Piper's own
+    actor system (mailboxes, asks, stopping), the transports nodes talk over (in memory, and HTTP/2 on ASP.NET Core's
+    Kestrel), tracing through actors, and a cluster in one process for tests. No packages: only .NET, ASP.NET Core and
+    Piper.Runtime. Another transport (Proto.Actor's, for one) comes as its own provider. It comes with the plugin, beside
+    its assembly, and a program using it references it (IPiperPlugin.References).
   -->
   <PropertyGroup>
     <IsPackable>false</IsPackable>
@@ -14,9 +15,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The program has Proto.Actor itself (the plugin's Packages), so it isn't copied here. -->
-    <PackageReference Include="Proto.Actor" Version="1.8.0" PrivateAssets="all" ExcludeAssets="runtime" />
-    <PackageReference Include="Proto.Remote" Version="1.8.0" PrivateAssets="all" ExcludeAssets="runtime" />
+    <!-- The program has ASP.NET Core (the plugin's Frameworks), whose Kestrel serves the http transport. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <!-- A program has its own Piper.Runtime (providers, JSON for Piper's types); this must use that one. -->
+    <ProjectReference Include="..\..\src\Piper.Runtime\Piper.Runtime.csproj" Private="false" />
   </ItemGroup>
 
 </Project>

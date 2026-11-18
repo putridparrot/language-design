@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The rabbitmq plugin: no syntax of its own, but the `rabbitmq` transport for the messaging plugin's bus, over
+    RabbitMQ's official client, which it brings in. A program lists it beside messaging in its piper.json
+    ("plugins": ["messaging", "rabbitmq"]) and chooses it by configuration (Messaging:Provider=rabbitmq) or in code.
+    Without it, a program has no RabbitMQ packages at all.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!-- One place whatever the configuration, so piper.json files can point at it. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\plugin\</OutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The compiler loads the plugin, so it provides Piper.Compiler; don't copy it next to the plugin. -->
+    <ProjectReference Include="..\..\src\Piper.Compiler\Piper.Compiler.csproj" Private="false" ExcludeAssets="runtime" />
+    <!-- What the program calls (IPiperPlugin.References): built first, and copied beside the plugin. -->
+    <ProjectReference Include="..\Piper.Messaging.RabbitMq\Piper.Messaging.RabbitMq.csproj" ReferenceOutputAssembly="false" />
+    <None Include="..\Piper.Messaging.RabbitMq\bin\runtime\Piper.Messaging.RabbitMq.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+</Project>
