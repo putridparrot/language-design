@@ -21,8 +21,17 @@ dotnet pack src/Piper.Cli -c Release -o artifacts
 dotnet tool install -g Piper --add-source artifacts
 ```
 
-The installed tool is a copy of the compiler as it was built; after changing the compiler, pack again and reinstall it
-(`dotnet tool uninstall -g Piper`, then the install line above).
+The installed tool is a copy of the compiler as it was built. After changing the compiler, pack again and update it:
+each local pack is numbered after the release it builds on (`1.0.0.463511`, the fourth part counting minutes), so it's
+always newer than the one installed. Close the editor first; its language server is the installed tool and holds its
+files. `piper --version` says which you have.
+
+```
+dotnet pack src/Piper.Cli -c Release -o artifacts
+dotnet tool update -g Piper --add-source artifacts
+```
+
+A release packs without the stamp: `dotnet pack src/Piper.Cli -c Release -o artifacts -p:PiperRelease=true`.
 
 ```
 piper new hello               # make a program folder: hello/piper.json and hello/main.piper (with a test)
@@ -113,6 +122,7 @@ following, from the compiler's own parser and binder, so it works on incomplete 
 - inlay hints for inferred types
 - semantic highlighting
 - a quick fix that adds missing match arms
+- a quick fix that adds the `using` a name needs
 - an outline
 
 [editors/vscode](editors/vscode) is a VS Code extension that starts it, adds syntax highlighting, and runs and debugs programs

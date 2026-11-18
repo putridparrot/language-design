@@ -663,5 +663,4 @@ finds, and what was done.
   wrapping long lines, and putting a `{` on the line it belongs to.
 - **Language server:**
   - `piper.json` errors while typing, not just on save;
-  - a quick fix to add a missing `using`;
   - signature help inside lambdas.

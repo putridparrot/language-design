@@ -52,11 +52,7 @@ const string Usage = """
 
 if (args is ["--version" or "-v"])
 {
-    var version = typeof(Compilation).Assembly
-        .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
-        .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
-        .FirstOrDefault()?.InformationalVersion;
-    Console.WriteLine($"piper {version?.Split('+')[0] ?? "?"}");
+    Console.WriteLine($"piper {PiperVersion.Current}");
     return 0;
 }
 

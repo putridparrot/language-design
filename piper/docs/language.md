@@ -2032,7 +2032,7 @@ None known.
 
 Version 1.0 includes everything above, and also:
 
-- **Tooling:** debugging in VS Code (breakpoints and stepping in `.piper` files, through the C# extension's debugger), and signature help, inlay hints, semantic highlighting and an "add missing match arms" quick fix in the language server.
+- **Tooling:** debugging in VS Code (breakpoints and stepping in `.piper` files, through the C# extension's debugger), and signature help, inlay hints, semantic highlighting and quick fixes ("add missing match arms", "add the missing `using`") in the language server.
 - **Patterns:** list patterns (`[first, ...rest]`), property patterns (`Point { x: 0 }`, `{ Length: > 5 }`) and relational patterns (`< 0`).
 - **Attributes:** .NET attributes on declarations, fields and parameters, with `[Obsolete]` warnings for Piper declarations and .NET members.
 - **Tests:** `test "name" { … }` blocks with `Assert` and `AssertEqual`, run by `piper test`.

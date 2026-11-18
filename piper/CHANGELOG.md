@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Each local pack of the tool is a newer version**, so `dotnet tool update -g Piper --add-source artifacts` replaces
+  the installed piper (it stayed 1.0.0, so an update saw nothing new and it had to be uninstalled and installed again).
+  A `dotnet pack` numbers the package after the release it builds on with the minutes since 2026-01-01 as a fourth
+  part (`1.0.0.463511`); `-p:PiperRelease=true` packs the release's own number. Assembly versions stay at the release,
+  so plugins keep loading across local packs. `piper --version` and the language server (its server info, and the
+  PIP0408 hint, which now says to close the editor before updating) report the package's version.
+
+- **Quick fix: add the missing `using`.** Where a name doesn't resolve (PIP0200), a type doesn't exist (PIP0211) or a
+  type has no such method (PIP0243), the editor offers `Add 'using System.Text;'` for each namespace that would make
+  it resolve: a .NET type the program references, an extension method (`ToImmutableArray` for
+  `System.Collections.Immutable`), or a public declaration in another of the program's own namespaces. The using goes
+  in order among the file's usings, after its `namespace` if it has none, or below the comments heading the file. Only
+  a sole candidate is the preferred fix, and a name more than six namespaces define offers none.
+
 - **Workflow versions:** `workflow Fulfil version 2 { … }` beside the old code kept as `workflow FulfilV1 as Fulfil
   version 1 { … }` (`as` names the workflow it's a version of). Each instance records the version it started on
   (`StepsAsync` shows `started Fulfil version 2`); new ones start on the latest registered

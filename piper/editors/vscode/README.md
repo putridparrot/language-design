@@ -17,6 +17,8 @@ Support for [Piper](../../README.md) `.piper` files:
   - inlay hints for the types of variables declared without one
   - semantic highlighting (variants, traits, parameters and so on, coloured by what they are)
   - a quick fix that adds a match's missing arms
+  - a quick fix that adds the `using` a name needs (a .NET type or extension method, or a declaration in another of the
+    program's namespaces)
   - an outline
   - in markup: completion of tags, attributes and a typed form's field names; hover on HTML's elements and
     attributes; and closing tags as you type a start tag's `>` (the `piper.autoClosingTags` setting turns it off)
@@ -71,18 +73,16 @@ the PATH. Then open a `.piper` file: it's highlighted, errors show as you type, 
 
 The installed tool and extension are copies of what you built; changing this repository doesn't change them.
 
-- **After changing the compiler**, with the `piper` tool, pack and reinstall it (the version stays 1.0.0, so
-  `dotnet tool update` would see nothing new), from the `piper` folder:
+- **After changing the compiler**, with the `piper` tool, pack and update it (each pack is numbered newer than the
+  last, `1.0.0.463511`, so the update always takes it), from the `piper` folder:
 
   ```
   dotnet pack src/Piper.Cli -c Release -o artifacts
-  dotnet tool uninstall -g Piper
-  dotnet tool install -g Piper --add-source artifacts
+  dotnet tool update -g Piper --add-source artifacts
   ```
 
   With the settings instead, `dotnet build` is enough. Either way, then run **Piper: Restart Language Server** in VS
-  Code. (Uninstalling or rebuilding while VS Code runs the compiler may fail with the file locked: close VS Code, or
-  run **Piper: Restart Language Server** after.)
+  Code. (Updating or rebuilding while VS Code runs the compiler fails with the file locked: close VS Code first.)
 
 - **After adding or changing a plugin**, there's no need to reinstall. A plugin made with `piper plugin new` adds
   itself to piper each time it's built; for another, run `piper plugin add <its folder>`. The language server picks it

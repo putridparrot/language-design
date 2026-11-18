@@ -12,8 +12,7 @@ Every app in `apps/` is run with a `piper` tool built from this repository. From
 
 ```
 dotnet pack src/Piper.Cli -c Release -o artifacts       # once, and after changing the compiler
-dotnet tool uninstall -g Piper
-dotnet tool install -g Piper --add-source artifacts
+dotnet tool update -g Piper --add-source artifacts      # installs it the first time, updates it after
 ```
 
 Or, without installing it, put `dotnet run --project src/Piper.Cli --` wherever `piper` appears below.

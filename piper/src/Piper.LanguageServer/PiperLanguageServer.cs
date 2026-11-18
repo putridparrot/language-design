@@ -283,7 +283,7 @@ public sealed class PiperLanguageServer
             ["semanticTokensProvider"] = new JsonObject { ["legend"] = SemanticTokens.Legend(), ["full"] = true },
             ["codeActionProvider"] = new JsonObject { ["codeActionKinds"] = new JsonArray("quickfix") },
         },
-        ["serverInfo"] = new JsonObject { ["name"] = "piper", ["version"] = typeof(Compilation).Assembly.GetName().Version?.ToString() },
+        ["serverInfo"] = new JsonObject { ["name"] = "piper", ["version"] = PiperVersion.Current },
     };
 
     // Diagnostics
@@ -322,9 +322,9 @@ public sealed class PiperLanguageServer
                    $"couldn't load shows errors here that aren't its own: {errors[0].Message}";
         if (errors.Any(e => e.Message.Contains("isn't one that comes with piper", StringComparison.Ordinal)))
         {
-            var version = typeof(Compilation).Assembly.GetName().Version;
-            said += $" The editor's language server is piper {version} ({Environment.ProcessPath}): if this program's plugins come with a newer " +
-                    "piper, update the tool (dotnet tool update -g Piper), or point the piper.server.path setting at the newer one.";
+            said += $" The editor's language server is piper {PiperVersion.Current} ({Environment.ProcessPath}): if this program's plugins come " +
+                    "with a newer piper, update the tool (dotnet tool update -g Piper, adding --add-source for a local pack; close the editor " +
+                    "first, as its server holds the tool's files), or point the piper.server.path setting at the newer one.";
         }
         return said;
     }

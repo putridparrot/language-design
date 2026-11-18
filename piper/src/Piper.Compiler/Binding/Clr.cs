@@ -67,6 +67,14 @@ public sealed class ClrTypeIndex
                     .Where(m => m.Name == key.Name && m.IsDefined(typeof(System.Runtime.CompilerServices.ExtensionAttribute), false))]
                 : []);
 
+    /// <summary>The namespaces with a public top-level type called <paramref name="name"/> (of any arity), for the editor's "add a using".</summary>
+    public IReadOnlyList<string> NamespacesWithType(string name) =>
+        [.. _index.Value.TypesByNamespace.Keys.Where(ns => _index.Value.Types.ContainsKey($"{ns}.{name}"))];
+
+    /// <summary>The namespaces declaring an extension method called <paramref name="name"/>, for the editor's "add a using".</summary>
+    public IReadOnlyList<string> NamespacesWithExtension(string name) =>
+        [.. _index.Value.TypesByNamespace.Keys.Where(ns => ExtensionMethods(ns, name).Count > 0)];
+
     private Index Build(ImmutableArray<string> references)
     {
         var types = new Dictionary<string, List<Type>>();

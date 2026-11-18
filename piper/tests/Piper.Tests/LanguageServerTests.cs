@@ -860,4 +860,107 @@ public sealed class LanguageServerTests : IDisposable
         });
         Assert.Empty(_notifications[^1]["params"]!["diagnostics"]!.AsArray());
     }
+    [Theory]
+    [InlineData("""
+        // Builds a greeting.
+        using System;
+
+        fn greet(name: string) => string = StringBuilder().Append("hello ").Append(name).ToString();
+        """, "System.Text", """
+        // Builds a greeting.
+        using System;
+        using System.Text;
+
+        fn greet(name: string) => string = StringBuilder().Append("hello ").Append(name).ToString();
+        """)]
+    [InlineData("""
+        // Freezes a list.
+        using System.Collections.Generic;
+
+        fn freeze(xs: List<int>) => int = xs.ToImmutableArray().Length;
+        """, "System.Collections.Immutable", """
+        // Freezes a list.
+        using System.Collections.Generic;
+        using System.Collections.Immutable;
+
+        fn freeze(xs: List<int>) => int = xs.ToImmutableArray().Length;
+        """)]
+    [InlineData("""
+        // Builds a greeting.
+        fn greet(name: string) => string = StringBuilder().Append(name).ToString();
+        """, "System.Text", """
+        // Builds a greeting.
+        using System.Text;
+
+        fn greet(name: string) => string = StringBuilder().Append(name).ToString();
+        """)]
+    [InlineData("""
+        namespace Greetings;
+
+        using System.Text;
+
+        fn read(path: string) => string = File.ReadAllText(path);
+        """, "System.IO", """
+        namespace Greetings;
+
+        using System.IO;
+        using System.Text;
+
+        fn read(path: string) => string = File.ReadAllText(path);
+        """)]
+    public async Task A_quick_fix_adds_the_using_a_name_needs(string text, string @namespace, string expected)
+    {
+        text = text.ReplaceLineEndings("\n");
+        var uri = await OpenAsync(text);
+        var diagnostics = _notifications[^1]["params"]!["diagnostics"]!.AsArray();
+        Assert.NotEmpty(diagnostics);
+
+        var request = WholeDocument(uri, text);
+        request["context"] = new JsonObject { ["diagnostics"] = diagnostics.DeepClone() };
+        var actions = (JsonArray)(await _server.HandleAsync("textDocument/codeAction", request))!;
+
+        var action = Assert.Single(actions)!;
+        Assert.Equal($"Add 'using {@namespace};'", action["title"]!.GetValue<string>());
+        Assert.True(action["isPreferred"]!.GetValue<bool>());
+        var edit = Assert.Single(action["edit"]!["changes"]![uri]!.AsArray())!;
+        var source = new Piper.Text.SourceText(text);
+        int Offset(JsonNode position) => source.GetPosition(position["line"]!.GetValue<int>(), position["character"]!.GetValue<int>());
+        var start = Offset(edit["range"]!["start"]!);
+        var fixedText = text[..start] + edit["newText"]!.GetValue<string>() + text[Offset(edit["range"]!["end"]!)..];
+        Assert.Equal(expected.ReplaceLineEndings("\n"), fixedText);
+
+        await _server.HandleAsync("textDocument/didChange", new JsonObject
+        {
+            ["textDocument"] = new JsonObject { ["uri"] = uri, ["version"] = 2 },
+            ["contentChanges"] = new JsonArray(new JsonObject { ["text"] = fixedText }),
+        });
+        Assert.Empty(_notifications[^1]["params"]!["diagnostics"]!.AsArray());
+    }
+
+    [Fact]
+    public async Task No_using_is_offered_for_a_name_nothing_defines()
+    {
+        var text = "fn f() => int = Nonesuch.Count;";
+        var uri = await OpenAsync(text);
+        var request = WholeDocument(uri, text);
+        request["context"] = new JsonObject { ["diagnostics"] = _notifications[^1]["params"]!["diagnostics"]!.DeepClone() };
+        Assert.Empty((JsonArray)(await _server.HandleAsync("textDocument/codeAction", request))!);
+    }
+    [Fact]
+    public async Task A_quick_fix_adds_the_using_for_a_name_in_another_of_the_programs_namespaces()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_directory, "piper.json"), "{}");
+        await File.WriteAllTextAsync(Path.Combine(_directory, "shapes.piper"), "namespace Geometry.Shapes;\n\nfn Twice(n: int) => int = n * 2;\n");
+        var text = "fn Main() { Print(Twice(21)); }";
+        await File.WriteAllTextAsync(Path.Combine(_directory, "main.piper"), text);
+        var uri = await OpenAsync(text);
+
+        var request = WholeDocument(uri, text);
+        request["context"] = new JsonObject { ["diagnostics"] = _notifications[^1]["params"]!["diagnostics"]!.DeepClone() };
+        var actions = (JsonArray)(await _server.HandleAsync("textDocument/codeAction", request))!;
+
+        var action = Assert.Single(actions)!;
+        Assert.Equal("Add 'using Geometry.Shapes;'", action["title"]!.GetValue<string>());
+        Assert.Equal("using Geometry.Shapes;\n\n", Assert.Single(action["edit"]!["changes"]![uri]!.AsArray())!["newText"]!.GetValue<string>());
+    }
 }
