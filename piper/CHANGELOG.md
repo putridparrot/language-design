@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **CI** (`.github/workflows/piper.yml`, at the repository's root): every push to main and pull request touching piper/
+  runs the tests and the four apps' tests, on Linux and Windows (Linux with Docker, so the RabbitMQ tests run against a
+  real broker). A tag such as `piper-v1.1.0` (or `piper-v1.1.0-beta.1`) also packs the tool, Piper.Build and
+  Piper.Runtime as that version, assemblies included, and keeps them as the run's artifact; publishing them is left to
+  a person. Everything passes on Linux as on Windows (checked in the .NET 10 SDK's container).
+
+- **apps/grid's cluster tests are simulated:** the job shared by workers on several nodes, one cut off mid-chunk, and
+  the coordinator restarting mid-job run in a `SimulatedCluster` (`simulate runs 5`) instead of on real nodes over
+  HTTP/2, so the 30-second lease the cut-off test waits out takes no real time, and they no longer depend on how busy
+  the machine is. Every app's tests are now deterministic.
+
 - **Each local pack of the tool is a newer version**, so `dotnet tool update -g Piper --add-source artifacts` replaces
   the installed piper (it stayed 1.0.0, so an update saw nothing new and it had to be uninstalled and installed again).
   A `dotnet pack` numbers the package after the release it builds on with the minutes since 2026-01-01 as a fourth

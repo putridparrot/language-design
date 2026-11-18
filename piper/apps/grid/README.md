@@ -81,10 +81,13 @@ Events__Provider=sqlite Events__Connection="Data Source=grid.db" piper run apps/
 (or `sqlserver`, `postgres`, for a database in a cloud; see the Providers section of
 [docs/plugins.md](../../docs/plugins.md)).
 
-**`piper test apps/grid`** tests the risk figures, the rules for handing out chunks, and a job over HTTP/2 on three
-worker nodes (a cluster in one process), where a fourth worker takes a chunk and is cut off by the network (its chunk is done by another, and
-its answer, once it's back, ignored). Some are property tests: a job's figures are the same
-for any number of chunks coming back in any order, and a sample counts every scenario, for any count and seed.
+**`piper test apps/grid`** tests the risk figures, the rules for handing out chunks, and a job on three
+worker nodes, where a fourth worker takes a chunk and is cut off by the network (its chunk is done by another, and
+its answer, once it's back, ignored), and a coordinator that restarts mid-job. Those run in a simulated cluster
+(`simulate` tests, on Piper.Actors.Remote's `SimulatedCluster`): its network and the 30-second lease on the
+simulation's clock, so they take no real time, don't depend on how busy the machine is, and each runs over five seeds.
+Some are property tests: a job's figures are the same for any number of chunks coming back in any order, and a sample
+counts every scenario, for any count and seed.
 
 ## On Docker Desktop's Kubernetes
 

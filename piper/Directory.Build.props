@@ -10,7 +10,8 @@
     <!--
       VersionPrefix is the release. A local `dotnet pack` stamps a fourth part, the minutes since 2026-01-01, so each
       pack is newer than the last (and than the release it builds on) and `dotnet tool update` (see README.md)
-      replaces an installed piper. A release packs with -p:PiperRelease=true (or -p:Version=x.y.z).
+      replaces an installed piper. A release packs with -p:PiperRelease=true, and -p:VersionPrefix=x.y.z for
+      another number (as CI does for a piper-vx.y.z tag, in .github/workflows/piper.yml).
       Assembly versions stay at the release, so plugins built by one local pack load in the next.
     -->
     <VersionPrefix>1.0.0</VersionPrefix>

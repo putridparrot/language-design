@@ -263,7 +263,9 @@ public sealed partial class WebPlugin
         // it sees every exception; then HTTPS, so nothing is answered over HTTP; then the app's own
         // middleware; then the policies' (CORS, authentication, authorization, rate limits, caching), which must come
         // before the endpoints they guard.
-        List<StatementSyntax> pipeline = [.. forwarded, .. problems, .. https, .. middleware, .. policyMiddleware, .. mapping, .. endpoints, .. host.Built];
+        // Idempotent endpoints' replays after the policies, so a repeat is checked as the first was, and keyed by its user.
+        var idempotency = p.Template.Statement("Piper.Web.PiperIdempotency.Use(app);");
+        List<StatementSyntax> pipeline = [.. forwarded, .. problems, .. https, .. middleware, .. policyMiddleware, idempotency, .. mapping, .. endpoints, .. host.Built];
         return p.Template.Declarations($$"""
             fn $name({{(parameters.Count == 0 ? "" : "$parameters: unit")}}) => Microsoft.AspNetCore.Builder.WebApplication {
                 let builder = Microsoft.AspNetCore.Builder.WebApplication.CreateBuilder();

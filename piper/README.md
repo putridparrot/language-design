@@ -157,6 +157,10 @@ dotnet pack src/Piper.Build -c Release -o packages   # the Piper.Build MSBuild p
 Inputs can be any mix of `.piper` files and directories; they are compiled together as one program,
 producing one `.cs` file per `.piper` file. The generated code needs C# 14 (.NET 10 SDK).
 
+CI ([.github/workflows/piper.yml](../.github/workflows/piper.yml)) runs `dotnet test` and each app's `piper test` on
+Linux and Windows for every push and pull request. Pushing a tag `piper-v1.1.0` also packs the three packages above as
+1.1.0, kept as the run's artifact.
+
 ## Layout
 
 | Path | What |

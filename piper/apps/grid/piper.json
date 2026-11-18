@@ -1,7 +1,7 @@
 {
   // Grid: a coordinator shares a long calculation (a Monte Carlo Value at Risk) among workers that ask it for work, as
   // processes, or as pods in Kubernetes that can be added or removed mid-job. See README.md.
-  // `piper test apps/grid` runs its tests, which start a coordinator and workers in one process.
+  // `piper test apps/grid` runs its tests, the coordinator and workers in a simulated cluster.
   "name": "grid",
   "plugins": ["remote-actors", "args", "web", "hosting", "telemetry", "data", "deploy"],
   "packages": { "Microsoft.EntityFrameworkCore.Sqlite": "10.0.14" }

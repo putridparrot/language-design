@@ -60,6 +60,7 @@ public sealed partial class WebPlugin : IPiperPlugin
                 ["cors"] = "Browsers on other sites may call it as the CORS policy named allows: `RequireCors`.",
                 ["cache"] = "Responses are cached, by the output cache policy named or the default one: `CacheOutput`.",
                 ["tags"] = "The endpoint's OpenAPI tags, which group it in API documentation: `WithTags`. Without them, it's tagged with the declaration's name. After the group's route it applies to every endpoint.",
+                ["idempotent"] = "A request with an `Idempotency-Key` header runs once: a repeat (a client retrying after a timeout) is answered with the first one's response, marked `Idempotent-Replayed: true`; 409 while the first is running, 422 for the same key on a different request. Keys and responses are kept by the registered `IIdempotencyStore` (Piper.Data's `DatabaseIdempotency` for every pod), or in memory, for 24 hours. After the group's route it applies to its posts, puts, patches and deletes.",
             },
         },
         new DeclarationKeyword("policies", Policies)
@@ -119,7 +120,7 @@ public sealed partial class WebPlugin : IPiperPlugin
         var groupWords = ReadPolicyWords(p);
         layout ??= ReadLayout();
         var policyUses = new List<PolicyName>(NamesUsed(groupWords.Values));
-        var policyWords = groupWords.Values.Where(w => w.Concern != Concern.Tags).Select(w => w.Word).ToList();
+        var policyWords = groupWords.Values.Where(w => w.Concern is not (Concern.Tags or Concern.Idempotency)).Select(w => w.Word).ToList();
         // Without `tags`, an endpoint's OpenAPI tag is its declaration's name (ASP.NET Core's is the application's, for all).
         var defaultTags = new PolicyWord(new Token(TokenKind.Identifier, name.Span, "tags") { IsGenerated = true }, Concern.Tags,
             [new LiteralExpressionSyntax(name.Span, new Token(TokenKind.StringLiteral, name.Span, $"\"{name.Text}\"", name.Text) { IsGenerated = true }, name.Text)], false);
@@ -162,10 +163,16 @@ public sealed partial class WebPlugin : IPiperPlugin
 
             // The endpoint's own words replace the group's for the same concern.
             var words = ReadPolicyWords(p);
+            if (verb.Text == "get" && words.TryGetValue(Concern.Idempotency, out var idempotent))
+                p.Report(idempotent.Word.Span, "A GET is idempotent already, and its responses aren't replayed: 'idempotent' is for a post, put, patch or delete.");
             policyUses.AddRange(NamesUsed(words.Values));
-            policyWords.AddRange(words.Values.Where(w => w.Concern != Concern.Tags).Select(w => w.Word));
+            policyWords.AddRange(words.Values.Where(w => w.Concern is not (Concern.Tags or Concern.Idempotency)).Select(w => w.Word));
+            // A group's `idempotent` is for what changes things: its gets are idempotent already.
             foreach (var (concern, word) in groupWords)
-                words.TryAdd(concern, word);
+            {
+                if (concern != Concern.Idempotency || verb.Text != "get")
+                    words.TryAdd(concern, word);
+            }
             words.TryAdd(Concern.Tags, defaultTags);
 
             var handler = Handler(p);

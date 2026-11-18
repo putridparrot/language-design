@@ -42,6 +42,7 @@ public sealed class DataPlugin : IPiperPlugin
                 ["index"] = "An index on the field (or fields, in parentheses), for faster lookups: `HasIndex`.",
                 ["outbox"] = "A table of messages saved with the changes they tell of (`PiperOutbox`), and an `Outbox` property: " +
                              "`bus.In(db.Outbox).Publish(…)` before `SaveChangesAsync()`, and a relay sends them once saved.",
+                ["idempotency"] = "A table of idempotent requests' keys and responses (`PiperIdempotency`), shared by every pod: register it for a server's `idempotent` endpoints with `singleton IIdempotencyStore = DatabaseIdempotency.Store(() => Db(options));`.",
             },
         },
     ];
@@ -50,7 +51,7 @@ public sealed class DataPlugin : IPiperPlugin
     private sealed record TableColumns(Token Table, TypeSyntax Entity, List<LiteralExpressionSyntax> Columns);
 
     /// <summary>
-    /// database = "database" IDENT "{" { table | "outbox" ";" } "}" ;
+    /// database = "database" IDENT "{" { table | "outbox" ";" | "idempotency" ";" } "}" ;
     /// table    = "table" IDENT ":" type { ( "key" | "index" ) columns } ";" ;
     /// columns  = IDENT | "(" IDENT { "," IDENT } ")" ;
     /// </summary>
@@ -65,6 +66,7 @@ public sealed class DataPlugin : IPiperPlugin
         var tables = new List<TableColumns>();
         var seen = new HashSet<string>();
         var outbox = false;
+        var idempotency = false;
         while (p.Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
         {
             // `outbox;`: a table of messages saved with the changes they tell of (Piper.Data's DatabaseOutbox).
@@ -77,9 +79,19 @@ public sealed class DataPlugin : IPiperPlugin
                 outbox = true;
                 continue;
             }
+            // `idempotency;`: a table of idempotent requests' keys and responses (Piper.Data's DatabaseIdempotency).
+            if (p.AtWord("idempotency"))
+            {
+                var word = p.ReadWord();
+                p.Expect(TokenKind.Semicolon);
+                if (idempotency)
+                    p.Report(word.Span, "There's already an idempotency table.");
+                idempotency = true;
+                continue;
+            }
             if (!p.AtWord("table"))
             {
-                p.Report(p.Current.Span, "Expected 'table', such as table Orders: Order key id; or outbox;");
+                p.Report(p.Current.Span, "Expected 'table', such as table Orders: Order key id; or outbox; or idempotency;");
                 while (p.Current.Kind is not (TokenKind.Semicolon or TokenKind.CloseBrace or TokenKind.EndOfFile))
                     p.NextToken();
                 if (p.Current.Kind == TokenKind.Semicolon)
@@ -123,6 +135,8 @@ public sealed class DataPlugin : IPiperPlugin
             properties.Add("prop Outbox => Piper.Runtime.IOutbox = Piper.Data.DatabaseOutbox.For(this);");
             model.Add(p.Template.Statement("Piper.Data.DatabaseOutbox.Configure(model);"));
         }
+        if (idempotency)
+            model.Add(p.Template.Statement("Piper.Data.DatabaseIdempotency.Configure(model);"));
         holes.Add(("model", model));
 
         return p.Template.Declarations($$"""

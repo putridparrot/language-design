@@ -18,9 +18,12 @@ async fn WaitForJob(jobs: Jobs, job: int) => Task<View> {
     view
 }
 
-async test "workers on three nodes share a job over HTTP/2; a worker cut off mid-chunk has it done by another, and its late answer is ignored" {
-    // Five nodes in this process (Piper.Actors.Remote's PiperCluster): the coordinator, a worker to cut off, three more.
-    let cluster = await PiperCluster.StartOverNetworkAsync(5);
+// The tests run in a simulated cluster (Piper.Actors.Remote's SimulatedCluster): its network, and the leases, pauses and
+// timeouts, on the simulation's clock, so the 30-second lease takes no real time, and each test runs over several seeds.
+
+async test "workers on three nodes share a job; a worker cut off mid-chunk has it done by another, and its late answer is ignored" simulate runs 5 {
+    // Five nodes: the coordinator, a worker to cut off, three more.
+    let cluster = await SimulatedCluster.StartAsync(5, _ => {});
     let coordinator = cluster[0];
     let jobs = Jobs.Spawn(coordinator, "jobs", MemoryEventStore(), "grid");
     Assert(await jobs.Start(JobSpec(12, 2_000, 5)));
@@ -40,7 +43,6 @@ async test "workers on three nodes share a job over HTTP/2; a worker cut off mid
     cluster.Heal();
     Assert(!(await cutOff.Done(Tally(1, 0, "cut-off", Simulate(2_000, ChunkSeed(5, 0)), 10L))));
     let after = await jobs.Status();
-    await cluster.StopAsync();
 
     Assert(!view.running, "the job didn't finish within a minute");
     AssertEqual(1, after.late);
@@ -56,10 +58,10 @@ async test "workers on three nodes share a job over HTTP/2; a worker cut off mid
 /// What chunk `id` of a job with seed 4 and 50 scenarios sends back.
 fn Small(id: int, worker: string) => Tally = Tally(1, id, worker, Simulate(50, ChunkSeed(4, id)), 10L);
 
-async test "a coordinator that restarts carries on with its job, from its snapshot and the events since" {
+async test "a coordinator that restarts carries on with its job, from its snapshot and the events since" simulate runs 5 {
     let store = MemoryEventStore();
-    let first = await PiperNode.StartAsync("127.0.0.1", 0);
-    let jobs = Jobs.Spawn(first, "jobs", store, "grid");
+    let cluster = await SimulatedCluster.StartAsync(1, _ => {});
+    let jobs = Jobs.Spawn(cluster[0], "jobs", store, "grid");
     Assert(await jobs.Start(JobSpec(60, 50, 4)));
     for id in 0..57 {   // two events each, so a snapshot is taken after the 100th
         AssertEqual(id, Given(await jobs.Take("a")));
@@ -67,14 +69,14 @@ async test "a coordinator that restarts carries on with its job, from its snapsh
     }
     AssertEqual(58, Given(await jobs.Take("b")));   // lent to b and c, which are still working on them
     AssertEqual(59, Given(await jobs.Take("c")));
-    await first.StopAsync();
+    await cluster.StopAsync(0);
     match await store.LoadSnapshotAsync("Jobs/grid") {
         Some(kept) => AssertEqual(100, kept.Version),   // Started, 49 chunks taken and done, and the 50th taken
         None => Assert(false, "no snapshot was taken"),
     }
 
-    let second = await PiperNode.StartAsync("127.0.0.1", 0);
-    let again = Jobs.Spawn(second, "jobs", store, "grid");
+    await cluster.RestartAsync(0);
+    let again = Jobs.Spawn(cluster[0], "jobs", store, "grid");
     let view = await again.Status();
     Assert(view.running);
     AssertEqual(58, view.done);
@@ -87,7 +89,6 @@ async test "a coordinator that restarts carries on with its job, from its snapsh
         Assert(await again.Done(Small(id, worker)));
     }
     let done = await again.Status();
-    await second.StopAsync();
     Assert(!done.running);
     let expected = Combine(Enumerable.Range(0, 60).Select(id => Simulate(50, ChunkSeed(4, id))));
     AssertEqual(expected.var99, done.history.Single().valuation.var99);

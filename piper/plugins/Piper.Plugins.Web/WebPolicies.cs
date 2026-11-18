@@ -28,6 +28,9 @@ public sealed partial class WebPlugin
 
         /// <summary>OpenAPI's tags: not a policy, so no `policies` block declares them and they need no middleware.</summary>
         Tags,
+
+        /// <summary>`idempotent`: not a policy either; its middleware is every server's (PiperIdempotency.Use).</summary>
+        Idempotency,
     }
 
     private static readonly Dictionary<string, Concern> PolicyWords = new()
@@ -38,6 +41,7 @@ public sealed partial class WebPlugin
         ["cors"] = Concern.Cors,
         ["cache"] = Concern.Cache,
         ["tags"] = Concern.Tags,
+        ["idempotent"] = Concern.Idempotency,
     };
 
     /// <summary>How each concern's policies are described in messages.</summary>
@@ -48,6 +52,7 @@ public sealed partial class WebPlugin
         [Concern.Cors] = "CORS",
         [Concern.Cache] = "output cache",
         [Concern.Tags] = "OpenAPI tag",
+        [Concern.Idempotency] = "idempotency",
     };
 
     /// <summary>A policy word and the policy names after it: <c>authorize "admin", "owner"</c>, or <c>ratelimit off</c>.</summary>
@@ -91,7 +96,7 @@ public sealed partial class WebPlugin
                 p.ReadWord();
                 off = true;
             }
-            else if (word.Text != "anonymous" && p.Current.Kind is TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral)
+            else if (word.Text is not ("anonymous" or "idempotent") && p.Current.Kind is TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral)
             {
                 names.Add(PolicyNameLiteral(p));
                 while (word.Text is "authorize" or "tags" && p.Current.Kind == TokenKind.Comma)
@@ -161,6 +166,7 @@ public sealed partial class WebPlugin
                 "ratelimit" => $"{RateLimitConventions}.RequireRateLimiting",
                 "cors" => $"{CorsConventions}.RequireCors",
                 "tags" => $"{OpenApiConventions}.WithTags",
+                "idempotent" => "Piper.Web.PiperIdempotency.Idempotent",
                 _ => $"{CacheConventions}.CacheOutput",
             };
             endpoint = p.Template.Expression($"{call}($arguments)", ("arguments", new List<ExpressionSyntax> { endpoint }.Concat(word.Names).ToList()));
@@ -170,7 +176,7 @@ public sealed partial class WebPlugin
 
     /// <summary>The named policies <paramref name="words"/> use, for the analysis.</summary>
     private static IEnumerable<PolicyName> NamesUsed(IEnumerable<PolicyWord> words) =>
-        words.Where(w => w.Concern != Concern.Tags).SelectMany(w => w.Names.Select(n => new PolicyName(w.Concern, (string)n.Value!, n.Literal)));
+        words.Where(w => w.Concern is not (Concern.Tags or Concern.Idempotency)).SelectMany(w => w.Names.Select(n => new PolicyName(w.Concern, (string)n.Value!, n.Literal)));
 
     /// <summary>
     /// policies   = "policies" IDENT "{" { policy } "}" ;
@@ -209,7 +215,7 @@ public sealed partial class WebPlugin
         while (p.Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
         {
             var word = p.Current;
-            if (word.Kind != TokenKind.Identifier || !PolicyWords.TryGetValue(word.Text, out var concern) || word.Text == "anonymous")
+            if (word.Kind != TokenKind.Identifier || !PolicyWords.TryGetValue(word.Text, out var concern) || word.Text is "anonymous" or "tags" or "idempotent")
             {
                 p.Report(word.Span, "Expected 'authorize', 'ratelimit', 'cors' or 'cache', each declaring a policy.");
                 SkipClause(p);
