@@ -292,14 +292,41 @@ public sealed class PiperLanguageServer
     private async Task PublishAsync(string path)
     {
         var analysis = _workspace.Analyze(path);
+        var root = Workspace.ProgramRoot(path);
+        var problem = ProjectProblem(root);
         foreach (var source in analysis.Sources)
         {
             // Other files of the program get diagnostics too, but only open ones keep them published.
             var diagnostics = analysis.Diagnostics.Where(d => d.Source == source).ToList();
+            // A piper.json that couldn't be loaded whole explains errors here, so each file says so, where it's seen.
+            if (problem is not null && root is not null && Workspace.Normalize(source.FileName).StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                diagnostics.Insert(0, new Diagnostic("PIP0408", DiagnosticSeverity.Warning, new TextSpan(0, 0), problem) { Source = source });
             if (_workspace.IsOpen(source.FileName) || diagnostics.Count > 0 || _published.Contains(source.FileName))
                 await SendDiagnosticsAsync(source.FileName, diagnostics);
         }
         await PublishProjectAsync(Workspace.ProgramRoot(path));
+    }
+
+    /// <summary>
+    /// What's wrong with the piper.json of the program in <paramref name="root"/>, said for its code's files: errors in
+    /// it (a plugin this piper doesn't know, say) leave out what it couldn't load, so code needing that shows errors that
+    /// aren't really its own. Null if nothing's wrong. A plugin it doesn't know is most often a newer one than the copy of
+    /// piper running the editor has, which is worth saying.
+    /// </summary>
+    private string? ProjectProblem(string? root)
+    {
+        var errors = _workspace.ProjectOf(root).Errors.Where(e => e.Severity == DiagnosticSeverity.Error).ToList();
+        if (errors.Count == 0)
+            return null;
+        var said = $"This program's piper.json has {(errors.Count == 1 ? "a problem" : $"{errors.Count} problems")}, so code needing what it " +
+                   $"couldn't load shows errors here that aren't its own: {errors[0].Message}";
+        if (errors.Any(e => e.Message.Contains("isn't one that comes with piper", StringComparison.Ordinal)))
+        {
+            var version = typeof(Compilation).Assembly.GetName().Version;
+            said += $" The editor's language server is piper {version} ({Environment.ProcessPath}): if this program's plugins come with a newer " +
+                    "piper, update the tool (dotnet tool update -g Piper), or point the piper.server.path setting at the newer one.";
+        }
+        return said;
     }
 
     /// <summary>

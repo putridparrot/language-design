@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Workflow versions:** `workflow Fulfil version 2 { … }` beside the old code kept as `workflow FulfilV1 as Fulfil
+  version 1 { … }` (`as` names the workflow it's a version of). Each instance records the version it started on
+  (`StepsAsync` shows `started Fulfil version 2`); new ones start on the latest registered
+  (`WorkflowEngine.LatestVersion`), and each replays on its own (`Register(type, version, body)`); one whose version
+  isn't registered is left waiting, not failed, with a message saying which to keep. Each version has its own shape
+  (`Fulfil.shape.json` for 1, `Fulfil.v2.shape.json` for 2), and the replay-breaking error suggests a new version.
+
+- **Fixed, in the editor: one unknown plugin no longer breaks everything.** A piper.json naming a plugin the copy of
+  piper running the language server doesn't have (a newer one, as the installed tool lagged this repository's) made
+  the whole project fail to load, so no plugin or package was loaded and every keyword and type showed an error, with
+  the reason only in piper.json. The editor now loads the project leniently (`LoadedProject.Load(…, lenient: true)`):
+  the other plugins load, and each of the program's files has a warning (PIP0408) saying what piper.json couldn't
+  load, and for an unknown plugin which piper the server is and to update it. Builds still fail on it.
+
 - **`deploy` (Kubernetes manifests):** the new deploy plugin's `deploy Name [to "path"] { … }` says how a program runs
   on Kubernetes: `role`s (each a Deployment: `replicas`, `args` with `pod.ip`/`pod.name` from the downward API,
   `port … [public [n]] [service]`, `health … ready …` probes, `env X = "…" | secret "s" "k" | pod.ip`, `stopping`,

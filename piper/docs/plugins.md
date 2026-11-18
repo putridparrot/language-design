@@ -2036,6 +2036,13 @@ consumer Payments(engine: WorkflowEngine) {                                 // a
   removed or moved before others ("step 1: activity shop.Charge is gone or has moved, but instances already running
   recorded it there"), a new input they weren't started with, another result. A step added after the others, or an
   optional input, is fine. `--accept-breaking` records a deliberate one, for when no instances are running.
+- **Versions:** a change running instances couldn't replay is a new version, with the old code kept for them:
+  `workflow Fulfil version 2 { … }` is the new code, and `workflow FulfilV1 as Fulfil version 1 { … }` the old (`as`
+  names the workflow it's a version of), both registered. Each instance records the version it started on, new ones
+  start on the latest registered, and each replays on its own; one whose version isn't registered is left waiting
+  (another process may have it), not failed. Each version has its own shape (`Fulfil.shape.json` for 1,
+  `Fulfil.v2.shape.json` for 2), so the old code kept unchanged still matches. Drop the old version once none of its
+  instances are left.
   [apps/orders](../apps/orders/README.md) is a service on workflows: an order's fulfilment, waiting for its payment.
 - **Changed code:** a replay asking for another step than the history has (the code changed while an instance was
   running) fails the instance, saying which step, what it asked for and what the history has.

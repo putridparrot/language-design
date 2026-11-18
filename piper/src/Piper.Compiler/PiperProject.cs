@@ -187,8 +187,17 @@ public sealed record LoadedProject(PiperProject Project, ImmutableArray<IPiperPl
     /// <c>piper plugin add</c>, and shared frameworks. The rest is left out and reported as a warning.
     /// </param>
     /// <param name="runtime">The platform native libraries are for (<c>linux-x64</c>), when it isn't this machine: publishing for a container.</param>
-    public static (LoadedProject? Project, ImmutableArray<Diagnostic> Errors) Load(string directory, bool trusted = true, string? runtime = null)
+    public static (LoadedProject? Project, ImmutableArray<Diagnostic> Errors) Load(string directory, bool trusted = true, string? runtime = null) =>
+        Load(directory, trusted, runtime, lenient: false);
+
+    /// <summary>
+    /// The same; with <paramref name="lenient"/>, a plugin that can't be loaded (one this piper doesn't know, as an older
+    /// copy of the tool running the editor wouldn't) is reported but the rest are loaded, and the project returned with
+    /// the errors, so the editor still understands the code that doesn't use it, rather than none of it.
+    /// </summary>
+    public static (LoadedProject? Project, ImmutableArray<Diagnostic> Errors) Load(string directory, bool trusted, string? runtime, bool lenient)
     {
+        var unloaded = new List<Diagnostic>();
         var path = Path.Combine(directory, PiperProject.FileName);
         var source = new SourceText(File.ReadAllText(path), path);
         var (project, errors) = PiperProject.Parse(source);
@@ -211,7 +220,11 @@ public sealed record LoadedProject(PiperProject Project, ImmutableArray<IPiperPl
             var named = trusted ? each.Plugins : [.. each.Plugins.Where(PluginLoader.IsBundledName)];
             var (loadedPlugins, pluginErrors) = PluginLoader.Load(folder, named, eachSource);
             if (!pluginErrors.IsEmpty)
-                return (null, pluginErrors);
+            {
+                if (!lenient)
+                    return (null, pluginErrors);
+                unloaded.AddRange(pluginErrors);
+            }
             // Plugins are loaded once per assembly, so a plugin two projects name is the same one.
             pluginBuilder.AddRange(loadedPlugins.Where(p => !pluginBuilder.Contains(p) && !pluginBuilder.Any(q => q.Name == p.Name)));
             if (!trusted)
@@ -245,7 +258,7 @@ public sealed record LoadedProject(PiperProject Project, ImmutableArray<IPiperPl
                 $"This folder isn't trusted, so the editor hasn't loaded what could run code from it: {string.Join(", ", skipped)}. " +
                 "Code using them shows errors until you trust the folder (in VS Code: Manage Workspace Trust).") { Source = source },
         ];
-        return (new LoadedProject(project, plugins, references) { Warnings = warnings, SharedFolders = [.. shared.Select(s => s.Folder)] }, []);
+        return (new LoadedProject(project, plugins, references) { Warnings = warnings, SharedFolders = [.. shared.Select(s => s.Folder)] }, [.. unloaded]);
     }
 
     /// <summary>

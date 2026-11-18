@@ -693,6 +693,31 @@ public sealed class LanguageServerTests : IDisposable
         Assert.Equal(PiperLanguageServer.UriOf(project), _notifications[^1]["params"]!["uri"]!.GetValue<string>());
     }
 
+    /// <summary>
+    /// A piper.json naming a plugin this piper doesn't know (one newer than the copy of the tool running the editor) still
+    /// has its other plugins loaded, so code using them is understood; and the program's files say why code needing the
+    /// missing one shows errors, rather than every keyword and type failing with no word of piper.json.
+    /// </summary>
+    [Fact]
+    public async Task A_plugin_the_editor_doesnt_know_leaves_the_others_working_and_says_so()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_directory, "piper.json"), """{ "plugins": ["state-machines", "no-such-plugin"] }""");
+        await OpenAsync("""
+            statemachine Door {
+                state Closed { on Open() => Opened; }
+                state Opened;
+            }
+            fn Main() { let door = Door(); door.Open(); }
+            """);
+        var mine = _notifications.Last(n => n["params"]!["uri"]!.GetValue<string>().EndsWith(".piper", StringComparison.Ordinal));
+        var diagnostic = Assert.Single(mine["params"]!["diagnostics"]!.AsArray())!;
+        Assert.Equal("PIP0408", diagnostic["code"]!.GetValue<string>());
+        var message = diagnostic["message"]!.GetValue<string>();
+        Assert.Contains("no-such-plugin", message);
+        Assert.Contains("The editor's language server is piper", message);
+        Assert.Contains("dotnet tool update -g Piper", message);
+    }
+
     [Fact]
     public async Task Serves_framed_json_rpc_over_streams()
     {

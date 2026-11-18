@@ -46,7 +46,7 @@ public sealed class WorkflowEngine : IAsyncDisposable
     private const string Index = "Workflows";
 
     private readonly IEventStore _store;
-    private readonly ConcurrentDictionary<string, Registered> _definitions = new();
+    private readonly ConcurrentDictionary<(string Type, int Version), Registered> _definitions = new();
     private readonly ConcurrentDictionary<string, Running> _running = new();
     private readonly CancellationTokenSource _stopping = new();
     private readonly PiperRuntime _runtime = PiperRuntime.Current;
@@ -58,12 +58,27 @@ public sealed class WorkflowEngine : IAsyncDisposable
     /// the code an instance's history is replayed against, so a change to it must keep instances already running on
     /// the same path (or wait for them to finish).
     /// </summary>
-    public void Register<TInput, TResult>(string type, Func<WorkflowContext, TInput, Task<TResult>> body)
+    public void Register<TInput, TResult>(string type, Func<WorkflowContext, TInput, Task<TResult>> body) => Register(type, 1, body);
+
+    /// <summary>
+    /// Declares version <paramref name="version"/> of the workflow <paramref name="type"/>. Several versions can be
+    /// registered at once: an instance is started on the latest, and replayed on the version it started on, so code
+    /// that changed in a way running instances couldn't replay is a new version, with the old kept for them until they
+    /// finish (the plugin's <c>workflow FulfilV1 as Fulfil version 1</c>).
+    /// </summary>
+    public void Register<TInput, TResult>(string type, int version, Func<WorkflowContext, TInput, Task<TResult>> body)
     {
-        if (!_definitions.TryAdd(type, new Registered(
+        if (version < 1)
+            throw new ArgumentOutOfRangeException(nameof(version), "A workflow's versions count from 1.");
+        if (!_definitions.TryAdd((type, version), new Registered(
                 async (context, input) => JsonSerializer.Serialize(await body(context, JsonSerializer.Deserialize<TInput>(input, Json)!), Json))))
-            throw new InvalidOperationException($"There's already a workflow called '{type}'.");
+            throw new InvalidOperationException($"There's already a workflow called '{type}'{(version > 1 ? $", version {version}" : "")}.");
     }
+
+    /// <summary>The latest version of <paramref name="type"/> registered here: what new instances start on.</summary>
+    public int LatestVersion(string type) => _definitions.Keys.Where(k => k.Type == type).Select(k => k.Version).DefaultIfEmpty(0).Max() is > 0 and var latest
+        ? latest
+        : throw new InvalidOperationException($"There's no workflow called '{type}': Register it first.");
 
     /// <summary>
     /// Starts an instance of <paramref name="type"/> called <paramref name="id"/> with <paramref name="input"/>, unless
@@ -72,14 +87,14 @@ public sealed class WorkflowEngine : IAsyncDisposable
     /// </summary>
     public async Task StartAsync<TInput>(string type, string id, TInput input)
     {
-        Definition(type);
+        var version = LatestVersion(type);
         var stream = Stream(type, id);
         if ((await _store.LoadAsync(stream)).Count == 0)
         {
             try
             {
                 await _store.AppendAsync(stream, 0, [Event(new HistoryEvent("started", Name: type, Json: JsonSerializer.Serialize(input, Json),
-                    At: _runtime.UtcNow))]);
+                    At: _runtime.UtcNow, Version: version))]);
                 await IndexAsync("started", type, id);
             }
             catch (EventStreamConflictException)
@@ -108,7 +123,7 @@ public sealed class WorkflowEngine : IAsyncDisposable
                 ended.Add((entry.Type, entry.Id));
         }
         var resumed = 0;
-        foreach (var (type, id) in started.Where(s => !ended.Contains(s) && _definitions.ContainsKey(s.Type)))
+        foreach (var (type, id) in started.Where(s => !ended.Contains(s) && _definitions.Keys.Any(k => k.Type == s.Type)))
         {
             Run(type, id);
             resumed++;
@@ -181,11 +196,20 @@ public sealed class WorkflowEngine : IAsyncDisposable
         var history = await HistoryAsync(type, id);
         if (history is [] || history[^1].Kind is "completed" or "failed")
             return;
+        // Replayed on the version it started on (1 for one started before versions were recorded). Without that version
+        // here, it's left as it is, not failed: another process may have it, or this one may again once it's put back.
+        var version = history[0].Version ?? 1;
+        if (!_definitions.TryGetValue((type, version), out var definition))
+        {
+            Console.Error.WriteLine($"Piper.Workflows: {type} '{id}' started on version {version}, which isn't registered here, so it's left " +
+                                    $"waiting. Register that version (keep its code as `workflow {type}V{version} as {type} version {version}`) to finish it.");
+            return;
+        }
         var context = new WorkflowContext(this, type, id, history, _runtime, _stopping.Token);
         HistoryEvent outcome;
         try
         {
-            var result = await Definition(type).Body(context, history[0].Json!);
+            var result = await definition.Body(context, history[0].Json!);
             context.Finished();
             outcome = new HistoryEvent("completed", Json: result, At: _runtime.UtcNow);
         }
@@ -237,10 +261,6 @@ public sealed class WorkflowEngine : IAsyncDisposable
             }
         }
     }
-
-    private Registered Definition(string type) => _definitions.TryGetValue(type, out var definition)
-        ? definition
-        : throw new InvalidOperationException($"There's no workflow called '{type}': Register it first.");
 
     private static string Stream(string type, string id) => $"Workflow/{type}/{id}";
 
@@ -348,11 +368,12 @@ public enum WorkflowStatus
 /// One step of a workflow's history: <c>started</c> (its input), <c>activity</c> (a result) or <c>activityFailed</c>,
 /// <c>timer</c> (when it's due) and <c>fired</c>, <c>recorded</c> (a value), and <c>completed</c> or <c>failed</c>.
 /// </summary>
-internal sealed record HistoryEvent(string Kind, int Step = 0, string? Name = null, string? Json = null, string? Error = null, DateTime? At = null, int? Index = null)
+internal sealed record HistoryEvent(
+    string Kind, int Step = 0, string? Name = null, string? Json = null, string? Error = null, DateTime? At = null, int? Index = null, int? Version = null)
 {
     public override string ToString() => Kind switch
     {
-        "started" => $"started {Name} with {Json}",
+        "started" => $"started {Name}{(Version is > 1 ? $" version {Version}" : "")} with {Json}",
         "activity" => $"{Step}: {Name} gave {Json}",
         "activityFailed" => $"{Step}: {Name} failed: {Error}",
         "timer" => $"{Step}: waiting until {At:yyyy-MM-dd HH:mm:ss}",

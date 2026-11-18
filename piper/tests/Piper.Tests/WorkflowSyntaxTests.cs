@@ -276,6 +276,115 @@ public class WorkflowSyntaxTests
         }
     }
 
+    private const string Versions = """
+        /// The old code, kept for the instances started on it.
+        workflow FulfilV1 as Fulfil version 1 (shop: Shop) {
+            start (order: Order) => string {
+                activity payment = shop.Charge(order);
+                timer TimeSpan.FromDays(1);
+                $"v1: {payment}"
+            }
+        }
+
+        /// The new code: a step before the others, which instances started on version 1 couldn't replay.
+        workflow Fulfil version 2 (shop: Shop) {
+            start (order: Order) => string {
+                activity shipped = shop.Ship(order.id);
+                activity payment = shop.Charge(order);
+                timer TimeSpan.FromDays(1);
+                $"v2: {payment}, shipped {shipped}"
+            }
+        }
+
+        """;
+
+    /// <summary>
+    /// Versions: an instance started on version 1 finishes on version 1's code, kept beside version 2, which new ones
+    /// start on; an engine without the version an instance started on leaves it waiting, rather than failing it.
+    /// </summary>
+    [Fact]
+    public void Instances_replay_on_the_version_they_started_on()
+    {
+        var result = Compile(Shop + Versions + """
+            async fn Upgrade(sim: PiperSimulation) => Task<string> {
+                let store = MemoryEventStore();
+                let shop = Shop();
+                // The program before: version 1 alone.
+                let before = WorkflowEngine(store);
+                FulfilV1(shop).Register(before);
+                await Fulfil.Start(before, "old", Order("old", 10m));
+                await sim.Delay(TimeSpan.FromHours(1));
+                await before.DisposeAsync();
+
+                // The program after: both versions.
+                let after = WorkflowEngine(store);
+                FulfilV1(shop).Register(after);
+                Fulfil(shop).Register(after);
+                await after.ResumeAsync();
+                await Fulfil.Start(after, "new", Order("new", 20m));
+                let old = await Fulfil.Outcome(after, "old");
+                let fresh = await Fulfil.Outcome(after, "new");
+                let started = (await after.StepsAsync("Fulfil", "new"))[0];
+                await after.DisposeAsync();
+
+                // Elsewhere, an instance started on version 1, then a program with version 2 alone: it's left as it was.
+                let elsewhere = MemoryEventStore();
+                let first = WorkflowEngine(elsewhere);
+                FulfilV1(shop).Register(first);
+                await Fulfil.Start(first, "stranded", Order("stranded", 5m));
+                await sim.Delay(TimeSpan.FromHours(1));
+                await first.DisposeAsync();
+                let only = WorkflowEngine(elsewhere);
+                Fulfil(shop).Register(only);
+                await only.ResumeAsync();
+                await sim.Delay(TimeSpan.FromDays(2));
+                let stranded = await only.StatusAsync("Fulfil", "stranded");
+                await only.DisposeAsync();
+                $"{old} | {fresh} | {started} | {stranded}"
+            }
+
+            fn Main() {
+                Print(PiperSimulation.Run(1, Upgrade));
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors) + "\n" + run.Output);
+        // "stranded" is left waiting by the engine without its version: Running, not Failed.
+        Assert.Equal("v1: pay-old | v2: pay-new, shipped True | started Fulfil version 2 with {\"order\":{\"id\":\"new\",\"total\":20}} | Running\n",
+            run.Output.Replace("\r\n", "\n"));
+    }
+
+    /// <summary>Each version has its own shape: version 1 kept unchanged still matches Fulfil.shape.json, and version 2 is new.</summary>
+    [Fact]
+    public void Each_version_has_its_own_shape()
+    {
+        var folder = Directory.CreateTempSubdirectory("piper-versions").FullName;
+        try
+        {
+            CompilationResult CompileIn(string text)
+            {
+                var path = Path.Combine(folder, "orders.piper");
+                File.WriteAllText(path, text);
+                return Compilation.Compile([new SourceText(text, path)],
+                    new CompilationOptions { Plugins = Plugins.Value.Plugins, References = Plugins.Value.References, WireShapes = Piper.Plugins.WireShapeMode.Record });
+            }
+            var version1 = Versions[..Versions.IndexOf("/// The new code", StringComparison.Ordinal)].Replace("workflow FulfilV1 as Fulfil version 1", "workflow Fulfil");
+            Assert.True(CompileIn(Shop + version1 + "fn Main() {}").Success);
+            Assert.True(File.Exists(Path.Combine(folder, "Fulfil.shape.json")));
+
+            // The upgrade: the old code kept as version 1 (its shape unchanged), the new as version 2.
+            var upgraded = CompileIn(Shop + Versions + "fn Main() {}");
+            Assert.True(upgraded.Success, string.Join("\n", upgraded.FormattedDiagnostics));
+            Assert.Contains("\"1: activity shop.Ship\"", File.ReadAllText(Path.Combine(folder, "Fulfil.v2.shape.json")));
+            Assert.Contains("\"1: activity shop.Charge\"", File.ReadAllText(Path.Combine(folder, "Fulfil.shape.json")));
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
     [Fact]
     public void What_could_differ_when_a_workflow_is_replayed_is_an_error_where_its_written()
     {

@@ -388,8 +388,9 @@ finishing it), container publishing, and hosted workers; and of actor clustering
      sagas, a consumer passing a message on as a signal;
    - ~~a real app on them~~, done: [apps/orders](../apps/orders/README.md), an order's fulfilment waiting for its payment,
      and so is ~~the compatibility check for a workflow's code~~ (its input, result and steps in order recorded in
-     `Name.shape.json`; a step inserted or moved before others is an error). Still to come: a version that runs old
-     instances on the code they started with, beside new ones on the new.
+     `Name.shape.json`; a step inserted or moved before others is an error), and so are ~~versions~~ (`workflow Fulfil
+     version 2`, the old kept as `workflow FulfilV1 as Fulfil version 1`; each instance replays on the version it
+     started on). Still to come: seeing which versions still have instances running, to know when an old one can go.
 
 More, around the services themselves:
 

@@ -139,7 +139,7 @@ public static class WireShapes
             if (newCalls[key] is not JsonObject newCall)
             {
                 breaks.Add(replayed
-                    ? $"step {key} is gone or has moved, but {callers} recorded it there, and would replay differently; finish them first, or add new steps after the old ones"
+                    ? $"step {key} is gone or has moved, but {callers} recorded it there, and would replay differently; add new steps after the old ones, or make this a new version (`version 2`), keeping the old code for them (`workflow FulfilV1 as Fulfil version 1`)"
                     : $"nothing answers {(name == key ? key : $"{key} ({name})")} any more, but {callers} still send it");
                 continue;
             }

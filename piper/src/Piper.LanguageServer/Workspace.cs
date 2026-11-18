@@ -152,8 +152,8 @@ public sealed class Workspace
         {
             if (!File.Exists(Path.Combine(root, PiperProject.FileName)))
                 return ([], ProgramReferences.None, []);
-            var (project, errors) = LoadedProject.Load(root, Trusted);
-            return project is null ? ([], ProgramReferences.None, errors) : (project.Plugins, project.References, project.Warnings);
+            var (project, errors) = LoadedProject.Load(root, Trusted, null, lenient: true);
+            return project is null ? ([], ProgramReferences.None, errors) : (project.Plugins, project.References, [.. project.Warnings, .. errors]);
         }
         catch (IOException)
         {

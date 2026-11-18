@@ -55,6 +55,8 @@ public sealed class WorkflowsPlugin : IPiperPlugin
             Words = new Dictionary<string, string>
             {
                 ["start"] = "The workflow's code, given its input (the parameters, saved with it) and answering its result. `flow` is its context.",
+                ["as"] = "The workflow's name in the store, when this class keeps an older version of it: `workflow FulfilV1 as Fulfil version 1 { … }`, beside the new `workflow Fulfil version 2`.",
+                ["version"] = "Which version of the workflow this is (1 without it). New instances start on the latest registered; each replays on the one it started on. A change running instances couldn't replay is a new version, the old kept (`as`) until they've finished.",
             },
         },
         new StatementKeyword("activity", Activity)
@@ -76,6 +78,26 @@ public sealed class WorkflowsPlugin : IPiperPlugin
     private static IEnumerable<DeclarationSyntax> Workflow(PluginParser p)
     {
         var name = p.Expect(TokenKind.Identifier);
+        // `as Fulfil`: the workflow's name in the store, when this class keeps an older version of it (`FulfilV1`).
+        var label = name;
+        if (p.AtWord("as"))
+        {
+            p.ReadWord();
+            label = p.Expect(TokenKind.Identifier);
+        }
+        // `version 2`: which version of it this is; instances replay on the version they started on.
+        var version = 1;
+        if (p.AtWord("version"))
+        {
+            p.ReadWord();
+            if (p.Current is { Kind: TokenKind.IntegerLiteral, Value: int number } && number >= 1)
+            {
+                version = number;
+                p.NextToken();
+            }
+            else
+                p.Report(p.Current.Span, "A workflow's version is a whole number from 1: `version 2`.");
+        }
         var dependencies = Parameters(p);
         p.Expect(TokenKind.OpenBrace);
         if (!p.AtWord("start"))
@@ -98,7 +120,7 @@ public sealed class WorkflowsPlugin : IPiperPlugin
             _inWorkflow--;
         }
         p.Expect(TokenKind.CloseBrace);
-        p.Data = new WorkflowData(name, Steps(body));
+        p.Data = new WorkflowData(name, label.Text, version, Steps(body));
 
         // The input arrives as a record, `FulfilStart(order)`, saved with the workflow; its fields are its parameters again.
         var input = new Token(TokenKind.Identifier, name.Span, name.Text + "Start");
@@ -119,7 +141,7 @@ public sealed class WorkflowsPlugin : IPiperPlugin
 
                 /// Makes `engine` run $name workflows with these dependencies.
                 fn Register(engine: {{Engine}}) {
-                    engine.Register<$input, $result>($label, (flow, input) => Run(flow, input));
+                    engine.Register<$input, $result>($label, {{version}}, (flow, input) => Run(flow, input));
                 }
 
                 /// Starts a $name workflow called `id`, unless one is already there.
@@ -137,7 +159,7 @@ public sealed class WorkflowsPlugin : IPiperPlugin
             """,
             ("name", name), ("input", input), ("inputs", inputs), ("dependencies", dependencies), ("result", result),
             ("statements", statements), ("trailing", (object?)body.Trailing ?? Array.Empty<StatementSyntax>()),
-            ("label", Text(name.Span, name.Text)), ("arguments", arguments));
+            ("label", Text(label.Span, label.Text)), ("arguments", arguments));
     }
 
     /// <summary>
@@ -183,7 +205,7 @@ public sealed class WorkflowsPlugin : IPiperPlugin
     }
 
     /// <summary>What a workflow noted as it was read: its name, and its steps, in the order they're written.</summary>
-    private sealed record WorkflowData(Token Name, List<string> Steps);
+    private sealed record WorkflowData(Token Name, string Label, int Version, List<string> Steps);
 
     /// <summary>
     /// The workflow's steps as its code writes them: each call on <c>flow</c> that its history records (an activity, a
@@ -238,7 +260,9 @@ public sealed class WorkflowsPlugin : IPiperPlugin
                 new WireOperation("start", $"start {name}", [.. input.Fields.Select(f => (f.Name, f.Type))], result.ToString(), [result]),
                 .. data.Steps.Select((step, i) => new WireOperation($"{i + 1}: {step}", step, [], null, [])),
             ];
-            analysis.CheckWireShape(expansion.File, data.Name.Span, name, operations, replayed: true);
+            // Each version its own shape: version 1 as `Fulfil.shape.json`, so keeping it unchanged as `FulfilV1` still matches.
+            var shape = data.Version > 1 ? $"{data.Label}.v{data.Version}" : data.Label;
+            analysis.CheckWireShape(expansion.File, data.Name.Span, shape, operations, replayed: true);
         }
     }
 
