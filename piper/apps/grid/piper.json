@@ -3,6 +3,6 @@
   // processes, or as pods in Kubernetes that can be added or removed mid-job. See README.md.
   // `piper test apps/grid` runs its tests, which start a coordinator and workers in one process.
   "name": "grid",
-  "plugins": ["remote-actors", "args", "web", "hosting", "telemetry", "data"],
+  "plugins": ["remote-actors", "args", "web", "hosting", "telemetry", "data", "deploy"],
   "packages": { "Microsoft.EntityFrameworkCore.Sqlite": "10.0.14" }
 }

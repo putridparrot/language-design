@@ -1,0 +1,75 @@
+// The whole service over HTTP, served from memory: stock received, an order placed, its payment's webhook, and the
+// order shipped, through the bus, the payments consumer and the workflow, with SQLite in memory for the stock and the
+// workflows' histories.
+namespace Orders;
+
+using System;
+using System.Net.Http;
+using System.Text;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Data.Sqlite;
+using Piper.Web;
+
+/// A running service for a test, with its own in-memory database (kept alive by `keepAlive`).
+record Running(client: TestClient<WebApplication>, keepAlive: SqliteConnection);
+
+async fn StartOrders() => Task<Running> {
+    let connection = $"Data Source=file:orders-{Guid.NewGuid()}?mode=memory&cache=shared";
+    let keepAlive = SqliteConnection(connection);
+    await keepAlive.OpenAsync();
+    let settings = Settings(connection, 30, "");
+    await Prepare(settings);
+    let client = await TestClient.Start(() => OrdersServer(settings, ""));
+    Running(client, keepAlive)
+}
+
+/// Calls the service, sending `json` if there is any: the status and the body.
+async fn Call(running: Running, method: string, path: string, json: string) => Task<(int, string)> {
+    let request = HttpRequestMessage(HttpMethod(method), path);
+    if json != "" { request.Content = StringContent(json, Encoding.UTF8, "application/json"); }
+    let response = await running.client.SendAsync(request);
+    ((int)response.StatusCode, await response.Content.ReadAsStringAsync())
+}
+
+/// Asks for the order until its workflow has finished (for up to ten seconds): its view.
+async fn Finished(running: Running, id: string) => Task<string> {
+    let deadline = DateTime.UtcNow.AddSeconds(10);
+    mut body = "";
+    while DateTime.UtcNow < deadline {
+        body = (await Call(running, "GET", $"/api/orders/{id}", "")).Item2;
+        if body.Contains("\"status\":\"Completed\"") { break; }
+        await Task.Delay(20);
+    }
+    body
+}
+
+async test "an order placed and paid over HTTP ships, its payment passed on by the bus" {
+    let running = await StartOrders();
+    defer { running.client.Dispose(); running.keepAlive.Dispose(); }
+
+    AssertEqual(200, (await Call(running, "POST", "/api/stock/tea?quantity=5", "")).Item1);
+    let (placed, _) = await Call(running, "POST", "/api/orders", """{"id": "o-1", "sku": "tea", "quantity": 2, "total": 10}""");
+    AssertEqual(202, placed);
+    let (again, _) = await Call(running, "POST", "/api/orders", """{"id": "o-1", "sku": "tea", "quantity": 2, "total": 10}""");
+    AssertEqual(202, again);                                   // placing it again starts nothing new
+
+    let (paid, _) = await Call(running, "POST", "/api/orders/o-1/payment", """{"amount": 10}""");
+    AssertEqual(202, paid);
+    let view = await Finished(running, "o-1");
+    Assert(view.Contains("\"outcome\":\"shipped: TRK-o-1\""), view);
+    Assert(view.Contains("1: inventory.Reserve gave true"), view);
+    Assert(view.Contains("paid came"), view);
+    AssertEqual("3", (await Call(running, "POST", "/api/stock/tea?quantity=0", "")).Item2);   // 5, less the 2 shipped
+
+    AssertEqual(404, (await Call(running, "GET", "/api/orders/o-404", "")).Item1);
+}
+
+async test "an order there isn't the stock for is rejected" {
+    let running = await StartOrders();
+    defer { running.client.Dispose(); running.keepAlive.Dispose(); }
+    let _ = await Call(running, "POST", "/api/stock/tea?quantity=1", "");
+    let _ = await Call(running, "POST", "/api/orders", """{"id": "o-2", "sku": "tea", "quantity": 2, "total": 10}""");
+    let view = await Finished(running, "o-2");
+    Assert(view.Contains("\"outcome\":\"rejected: out of stock\""), view);
+}

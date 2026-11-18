@@ -1,0 +1,49 @@
+{
+  "name": "Fulfil",
+  "calls": {
+    "1: activity inventory.Reserve": {
+      "name": "activity inventory.Reserve",
+      "inputs": {},
+      "output": null
+    },
+    "2: signal paid": {
+      "name": "signal paid",
+      "inputs": {},
+      "output": null
+    },
+    "3: activity inventory.Release": {
+      "name": "activity inventory.Release",
+      "inputs": {},
+      "output": null
+    },
+    "4: activity inventory.Ship": {
+      "name": "activity inventory.Ship",
+      "inputs": {},
+      "output": null
+    },
+    "5: activity inventory.Release": {
+      "name": "activity inventory.Release",
+      "inputs": {},
+      "output": null
+    },
+    "start": {
+      "name": "start Fulfil",
+      "inputs": {
+        "order": "Order"
+      },
+      "output": "string"
+    }
+  },
+  "types": {
+    "Order": {
+      "sent": "request",
+      "kind": "record",
+      "fields": {
+        "id": "string",
+        "sku": "string",
+        "quantity": "int",
+        "total": "decimal"
+      }
+    }
+  }
+}

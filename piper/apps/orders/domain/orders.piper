@@ -1,0 +1,72 @@
+// An order's fulfilment, as a durable workflow: reserve the stock, wait for the payment, then ship, or give the stock
+// back. It can take as long as the payment window (half an hour, or days), surviving restarts meanwhile.
+namespace Orders;
+
+using System;
+using System.Threading.Tasks;
+using Piper.Messaging;
+using Piper.Workflows;
+
+/// An order for `quantity` of one product, costing `total`.
+record Order(id: string, sku: string, quantity: int, total: decimal)
+    requires id.Trim().Length > 0
+    requires quantity > 0
+    requires total >= 0m;
+
+/// What's paid for an order.
+record Payment(amount: decimal);
+
+messages Payments {
+    /// A payment for an order arrived (from a payment provider's webhook, say): passed on to its workflow.
+    event PaymentReceived(orderId: string, amount: decimal) topic "payments" key orderId;
+}
+
+/// Where the stock is kept, and shipments made: what the workflow's activities do.
+trait Inventory {
+    /// Takes `order.quantity` of its product out of what's available, if there's that much: whether there was.
+    fn Reserve(order: Order) => Task<bool>;
+
+    /// Gives a reservation back: the order was cancelled.
+    fn Release(order: Order) => Task;
+
+    /// Ships the reserved stock: its tracking code.
+    fn Ship(order: Order) => Task<string>;
+}
+
+/// An order's fulfilment. Each step with effects is an activity, run once and recorded, so a restart at any point
+/// carries on without reserving or shipping twice; waiting for the payment is durable, for up to `window`.
+workflow Fulfil(inventory: Inventory, window: TimeSpan) {
+    start (order: Order) => string {
+        activity reserved = inventory.Reserve(order);
+        if !reserved {
+            return "rejected: out of stock";
+        }
+        match await flow.Signal<Payment>("paid", window) {
+            Some(payment) => {
+                if payment.amount < order.total {
+                    activity inventory.Release(order);
+                    $"cancelled: paid {payment.amount} of {order.total}"
+                } else {
+                    activity tracking = inventory.Ship(order);
+                    $"shipped: {tracking}"
+                }
+            },
+            None => {
+                activity inventory.Release(order);
+                "cancelled: not paid in time"
+            },
+        }
+    }
+}
+
+/// Passes each payment on to its order's workflow, as the signal it waits for. A payment for an order there isn't is
+/// dead-lettered, to be looked at.
+consumer PaymentsIn(engine: WorkflowEngine) {
+    on PaymentReceived(paid) {
+        if await engine.StatusAsync("Fulfil", paid.orderId) == WorkflowStatus.NotStarted {
+            return Handled.Reject($"There's no order {paid.orderId}.");
+        }
+        await Fulfil.Signal(engine, paid.orderId, "paid", Payment(paid.amount));
+        Handled.Done
+    }
+}

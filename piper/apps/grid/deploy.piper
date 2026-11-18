@@ -1,0 +1,28 @@
+// How grid runs on Kubernetes (AKS, or any other cluster): one coordinator, and workers that can be scaled while a job
+// runs (kubectl scale deployment grid-worker --replicas=6). `piper build`, `run` and `test` write k8s/grid.yaml from
+// this; see README.md for applying it.
+//
+// Workers find the coordinator by its service's name, and tell it their pod's IP address to reply to, so they need no
+// stable names of their own.
+namespace Grid;
+
+deploy Grid to "k8s/grid.yaml" {
+    role coordinator {
+        replicas 1;                                   // one: it holds the jobs
+        recreate;                                     // never two at once
+        args "coordinator", "--host", "grid-coordinator", "--port", "8000", "--http", "8090";
+        port actors 8000 service;                     // grid-coordinator: what the workers ask for work
+        port http 8090 public;                        // grid: the dashboard
+        health "/healthz" ready "/ready";
+        resources cpu "100m" memory "128Mi" limit memory "256Mi";
+    }
+
+    role worker {
+        replicas 3;
+        // What the coordinator replies to, and what the dashboard calls it; one chunk at a time, on one CPU each.
+        args "worker", "--host", pod.ip, "--port", "8000", "--coordinator", "grid-coordinator:8000", "--name", pod.name, "--workers", "1";
+        port actors 8000;
+        stopping 5 seconds;
+        resources cpu "500m" memory "128Mi" limit cpu "1" memory "256Mi";
+    }
+}

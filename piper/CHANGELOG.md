@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+- **`deploy` (Kubernetes manifests):** the new deploy plugin's `deploy Name [to "path"] { … }` says how a program runs
+  on Kubernetes: `role`s (each a Deployment: `replicas`, `args` with `pod.ip`/`pod.name` from the downward API,
+  `port … [public [n]] [service]`, `health … ready …` probes, `env X = "…" | secret "s" "k" | pod.ip`, `stopping`,
+  `resources`, `recreate`, `volume`), `postgres "name" database "db"` (Secret, Service, StatefulSet with a volume), and
+  `image`. `piper build`, `run` and `test` write the manifest (`Name.k8s.yaml`, or `to`), to check in; the editor never
+  does. Checked: unknown clauses, values, two public roles, a volume on several replicas.
+  - apps/stock's and apps/grid's hand-written k8s/*.yaml are now made from their `deploy.piper` (the same resources,
+    labelled with their role too); apps/orders has one (a volume for its SQLite database), and its address is a
+    setting (`Orders:Urls`), so its published image runs in a container: run with the manifest's settings, an order
+    placed and paid through it shipped.
+
+- **Fixed: a package redefining one of .NET's public types** made calls to .NET's ambiguous in the generated C#, an
+  internal compiler error: `dict.GetValueOrDefault(key)` in a program using EF Core, whose
+  Microsoft.Extensions.DependencyModel has its own public `System.Collections.Generic.CollectionExtensions`. Such a
+  package is now referenced by an extern alias (as two packages declaring one type already were), .NET's own keeping
+  the plain name.
+- **apps/stock's cluster tests are simulated:** the six that ran three nodes in real time with fast heartbeats (and
+  could miss their waits on a busy machine) are `simulate` tests on `SimulatedCluster`, each over several seeds; the
+  load test, which runs real HTTP servers, keeps real nodes.
+
+- **A workflow's changes checked:** its shape (input fields, result, and steps in the order written: `1: activity
+  shop.Charge`, `2: timer`, `3: signal paid`, `recorded now`) is recorded in `Name.shape.json`, and a change instances
+  already running couldn't replay (a step inserted, removed or moved before others; a new required input; another
+  result) is an error saying so; a step added after the others, or an optional input, isn't. `--accept-breaking`
+  records a deliberate one. The shape check (`PluginAnalysis.CheckWireShape(…, replayed: true)`,
+  `WireShapes.Breaking(…, replayed)`) words such breaks for running instances rather than callers.
+- **apps/orders:** an order service on workflows. `workflow Fulfil` reserves the stock, waits for the payment (a
+  `PaymentReceived` message the `PaymentsIn` consumer passes on as a signal) for a configured window, then ships, or
+  releases the stock when it's short or late; idempotent activities over SQLite (EF Core); `workflows engine: Fulfil(…)
+  from Events(connection);`, `bus` and `consume` in its server. Simulated tests (forty runs restarting it at random
+  moments, the stock always adding up) and HTTP tests; and by hand, a process killed while an order waited for its
+  payment, restarted, then paid: it shipped, reserving once.
+  - `workflows name: … from store;` names the engine for the clauses after (`consume PaymentsIn(engine);`).
+
 - **Workflows in a server or host:** `workflows Fulfil(shop), Returns(shop) from store;` makes a `WorkflowEngine` over
   the store, registers each workflow with its dependencies, registers the engine for handlers to start them, resumes
   the unfinished as the app starts, and stops them as it stops (`WorkflowEngine.RunUntil`). Given twice, an error.

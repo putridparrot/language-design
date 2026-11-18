@@ -5,7 +5,7 @@
   // events (a persisted actor), in a store the nodes share, chosen by configuration (the data plugin's
   // DatabaseEventStore): PostgreSQL deployed, SQLite or memory locally.
   "name": "stock",
-  "plugins": ["remote-actors", "args", "web", "telemetry", "data"],
+  "plugins": ["remote-actors", "args", "web", "telemetry", "data", "deploy"],
   "packages": {
     "Microsoft.EntityFrameworkCore.Sqlite": "10.0.14",
     "Npgsql.EntityFrameworkCore.PostgreSQL": "10.0.3"

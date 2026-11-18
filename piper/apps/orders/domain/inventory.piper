@@ -1,0 +1,122 @@
+// Where the stock is: a database (SQLite locally) with each product's stock, the reservations held for orders, and
+// the shipments made; and the same in memory, for the tests. Each operation is idempotent for its order, as an
+// activity may run twice (interrupted after it ran, before its result was recorded).
+namespace Orders;
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using Piper.Data;
+
+record StockLevel(sku: string, available: int);
+record Reservation(orderId: string, sku: string, quantity: int);
+record Shipment(orderId: string, tracking: string);
+
+database Warehouse {
+    table Stock: StockLevel key sku;
+    table Reservations: Reservation key orderId;
+    table Shipments: Shipment key orderId;
+}
+
+/// The warehouse's database: `connection`, a SQLite connection string.
+fn OpenWarehouse(connection: string) => Warehouse =
+    Warehouse(DbContextOptionsBuilder<Warehouse>().UseSqlite(connection).Options);
+
+/// The stock in the warehouse's database, each operation in a transaction of its own.
+class WarehouseInventory(connection: string): Inventory {
+    async fn Reserve(order: Order) => Task<bool> {
+        using let db = OpenWarehouse(connection);
+        using let transaction = await db.Database.BeginTransactionAsync();
+        if await db.Reservations.AnyAsync(r => r.orderId == order.id) {
+            return true;                                         // reserved already: this is a retry
+        }
+        let taken = await db.ExecuteAsync(sql$"update Stock set available = available - {order.quantity} where sku = {order.sku} and available >= {order.quantity}");
+        if taken == 0 {
+            return false;
+        }
+        db.Reservations.Add(Reservation(order.id, order.sku, order.quantity));
+        await db.SaveChangesAsync();
+        await transaction.CommitAsync();
+        true
+    }
+
+    async fn Release(order: Order) => Task {
+        using let db = OpenWarehouse(connection);
+        using let transaction = await db.Database.BeginTransactionAsync();
+        let held = await db.Reservations.FirstOrDefaultAsync(r => r.orderId == order.id);
+        if held is Some(reservation) {
+            let _ = await db.ExecuteAsync(sql$"update Stock set available = available + {reservation.quantity} where sku = {reservation.sku}");
+            db.Reservations.Remove(reservation);
+            await db.SaveChangesAsync();
+            await transaction.CommitAsync();
+        }
+    }
+
+    async fn Ship(order: Order) => Task<string> {
+        using let db = OpenWarehouse(connection);
+        if await db.Shipments.FirstOrDefaultAsync(s => s.orderId == order.id) is Some(shipped) {
+            return shipped.tracking;                             // shipped already: this is a retry
+        }
+        let tracking = $"TRK-{order.id}";
+        db.Shipments.Add(Shipment(order.id, tracking));
+        if await db.Reservations.FirstOrDefaultAsync(r => r.orderId == order.id) is Some(reservation) {
+            db.Reservations.Remove(reservation);
+        }
+        await db.SaveChangesAsync();
+        tracking
+    }
+}
+
+/// Puts `quantity` more of `sku` in stock.
+async fn Receive(connection: string, sku: string, quantity: int) => Task<int> {
+    using let db = OpenWarehouse(connection);
+    match await db.Stock.AsNoTracking().FirstOrDefaultAsync(s => s.sku == sku) {
+        Some(level) => {
+            db.Stock.Update({ ...level, available: level.available + quantity });
+            await db.SaveChangesAsync();
+            level.available + quantity
+        },
+        None => {
+            db.Stock.Add(StockLevel(sku, quantity));
+            await db.SaveChangesAsync();
+            quantity
+        },
+    }
+}
+
+/// The stock in memory: for the tests, which count what each operation did.
+class MemoryInventory(stock: Dictionary<string, int>): Inventory {
+    public let available = stock;
+    public let reserved = Dictionary<string, Order>();
+    public let shipped = Dictionary<string, string>();
+
+    fn Reserve(order: Order) => Task<bool> {
+        if reserved.ContainsKey(order.id) || shipped.ContainsKey(order.id) {
+            return Task.FromResult(true);
+        }
+        if available.GetValueOrDefault(order.sku) < order.quantity {
+            return Task.FromResult(false);
+        }
+        available[order.sku] -= order.quantity;
+        reserved[order.id] = order;
+        Task.FromResult(true)
+    }
+
+    fn Release(order: Order) => Task {
+        if reserved.Remove(order.id) {
+            available[order.sku] += order.quantity;
+        }
+        Task.CompletedTask
+    }
+
+    fn Ship(order: Order) => Task<string> {
+        let tracking = $"TRK-{order.id}";
+        if !shipped.ContainsKey(order.id) {
+            shipped[order.id] = tracking;
+            reserved.Remove(order.id);
+        }
+        Task.FromResult(tracking)
+    }
+}

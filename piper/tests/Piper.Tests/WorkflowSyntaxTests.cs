@@ -215,6 +215,67 @@ public class WorkflowSyntaxTests
         Assert.Equal("held\n", run.Output.Replace("\r\n", "\n"));
     }
 
+    /// <summary>
+    /// A workflow's shape is recorded (Fulfil.shape.json): its input, its result and its steps in order. A change
+    /// instances already running couldn't replay (a step inserted before others, or moved; a new input they weren't
+    /// started with) is an error; a step added after the others, or an optional input, isn't.
+    /// </summary>
+    [Fact]
+    public void A_change_running_instances_couldnt_replay_is_an_error()
+    {
+        var folder = Directory.CreateTempSubdirectory("piper-workflows").FullName;
+        try
+        {
+            CompilationResult CompileIn(string text, Piper.Plugins.WireShapeMode mode)
+            {
+                var path = Path.Combine(folder, "orders.piper");
+                File.WriteAllText(path, text);
+                return Compilation.Compile([new SourceText(text, path)],
+                    new CompilationOptions { Plugins = Plugins.Value.Plugins, References = Plugins.Value.References, WireShapes = mode });
+            }
+            const string Before = """
+                using System;
+                using System.Threading.Tasks;
+                record Order(id: string);
+                class Shop {
+                    fn Charge(id: string) => string = $"pay-{id}";
+                    fn Ship(id: string) => bool = true;
+                }
+                workflow Fulfil(shop: Shop) {
+                    start (order: Order) => string {
+                        activity payment = shop.Charge(order.id);
+                        timer TimeSpan.FromDays(1);
+                        activity shipped = shop.Ship(order.id);
+                        payment
+                    }
+                }
+                fn Main() {}
+                """;
+            Assert.True(CompileIn(Before, Piper.Plugins.WireShapeMode.Record).Success);
+            var shape = File.ReadAllText(Path.Combine(folder, "Fulfil.shape.json"));
+            Assert.Contains("\"1: activity shop.Charge\"", shape);
+            Assert.Contains("\"2: timer\"", shape);
+            Assert.Contains("\"3: activity shop.Ship\"", shape);
+
+            // After the others, or optional: instances replay what they have, then go on.
+            Assert.True(CompileIn(Before.Replace("        payment\n", "        activity shop.Ship(order.id);\n        payment\n"), Piper.Plugins.WireShapeMode.Check).Success);
+            Assert.True(CompileIn(Before.Replace("(order: Order)", "(order: Order, note: string?)"), Piper.Plugins.WireShapeMode.Check).Success);
+
+            // Before them: step 1 is now another.
+            var inserted = CompileIn(Before.Replace("        activity payment = shop.Charge", "        activity checked = shop.Ship(order.id);\n        activity payment = shop.Charge"),
+                Piper.Plugins.WireShapeMode.Check);
+            Assert.Contains(inserted.FormattedDiagnostics, d => d.Contains(
+                "A breaking change to Fulfil: step 1: activity shop.Charge is gone or has moved, but instances already running recorded it there, and would replay differently"));
+            // A new input that instances weren't started with.
+            Assert.Contains(CompileIn(Before.Replace("(order: Order)", "(order: Order, express: bool)"), Piper.Plugins.WireShapeMode.Check).FormattedDiagnostics,
+                d => d.Contains("start Fulfil now needs 'express' (bool), which instances already running don't send"));
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
     [Fact]
     public void What_could_differ_when_a_workflow_is_replayed_is_an_error_where_its_written()
     {

@@ -1,0 +1,79 @@
+# Made by the deploy plugin from `deploy Orders` in deploy.piper, when the program was built: change that,
+# not this. Set the image to yours, then:  kubectl apply -f orders.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders
+  labels:
+    app: orders
+    role: orders
+spec:
+  type: LoadBalancer
+  selector:
+    app: orders
+    role: orders
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: orders-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: orders
+      role: orders
+  template:
+    metadata:
+      labels:
+        app: orders
+        role: orders
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: orders
+          image: REGISTRY/orders:1
+          env:
+            - name: Orders__Urls
+              value: "http://*:8080"
+            - name: Orders__Connection
+              value: "Data Source=/data/orders.db"
+            - name: Orders__PaymentWindowMinutes
+              value: "30"
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              memory: "256Mi"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: orders-data

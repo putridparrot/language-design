@@ -24,6 +24,7 @@
     <Project Path="plugins/Piper.Messaging.RabbitMq/Piper.Messaging.RabbitMq.csproj" />
     <Project Path="plugins/Piper.Plugins.Messaging.RabbitMq/Piper.Plugins.Messaging.RabbitMq.csproj" />
     <Project Path="plugins/Piper.Workflows/Piper.Workflows.csproj" />
+    <Project Path="plugins/Piper.Plugins.Deploy/Piper.Plugins.Deploy.csproj" />
     <Project Path="plugins/Piper.Plugins.Workflows/Piper.Plugins.Workflows.csproj" />
     <Project Path="plugins/Piper.Telemetry/Piper.Telemetry.csproj" />
     <Project Path="plugins/Piper.Actors.Remote/Piper.Actors.Remote.csproj" />

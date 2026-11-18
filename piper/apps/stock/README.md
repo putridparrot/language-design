@@ -115,9 +115,11 @@ The image is built from the `piper` folder, since it compiles the app with this 
 `apps/stock/bin/publish`, a folder ready for `docker build -t stock apps/stock/bin/publish`, built from the compiled
 app with no SDK in the image.
 
-**`piper test apps/stock`** starts a cluster of three nodes in one process, and checks that every node agrees on who
-keeps a product, that a node cut off or stopped has its products served by the others, that reservations from all
-three never oversell, and that the load run through their APIs reserves each unit exactly once.
+**`piper test apps/stock`** runs a cluster of three nodes in a simulation (`simulate` tests: the pings, timeouts and
+messages on a simulated clock and network, each test over several seeds), and checks that every node agrees on who
+keeps a product, that a node cut off or stopped has its products served by the others, and that reservations from all
+three never oversell, even while the run crashes and cuts off nodes as it chooses. One test runs three real nodes, with
+their HTTP APIs, and checks that the load run through them reserves each unit exactly once.
 
 **Stopping it:**
 - **Processes:** Ctrl+C in each terminal.
@@ -196,7 +198,7 @@ Or in PowerShell:
 (Get-Content apps/stock/k8s/stock.yaml) -replace 'REGISTRY/stock:1', 'stockdemoacr.azurecr.io/stock:1' | kubectl apply -f -
 ```
 
-[k8s/stock.yaml](k8s/stock.yaml) makes:
+[k8s/stock.yaml](k8s/stock.yaml), written by each build from [deploy.piper](deploy.piper) (the deploy plugin), makes:
 - **A Deployment of three pods.** Each is given `--host <its pod IP>`, which is how the others reach it, and 30
   seconds to hand its products over when it's stopped. No pod is told about the others.
 - **`stock-db`,** PostgreSQL on a volume of its own, where every node keeps its products' events and its lease in the

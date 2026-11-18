@@ -115,6 +115,32 @@ public class EventStoreTests
     }
 
     /// <summary>
+    /// A package that redefines one of .NET's own public types (EF Core's Microsoft.Extensions.DependencyModel has its
+    /// own System.Collections.Generic.CollectionExtensions) is referenced by an alias, so the generated C# naming .NET's
+    /// (for `GetValueOrDefault`) isn't ambiguous. It was an internal compiler error.
+    /// </summary>
+    [Fact]
+    public void A_package_redefining_a_dotnet_type_doesnt_make_it_ambiguous()
+    {
+        var result = Compilation.Compile([new SourceText("""
+            using System.Collections.Generic;
+            using Microsoft.EntityFrameworkCore;
+
+            fn Main() {
+                let counts = Dictionary<string, int>();
+                counts["tea"] = 3;
+                Print(counts.GetValueOrDefault("tea"));
+                Print(counts.GetValueOrDefault("coffee"));
+            }
+            """, "main.piper")],
+            new CompilationOptions { Plugins = Plugins.Value.Plugins, References = Plugins.Value.References });
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("3\n0\n", run.Output.Replace("\r\n", "\n"));
+    }
+
+    /// <summary>
     /// A provider chosen by configuration: a host's `provider store: IEventStore from "Events";` reads Events:Provider
     /// and its settings (here from a source standing in for appsettings.json or a vault), makes that store and registers
     /// it, so the same program keeps its events in memory, a SQLite file or a cloud database by configuration alone.

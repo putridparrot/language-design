@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The deploy plugin: a `deploy` declaration (the program's roles, their replicas, ports, arguments and settings, and
+    any database), from which `piper build`, `run` and `test` write the Kubernetes manifest beside it, to check in. It
+    adds nothing to the program itself. It's listed in a program's piper.json ("plugins": ["deploy"]).
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!-- One place whatever the configuration, so piper.json files can point at it. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\plugin\</OutDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The compiler loads the plugin, so it provides Piper.Compiler; don't copy it next to the plugin. -->
+    <ProjectReference Include="..\..\src\Piper.Compiler\Piper.Compiler.csproj" Private="false" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+</Project>

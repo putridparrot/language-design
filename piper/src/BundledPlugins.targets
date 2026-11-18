@@ -12,6 +12,7 @@
     <BundledPlugin Include="args" Folder="Piper.Plugins.Args" />
     <BundledPlugin Include="config" Folder="Piper.Plugins.Config" />
     <BundledPlugin Include="data" Folder="Piper.Plugins.Data" />
+    <BundledPlugin Include="deploy" Folder="Piper.Plugins.Deploy" />
     <BundledPlugin Include="hosting" Folder="Piper.Plugins.Hosting" />
     <BundledPlugin Include="messaging" Folder="Piper.Plugins.Messaging" />
     <BundledPlugin Include="remote-actors" Folder="Piper.Plugins.Actors.Remote" />

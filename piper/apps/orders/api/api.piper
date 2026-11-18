@@ -1,0 +1,91 @@
+// The orders service: its settings, its HTTP API, and the server running the workflows and the payments consumer.
+namespace Orders;
+
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Piper.Data;
+using Piper.Messaging;
+using Piper.Runtime;
+using Piper.Workflows;
+
+/// The service's settings, from the "Orders" section of appsettings.json or the environment (Orders__Connection).
+config Settings from "Orders" {
+    connection: string = "Data Source=orders.db";
+    paymentWindowMinutes: int = 30 requires paymentWindowMinutes > 0;
+    urls: string = "http://localhost:5090";          // where it listens: in a container, every interface ("http://*:8080")
+}
+
+/// An order as the API shows it: where its workflow is, how it ended (once it has), and the steps it's taken.
+record OrderView(id: string, status: string, outcome: string?, steps: List<string>);
+
+/// What's paid for an order, as the payment provider's webhook says.
+record PaymentNotice(amount: decimal);
+
+endpoints Api "/api" tags "Orders" {
+    /// Places an order: its fulfilment starts, reserving the stock and waiting for the payment. Placing it again does nothing.
+    post "/orders" async (order: Order, engine: WorkflowEngine) => {
+        await Fulfil.Start(engine, order.id, order);
+        Results.Accepted($"/api/orders/{order.id}")
+    }
+
+    get "/orders/{id}" async (id: string, engine: WorkflowEngine) => await View(engine, id);
+
+    /// The payment provider's webhook: published as a message, which the payments consumer passes on to the order.
+    post "/orders/{id}/payment" async (id: string, notice: PaymentNotice, bus: Bus) => {
+        await bus.Publish(PaymentReceived(id, notice.amount));
+        Results.Accepted()
+    }
+
+    /// Puts more of a product in stock: how much there is now.
+    post "/stock/{sku}" async (sku: string, quantity: int, settings: Settings) => await Receive(settings.connection, sku, quantity);
+}
+
+/// An order's workflow as it stands: None if there's no such order.
+async fn View(engine: WorkflowEngine, id: string) => Task<OrderView?> {
+    let status = await engine.StatusAsync("Fulfil", id);
+    if status == WorkflowStatus.NotStarted {
+        return None;
+    }
+    let outcome = if status == WorkflowStatus.Completed { Some(await Fulfil.Outcome(engine, id)) } else { None };
+    Some(OrderView(id, status.ToString(), outcome, [...await engine.StepsAsync("Fulfil", id)]))
+}
+
+/// Where the workflows' histories are kept: the same database as the stock, so they outlive the process.
+fn Events(connection: string) => IEventStore =
+    DatabaseEventStore.Open(DbContextOptionsBuilder().UseSqlite(connection).Options);
+
+/// The web app, set up but not started: `Main` runs it, and the tests serve it from memory.
+server OrdersServer(settings: Settings, urls: string) {
+    urls urls;
+    logging off;
+    singleton Settings = settings;
+    // Messages over the in-memory transport, unless Messaging:Provider names a broker's (rabbitmq).
+    bus from "Messaging";
+    // The orders' fulfilment, resumed as it starts: an order waiting for its payment when it stopped carries on waiting.
+    workflows engine: Fulfil(WarehouseInventory(settings.connection), TimeSpan.FromMinutes(settings.paymentWindowMinutes)) from Events(settings.connection);
+    consume PaymentsIn(engine);
+    problems;
+    endpoints Api;
+    health "/healthz";
+}
+
+/// Makes the warehouse's tables, if they aren't there.
+async fn Prepare(settings: Settings) {
+    using let db = OpenWarehouse(settings.connection);
+    await db.Database.EnsureCreatedAsync();
+}
+
+async fn Main() {
+    let configuration = ConfigurationBuilder().AddJsonFile(Path.GetFullPath("appsettings.json"), optional: true).AddEnvironmentVariables().Build();
+    let settings = SettingsFrom(configuration);
+    await Prepare(settings);
+    let url = settings.urls;
+    Print($"Orders on {url}");
+    await OrdersServer(settings, url).RunAsync();
+}

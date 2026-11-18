@@ -1292,6 +1292,43 @@ let big = await shop.Orders.Where(o => o.total > 100m).OrderBy(o => o.placed).To
 - **Checked:** a `key` or `index` naming a field its type doesn't have (a class's must be public, as EF Core maps
   properties), and a table declared twice.
 
+### `deploy` (Kubernetes manifests)
+
+[plugins/Piper.Plugins.Deploy](../plugins/Piper.Plugins.Deploy/DeployPlugin.cs) says how a program runs on Kubernetes,
+once, beside its code: its roles (each a Deployment), their replicas, ports, arguments, settings, probes and storage,
+and any database. `piper build`, `run` and `test` write the manifest from it, to check in, as a shape is (the editor
+never writes it), so no app's YAML is written by hand or drifts from the others'.
+
+```piper
+// piper.json: { "plugins": ["deploy"] }
+deploy Stock to "k8s/stock.yaml" {                // without `to`, Stock.k8s.yaml beside this file
+    postgres "stock-db" database "stock";         // its Secret (password, connection), Service and StatefulSet
+    role stock {
+        replicas 3;
+        args "--host", pod.ip;                    // pod.ip, pod.name: the downward API's, wired in
+        port http 8080 public 80;                 // public: a LoadBalancer named as the app (on 80 here)
+        port actors 8000;                         // `service`: a ClusterIP service named as the role, for other pods
+        health "/healthz" ready "/ready";         // liveness and readiness probes, on the http port
+        env Events__Provider = "postgres";
+        env Events__Connection = secret "stock-db" "connection";
+        stopping 30 seconds;                      // terminationGracePeriodSeconds
+        resources cpu "100m" memory "128Mi" limit memory "256Mi";
+    }
+}
+```
+
+- **A role** is a Deployment named as the app (`stock`), or `app-role` (`grid-worker`), labelled with both. `recreate`
+  keeps it to one pod at a time through an update; `volume data "/data" size "1Gi";` gives it a PersistentVolumeClaim
+  mounted there (and needs one replica).
+- **The image** is `REGISTRY/app:1` unless `image "…"` says, to set as the apps' READMEs do (`sed`) or once here.
+- **Checked:** an unknown clause, a value that isn't a string, number, `pod.ip`, `pod.name` or `secret "…" "…"`, two
+  roles with public ports (they'd share the LoadBalancer), and a volume on several replicas.
+- **The image itself:** `piper build --publish` writes the compiled program and its Dockerfile; with a server's
+  address and settings from the environment (`env Orders__Urls = "http://*:8080";`), that image runs as the manifest says.
+  apps/stock, apps/grid and apps/orders deploy so ([apps/orders/deploy.piper](../apps/orders/deploy.piper)).
+- **Not yet:** Docker Compose files (a service per node, as apps/stock's hand-written one has), Aspire's manifest, and
+  reading what the program already knows (its server's health paths, its `config` sections) rather than restating it.
+
 ### `args` (command-line options)
 
 [plugins/Piper.Plugins.Args](../plugins/Piper.Plugins.Args) declares what a program accepts on its command line, as a
@@ -1993,6 +2030,13 @@ consumer Payments(engine: WorkflowEngine) {                                 // a
   instance runs its code from the start: a step already in the history gives its recorded result at once, and a new
   one runs and is added. So after a restart it replays to where it was and carries on, and a timer that came due
   meanwhile fires at once. `engine.StepsAsync` shows the history; `StatusAsync` says where it is.
+- **Changes checked as it compiles:** a workflow's shape (its input's fields, its result, and its steps in the order
+  they're written: `1: activity shop.Charge`, `2: timer`, `3: signal paid`) is recorded in `Name.shape.json` beside
+  it, to check in, as an api's is. A change instances already running couldn't replay is an error: a step inserted,
+  removed or moved before others ("step 1: activity shop.Charge is gone or has moved, but instances already running
+  recorded it there"), a new input they weren't started with, another result. A step added after the others, or an
+  optional input, is fine. `--accept-breaking` records a deliberate one, for when no instances are running.
+  [apps/orders](../apps/orders/README.md) is a service on workflows: an order's fulfilment, waiting for its payment.
 - **Changed code:** a replay asking for another step than the history has (the code changed while an instance was
   running) fails the instance, saying which step, what it asked for and what the history has.
 - **Activities** run at least once: one interrupted after running but before its result was saved runs again, so

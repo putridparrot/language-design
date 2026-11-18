@@ -1,0 +1,14 @@
+{
+  "name": "Payments",
+  "calls": {
+    "payments: PaymentReceived": {
+      "name": "event PaymentReceived",
+      "inputs": {
+        "amount": "decimal",
+        "orderId": "string"
+      },
+      "output": null
+    }
+  },
+  "types": {}
+}

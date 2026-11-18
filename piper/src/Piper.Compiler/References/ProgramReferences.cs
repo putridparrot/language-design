@@ -87,9 +87,49 @@ public sealed record ProgramReferences(ImmutableArray<string> Assemblies, Immuta
             {
             }
         }
-        var clashing = declaredIn.Values.Where(owners => owners.Count > 1).SelectMany(owners => owners).Distinct().Order(StringComparer.Ordinal);
+        // A type declared twice among them, or one that redefines a public type of .NET's own (which the program always
+        // references, and which keeps the plain name): Microsoft.Extensions.DependencyModel has its own public
+        // System.Collections.Generic.CollectionExtensions, beside the core library's.
+        var clashing = declaredIn
+            .SelectMany(entry => entry.Value.Count > 1 ? entry.Value
+                : PlatformTypes.Value.Types.Contains(entry.Key) ? entry.Value.Where(owner => !PlatformTypes.Value.Assemblies.Contains(owner)) : [])
+            .Distinct()
+            .Order(StringComparer.Ordinal);
         return clashing.Select((name, i) => (name, i)).ToImmutableDictionary(c => c.name, c => $"piper_ref{c.i + 1}", StringComparer.OrdinalIgnoreCase);
     }
+
+    /// <summary>The public types of .NET's own assemblies (the runtime's folder), and their names: found once.</summary>
+    private static readonly Lazy<(HashSet<string> Types, HashSet<string> Assemblies)> PlatformTypes = new(() =>
+    {
+        var types = new HashSet<string>(StringComparer.Ordinal);
+        var assemblies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var folder = Path.GetDirectoryName(typeof(object).Assembly.Location);
+        if (folder is null)
+            return (types, assemblies);
+        foreach (var path in Directory.EnumerateFiles(folder, "*.dll"))
+        {
+            try
+            {
+                using var stream = File.OpenRead(path);
+                using var pe = new System.Reflection.PortableExecutable.PEReader(stream);
+                if (!pe.HasMetadata)
+                    continue;
+                var metadata = System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader(pe);
+                if (metadata.IsAssembly)
+                    assemblies.Add(metadata.GetString(metadata.GetAssemblyDefinition().Name));
+                foreach (var handle in metadata.TypeDefinitions)
+                {
+                    var type = metadata.GetTypeDefinition(handle);
+                    if ((type.Attributes & TypeAttributes.VisibilityMask) == TypeAttributes.Public)
+                        types.Add($"{metadata.GetString(type.Namespace)}.{metadata.GetString(type.Name)}");
+                }
+            }
+            catch (Exception ex) when (ex is IOException or BadImageFormatException or InvalidOperationException)
+            {
+            }
+        }
+        return (types, assemblies);
+    });
 
     /// <summary>The assemblies a built program needs next to it: all but the frameworks', which the .NET host provides.</summary>
     public IEnumerable<string> CopiedAssemblies =>

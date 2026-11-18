@@ -1,15 +1,5 @@
-# The stock app on Kubernetes (AKS, or any other cluster): pods in a Deployment, which form a cluster: each product runs
-# on one of them, its owner, and moves to another when a pod stops, fails or is added. They share one database
-# (PostgreSQL, below) for two things: their products' events, so a product carries on from its events wherever it
-# starts; and the cluster's members, each pod holding a lease there under its own IP, so they find each other with no
-# list of nodes and no stable names. A LoadBalancer service puts their HTTP APIs behind one address.
-#
-# Set the image to yours (see README.md), then:  kubectl apply -f apps/stock/k8s/stock.yaml
-#
-# To change the number of nodes, change `replicas` (or kubectl scale deployment stock --replicas=5). For a managed
-# database in your cloud (Azure Database for PostgreSQL, Amazon RDS, Cloud SQL), drop the stock-db parts and put its
-# connection string in the stock-db Secret.
-
+# Made by the deploy plugin from `deploy Stock` in deploy.piper, when the program was built: change that,
+# not this. Set the image to yours, then:  kubectl apply -f stock.yaml
 apiVersion: v1
 kind: Secret
 metadata:
@@ -17,7 +7,7 @@ metadata:
 type: Opaque
 stringData:
   password: change-me
-  connection: Host=stock-db;Database=stock;Username=stock;Password=change-me
+  connection: "Host=stock-db;Database=stock;Username=stock;Password=change-me"
 ---
 apiVersion: v1
 kind: Service
@@ -64,7 +54,6 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
-  # The products' events, kept when the database's pod restarts or moves. (Delete the claim to clear the counts.)
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -80,10 +69,12 @@ metadata:
   name: stock
   labels:
     app: stock
+    role: stock
 spec:
   type: LoadBalancer
   selector:
     app: stock
+    role: stock
   ports:
     - name: http
       port: 80
@@ -98,25 +89,25 @@ spec:
   selector:
     matchLabels:
       app: stock
+      role: stock
   template:
     metadata:
       labels:
         app: stock
+        role: stock
     spec:
-      # Time to leave the cluster when stopped, handing its products to the others, before Kubernetes kills it.
       terminationGracePeriodSeconds: 30
       containers:
         - name: stock
           image: REGISTRY/stock:1
           args:
-            - --host                   # how the other nodes reach this one: its pod's IP
+            - --host
             - $(POD_IP)
           env:
             - name: POD_IP
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
-            # Where the products' events are kept: the database every node shares.
             - name: Events__Provider
               value: postgres
             - name: Events__Connection
@@ -124,7 +115,6 @@ spec:
                 secretKeyRef:
                   name: stock-db
                   key: connection
-            # How the nodes find each other: leases in that same database.
             - name: Cluster__Provider
               value: postgres
             - name: Cluster__Connection
@@ -133,10 +123,10 @@ spec:
                   name: stock-db
                   key: connection
           ports:
-            - name: actors
-              containerPort: 8000
             - name: http
               containerPort: 8080
+            - name: actors
+              containerPort: 8000
           readinessProbe:
             httpGet:
               path: /ready
@@ -149,7 +139,7 @@ spec:
             periodSeconds: 10
           resources:
             requests:
-              cpu: 100m
-              memory: 128Mi
+              cpu: "100m"
+              memory: "128Mi"
             limits:
-              memory: 256Mi
+              memory: "256Mi"

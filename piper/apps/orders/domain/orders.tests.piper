@@ -1,0 +1,110 @@
+// The fulfilment workflow, simulated: a day's payment window passes at once, and the engine can be restarted at any
+// moment the run chooses, as a pod would be.
+namespace Orders;
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Piper.Messaging;
+using Piper.Runtime;
+using Piper.Workflows;
+
+/// An order for two teas, costing 10.
+fn Placed(id: string) => Order = Order(id, "tea", 2, 10m);
+
+/// `count` teas in stock, in memory.
+fn Stocked(count: int) => MemoryInventory {
+    let stock = Dictionary<string, int>();
+    stock["tea"] = count;
+    MemoryInventory(stock)
+}
+
+/// An engine running the fulfilment on `inventory`, with a day to pay.
+fn Engine(store: IEventStore, inventory: Inventory) => WorkflowEngine {
+    let engine = WorkflowEngine(store);
+    Fulfil(inventory, TimeSpan.FromDays(1)).Register(engine);
+    engine
+}
+
+async test "a paid order ships, and an unpaid one gives its stock back once the window's gone" simulate runs 20 {
+    let inventory = Stocked(10);
+    let engine = Engine(MemoryEventStore(), inventory);
+    await Fulfil.Start(engine, "paid", Placed("paid"));
+    await Fulfil.Start(engine, "unpaid", Placed("unpaid"));
+    await PiperSimulation.Running.Delay(TimeSpan.FromHours(1));
+    await Fulfil.Signal(engine, "paid", "paid", Payment(10m));
+    AssertEqual("shipped: TRK-paid", await Fulfil.Outcome(engine, "paid"));
+    AssertEqual("cancelled: not paid in time", await Fulfil.Outcome(engine, "unpaid"));
+    AssertEqual(8, inventory.available["tea"]);
+    AssertEqual(0, inventory.reserved.Count);
+    AssertEqual(1, (int)PiperSimulation.Running.Elapsed.TotalDays);
+    await engine.DisposeAsync();
+}
+
+async test "an underpaid order is cancelled, and one there isn't the stock for is rejected" simulate runs 20 {
+    let inventory = Stocked(3);
+    let engine = Engine(MemoryEventStore(), inventory);
+    await Fulfil.Start(engine, "short", Placed("short"));
+    await Fulfil.Signal(engine, "short", "paid", Payment(5m));
+    AssertEqual("cancelled: paid 5 of 10", await Fulfil.Outcome(engine, "short"));
+    await Fulfil.Start(engine, "big", Order("big", "tea", 4, 20m));
+    AssertEqual("rejected: out of stock", await Fulfil.Outcome(engine, "big"));
+    AssertEqual(3, inventory.available["tea"]);
+    await engine.DisposeAsync();
+}
+
+async test "payments arrive as messages, passed on to their orders; one for no order is dead-lettered" simulate runs 20 {
+    let inventory = Stocked(10);
+    let engine = Engine(MemoryEventStore(), inventory);
+    let transport = MemoryTransport();
+    let bus = Bus(transport);
+    await using let payments = await PaymentsIn(engine).Start(bus);
+    await Fulfil.Start(engine, "o-1", Placed("o-1"));
+    await bus.Publish(PaymentReceived("o-1", 10m));
+    await bus.Publish(PaymentReceived("o-404", 10m));
+    AssertEqual("shipped: TRK-o-1", await Fulfil.Outcome(engine, "o-1"));
+    await transport.Idle();
+    AssertEqual(["There's no order o-404."], [...transport.DeadLetters.Select(d => d.Reason)]);
+    await engine.DisposeAsync();
+}
+
+/// How an order in the run below is paid, chosen by the run: in full, short, or not at all.
+fn Paying(choice: int) => decimal? = match choice {
+    0 => Some(10m),
+    1 => Some(4m),
+    _ => None,
+};
+
+async test "however orders are paid, and whenever the service restarts, the stock adds up" simulate runs 40 {
+    let sim = PiperSimulation.Running;
+    let store = MemoryEventStore();
+    let inventory = Stocked(20);
+    mut engine = Engine(store, inventory);
+    let ids = ["a", "b", "c", "d"];
+    let pays = [...ids.Select(_ => Paying(sim.Random.Next(3)))];
+    for id in ids {
+        await Fulfil.Start(engine, id, Placed(id));
+    }
+    // Over two days, each order's payment (if any) comes at a moment the run chooses, and the service restarts twice.
+    for hour in 0..<48 {
+        for i in 0..<ids.Count {
+            if pays[i] is Some(amount) && sim.Random.Next(48) == 0 {
+                await Fulfil.Signal(engine, ids[i], "paid", Payment(amount));
+            }
+        }
+        if hour == 12 || hour == 30 {
+            await engine.DisposeAsync();
+            engine = Engine(store, inventory);
+            await engine.ResumeAsync();
+        }
+        await sim.Delay(TimeSpan.FromHours(1));
+    }
+    let outcomes = [...await Task.WhenAll(ids.Select(id => Fulfil.Outcome(engine, id)))];
+    let shipped = outcomes.Count(o => o.StartsWith("shipped"));
+    sim.Log($"outcomes: {string.Join(", ", outcomes)}");
+    AssertEqual(20 - 2 * shipped, inventory.available["tea"]);
+    AssertEqual(0, inventory.reserved.Count);
+    AssertEqual(shipped, inventory.shipped.Count);
+    await engine.DisposeAsync();
+}

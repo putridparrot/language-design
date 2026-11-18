@@ -344,10 +344,13 @@ finishing it), container publishing, and hosted workers; and of actor clustering
      (`SimulatedCluster.StartChaos` and `CalmAsync`), which apps/stock's simulated test uses;
    - shrinking to show the failure as the few events that matter, rather than the shrunk run's whole timeline;
    - the messaging plugin's transport and the data plugin's stores in simulation (an in-memory store already is).
-7. **Deploying without hand-written files.** Each app has a Dockerfile copying the repository to build the compiler,
-   and Kubernetes YAML with the same `POD_IP` plumbing. `piper build --publish` (planned above) could use the .NET SDK's
-   container publishing, so there's no Dockerfile; and a declaration of the app's roles (a coordinator and workers,
-   their ports and replicas) could generate the Kubernetes or Aspire manifests.
+7. **Deploying without hand-written files.** Each app had a Dockerfile copying the repository to build the compiler,
+   and Kubernetes YAML with the same `POD_IP` plumbing. ~~`piper build --publish`~~ writes the program and its
+   Dockerfile, and ~~a declaration of the app's roles~~ is done: the `deploy` plugin (see
+   [plugins](plugins.md#deploy-kubernetes-manifests)), whose `deploy` writes the Kubernetes manifest on each build;
+   apps/stock, apps/grid and apps/orders have theirs made so. Still to come: Docker Compose and Aspire's manifest,
+   building the image without Docker (as the .NET SDK's container publishing does), and reading the server's health
+   paths and `config` sections from the program rather than saying them again.
 8. **Durable workflows, checked by the compiler** (a `workflow` plugin, as Temporal and Azure Durable Functions). A
    process that runs for minutes or weeks (an order paid, packed, shipped, refunded if it isn't), surviving restarts by
    replaying its history of steps. Those frameworks need the workflow's code to be deterministic, so a replay takes the
@@ -383,7 +386,10 @@ finishing it), container publishing, and hosted workers; and of actor clustering
    - ~~running them from a server's or host's clause~~, done (`workflows Fulfil(shop) from store;`), and so is
      ~~waiting on signals~~ (`flow.Signal<T>(name, within)`, `Fulfil.Signal(engine, id, name, value)`), which makes
      sagas, a consumer passing a message on as a signal;
-   - a real app on them (an order's fulfilment), and the compatibility check for a workflow's code.
+   - ~~a real app on them~~, done: [apps/orders](../apps/orders/README.md), an order's fulfilment waiting for its payment,
+     and so is ~~the compatibility check for a workflow's code~~ (its input, result and steps in order recorded in
+     `Name.shape.json`; a step inserted or moved before others is an error). Still to come: a version that runs old
+     instances on the code they started with, beside new ones on the new.
 
 More, around the services themselves:
 

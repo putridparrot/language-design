@@ -60,7 +60,14 @@ public sealed class PluginAnalysis
     /// (a call or optional field added), or when breaking changes are accepted. A file not on disk has no shape, and a
     /// program with errors is neither compared nor recorded until they're fixed.
     /// </summary>
-    public void CheckWireShape(SourceText file, TextSpan span, string name, IEnumerable<WireOperation> operations)
+    public void CheckWireShape(SourceText file, TextSpan span, string name, IEnumerable<WireOperation> operations) =>
+        CheckWireShape(file, span, name, operations, replayed: false);
+
+    /// <summary>
+    /// The same for a contract whose "callers" are instances already running, replaying what they recorded (a workflow's
+    /// steps), so its breaking changes say so.
+    /// </summary>
+    public void CheckWireShape(SourceText file, TextSpan span, string name, IEnumerable<WireOperation> operations, bool replayed)
     {
         // A program with errors has types that couldn't be bound: compared, they'd look like changes; recorded, wrong.
         if (!File.Exists(file.FileName) || _diagnostics.HasErrors)
@@ -86,7 +93,7 @@ public sealed class PluginAnalysis
                 ReportError(file, span, $"{Path.GetFileName(path)} isn't a shape Piper can read; delete it to record {name}'s shape afresh.");
                 return;
             }
-            var breaking = WireShapes.Breaking(before, now);
+            var breaking = WireShapes.Breaking(before, now, replayed);
             foreach (var change in breaking)
             {
                 ReportError(file, span,

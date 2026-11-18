@@ -111,7 +111,7 @@ In PowerShell, the `sed` line is
 **Stopping it:** deleting the namespace removes everything in it, and frees port 8090. `docker image rm grid:local`
 removes the image too.
 
-[k8s/grid.yaml](k8s/grid.yaml) makes:
+[k8s/grid.yaml](k8s/grid.yaml), written by each build from [deploy.piper](deploy.piper) (the deploy plugin), makes:
 - **`grid-coordinator`,** one pod, and a service of the same name that the workers ask for work. The coordinator
   tells the workers that name to reply to.
 - **`grid-worker`,** a Deployment of three pods, each with one CPU and working on one chunk at a time. Each tells the

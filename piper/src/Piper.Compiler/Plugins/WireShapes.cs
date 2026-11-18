@@ -121,8 +121,15 @@ public static class WireShapes
     /// What in <paramref name="now"/> breaks callers built against <paramref name="before"/>: a call removed, an input
     /// they don't send, an answer of another type; a field or variant a side can't read; a type changed.
     /// </summary>
-    public static ImmutableArray<string> Breaking(JsonObject before, JsonObject now)
+    public static ImmutableArray<string> Breaking(JsonObject before, JsonObject now) => Breaking(before, now, replayed: false);
+
+    /// <summary>
+    /// The same, for a contract whose "callers" are instances already running, replaying what they recorded (a
+    /// workflow's steps, keyed by their place: <c>2: activity shop.Charge</c>): said so.
+    /// </summary>
+    public static ImmutableArray<string> Breaking(JsonObject before, JsonObject now, bool replayed)
     {
+        var callers = replayed ? "instances already running" : "callers built before";
         var breaks = new List<string>();
         var oldCalls = before["calls"] as JsonObject ?? new JsonObject();
         var newCalls = now["calls"] as JsonObject ?? new JsonObject();
@@ -131,7 +138,9 @@ public static class WireShapes
             var name = Text(oldCall?["name"]) ?? key;
             if (newCalls[key] is not JsonObject newCall)
             {
-                breaks.Add($"nothing answers {(name == key ? key : $"{key} ({name})")} any more, but callers built before still send it");
+                breaks.Add(replayed
+                    ? $"step {key} is gone or has moved, but {callers} recorded it there, and would replay differently; finish them first, or add new steps after the old ones"
+                    : $"nothing answers {(name == key ? key : $"{key} ({name})")} any more, but {callers} still send it");
                 continue;
             }
             var oldInputs = oldCall?["inputs"] as JsonObject ?? new JsonObject();
@@ -141,13 +150,13 @@ public static class WireShapes
                 if (oldInputs[input] is not { } oldType)
                 {
                     if (!IsOptional(typeText))
-                        breaks.Add($"{name} now needs '{input}' ({typeText}), which callers built before don't send; make it optional");
+                        breaks.Add($"{name} now needs '{input}' ({typeText}), which {callers} don't send; make it optional");
                 }
                 else if (Text(oldType) != typeText)
-                    breaks.Add($"{name} takes '{input}' as {typeText}, but callers built before send {Text(oldType)}");
+                    breaks.Add($"{name} takes '{input}' as {typeText}, but {callers} send {Text(oldType)}");
             }
             if (Text(oldCall?["output"]) != Text(newCall["output"]))
-                breaks.Add($"{name} answers {Text(newCall["output"])}, but callers built before read {Text(oldCall?["output"])}");
+                breaks.Add($"{name} answers {Text(newCall["output"])}, but {callers} read {Text(oldCall?["output"])}");
         }
 
         var newTypes = now["types"] as JsonObject ?? new JsonObject();
@@ -170,7 +179,7 @@ public static class WireShapes
                     breaks.Add($"{typeName} is now a {Text(newType["value"])}, not a {Text(oldType["value"])}");
                     break;
                 case "record":
-                    CompareFields(typeName, oldType["fields"] as JsonObject ?? new JsonObject(), newType["fields"] as JsonObject ?? new JsonObject(), request, response, breaks);
+                    CompareFields(typeName, oldType["fields"] as JsonObject ?? new JsonObject(), newType["fields"] as JsonObject ?? new JsonObject(), request, response, breaks, callers);
                     break;
                 case "enum":
                     var oldVariants = oldType["variants"] as JsonObject ?? new JsonObject();
@@ -178,14 +187,14 @@ public static class WireShapes
                     foreach (var (variant, fields) in oldVariants)
                     {
                         if (newVariants[variant] is JsonObject newFields)
-                            CompareFields($"{typeName}.{variant}", fields as JsonObject ?? new JsonObject(), newFields, request, response, breaks);
+                            CompareFields($"{typeName}.{variant}", fields as JsonObject ?? new JsonObject(), newFields, request, response, breaks, callers);
                         else if (request)
-                            breaks.Add($"{typeName}.{variant} is gone, but callers built before may still send it");
+                            breaks.Add($"{typeName}.{variant} is gone, but {callers} may still send it");
                     }
                     foreach (var (variant, _) in newVariants)
                     {
                         if (response && oldVariants[variant] is null)
-                            breaks.Add($"{typeName} has a new variant, {variant}, which callers built before can't read");
+                            breaks.Add($"{typeName} has a new variant, {variant}, which {callers} can't read");
                     }
                     break;
             }
@@ -197,7 +206,7 @@ public static class WireShapes
     /// A field callers send (<paramref name="request"/>) can't become needed unless it may be left out; one they read
     /// (<paramref name="response"/>) can't go unless it could already be missing; and no field can change its type.
     /// </summary>
-    private static void CompareFields(string owner, JsonObject before, JsonObject now, bool request, bool response, List<string> breaks)
+    private static void CompareFields(string owner, JsonObject before, JsonObject now, bool request, bool response, List<string> breaks, string callers)
     {
         foreach (var (field, oldNode) in before)
         {
@@ -205,19 +214,19 @@ public static class WireShapes
             if (now[field] is not { } newNode)
             {
                 if (response && !IsOptional(oldText))
-                    breaks.Add($"{owner}'s field '{field}' is gone, but callers built before need it");
+                    breaks.Add($"{owner}'s field '{field}' is gone, but {callers} need it");
                 continue;
             }
             var newText = Text(newNode) ?? "";
             if (TypeOf(oldText) != TypeOf(newText))
                 breaks.Add($"{owner}'s field '{field}' is now {TypeOf(newText)}, not {TypeOf(oldText)}");
             else if (request && IsOptional(oldText) && !IsOptional(newText))
-                breaks.Add($"{owner}'s field '{field}' no longer has a default, but callers built before may leave it out");
+                breaks.Add($"{owner}'s field '{field}' no longer has a default, but {callers} may leave it out");
         }
         foreach (var (field, newNode) in now)
         {
             if (request && before[field] is null && !IsOptional(Text(newNode) ?? ""))
-                breaks.Add($"{owner} has a new field, '{field}', which callers built before don't send; give it a default, or make it optional");
+                breaks.Add($"{owner} has a new field, '{field}', which {callers} don't send; give it a default, or make it optional");
         }
     }
 

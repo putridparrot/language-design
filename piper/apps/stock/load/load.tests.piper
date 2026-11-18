@@ -6,9 +6,18 @@ using System.Net;
 using System.Net.Http;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
+using Piper.Actors.Remote;
+using Piper.Runtime;
+
+/// Three nodes in real time (PiperCluster), as the load runs real HTTP servers and clients against them.
+async fn StartRealCluster() => Task<(PiperCluster, List<Shards>)> {
+    let store = MemoryEventStore();
+    let cluster = await PiperCluster.StartAsync(3, node => { Host(node, store); });
+    (cluster, [...cluster.Nodes.Select(node => Shards(node))])
+}
 
 async test "the load run through every node's API reserves each unit exactly once" {
-    let cluster = await StartCluster();
+    let (nodes, cluster) = await StartRealCluster();
     let apps = cluster.Select(shards => StockServer(shards, "http://127.0.0.1:0")).ToList();
     for app in apps { await app.StartAsync(); }
     let urls: List<string> = [...apps.Select(app => app.Urls.First())];
@@ -31,5 +40,5 @@ async test "the load run through every node's API reserves each unit exactly onc
     }
 
     for app in apps { await app.StopAsync(); }
-    await StopCluster(cluster);
+    await nodes.StopAsync();
 }

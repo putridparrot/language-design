@@ -1,0 +1,21 @@
+// How orders runs on Kubernetes. `piper build`, `run` and `test` write k8s/orders.yaml from this:
+//   kubectl apply -f apps/orders/k8s/orders.yaml   (with the image set to yours)
+//
+// One pod: its SQLite database (the stock, and the workflows' histories) is on a volume of its own, which outlives the
+// pod, so an order waiting for its payment when the pod is replaced carries on waiting in the next.
+namespace Orders;
+
+deploy Orders to "k8s/orders.yaml" {
+    role orders {
+        replicas 1;
+        recreate;                                       // never two at once: they'd share the database file
+        port http 8080 public 80;
+        health "/healthz";
+        env Orders__Urls = "http://*:8080";
+        env Orders__Connection = "Data Source=/data/orders.db";
+        env Orders__PaymentWindowMinutes = "30";
+        volume data "/data" size "1Gi";
+        stopping 30 seconds;
+        resources cpu "100m" memory "128Mi" limit memory "256Mi";
+    }
+}

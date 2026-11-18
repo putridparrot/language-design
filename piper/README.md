@@ -68,7 +68,8 @@ follows (flags override it):
 - **`plugins`** add keywords to the language (see [docs/plugins.md](docs/plugins.md)). Those that come with piper are
   named: `services` (dependency injection), `web` (ASP.NET Core endpoints), `api` (an API's shape and typed client),
   `openapi` (OpenAPI documents for them), `telemetry` (OpenTelemetry), `messaging` (commands and events), `rabbitmq`
-  (a RabbitMQ transport for them), `workflows` (durable workflows), `data` (EF Core databases), `args`
+  (a RabbitMQ transport for them), `workflows` (durable workflows), `data` (EF Core databases), `deploy`
+  (Kubernetes manifests), `args`
   (command-line options), `actors`, `remote-actors`, `parallel` and `state-machines`. Any other is the path of its assembly, relative to the folder, or
   a name given with `piper plugin add <folder>`, which copies it to `~/.piper/plugins`.
 
@@ -167,6 +168,7 @@ producing one `.cs` file per `.piper` file. The generated code needs C# 14 (.NET
 | [plugins/Piper.Plugins.Actors.Proto](plugins/Piper.Plugins.Actors.Proto) | The `proto-actor` plugin: an optional transport for remote actors on Proto.Actor's remoting (gRPC), chosen by configuration |
 | [plugins/Piper.Plugins.Messaging](plugins/Piper.Plugins.Messaging) | The `messaging` plugin: `messages` and `consumer`, over a bus with an in-memory transport and an outbox |
 | [plugins/Piper.Plugins.Messaging.RabbitMq](plugins/Piper.Plugins.Messaging.RabbitMq) | The `rabbitmq` plugin: the messaging bus over RabbitMQ, chosen by configuration |
+| [plugins/Piper.Plugins.Deploy](plugins/Piper.Plugins.Deploy) | The `deploy` plugin: a `deploy` declaration, from which each build writes the program's Kubernetes manifest |
 | [plugins/Piper.Plugins.Workflows](plugins/Piper.Plugins.Workflows) | The `workflows` plugin: `workflow`, `activity` and `timer`, durable workflows replayed from their history, checked to replay the same |
 | [plugins/Piper.Plugins.Parallel](plugins/Piper.Plugins.Parallel) | A sample compiler plugin: `parallel for` and `concurrency { }` |
 | [plugins/Piper.Plugins.Services](plugins/Piper.Plugins.Services) | A sample compiler plugin for dependency injection, in any program: `services { }` |

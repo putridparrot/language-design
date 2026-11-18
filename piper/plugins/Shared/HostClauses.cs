@@ -283,6 +283,10 @@ internal static class HostClauses
                 // (resuming the unfinished as it starts, stopping them as it stops), registered for handlers to start them.
                 p.ReadWord();
                 once(word);
+                // `workflows engine: Fulfil(shop) from store;` names the engine for the clauses after (`consume Payments(engine);`).
+                var local = p.Current.Kind == TokenKind.Identifier && p.Peek(1).Kind == TokenKind.Colon ? p.NextToken() : null;
+                if (local is not null)
+                    p.NextToken();
                 var workflows = new List<(Token Name, List<ExpressionSyntax> Arguments)>();
                 do
                 {
@@ -294,7 +298,7 @@ internal static class HostClauses
                 p.ExpectWord("from");
                 var store = p.ParseExpression();
                 p.Expect(TokenKind.Semicolon);
-                var engine = p.FreshName("workflows");
+                var engine = local ?? p.FreshName("workflows");
                 parts.Building.Add(p.Template.Statement("let $engine = Piper.Workflows.WorkflowEngine($store);", ("engine", engine), ("store", store)));
                 foreach (var (workflow, arguments) in workflows)
                     parts.Building.Add(p.Template.Statement("$workflow($arguments).Register($engine);",

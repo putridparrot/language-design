@@ -1,0 +1,31 @@
+// How stock runs on Kubernetes (AKS, or any other cluster). `piper build`, `run` and `test` write k8s/stock.yaml from
+// this; see README.md for applying it.
+//
+// The pods form a cluster: each product runs on one of them, its owner, and moves to another when a pod stops, fails or
+// is added. They share one database (PostgreSQL, below) for two things: their products' events, so a product carries on
+// from its events wherever it starts; and the cluster's members, each pod holding a lease there under its own IP, so
+// they find each other with no list of nodes and no stable names. A LoadBalancer puts their HTTP APIs behind one address.
+namespace StockApp;
+
+deploy Stock to "k8s/stock.yaml" {
+    // For a managed database in your cloud (Azure Database for PostgreSQL, Amazon RDS, Cloud SQL), drop this, and put
+    // its connection string in a Secret called stock-db.
+    postgres "stock-db" database "stock";
+
+    role stock {
+        replicas 3;                                   // or: kubectl scale deployment stock --replicas=5
+        args "--host", pod.ip;                        // how the other nodes reach this one: its pod's IP
+        port http 8080 public 80;
+        port actors 8000;
+        // /healthz while the process runs; /ready once this node is in the cluster.
+        health "/healthz" ready "/ready";
+        // Where the products' events are kept, and how the nodes find each other: the database every node shares.
+        env Events__Provider = "postgres";
+        env Events__Connection = secret "stock-db" "connection";
+        env Cluster__Provider = "postgres";
+        env Cluster__Connection = secret "stock-db" "connection";
+        // Time to leave the cluster when stopped, handing its products to the others, before Kubernetes kills it.
+        stopping 30 seconds;
+        resources cpu "100m" memory "128Mi" limit memory "256Mi";
+    }
+}

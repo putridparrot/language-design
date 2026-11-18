@@ -1,3 +1,4 @@
+using Piper.Binding;
 using Piper.Plugins;
 using Piper.Syntax;
 using Piper.Text;
@@ -97,6 +98,7 @@ public sealed class WorkflowsPlugin : IPiperPlugin
             _inWorkflow--;
         }
         p.Expect(TokenKind.CloseBrace);
+        p.Data = new WorkflowData(name, Steps(body));
 
         // The input arrives as a record, `FulfilStart(order)`, saved with the workflow; its fields are its parameters again.
         var input = new Token(TokenKind.Identifier, name.Span, name.Text + "Start");
@@ -178,6 +180,66 @@ public sealed class WorkflowsPlugin : IPiperPlugin
             return [];
         }
         return [p.Template.Statement("await flow.Delay($wait);", ("wait", wait))];
+    }
+
+    /// <summary>What a workflow noted as it was read: its name, and its steps, in the order they're written.</summary>
+    private sealed record WorkflowData(Token Name, List<string> Steps);
+
+    /// <summary>
+    /// The workflow's steps as its code writes them: each call on <c>flow</c> that its history records (an activity, a
+    /// timer, a signal, a value recorded), described as <c>activity shop.Charge</c>, in the order they appear.
+    /// </summary>
+    private static List<string> Steps(BlockExpressionSyntax body) =>
+    [
+        .. SyntaxWalker.DescendantsAndSelf(body).OfType<CallExpressionSyntax>()
+            .Where(call => call.Callee is MemberAccessExpressionSyntax { Target: NameExpressionSyntax { Identifier.Text: "flow" } })
+            .OrderBy(call => call.Span.Start)
+            .Select(call =>
+            {
+                var member = ((MemberAccessExpressionSyntax)call.Callee).Member.Text;
+                var named = call.Arguments.FirstOrDefault() is LiteralExpressionSyntax { Value: string text } ? text : "";
+                return member switch
+                {
+                    "Activity" => $"activity {named}",
+                    "Delay" => "timer",
+                    "Signal" => $"signal {named}",
+                    "Record" => $"recorded {named}",
+                    "Now" => "recorded now",
+                    "NewGuid" => "recorded guid",
+                    _ => null,
+                };
+            })
+            .OfType<string>(),
+    ];
+
+    /// <summary>
+    /// Once types are known: each workflow's shape (its input's fields, its result, and its steps, each at its place) is
+    /// recorded in <c>Name.shape.json</c>, as an api's is, and a change that instances already running couldn't replay
+    /// is an error: a step inserted, removed or reordered before others, a new input they weren't started with, another
+    /// result. A step added after the others, or an optional input, is fine. <c>--accept-breaking</c> records a
+    /// deliberate one (with no instances running, or ready to fail).
+    /// </summary>
+    public void Analyze(PluginAnalysis analysis)
+    {
+        foreach (var expansion in analysis.Expansions)
+        {
+            if (expansion.Data is not WorkflowData data)
+                continue;
+            var name = data.Name.Text;
+            var input = analysis.Program.Types.OfType<RecordSymbol>()
+                .FirstOrDefault(r => r.Name == name + "Start" && expansion.Result.Any(x => ReferenceEquals(x, r.Declaration)));
+            var run = analysis.Program.Methods.Select(m => m.Symbol).OfType<MethodSymbol>()
+                .FirstOrDefault(m => m.Name == "Run" && m.ContainingType.Name == name);
+            if (input is null || run is null)
+                continue;
+            var result = run.ReturnType.TypeArguments.FirstOrDefault() ?? run.ReturnType;
+            List<WireOperation> operations =
+            [
+                new WireOperation("start", $"start {name}", [.. input.Fields.Select(f => (f.Name, f.Type))], result.ToString(), [result]),
+                .. data.Steps.Select((step, i) => new WireOperation($"{i + 1}: {step}", step, [], null, [])),
+            ];
+            analysis.CheckWireShape(expansion.File, data.Name.Span, name, operations, replayed: true);
+        }
     }
 
     /// <summary>What a call calls, as it's written: <c>Refund</c>, <c>shop.Charge</c>; null if it isn't a name.</summary>

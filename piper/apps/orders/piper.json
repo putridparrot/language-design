@@ -1,0 +1,9 @@
+{
+  // Orders: an order service whose fulfilment is a durable workflow (the workflows plugin). An order reserves stock,
+  // waits for its payment (a message, passed on to the workflow as a signal), then ships, or releases the stock if the
+  // payment doesn't come in time. `piper test apps/orders` runs its tests (simulated: days pass at once);
+  // `piper run apps/orders` serves it on http://localhost:5090. See README.md.
+  "name": "orders",
+  "plugins": ["web", "data", "config", "workflows", "messaging", "rabbitmq", "deploy"],
+  "packages": { "Microsoft.EntityFrameworkCore.Sqlite": "10.0.14" }
+}
