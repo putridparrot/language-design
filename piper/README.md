@@ -46,6 +46,8 @@ piper test src/               # run the program's test blocks (--filter picks so
 piper build src/ --accept-breaking   # record an api's shape over a deliberate breaking change (see docs/plugins.md)
 piper emit hello.piper        # print the C#
 piper fmt src/                # lay out .piper files as Piper is written (--check lists them, failing if any would change)
+piper package add Dapper      # add a NuGet package's newest stable version to piper.json (--version, --prerelease, a folder)
+piper package remove Dapper   # and take it out
 ```
 
 A program folder can say what it builds into, and what it uses, with a `piper.json`, which `piper build src/` then
@@ -65,7 +67,9 @@ follows (flags override it):
 
 - **`output`** is `"exe"` or `"library"`.
 - **`packages`** are NuGet packages. They're restored with the .NET SDK, using your NuGet configuration, and remembered
-  in the folder's `obj/piper`, so that only happens again when they change.
+  in the folder's `obj/piper`, so that only happens again when they change. `piper package add <id>` adds one at its
+  newest stable version on your NuGet sources (found with `dotnet package search`), or at `--version`'s, changing only
+  that entry of piper.json, so its comments and layout stay; `piper package remove <id>` takes one out.
 - **`frameworks`** are shared frameworks such as ASP.NET Core, which come with .NET rather than as packages. On .NET 10,
   `Microsoft.Extensions.DependencyInjection` and the other `Microsoft.Extensions` libraries are part of ASP.NET Core's.
 - **`references`** are .NET assemblies, with paths relative to the folder.

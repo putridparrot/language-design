@@ -96,6 +96,41 @@ public class ConfigPluginTests
     }
 
     /// <summary>
+    /// The record a config becomes keeps its defaults, so code making one directly (a test's) can leave them out or name
+    /// them, and adding a field with a default doesn't break those calls. An optional field without one is None by
+    /// default. A record's defaults come after the fields without them, so a field whose default isn't a literal (or
+    /// that has none) ends the run: those before it are required.
+    /// </summary>
+    [Fact]
+    public void A_configs_record_keeps_its_defaults_for_code_that_makes_one()
+    {
+        var output = Run("""
+            using System;
+
+            config Server from "Server" {
+                host: string;
+                timeout: TimeSpan = TimeSpan.FromSeconds(30);
+                port: int = 8080;
+                retries: int = -1;
+                secret key: string?;
+                name: string = "piper";
+            }
+
+            fn Main() {
+                Print(Server("a", TimeSpan.Zero));
+                Print(Server("b", TimeSpan.Zero, name: "named"));
+                Print(Server("c", TimeSpan.Zero, 1, 2, Some(Piper.Runtime.Secret<string>("k")), "all"));
+            }
+            """);
+        Assert.Equal("""
+            Server { host = a, timeout = 00:00:00, port = 8080, retries = -1, key = None, name = piper }
+            Server { host = b, timeout = 00:00:00, port = 8080, retries = -1, key = None, name = named }
+            Server { host = c, timeout = 00:00:00, port = 1, retries = 2, key = Some(***), name = all }
+
+            """, output);
+    }
+
+    /// <summary>
     /// A secret field is read as its type and kept as a Secret: printing the config shows ***, and .Reveal() gives the
     /// value. A missing optional one is None; a missing required one is reported as any field is.
     /// </summary>

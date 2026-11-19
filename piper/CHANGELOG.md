@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **`piper package add <id>`** adds a NuGet package to a folder's piper.json (made if there's none) at its newest
+  stable version on your NuGet sources, found with `dotnet package search` (so private feeds work), or at
+  `--version`'s, looking nothing up; `--prerelease` includes previews. A package already there has its version changed.
+  **`piper package remove <id>`** takes one out. Only the package's entry is edited, so piper.json's comments and
+  layout stay as they were.
+
+- **The editor on Piper's own source:** with this repository open, the VS Code extension runs the piper built in it
+  rather than the installed tool, from a copy (so builds aren't blocked by locked files), restarting on each new
+  build. The false errors on what the installed tool didn't know yet (`idempotent`, `TaskScope`, a server's
+  `database`) go. Package and install the extension again once to get it (editors/vscode/README.md).
+
+- **A `config`'s record keeps its defaults:** code making one directly (a test's) can leave defaulted fields out or name
+  them, `Settings(connection)` or `Settings(connection, webhook: …)`, so adding a field with a default no longer breaks
+  every such call (it broke apps/tracker's tests when `provider` was added). Optional fields are None by default. Only
+  literal defaults carry over, on the trailing fields, as a record's defaults must be constants after the fields
+  without them.
+
 - **A database in a server or host:** `database db: TrackerDb from "Database";` registers a `database` declaration's
   class as a scoped service (as `AddDbContext` does) on the provider the configuration chooses (`Database:Provider`:
   sqlite by default, sqlserver, postgres; `Database:Connection`), and names `db`, a function making one, for the

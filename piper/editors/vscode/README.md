@@ -73,7 +73,13 @@ the PATH. Then open a `.piper` file: it's highlighted, errors show as you type, 
 
 The installed tool and extension are copies of what you built; changing this repository doesn't change them.
 
-- **After changing the compiler**, with the `piper` tool, pack and update it (each pack is numbered newer than the
+- **Working on Piper itself,** with this repository open in VS Code, there's nothing to do: the language server is the
+  piper built in the workspace (`src/Piper.Cli/bin/Debug` or `Release`, whichever is newer), not the installed tool,
+  so the editor knows what was just built. It runs from a copy in the extension's storage, so `dotnet build` is never
+  blocked by a locked file, and when a build finishes it restarts on the new one by itself (the status bar says so;
+  the **Piper** output panel says which piper it runs). Setting `piper.server.path` turns this off.
+
+- **After changing the compiler**, for other workspaces, with the `piper` tool, pack and update it (each pack is numbered newer than the
   last, `1.0.0.463511`, so the update always takes it), from the `piper` folder:
 
   ```

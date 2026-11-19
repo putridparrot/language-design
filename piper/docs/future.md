@@ -297,9 +297,10 @@ Server-side HTML belongs with [UI](#ui) (htmx over plain endpoints), not Razor.
 - **Databases:** the `data` plugin covers EF Core models and queries, and ~~registering a database with DI~~ is done: a
   server's or host's `database db: TrackerDb from "Database";` (or `(settings.provider, settings.connection)`), the
   provider chosen by configuration (sqlite, sqlserver, postgres), scoped, and `db` a factory for the clauses after
-  (apps/tracker uses it). Still to come: migrations (`piper db migrate`; to decide: scripts diffed from a checked-in
-  model snapshot and reviewed, applied at startup, or additive only), relationships between tables (navigation
-  properties), and comparing an optional column with an optional variable in a query.
+  (apps/tracker uses it). Still to come: migrations (designed in [one versioning system](#one-versioning-system-a-design):
+  a database's schema recorded and checked as the other shapes are, and `piper db migrate` writing reviewed SQL
+  scripts from it), relationships between tables (navigation properties), and comparing an optional column with an
+  optional variable in a query.
 - ~~**Background work**~~ in a `server`, done: `hosted Mailer;` (`AddHostedService`), and `worker` handlers whose
   parameters are services, run for the app's life or `every` period (apps/auction's clock is one), and in a `host` too.
 - **Composition and testing:** a `services` block including another (a library's), and replacing a registration in a
@@ -638,6 +639,131 @@ done (`bus from "Messaging";`, `consume`, `relay`); then sagas.
 **To decide:** whether Piper services must interoperate with existing C# services on the same bus. Their envelope
 (headers, type names, correlation) is a protocol; if they use MassTransit's or NServiceBus's, the transports would need
 an option to read and write it.
+
+## One versioning system: a design
+
+**Status:** proposed, not started.
+
+**The problem.** A release is safe to deploy only if everything it shares with what's already running still fits: old
+pods during a rolling update, clients already installed, messages already queued, workflows half way through, and the
+database's rows. Piper already checks four of those as it builds, through recorded shapes (`Name.shape.json`, see
+[item 1](#cloud-and-distributed)): an `api`'s calls, a remote actor's messages, a `messages` block's commands and
+events, and a workflow's steps. The fifth, the database, isn't checked at all:
+
+- **Nothing records a database's schema.** Adding a field to a table's record changes the table, but nothing notices
+  until the program runs against a database made before it. `EnsureCreated` makes missing databases, never missing
+  tables or columns, so apps/tracker's checked-in `tracker.db` never got the `PiperIdempotency` table, and every
+  `idempotent` post against it would fail.
+- **There are no migrations.** EF Core's own (`dotnet ef migrations add`) generate C# classes with the Design package,
+  which doesn't suit a Piper program, and their snapshot is C# too.
+- **Nothing says whether a schema change is safe alongside the old release.** Dropping a column old pods still read,
+  or adding a required one they don't write, breaks them mid-rollout, as a breaking API change does.
+
+**The proposal: the database as a fifth shape, and migrations generated from it.** The same mechanism as the others:
+recorded at build, checked against what's recorded, breaking changes errors unless accepted. Then a command that turns
+the recorded change into SQL, reviewed and checked in.
+
+#### 1. A database's shape
+
+The data plugin's analysis already sees each table's record or class with its fields' types (it checks `key` and
+`index` against them). From those it records `Shop.schema.json` beside the declaration, through the same
+`PluginAnalysis` machinery as `CheckWireShape`:
+
+```json
+{
+  "name": "TrackerDb",
+  "tables": {
+    "Issues": {
+      "entity": "Issue",
+      "key": ["id"],
+      "columns": {
+        "id": { "type": "IssueId", "stored": "int", "optional": false },
+        "assignee": { "type": "string?", "stored": "string", "optional": true },
+        "status": { "type": "WorkflowState", "stored": "string", "optional": false }
+      },
+      "indexes": [["projectId"], ["projectId", "status"]]
+    }
+  },
+  "piper": ["outbox", "idempotency"]
+}
+```
+
+- **Logical, not SQL:** columns as Piper types and what they're stored as (a newtype as its value, an Option as
+  nullable, a fieldless enum as its variant's name, as Piper.Data's converters store them). The same for every
+  provider, so one shape serves SQLite on a laptop and PostgreSQL in a cloud.
+- **Piper's own tables** (`outbox;`, `idempotency;`) are listed by name and version, as Piper.Data owns their shape.
+
+#### 2. Checked as it builds, as the other shapes are
+
+| Change | Alongside the old release |
+|---|---|
+| a table, an optional column, an index | compatible: recorded |
+| a required column **with** a default | compatible |
+| a required column without one | **breaking**: old pods insert rows without it |
+| a column or table removed, renamed, or its stored type changed | **breaking**: old pods read and write it |
+| a column made required | **breaking**, unless every row has a value (the migration must fill them) |
+| a column made optional | compatible |
+
+A breaking change is an error at the field, saying why and what to do, the usual way to change a schema without
+downtime: **expand, then contract**. Add the new column optional and have the release write both; once every pod runs
+it, a later release drops the old one. `--accept-breaking` records it anyway, as for the other shapes, when the
+downtime is deliberate (a database only one process uses, as a desktop app's).
+
+#### 3. `piper db migrate`
+
+```
+piper db migrate apps/tracker            # write the next script, if the shape changed since the last
+piper db migrate apps/tracker --apply    # apply the scripts not yet applied, to the configured database
+piper db status apps/tracker             # which are applied, which are waiting
+```
+
+- **Scripts, not code:** the change between the last migration's shape and the current one becomes a numbered SQL
+  script, `TrackerDb.migrations/0003-issues-priority.sql`, beside the declaration, with the shape it migrates to. Plain
+  SQL to read in review and check in, as a schema change deserves.
+- **Generated through EF Core's provider:** the change becomes EF Core's migration operations (`CreateTable`,
+  `AddColumn`, `CreateIndex`, …), and the provider's `IMigrationsSqlGenerator` writes the SQL, in the Relational
+  package Piper.Data already uses. No Design package, no generated C#, and each provider's SQL is its own (SQLite's
+  table rebuilds for what it can't alter, PostgreSQL's `ALTER COLUMN`).
+- **Applied once each:** a `PiperMigrations` table records what's applied (number, name, the script's hash). Applying
+  takes a lock where the database has one (PostgreSQL's and SQL Server's application locks; SQLite's write lock), so two
+  pods starting together don't both migrate. A script whose hash changed after it was applied is an error.
+- **An existing database** (made by `EnsureCreated`, as every app's is today): the first `piper db migrate` records the
+  current shape as migration 0001, the baseline, and applying it to a database whose tables are already there marks it
+  applied without running it.
+- **In a server or host** (optional): `database db: TrackerDb from "Database" migrate;` applies waiting scripts as the
+  app starts, for development and single-instance apps, so `piper run` just works. A cluster migrates as a deploy step
+  instead (a Kubernetes Job, which the `deploy` plugin could write).
+- **Tests** keep their own databases made from the current shape (`EnsureCreated`), and a check that applying every
+  script in order to an empty database gives the same schema as `EnsureCreated`, so scripts and model can't drift.
+
+#### 4. One answer for a release
+
+With the database a shape like the others, one command answers the question a deploy asks:
+
+```
+piper check apps/tracker --since piper-v1.4.0
+  api TrackerApi       2 calls added                          compatible
+  messages Notifications  no change
+  database TrackerDb   column Issues.priority added (optional) compatible, migration 0004 waiting
+  workflow Fulfil      step inserted before 'ship'            BREAKING: instances running v3 can't replay
+```
+
+It compares the recorded shapes against those at a git tag (or the last release), so CI can fail a release that would
+break what's running, and the output doubles as the release's notes on what changed for callers.
+
+#### To decide
+
+1. **Where migrations run:** the command, as a deploy step (proposed), with the server clause's `migrate` for
+   development and single-instance apps; or always at startup.
+2. **Scripts for several providers:** an app on SQLite locally and PostgreSQL in production needs SQL for each. Generate
+   one script per provider the program brings a package for (`TrackerDb.migrations/sqlite/…`, `…/postgres/…`;
+   proposed), or one provider's only, named in piper.json.
+3. **Breaking schema changes:** errors with `--accept-breaking` (proposed, as the other shapes), or warnings, as some
+   apps (a desktop app's own database) never run two releases at once.
+
+**In order:** the database's shape and its checks (part 1 and 2, compile time only, useful at once); `piper db migrate`
+with SQLite and the baseline (apps/tracker's checked-in `tracker.db` is the first user); PostgreSQL and SQL Server, and
+the lock; `migrate` in the server clause; `piper check --since`.
 
 ## UI
 

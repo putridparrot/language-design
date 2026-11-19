@@ -122,8 +122,14 @@ public sealed class ConfigPlugin : IPiperPlugin
         }
         p.Expect(TokenKind.CloseBrace);
 
+        // The record's fields keep their defaults, so code making one (a test's) can leave them out, and a field added
+        // later doesn't break every call: `Settings(connection)`. A record's defaults are constants, after the fields
+        // without them, so the trailing fields whose default is a literal, or that are optional (None by default), have them.
+        var defaults = new ExpressionSyntax?[fields.Count];
+        for (int i = fields.Count - 1; i >= 0 && RecordDefault(fields[i]) is { } value; i--)
+            defaults[i] = value;
         var record = (RecordDeclarationSyntax)p.Template.Declarations("record $name($fields: unit);",
-            ("name", name), ("fields", fields.Select(f => new ParameterSyntax(f.Name.Span, f.Name, f.Secret ? SecretType(f.Type) : f.Type)).ToList())).Single();
+            ("name", name), ("fields", fields.Select((f, i) => new ParameterSyntax(f.Name.Span, f.Name, f.Secret ? SecretType(f.Type) : f.Type) { Default = defaults[i] }).ToList())).Single();
         record = record with { Requires = [.. fields.SelectMany(f => f.Requires)] };
 
         var section_ = p.FreshName("section");
@@ -192,6 +198,18 @@ public sealed class ConfigPlugin : IPiperPlugin
     private static string SectionLoader(string config) => $"Load{config}Section";
 
     /// <summary>What a field's type is read as: a scalar, an optional or list of one, or a nested config; null if none.</summary>
+    /// <summary>
+    /// The default <paramref name="field"/> has as a record parameter: its own, if it's a literal (<c>60</c>, <c>-1</c>,
+    /// <c>"sqlite"</c>), or <c>null</c> (None) for an optional field without one; null if it can't have one.
+    /// </summary>
+    private static ExpressionSyntax? RecordDefault(Field field) => field.Default switch
+    {
+        LiteralExpressionSyntax or UnaryExpressionSyntax { Operand: LiteralExpressionSyntax } => field.Default,
+        null when Kind(field.Type) == "optional" =>
+            new NullLiteralExpressionSyntax(field.Name.Span, new Token(TokenKind.NullKeyword, field.Name.Span, "null") { IsGenerated = true }),
+        _ => null,
+    };
+
     private static string? Kind(TypeSyntax type) => type switch
     {
         NamedTypeSyntax { TypeArguments.IsEmpty: true, Name.Text: var scalar } when Scalars.ContainsKey(scalar) => "scalar",

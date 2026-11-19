@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- In a workspace holding Piper's own source (this repository), the language server is the piper built there, not the
+  installed tool, so new keywords and types aren't errors until the tool is updated. It runs from a copy in the
+  extension's storage (so `dotnet build` isn't blocked by locked files), and restarts on each new build.
+  `piper.server.path` turns it off.
 - Highlighting for `not` and `and` in patterns, and for loop labels (`outer: for …`, `break outer;`).
 - Markup: tags, attributes, text and entities highlighted as HTML, with holes (`{…}`) as Piper; `<script>` and
   `<style>` as text. A component tag (`<Card>`, `</Card>`) is coloured, hovered, gone to and renamed as its function.

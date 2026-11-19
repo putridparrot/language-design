@@ -1173,7 +1173,12 @@ match LoadSmtp(configuration) { Ok(s) => …, Err(problems) => … }
 ```
 
 - **What it becomes:** ordinary Piper, with no reflection:
-  - `record Smtp(…)`, with the fields' `requires` clauses as its invariants
+  - `record Smtp(…)`, with the fields' `requires` clauses as its invariants, and their defaults, so code making one
+    (a test's) can leave them out or name them: `Smtp("smtp.example")`, `Smtp("smtp.example", port: 2525)`. Adding a
+    field with a default then breaks no such call. An optional field without one is None by default. As a record's
+    defaults are constants after the fields without them, they're the trailing fields' whose default is a literal
+    (`587`, `"sqlite"`) or that are optional; a field with another default (`TimeSpan.FromSeconds(30)`) or none ends
+    the run, so it and the fields before it are required.
   - `fn LoadSmtp(configuration) => Result<Smtp, List<string>>`
   - `fn SmtpFrom(configuration) => Smtp`
 - **The section** is the string after `from`, or the config's name. Keys are matched as .NET matches them, without

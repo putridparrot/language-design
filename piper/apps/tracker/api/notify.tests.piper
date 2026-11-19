@@ -31,7 +31,7 @@ async fn WebhookSetup() => Task<(Settings, SqliteConnection, Bus, MemoryTranspor
     let connection = $"Data Source=file:notify-{Guid.NewGuid()}?mode=memory&cache=shared";
     let keepAlive = SqliteConnection(connection);
     await keepAlive.OpenAsync();
-    let settings = Settings(connection, 60, None, "sqlite");
+    let settings = Settings(connection);
     await Prepare(settings);
     using let db = Open(settings);
     db.Projects.Add(Project(ProjectId(0), "WEB", "Website"));
@@ -82,6 +82,6 @@ async test "a notification for an issue that's gone is rejected, not retried" {
 }
 
 test "the settings choose the notifier" {
-    Assert(NotifierFor(Settings("Data Source=:memory:", 60, None, "sqlite")) is _: NoNotifier);
-    Assert(NotifierFor(Settings("Data Source=:memory:", 60, Some(Piper.Runtime.Secret<string>("http://hooks.test")), "sqlite")) is _: WebhookNotifier);
+    Assert(NotifierFor(Settings("Data Source=:memory:")) is _: NoNotifier);
+    Assert(NotifierFor(Settings("Data Source=:memory:", webhook: Some(Piper.Runtime.Secret<string>("http://hooks.test")))) is _: WebhookNotifier);
 }

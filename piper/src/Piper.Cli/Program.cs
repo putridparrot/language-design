@@ -36,6 +36,10 @@ const string Usage = """
                                            Make a plugin project, which each build adds to piper, with an example program
       piper plugin remove <name>           Remove a plugin added with 'piper plugin add'
       piper plugin list                    List the plugins that come with piper and those added
+      piper package add <id> [--version <v>] [--prerelease] [<folder>]
+                                           Add a NuGet package to the folder's piper.json (default: the current one):
+                                           the newest stable version on your NuGet sources unless --version gives one
+      piper package remove <id> [<folder>] Remove a package from the folder's piper.json
       piper lsp                            Run the language server (LSP over stdin and stdout), for editors
       piper --version                      Show the compiler's version
 
@@ -64,6 +68,9 @@ if (args is ["new", .. var newArguments])
 
 if (args is ["plugin", .. var pluginArguments])
     return Plugin(pluginArguments);
+
+if (args is ["package", .. var packageArguments])
+    return Package(packageArguments);
 
 if (args is ["fmt", .. var fmtArguments])
     return Fmt(fmtArguments);
@@ -383,6 +390,100 @@ static int Plugin(string[] arguments)
         default:
             Console.Error.WriteLine(Usage);
             return 2;
+    }
+}
+
+// `piper package add Humanizer.Core [--version 2.14.1] [--prerelease] [folder]` and `piper package remove Humanizer.Core
+// [folder]`: a NuGet package in the folder's piper.json (made if there isn't one), only its entry changed. Without
+// --version, the newest stable version (or prerelease, with --prerelease) on the NuGet sources the .NET SDK is
+// configured with, found with `dotnet package search`; with it, nothing is looked up.
+static int Package(string[] arguments)
+{
+    string? version = null, folder = null;
+    var prerelease = false;
+    if (arguments is not [("add" or "remove") and var action, var id, .. var options])
+    {
+        Console.Error.WriteLine(Usage);
+        return 2;
+    }
+    for (int i = 0; i < options.Length; i++)
+    {
+        switch (options[i])
+        {
+            case "--version" or "-v" when action == "add" && i + 1 < options.Length:
+                version = options[++i];
+                break;
+            case "--prerelease" when action == "add":
+                prerelease = true;
+                break;
+            case var other when !other.StartsWith('-') && folder is null:
+                folder = other;
+                break;
+            default:
+                Console.Error.WriteLine($"Unknown argument '{options[i]}'.");
+                Console.Error.WriteLine(Usage);
+                return 2;
+        }
+    }
+    var path = Path.GetFullPath(Path.Combine(folder ?? ".", "piper.json"));
+    var text = File.Exists(path) ? File.ReadAllText(path) : "";
+
+    if (action == "remove")
+    {
+        if (PiperJsonPackages.Remove(text, id) is not { } removed)
+        {
+            Console.Error.WriteLine($"{path} has no package '{id}'.");
+            return 1;
+        }
+        File.WriteAllText(path, removed);
+        Console.WriteLine($"Removed {id} from {path}.");
+        return 0;
+    }
+
+    if (version is null)
+    {
+        Console.WriteLine($"Looking for the newest {(prerelease ? "" : "stable ")}version of {id}…");
+        List<string> searchArguments = ["package", "search", id, "--exact-match", "--format", "json"];
+        if (prerelease)
+            searchArguments.Add("--prerelease");
+        var search = RunDotnet([.. searchArguments]);
+        if (search is not { ExitCode: 0, Output: var json })
+        {
+            var why = search?.Error.Trim() is { Length: > 0 } error ? error : "is the .NET SDK installed?";
+            Console.Error.WriteLine($"Couldn't search for {id} ({why}). Give its version with --version.");
+            return 1;
+        }
+        var (latest, problems) = PiperJsonPackages.Latest(json, id, prerelease);
+        foreach (var problem in problems)
+            Console.Error.WriteLine($"  {problem}");
+        if (latest is null)
+        {
+            Console.Error.WriteLine($"No {(prerelease ? "" : "stable ")}version of {id} was found on your NuGet sources.{(prerelease ? "" : " --prerelease includes previews.")}");
+            return 1;
+        }
+        version = latest;
+    }
+    File.WriteAllText(path, PiperJsonPackages.Add(text, id, version));
+    Console.WriteLine($"Added {id} {version} to {path}. It's restored as the program is next built, run or tested.");
+    return 0;
+}
+
+static (int ExitCode, string Output, string Error)? RunDotnet(params string[] arguments)
+{
+    try
+    {
+        var start = new System.Diagnostics.ProcessStartInfo("dotnet") { RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var argument in arguments)
+            start.ArgumentList.Add(argument);
+        using var process = System.Diagnostics.Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        process.WaitForExit();
+        return (process.ExitCode, output.Result, error.Result);
+    }
+    catch (System.ComponentModel.Win32Exception)
+    {
+        return null;
     }
 }
 

@@ -157,12 +157,75 @@ const repoPiperDll = ["Debug", "Release"]
     .map(configuration => path.resolve(__dirname, "..", "..", "src", "Piper.Cli", "bin", configuration, "net10.0", "piper.dll"))
     .find(dll => fs.existsSync(dll));
 
-// How to start the Piper tool, without its subcommand: the configured command, or, if that's the default `piper` and
-// it isn't installed, `dotnet` with the piper.dll built in this repository. Null (after saying why) if neither exists.
+// Where the extension keeps its copies of a workspace's piper build (its global storage), set as it activates.
+let storage;
+
+// The piper built in an open workspace folder (this repository, or a checkout of it, as `<folder>/src/Piper.Cli` or
+// `<folder>/piper/src/Piper.Cli`): the newest of its Debug and Release builds, or null.
+function workspacePiperDll() {
+    const built = [];
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+        for (const root of [folder.uri.fsPath, path.join(folder.uri.fsPath, "piper")]) {
+            for (const configuration of ["Debug", "Release"]) {
+                const dll = path.join(root, "src", "Piper.Cli", "bin", configuration, "net10.0", "piper.dll");
+                try {
+                    built.push({ dll, time: fs.statSync(dll).mtimeMs });
+                } catch {
+                    // Not built in this configuration.
+                }
+            }
+        }
+    }
+    built.sort((a, b) => b.time - a.time);
+    return built[0]?.dll ?? null;
+}
+
+// A copy of the build `dll` is in, to run the server from: a running server's DLLs can't be replaced on Windows, so
+// running the build itself would make the next `dotnet build` fail. One copy per build, older ones removed (those
+// another window is still running stay until it stops).
+function serverCopy(dll) {
+    const root = path.join(storage, "server");
+    const stamp = String(Math.floor(fs.statSync(dll).mtimeMs));
+    const target = path.join(root, stamp);
+    if (!fs.existsSync(path.join(target, "piper.dll"))) {
+        const partial = `${target}.partial`;
+        fs.rmSync(partial, { recursive: true, force: true });
+        fs.cpSync(path.dirname(dll), partial, { recursive: true });
+        fs.renameSync(partial, target);
+    }
+    for (const old of fs.readdirSync(root).filter(name => name !== stamp)) {
+        try {
+            fs.rmSync(path.join(root, old), { recursive: true, force: true });
+        } catch {
+            // In use by another window's server.
+        }
+    }
+    return path.join(target, "piper.dll");
+}
+
+// Whether the running server is a copy of a workspace's build, so a rebuild restarts it.
+let fromWorkspaceBuild = false;
+
+// How to start the Piper tool, without its subcommand: the configured command; or, if that's the default `piper`, the
+// piper built in an open workspace folder (so working on Piper itself, the editor knows what was just built rather
+// than what the installed tool knew); or the installed `piper`; or, when the extension runs from editors/vscode,
+// `dotnet` with the piper.dll built in this repository. Null (after saying why) if none exists.
 function piperCommand() {
     const config = vscode.workspace.getConfiguration("piper");
     const command = config.get("server.path", "piper");
     const args = config.get("server.args", ["lsp"]).filter(a => a !== "lsp");
+    fromWorkspaceBuild = false;
+    const built = command === "piper" ? workspacePiperDll() : null;
+    if (built) {
+        try {
+            const copy = serverCopy(built);
+            fromWorkspaceBuild = true;
+            output.appendLine(`Language server: the piper built in this workspace (${built}), run from a copy.`);
+            return { command: "dotnet", args: [copy, ...args] };
+        } catch (error) {
+            output.appendLine(`Couldn't copy the workspace's piper build (${error.message ?? error}); using the installed piper.`);
+        }
+    }
     if (command !== "piper" || onPath("piper")) {
         return { command, args };
     }
@@ -254,6 +317,26 @@ async function activate(context) {
             await vscode.commands.executeCommand("piper.restartServer");
         }
     }));
+
+    // Working on Piper itself: when the workspace's piper is rebuilt, the server restarts on the new build, once the
+    // build has gone quiet (it writes piper.dll, then the plugins beside it).
+    storage = context.globalStorageUri.fsPath;
+    fs.mkdirSync(path.join(storage, "server"), { recursive: true });
+    const builds = vscode.workspace.createFileSystemWatcher("**/src/Piper.Cli/bin/*/net10.0/**");
+    let pending;
+    const rebuilt = () => {
+        clearTimeout(pending);
+        pending = setTimeout(async () => {
+            if (!fromWorkspaceBuild && vscode.workspace.getConfiguration("piper").get("server.path", "piper") !== "piper") {
+                return;
+            }
+            await vscode.commands.executeCommand("piper.restartServer");
+            vscode.window.setStatusBarMessage("Piper: the language server restarted on the rebuilt piper", 5000);
+        }, 3000);
+    };
+    builds.onDidChange(rebuilt);
+    builds.onDidCreate(rebuilt);
+    context.subscriptions.push(builds, { dispose: () => clearTimeout(pending) });
     await start();
 }
 
