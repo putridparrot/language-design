@@ -74,7 +74,11 @@ actor Jobs(id: string) persisted by id {
 /// from the coordinator at `coordinator` until `stop` is cancelled.
 async fn RunWorkers(system: ActorSystem, coordinator: string, name: string, count: int, stop: CancellationToken) {
     let names = if count == 1 { [name] } else { [...Enumerable.Range(1, count).Select(i => $"{name}/{i}")] };
-    await Task.WhenAll(names.Select(worker => Work(system, coordinator, worker, stop)));
+    await TaskScope.Run(stop) { scope =>
+        for worker in names {
+            scope.Start { token => Work(system, coordinator, worker, token) }
+        }
+    }
 }
 
 /// One worker: asks for a chunk, simulates it (on the thread pool, as it's all computation), and sends back the

@@ -16,6 +16,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Piper.Data;
 using Piper.Messaging;
+using Piper.Runtime;
 
 /// Sign-in for development and tests: the `X-User` header names the user, and `X-Roles` lists their roles
 /// (`X-Roles: admin`). A real deployment would use cookies or JWT bearer tokens instead.
@@ -46,10 +47,12 @@ class HeaderAuthentication(options: IOptionsMonitor<AuthenticationSchemeOptions>
 server TrackerServer(settings: Settings, clock: Clock, notifier: Notifier, urls: string) {
     urls urls;
 
-    // One database context per request, as EF Core expects.
-    scoped TrackerDb = TrackerDb(DbContextOptionsBuilder<TrackerDb>().UseSqlite(settings.connection).Options);
+    // The database the settings choose, one per request, as EF Core expects; `db` makes one, for the clauses below.
+    database db: TrackerDb(settings.provider, settings.connection);
     singleton Clock = clock;
     singleton Notifier = notifier;
+    // The idempotent endpoints' keys and responses, in the database, so every instance answers a retry the same way.
+    singleton IIdempotencyStore = DatabaseIdempotency.Store(db);
     // Where messages go: the in-memory transport unless "Messaging:Provider" names a broker's (rabbitmq).
     bus from "Messaging";
 
@@ -70,13 +73,13 @@ server TrackerServer(settings: Settings, clock: Clock, notifier: Notifier, urls:
     }
 
     // For as long as the app runs: the outbox's notifications sent once they're saved, and the webhook told of each.
-    relay DatabaseOutbox.Store(() => Open(settings));
+    relay DatabaseOutbox.Store(db);
     consume Webhook(settings, notifier);
 }
 
 /// Makes the database's tables, if they aren't there.
 async fn Prepare(settings: Settings) {
-    using let db = TrackerDb(DbContextOptionsBuilder<TrackerDb>().UseSqlite(settings.connection).Options);
+    using let db = Open(settings);
     await db.Database.EnsureCreatedAsync();
 }
 

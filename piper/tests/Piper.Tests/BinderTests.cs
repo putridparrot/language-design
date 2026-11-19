@@ -17,6 +17,8 @@ public class BinderTests
     [Theory]
     [InlineData("PIP0297", "async fn f() => int = 1;")]
     [InlineData("PIP0297", "using System.Threading.Tasks; fn f() { let g: () => int = async () => { await Task.Yield(); 1 }; }")]
+    // Returning nothing, an async lambda is allowed only as an event's handler (C#'s `async void`).
+    [InlineData("PIP0297", "using System; using System.Threading.Tasks; fn f() { let a: Action = async () => { await Task.Yield(); }; }")]
     [InlineData("PIP0298", "using System.Threading.Tasks; async fn f() => Task<int> = 1;")]
     [InlineData("PIP0299", "using System.Threading.Tasks; fn f() => int { await Task.Yield(); 1 }")]
     [InlineData("PIP0299", "using System.Threading.Tasks; async fn f() { let g = () => await Task.Yield(); await Task.Yield(); }")]

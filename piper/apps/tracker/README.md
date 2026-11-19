@@ -105,7 +105,9 @@ into this program and into [the desktop client](../tracker-desktop/README.md).
 - **Storage** ([store/store.piper](store/store.piper)): projects, issues and comments in SQLite, through EF Core (the
   data plugin), with LINQ queries for searching.
 - **The API** ([api/](api)): minimal API endpoints (the web plugin), with header sign-in, an admin policy, rate
-  limiting on searches, and settings bound from configuration (the config plugin).
+  limiting on searches, and settings bound from configuration (the config plugin). Its posts are `idempotent`: a
+  client retrying one with the same `Idempotency-Key` header gets the first response rather than adding an issue or
+  comment twice. Keys are kept in the database (`idempotency;`), so every instance answers alike.
 - **Notifications** ([api/notify.piper](api/notify.piper)): each transition saves an `IssueChanged` message in the
   same transaction as the change (the database's `outbox;`, and the messaging plugin's `bus.In(db.Outbox)`), so a
   crash between saving and telling can't lose it. The app's worker runs a relay, which sends saved messages, and a

@@ -788,6 +788,12 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportInvalidAsyncReturnType(TextSpan span, string what, TypeSymbol type) =>
         Error("PIP0297", span, $"An async {what} must return Task, Task<T>, ValueTask or ValueTask<T>, not '{type}'.");
 
+    public void ReportUnobservedTask(TextSpan span, TypeSymbol type) =>
+        Warning("PIP0409", span, $"Nothing waits for this {type}, so if it fails, its exception is lost: 'await' it, start it in a TaskScope (scope.Start) to run alongside, or write 'let _ = …;' to drop it on purpose.");
+
+    public void ReportScopeEscapes(TextSpan span, string scope) =>
+        Warning("PIP0410", span, $"'{scope}' outlives its TaskScope.Run here, but once Run has finished it can't start tasks, and cancelling it does nothing: use it inside the body, or pass it to the functions the body calls.");
+
     public void ReportAsyncWithoutAwait(TextSpan span, string what) =>
         Warning("PIP0298", span, $"This async {what} has no 'await', so it runs synchronously.");
 

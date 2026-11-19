@@ -39,12 +39,16 @@ async fn RunLoad(urls: List<string>, sku: string, stock: int, requests: int, con
 
     let pending = ConcurrentQueue<int>(Enumerable.Range(0, requests));
     let outcomes = ConcurrentBag<Outcome>();
-    let clients = Enumerable.Range(0, concurrency).Select(async _ => {
-        while pending.TryDequeue(out let n) {
-            outcomes.Add(await ReserveOne(http, nodes[n % nodes.Count], sku));
+    // `concurrency` clients sharing the requests; one failing stops the others, and its failure is the one reported.
+    await TaskScope.Run { scope =>
+        for _ in 0..<concurrency {
+            scope.Start { stop =>
+                while !stop.IsCancellationRequested && pending.TryDequeue(out let n) {
+                    outcomes.Add(await ReserveOne(http, nodes[n % nodes.Count], sku));
+                }
+            }
         }
-    });
-    await Task.WhenAll(clients);
+    }
 
     let level = JsonDocument.Parse(await http.GetStringAsync(url$"{first}/stock/{sku}".ToUri())).RootElement.GetProperty("result");
     LoadReport(stock, [...outcomes], level.GetProperty("onHand").GetInt32(), level.GetProperty("reserved").GetInt32())

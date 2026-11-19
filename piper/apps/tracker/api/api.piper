@@ -19,6 +19,7 @@ config Settings from "Tracker" {
     connection: string = "Data Source=tracker.db";
     searchesPerMinute: int = 60 requires searchesPerMinute > 0;
     secret webhook: string?;                // where to post changed issues, if anywhere: a secret, as its URL carries its token
+    provider: string = "sqlite";            // the database: sqlite (a local file), sqlserver or postgres, with its EF Core package
 }
 
 /// The time now: a service, so tests can fix it.
@@ -52,7 +53,9 @@ policies Security(settings: Settings) {
     ratelimit "search" fixed settings.searchesPerMinute per minute;
 }
 
-endpoints Api: TrackerApi "/api" authorize {
+/// Its posts are idempotent: a client retrying one with the same `Idempotency-Key` (after a timeout) gets the first
+/// one's response, rather than adding an issue or a comment twice.
+endpoints Api: TrackerApi "/api" authorize idempotent {
     get "/health" anonymous () => "ok";
 
     get "/projects" async (db: TrackerDb) => await db.Projects.OrderBy(p => p.code).ToListAsync();

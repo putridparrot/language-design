@@ -1200,6 +1200,11 @@ public sealed class Lowerer
         var left = LowerForValue(logical.Left, prelude);
         var rightPrelude = new List<BoundStatement>();
         var right = LowerForValue(logical.Right, rightPrelude);
+        // `a && q.TryDequeue(out let n)`: n is declared here, not inside the `if (t)` below, where the code after the
+        // condition (a loop's or if's body) couldn't see it. Declaring evaluates nothing, so it can move first; with
+        // nothing else to run, `a && q.TryDequeue(out n)` stays as it is, and C# knows n is assigned when it's true.
+        prelude.AddRange(rightPrelude.Where(s => s is BoundVariableDeclaration { Initializer: null }));
+        rightPrelude.RemoveAll(s => s is BoundVariableDeclaration { Initializer: null });
         if (rightPrelude.Count == 0)
             return new BoundBinaryExpression(left, logical.Operator, right, logical.Type);
 

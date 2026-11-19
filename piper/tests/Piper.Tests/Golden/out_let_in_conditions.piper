@@ -1,0 +1,25 @@
+// `out let` on the right of `&&` or `||` in a condition: the variable is in scope where the condition makes it
+// assigned (the body, or the `else`), as in C#.
+using System.Collections.Concurrent;
+
+fn Main() {
+    let queue = ConcurrentQueue<int>([1, 2, 3, 4]);
+    let running = true;
+    while running && queue.TryDequeue(out let n) {
+        Print(n);
+        if n == 2 { break; }
+    }
+    if running && queue.TryDequeue(out let n) {
+        Print($"then {n}");
+    }
+    if !running || !queue.TryDequeue(out let m) {
+        Print("none");
+    } else {
+        Print($"or {m}");
+    }
+    if running && queue.TryDequeue(out let last) {
+        Print(last);
+    } else {
+        Print("empty");
+    }
+}

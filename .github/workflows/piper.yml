@@ -1,0 +1,90 @@
+# Piper: the compiler's tests and the apps' on every push and pull request that touches piper/, on Linux and Windows;
+# and, for a tag such as piper-v1.1.0, the packages of that release (the tool, Piper.Build and Piper.Runtime) as the
+# run's artifact. Publishing them anywhere is left to a person.
+name: piper
+
+on:
+  push:
+    branches: [main]
+    paths: ["piper/**", ".github/workflows/piper.yml"]
+    tags: ["piper-v*"]
+  pull_request:
+    paths: ["piper/**", ".github/workflows/piper.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: piper-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: piper
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux has Docker for the RabbitMQ tests' broker; on Windows they say they didn't run.
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('piper/**/*.csproj', 'piper/**/piper.json', 'piper/Directory.Build.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Compiler, plugins and language server
+        run: dotnet test -c Release --logger "console;verbosity=minimal"
+
+      - name: Apps
+        shell: bash
+        run: |
+          dotnet build src/Piper.Cli -c Release -v q
+          for app in orders tracker stock grid; do
+            echo "::group::apps/$app"
+            dotnet src/Piper.Cli/bin/Release/net10.0/piper.dll test "apps/$app"
+            echo "::endgroup::"
+          done
+
+  pack:
+    name: pack the release
+    if: startsWith(github.ref, 'refs/tags/piper-v')
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Pack, as the tag's version
+        shell: bash
+        run: |
+          # piper-v1.1.0 packs 1.1.0 (assemblies 1.1.0.0); piper-v1.1.0-beta.1 packs 1.1.0-beta.1.
+          version="${GITHUB_REF_NAME#piper-v}"
+          prefix="${version%%-*}"
+          suffix=""
+          if [[ "$version" == *-* ]]; then suffix="${version#*-}"; fi
+          for project in src/Piper.Runtime src/Piper.Cli src/Piper.Build; do
+            dotnet pack "$project" -c Release -o packages -p:PiperRelease=true -p:VersionPrefix="$prefix" -p:VersionSuffix="$suffix"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: piper-packages
+          path: piper/packages/*.nupkg
+          if-no-files-found: error

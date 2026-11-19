@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+- **A database in a server or host:** `database db: TrackerDb from "Database";` registers a `database` declaration's
+  class as a scoped service (as `AddDbContext` does) on the provider the configuration chooses (`Database:Provider`:
+  sqlite by default, sqlserver, postgres; `Database:Connection`), and names `db`, a function making one, for the
+  clauses after (`relay DatabaseOutbox.Store(db);`). `database db: TrackerDb(settings.provider, settings.connection);`
+  takes them from the program's own `config` record. An unknown provider or a missing connection stops the app as it
+  starts. apps/tracker's server uses it in place of its hand-written `DbContextOptionsBuilder` registration and
+  factories, and its settings gain `provider` (`Tracker:Provider`, sqlite by default).
+
+- **Async event handlers:** `button.Click += async (_, e) => { await Save(); }` (C#'s `async void`), for Piper's events
+  and .NET's, was an error, as an async lambda had to return a Task. An event's handler can now be async; anywhere else
+  an async lambda returning nothing is still an error (PIP0297). Found by apps/tracker-desktop, which keeps running its
+  `[Command]`s from its handler, as they report failures in its status line.
+
+- **`TaskScope` checks:** the tasks a scope starts are checked for data races (PIP0387), each with the others or,
+  started in a loop, with itself, as `Task.WhenAll`'s `Task.Run` lambdas and parallel loops are. And a scope kept past
+  its `Run` (stored outside the body, held by a lambda kept for later, or returned) is a warning (PIP0410), as it can't
+  start tasks once `Run` has finished. Passing it to a function, or reading `scope.Token`, is fine.
+
+- **A task nothing waits for is a warning** (PIP0409): a call giving a `Task` or `ValueTask` whose value is thrown
+  away (`Save(order);`, the last expression of a block whose value isn't used, or an `Action` lambda's body), as its
+  exception would be lost. In any function, not only async ones as C#'s CS4014. `let _ = …;` drops one on purpose;
+  `TaskScope.Start`'s task, marked `[ObservedTask]`, is its scope's to wait for. Nothing in the samples or apps
+  needed changing.
+
+- **Structured concurrency: `TaskScope`.** `await TaskScope.Run { scope => … scope.Start { stop => Work(stop) } … }`
+  ties tasks to a block. It finishes only when the body and every task it started have finished. A body that throws
+  cancels the tasks (so a failed test can't leave workers running), and a task that fails cancels the rest, its
+  exception being the one thrown. `TaskScope.Run(stop) { … }` links it to an outer token. Simulated tests run it as
+  they run `Task.Run`, and it needs no `using`. apps/grid (its workers, in main, tests and `RunWorkers`) and
+  apps/stock (its load clients) use it in place of "cancel, then `Task.WhenAll`". See
+  [docs/future.md](docs/future.md#structured-concurrency-a-design) for the compiler checks to come.
+- **Fixed: `out let` on the right of `&&` or `||`** (`while running && queue.TryDequeue(out let n) { … n … }`) was an
+  internal compiler error, as `n` was declared inside the `if` that the short circuit became, out of the body's sight.
+  It's now declared before the condition, which stays a plain `&&`.
+
+- **Fixed, in the editor: the outline failing** ("Request textDocument/documentSymbol failed: selectionRange must be
+  contained in fullRange") for any file with a plugin's declarations whose names come from the plugin's template: a
+  `config` record's loaders, the `UseSecurity` a `policies` block makes, an `args` record's fields, `[Notify]` and
+  `[Command]` properties. Such a name is now placed at its declaration's start.
+
+- **Idempotent endpoints:** `post "/issues" idempotent …`, or `idempotent` on a group for its posts, puts, patches
+  and deletes. A request with an `Idempotency-Key` header runs once, and a retry is answered with the first one's
+  response (marked `Idempotent-Replayed: true`): 409 while the first runs, 422 for the key on a different request.
+  Failures (500 and over) aren't kept, so they run again, and keys are per signed-in user. Keys are kept by the
+  registered `IIdempotencyStore`: in memory, or in a database the data plugin's `idempotency;` adds a table to
+  (`DatabaseIdempotency.Store(…)`), shared by a service's pods. `idempotent` on a `get` is an error. A `server` adds
+  the middleware after its policies'. apps/tracker's posts are idempotent, with keys in its database.
+
 - **CI** (`.github/workflows/piper.yml`, at the repository's root): every push to main and pull request touching piper/
   runs the tests and the four apps' tests, on Linux and Windows (Linux with Docker, so the RabbitMQ tests run against a
   real broker). A tag such as `piper-v1.1.0` (or `piper-v1.1.0-beta.1`) also packs the tool, Piper.Build and

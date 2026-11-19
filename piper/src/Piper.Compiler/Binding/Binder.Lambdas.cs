@@ -197,7 +197,11 @@ public sealed partial class Binder
 
         // An async lambda's body produces the Task's result: `async x => 1` is a (T) => Task<int>.
         bool isAsync = syntax.Async is not null;
-        if (isAsync && returnType is not null)
+        // An event's handler, `button.Click += async (_, e) => { await Save(); }`, is C#'s `async void`: allowed for an
+        // event handler only, its body producing nothing. What it throws surfaces on the event's synchronization context
+        // (the UI thread), as C#'s does.
+        bool asyncHandler = isAsync && returnType == TypeSymbol.Unit && ReferenceEquals(syntax, _eventHandler);
+        if (isAsync && returnType is not null && !asyncHandler)
         {
             var awaited = AsyncBodyType(returnType);
             if (awaited is null && returnType != TypeSymbol.Error)
@@ -932,7 +936,7 @@ public sealed partial class Binder
             return new BoundErrorExpression();
         }
 
-        var handler = RequireValue(BindExpression(syntax.Value, handlerType), syntax.Value.Span);
+        var handler = RequireValue(BindEventHandler(syntax.Value, handlerType), syntax.Value.Span);
         if (syntax.Operator.Kind is not (TokenKind.PlusEquals or TokenKind.MinusEquals))
         {
             _diagnostics.ReportEventMisused(target.Member.Span, @event.Name);

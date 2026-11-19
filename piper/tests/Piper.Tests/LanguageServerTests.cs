@@ -662,6 +662,36 @@ public sealed class LanguageServerTests : IDisposable
         Assert.Equal(["Point", "extend Point", "scale", "Main"], names);
     }
 
+    /// <summary>
+    /// A plugin's declarations (here the functions `config` makes) have names from the plugin's template, not this
+    /// file. VS Code refuses the whole outline if a symbol's name is outside its range ("selectionRange must be
+    /// contained in fullRange"), so every name must be inside its symbol.
+    /// </summary>
+    [Fact]
+    public async Task Every_symbols_name_is_inside_it_even_for_a_plugins_declarations()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_directory, "piper.json"), """{ "plugins": ["config"] }""");
+        var uri = await OpenAsync("""
+
+
+            config Settings from "App" {
+                port: int = 8080;
+            }
+
+            fn Main() {}
+            """);
+        var symbols = (JsonArray)(await _server.HandleAsync("textDocument/documentSymbol", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = uri } }))!;
+        static (int, int) At(JsonNode position) => (position["line"]!.GetValue<int>(), position["character"]!.GetValue<int>());
+        var all = symbols.Concat(symbols.SelectMany(s => s!["children"]!.AsArray())).ToList();
+        Assert.Contains(all, s => s!["name"]!.GetValue<string>().StartsWith("Load", StringComparison.Ordinal));
+        Assert.All(all, s =>
+        {
+            var (range, selection) = (s!["range"]!, s["selectionRange"]!);
+            Assert.True(At(selection["start"]!).CompareTo(At(range["start"]!)) >= 0 && At(selection["end"]!).CompareTo(At(range["end"]!)) <= 0,
+                $"{s["name"]}: {selection.ToJsonString()} isn't inside {range.ToJsonString()}");
+        });
+    }
+
     [Fact]
     public async Task A_folder_with_piper_json_is_one_program()
     {

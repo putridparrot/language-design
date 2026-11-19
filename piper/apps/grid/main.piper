@@ -67,17 +67,17 @@ host WorkerNode(node: ActorSystem, options: Options, name: string) {
 async fn Everything(options: Options) => Task<int> {
     let node = await PiperNode.StartAsync("127.0.0.1", options.port ?? 8000);
     let jobs = Jobs.Spawn(node, "jobs", EventStore(), "grid");
-    using let stop = CancellationTokenSource();
-    let workers: List<Task> = [];
-    for i in 1..3 {
-        let worker = await PiperNode.StartAsync("127.0.0.1", 0);
-        workers.Add(RunWorkers(worker, node.Address, $"worker-{i}", 1, stop.Token));
+    // The workers run until the dashboard's server stops, and are stopped if it fails.
+    await TaskScope.Run { scope =>
+        for i in 1..3 {
+            let worker = await PiperNode.StartAsync("127.0.0.1", 0);
+            scope.Start { stop => RunWorkers(worker, node.Address, $"worker-{i}", 1, stop) }
+        }
+        let url = HttpUrl(options);
+        Print($"Coordinator {node.Address} and three workers; dashboard on {url}");
+        await GridServer(jobs, url).RunAsync();
+        scope.Cancel();
     }
-    let url = HttpUrl(options);
-    Print($"Coordinator {node.Address} and three workers; dashboard on {url}");
-    await GridServer(jobs, url).RunAsync();
-    stop.Cancel();
-    await Task.WhenAll(workers);
     0
 }
 

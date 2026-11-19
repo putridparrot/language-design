@@ -26,8 +26,11 @@ public static class PiperHost
 
     /// <summary>The provider of <typeparamref name="T"/> that <paramref name="section"/> of any configuration chooses.</summary>
     public static T Provider<T>(Microsoft.Extensions.Configuration.IConfiguration configuration, string section) where T : class =>
-        Piper.Runtime.PiperProviders.Create<T>(new Piper.Runtime.ProviderSettings(section,
-            Microsoft.Extensions.Configuration.ConfigurationExtensions.AsEnumerable(configuration.GetSection(section), makePathsRelative: true)));
+        Piper.Runtime.PiperProviders.Create<T>(Settings(configuration, section));
+
+    /// <summary>The settings in <paramref name="section"/> of the configuration, for a provider to read (a <c>database</c> clause's).</summary>
+    public static Piper.Runtime.ProviderSettings Settings(Microsoft.Extensions.Configuration.IConfiguration configuration, string section) =>
+        new(section, Microsoft.Extensions.Configuration.ConfigurationExtensions.AsEnumerable(configuration.GetSection(section), makePathsRelative: true));
 
     /// <summary><c>logging off;</c>: no logging providers, so the program writes nothing to the console.</summary>
     public static void LoggingOff(IHostApplicationBuilder builder) => builder.Logging.ClearProviders();

@@ -48,8 +48,9 @@ async fn Run(words: List<string>, settings: Settings, port: int) => Task<int> {
     }
 }
 
+/// The database the settings choose (Tracker:Provider and Tracker:Connection), as the server opens it.
 fn Open(settings: Settings) => TrackerDb =
-    TrackerDb(DbContextOptionsBuilder<TrackerDb>().UseSqlite(settings.connection).Options);
+    Piper.Data.PiperDatabase.Factory<TrackerDb>(settings.provider, settings.connection)();
 
 /// Prints what a command did, or why it couldn't; the exit code.
 async fn Report<T>(work: Task<Result<T, IssueError>>, describe: (T) => string) => Task<int> {

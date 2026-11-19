@@ -20,7 +20,7 @@ async fn StartTrackerTelling(searchesPerMinute: int, notifier: Notifier) => Task
     let connection = $"Data Source=file:tracker-{Guid.NewGuid()}?mode=memory&cache=shared";
     let keepAlive = SqliteConnection(connection);
     await keepAlive.OpenAsync();
-    let settings = Settings(connection, searchesPerMinute, None);
+    let settings = Settings(connection, searchesPerMinute, None, "sqlite");
     await Prepare(settings);
     let client = await TestClient.Start(() => TrackerServer(settings, FixedClock(Noon()), notifier, ""));
     Running(client, keepAlive)
@@ -99,6 +99,27 @@ async test "an issue moves through its workflow over HTTP" {
 
     AssertEqual(404, (await Get(running, "/api/issues/99")).Item1);
     AssertEqual(404, (await Post(running, "/api/issues/99/events", """{"kind": "Submit"}""")).Item1);
+}
+
+async test "a post retried with its Idempotency-Key adds one issue, and is answered as the first was" {
+    let running = await StartTracker(60);
+    defer { Stop(running); }
+    await AddWebProject(running);
+    async fn Add(key: string) => Task<(int, string)> {
+        let request = HttpRequestMessage(HttpMethod.Post, "/api/projects/1/issues");
+        request.Headers.Add("X-User", "ada");
+        request.Headers.Add("Idempotency-Key", key);
+        request.Content = StringContent("""{"title": "Crash on save", "description": "", "priority": "High"}""", Encoding.UTF8, "application/json");
+        let response = await running.client.SendAsync(request);
+        ((int)response.StatusCode, await response.Content.ReadAsStringAsync())
+    }
+    let first = await Add("retry-1");
+    AssertEqual(200, first.Item1);
+    AssertEqual(first, await Add("retry-1"));
+    let (_, issues) = await Get(running, "/api/projects/1/issues");
+    AssertEqual(1, issues.Split("Crash on save").Length - 1);
+    // A new key is a new request.
+    AssertEqual(200, (await Add("retry-2")).Item1);
 }
 
 async test "a request breaking an invariant is a 400" {

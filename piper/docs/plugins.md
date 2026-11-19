@@ -801,9 +801,53 @@ endpoints Admin "/admin" authorize "admin" ratelimit "api" {
 | `ratelimit "p"`, `ratelimit off` | limited by the policy named, or not limited | `RequireRateLimiting("p")`, `DisableRateLimiting()` |
 | `cors "p"` | other sites' pages may call it, as the policy says | `RequireCors("p")` |
 | `cache`, `cache "p"` | responses are cached | `CacheOutput()`, `CacheOutput("p")` |
+| `idempotent` | a request retried with its `Idempotency-Key` runs once (see [below](#idempotent-endpoints)) | Piper.Web's `PiperIdempotency` |
 
 `authorize` with `anonymous`, or a word given twice in one place, is an error, as is `ratelimit` or `cors` without a
 policy's name.
+
+#### Idempotent endpoints
+
+A client that times out on a POST can't tell whether it ran, so it retries, and adds the issue twice. `idempotent`
+makes a retry safe:
+
+```piper
+endpoints Api "/api" authorize idempotent {                // the group's posts, puts, patches and deletes
+    post "/issues" async (issue: NewIssue, db: TrackerDb) => await AddIssue(db, issue);
+    get "/issues/{id:int}" async (id: IssueId, db: TrackerDb) => await FindIssue(db, id);   // gets aren't affected
+}
+```
+
+- **The key:** a request with an `Idempotency-Key` header (a UUID the client makes, and sends again with each retry)
+  runs once. A repeat is answered with the first one's response (its status, content type, `Location` and body),
+  marked `Idempotent-Replayed: true`, and the handler doesn't run. A request without the header runs as usual.
+- **Refused:**
+  - **409** for the key while the first request with it is still running;
+  - **422** for the key on a different request (another method, route, query or body);
+  - **400** for a key that's empty or longer than 255 characters.
+- **Failures run again:** a response of 500 or over, or an exception, isn't kept, so a retry runs again.
+- **Per user:** keys are kept per signed-in user, so one user's key can't replay another's response. The middleware
+  runs after the policies', so a repeat is authorized and rate limited as the first was.
+- **Where keys are kept:** the `IIdempotencyStore` the server registers. Without one, it's an in-memory store, which
+  suits one process and tests. For a service with several pods, the data plugin's `idempotency;` adds a table to a
+  database (see [`data`](#data-ef-core-databases)) and `DatabaseIdempotency` keeps keys there, so any pod answers a
+  retry the same way:
+
+  ```piper
+  database TrackerDb { …; idempotency; }
+
+  server TrackerServer(settings: Settings) {
+      singleton IIdempotencyStore = DatabaseIdempotency.Store(() => Open(settings));
+      …
+  }
+  ```
+- **How long:** a running request holds its key for two minutes, after which one whose process died no longer blocks
+  its retries. Responses are kept for 24 hours. Both can be changed by registering
+  `singleton IdempotencyOptions = IdempotencyOptions() { Lease: …, Keep: … };`.
+- **Checked:** `idempotent` on a `get` is an error, since a GET is idempotent already. On a group, it passes the
+  group's gets by.
+- **Without a server:** a `server` adds the middleware. An app built by hand calls `PiperIdempotency.Use(app)` after
+  its policies' middleware and before mapping the endpoints.
 
 A `policies` declaration defines the policies:
 
@@ -865,8 +909,8 @@ server TrackerServer(settings: Settings, clock: Clock) {
     https certificate settings.pfx;                 // HTTP redirected to HTTPS, serving this certificate
     logging off;
     services AppServices;                           // a `services` block, with its arguments if it takes any
-    scoped TrackerDb = TrackerDb(settings.options); // or registrations of its own, as `services` writes them
-    singleton Clock = clock;
+    database db: TrackerDb from "Database";         // the database the configuration chooses, one per request
+    singleton Clock = clock;                        // or registrations of its own, as `services` writes them
     policies Security(settings);                    // registered, and its middleware added before the endpoints
     configure {                                     // anything else, written against `builder`
         builder.Services.AddAuthentication("Cookies").AddCookie("Cookies");
@@ -894,12 +938,23 @@ async fn Main() => Task = await TrackerServer(Load(), SystemClock()).RunAsync();
   FixedClock(noon)))`) and `Main` runs it. The builder is `builder` and the app `app`, in `configure` and `use`.
 - **Order:** registrations run in the order written, then the app is built and its middleware added: `problems` first
   (so it sees every exception), then `https`, then `use { … }` blocks (the app's own middleware, `app.Use(…)`), then the policies'
-  (CORS, authentication, authorization, rate limits, caching), then health, OpenAPI and the endpoints. Writing
+  (CORS, authentication, authorization, rate limits, caching), then [idempotent endpoints'](#idempotent-endpoints)
+  replays, then health, OpenAPI and the endpoints. Writing
   `UseSecurity(app)` after the endpoints, where it silently does nothing, can't happen.
 - **`provider`:** `provider store: IEventStore from "Events";` makes the implementation of a service the
   configuration chooses (see [Providers](#providers-chosen-by-configuration)) and registers it, naming it `store` for
   the clauses after. A provider that can't be made (an unknown name, a missing setting, a package not brought) stops
   the app as it starts, saying why. A `host` has it too.
+- **`database`:** `database TrackerDb from "Database";` registers a [`database`](#data-ef-core-databases)
+  declaration's class as a scoped service, one per request as EF Core's `AddDbContext` does, on the database the
+  configuration chooses: `Database:Provider` (`sqlite`, the local one, if it isn't set; `sqlserver`; `postgres`) and
+  `Database:Connection`. So the same program runs on a SQLite file on a laptop and on PostgreSQL in a cloud, by
+  configuration, each provider's EF Core package brought in piper.json. `database db: TrackerDb from "Database";`
+  also names `db`, a function making one, for the clauses after: `relay DatabaseOutbox.Store(db);`.
+  `database db: TrackerDb(settings.provider, settings.connection);` takes them from a `config` record the program
+  has instead, as apps/tracker's server does, whose tests give each its own database. An unknown provider, a missing
+  connection or a missing package stops the app as it starts, saying which. A `host` has it too; it needs the data
+  plugin.
 - **`sources`:** `sources (configuration: IConfigurationBuilder) => configuration.AddAzureKeyVault(…);` adds where
   configuration comes from beyond appsettings.json and the environment, from any provider (a key vault, a cloud's
   secrets manager, mounted files), chosen by the app. It's added before anything reads configuration, wherever it's
@@ -1287,8 +1342,15 @@ let big = await shop.Orders.Where(o => o.total > 100m).OrderBy(o => o.placed).To
   `shop.Query<string>(sql$"select name as Value from …")` selects values, and `await shop.ExecuteAsync(sql$"update …")`
   runs a command, giving the rows it changed. EF Core's `FromSql($"…")` works too. Its `FromSqlRaw` and
   `ExecuteSqlRaw`, given an interpolated string, are a warning (PIP0405), as they'd put its holes in the SQL as text.
+- **In a server or host,** the `database` clause registers one on the provider the configuration chooses (see
+  [A server](#a-server)): `database db: Shop from "Database";`.
 - **Packages:** the plugin brings EF Core. The program's piper.json adds its database's provider, such as
   `"packages": { "Microsoft.EntityFrameworkCore.Sqlite": "10.0.14" }`.
+- **`outbox;`** adds a table of messages saved with the changes they tell of (see
+  [the outbox](#the-outbox-a-change-and-its-messages-saved-together)). **`idempotency;`** adds a table,
+  `PiperIdempotency`, of [idempotent endpoints'](#idempotent-endpoints) keys and responses, for
+  `DatabaseIdempotency.Store(() => Db(options))`. Several pods share it: a key is claimed by inserting its row, which
+  only one request can do.
 - **Checked:** a `key` or `index` naming a field its type doesn't have (a class's must be public, as EF Core maps
   properties), and a table declared twice.
 

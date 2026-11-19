@@ -52,6 +52,14 @@ public sealed class DatabaseEventStore : IEventStore
     /// <summary>The options of a database chosen by name, through its EF Core provider's <c>Use…</c>, found in its package.</summary>
     internal static DbContextOptions Options(string name, string package, string extensions, string method, ProviderSettings settings)
     {
+        var options = new DbContextOptionsBuilder();
+        Configure(options, name, package, extensions, method, settings);
+        return options.Options;
+    }
+
+    /// <summary>Configures <paramref name="options"/> for a database chosen by name, through its EF Core provider's <c>Use…</c>.</summary>
+    internal static void Configure(DbContextOptionsBuilder options, string name, string package, string extensions, string method, ProviderSettings settings)
+    {
         var connection = settings.Required("Connection");
         var type = Type.GetType($"{extensions}, {package}")
             ?? throw new ProviderException($"The '{name}' provider of {settings.Section} needs EF Core's {package} package: add it to piper.json's \"packages\".");
@@ -59,9 +67,7 @@ public sealed class DatabaseEventStore : IEventStore
             m.Name == method && !m.IsGenericMethod && m.GetParameters() is [{ ParameterType: var builder }, { ParameterType: var text }, ..] rest &&
             builder == typeof(DbContextOptionsBuilder) && text == typeof(string) && rest.Skip(2).All(p => p.IsOptional))
             ?? throw new ProviderException($"{package} has no {method}(DbContextOptionsBuilder, string) that this version of Piper knows.");
-        var options = new DbContextOptionsBuilder();
         use.Invoke(null, [options, connection, .. use.GetParameters().Skip(2).Select(p => p.DefaultValue is DBNull ? null : p.DefaultValue)]);
-        return options.Options;
     }
 
     /// <summary>

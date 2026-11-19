@@ -1827,6 +1827,195 @@ public class WebPluginTests
         Assert.Contains("'authorize' needs the app to register and use its middleware", warning.Message);
     }
 
+    /// <summary>
+    /// <c>idempotent</c> endpoints, served by a <c>server</c> (which adds PiperIdempotency's middleware): a request
+    /// repeated with its <c>Idempotency-Key</c> is answered with the first one's response rather than running again;
+    /// 422 for the key on a different request, 409 while the first runs, 400 for a key too long. A request without
+    /// the header, or to an endpoint that isn't idempotent, runs as usual, and one that failed runs again.
+    /// </summary>
+    [Fact]
+    public void Idempotent_endpoints_answer_a_repeat_with_the_first_response()
+    {
+        var result = Compilation.Compile([new SourceText(""""
+            using System;
+            using System.Net;
+            using System.Net.Http;
+            using System.Text;
+            using System.Threading.Tasks;
+            using Microsoft.AspNetCore.Http;
+            using Piper.Web;
+
+            record NewIssue(title: string);
+            record Issue(id: int, title: string);
+            class Counter { public mut count = 0; }
+            class Gate {
+                public mut entered: TaskCompletionSource = TaskCompletionSource();
+                public mut release: TaskCompletionSource = TaskCompletionSource();
+            }
+
+            endpoints Issues "/issues" idempotent {
+                get "/count" (counter: Counter) => counter.count;
+                post "/" (issue: NewIssue, counter: Counter) => {
+                    counter.count += 1;
+                    TypedResults.Created($"/issues/{counter.count}", Issue(counter.count, issue.title))
+                };
+                put "/{id:int}" (id: int, issue: NewIssue, counter: Counter) => {
+                    counter.count += 1;
+                    Issue(id, issue.title)
+                };
+                post "/broken" (counter: Counter) => {
+                    counter.count += 1;
+                    let zero = 0;
+                    $"{1 / zero}"
+                };
+                post "/slow" async (gate: Gate) => {
+                    gate.entered.SetResult();
+                    await gate.release.Task;
+                    "slow"
+                };
+            }
+
+            endpoints Other {
+                post "/other" (counter: Counter) => {
+                    counter.count += 1;
+                    counter.count
+                };
+                post "/once" idempotent (counter: Counter) => {
+                    counter.count += 1;
+                    counter.count
+                };
+            }
+
+            server Site(counter: Counter, gate: Gate) {
+                urls "http://127.0.0.1:0";
+                logging off;
+                singleton Counter = counter;
+                singleton Gate = gate;
+                problems;
+                endpoints Issues;
+                endpoints Other;
+            }
+
+            fn Main() {}
+
+            fn Request(method: HttpMethod, path: string, key: string, json: string) => HttpRequestMessage {
+                let request = HttpRequestMessage(method, path);
+                if key != "" { request.Headers.Add("Idempotency-Key", key); }
+                request.Content = StringContent(json, Encoding.UTF8, "application/json");
+                request
+            }
+
+            fn Replayed(response: HttpResponseMessage) => bool = response.Headers.Contains("Idempotent-Replayed");
+
+            async test "a repeat is answered with the first response, without running again" {
+                let counter = Counter();
+                using let site = await TestClient.Start(() => Site(counter, Gate()));
+                let first = await site.SendAsync(Request(HttpMethod.Post, "/issues", "k1", """{"title": "a"}"""));
+                AssertEqual(HttpStatusCode.Created, first.StatusCode);
+                let body = await first.Content.ReadAsStringAsync();
+                AssertEqual("""{"id":1,"title":"a"}""", body);
+                Assert(!Replayed(first));
+
+                let again = await site.SendAsync(Request(HttpMethod.Post, "/issues", "k1", """{"title": "a"}"""));
+                AssertEqual(HttpStatusCode.Created, again.StatusCode);
+                AssertEqual(body, await again.Content.ReadAsStringAsync());
+                AssertEqual("/issues/1", match again.Headers.Location { Some(l) => l.ToString(), None => "" });
+                AssertEqual("application/json", again.Content.Headers.ContentType?.MediaType ?? "");
+                Assert(Replayed(again));
+                AssertEqual(1, counter.count);
+
+                // A put is covered by the group's word as well.
+                AssertEqual(HttpStatusCode.OK, (await site.SendAsync(Request(HttpMethod.Put, "/issues/7", "k2", """{"title": "b"}"""))).StatusCode);
+                Assert(Replayed(await site.SendAsync(Request(HttpMethod.Put, "/issues/7", "k2", """{"title": "b"}"""))));
+                AssertEqual(2, counter.count);
+                AssertEqual("2", await site.GetStringAsync("/issues/count"));
+            }
+
+            async test "a key is for one request: another body or route is refused" {
+                let counter = Counter();
+                using let site = await TestClient.Start(() => Site(counter, Gate()));
+                await site.SendAsync(Request(HttpMethod.Post, "/issues", "k1", """{"title": "a"}"""));
+                let otherBody = await site.SendAsync(Request(HttpMethod.Post, "/issues", "k1", """{"title": "b"}"""));
+                AssertEqual(HttpStatusCode.UnprocessableEntity, otherBody.StatusCode);
+                AssertEqual("application/problem+json", otherBody.Content.Headers.ContentType?.MediaType ?? "");
+                AssertEqual(HttpStatusCode.UnprocessableEntity, (await site.SendAsync(Request(HttpMethod.Put, "/issues/1", "k1", """{"title": "a"}"""))).StatusCode);
+                AssertEqual(1, counter.count);
+
+                let tooLong = await site.SendAsync(Request(HttpMethod.Post, "/issues", string('k', 256), """{"title": "a"}"""));
+                AssertEqual(HttpStatusCode.BadRequest, tooLong.StatusCode);
+                AssertEqual(1, counter.count);
+            }
+
+            async test "without a key, or on an endpoint that isn't idempotent, every request runs" {
+                let counter = Counter();
+                using let site = await TestClient.Start(() => Site(counter, Gate()));
+                await site.SendAsync(Request(HttpMethod.Post, "/issues", "", """{"title": "a"}"""));
+                await site.SendAsync(Request(HttpMethod.Post, "/issues", "", """{"title": "a"}"""));
+                AssertEqual(2, counter.count);
+                await site.SendAsync(Request(HttpMethod.Post, "/other", "k1", "{}"));
+                let other = await site.SendAsync(Request(HttpMethod.Post, "/other", "k1", "{}"));
+                AssertEqual("4", await other.Content.ReadAsStringAsync());
+                Assert(!Replayed(other));
+
+                // An endpoint's own word, in a group without one.
+                AssertEqual("5", await (await site.SendAsync(Request(HttpMethod.Post, "/once", "k1", "{}"))).Content.ReadAsStringAsync());
+                AssertEqual("5", await (await site.SendAsync(Request(HttpMethod.Post, "/once", "k1", "{}"))).Content.ReadAsStringAsync());
+                AssertEqual(5, counter.count);
+            }
+
+            async test "a request that failed runs again" {
+                let counter = Counter();
+                using let site = await TestClient.Start(() => Site(counter, Gate()));
+                AssertEqual(HttpStatusCode.InternalServerError, (await site.SendAsync(Request(HttpMethod.Post, "/issues/broken", "k1", "{}"))).StatusCode);
+                let again = await site.SendAsync(Request(HttpMethod.Post, "/issues/broken", "k1", "{}"));
+                AssertEqual(HttpStatusCode.InternalServerError, again.StatusCode);
+                Assert(!Replayed(again));
+                AssertEqual(2, counter.count);
+            }
+
+            async test "a repeat while the first is running is 409, and replayed once it's done" {
+                let gate = Gate();
+                using let site = await TestClient.Start(() => Site(Counter(), gate));
+                let first = site.SendAsync(Request(HttpMethod.Post, "/issues/slow", "k1", "{}"));
+                await gate.entered.Task;
+                AssertEqual(HttpStatusCode.Conflict, (await site.SendAsync(Request(HttpMethod.Post, "/issues/slow", "k1", "{}"))).StatusCode);
+                gate.release.SetResult();
+                AssertEqual("slow", await (await first).Content.ReadAsStringAsync());
+                let after = await site.SendAsync(Request(HttpMethod.Post, "/issues/slow", "k1", "{}"));
+                AssertEqual("slow", await after.Content.ReadAsStringAsync());
+                Assert(Replayed(after));
+            }
+            """", "main.piper")],
+            new CompilationOptions(LineDirectives: true, IncludeTests: true) { Plugins = Web.Value.Plugins, References = Web.Value.References });
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Empty(result.Diagnostics);
+        var run = Runner.RunTests(result.Files, references: result.References);
+        Assert.Empty(run.Errors);
+        Assert.True(run.Results.All(r => r.Passed), string.Join("\n", run.Results.Select(r => $"{r.Name}: {r.Failure}")));
+        Assert.Equal(5, run.Results.Length);
+    }
+
+    /// <summary>A GET is idempotent already: <c>idempotent</c> on one is an error, and a group's word passes its gets by.</summary>
+    [Fact]
+    public void Idempotent_is_for_what_changes_things()
+    {
+        AssertPluginError(Types + """
+
+            endpoints Routes {
+                get "/a" idempotent () => "a";
+            }
+            """, "idempotent", "A GET is idempotent already");
+        var result = Compile(Types + """
+
+            endpoints Routes "/r" idempotent {
+                get "/a" () => "a";
+                post "/b" () => "b";
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Empty(result.Diagnostics);
+    }
+
     /// <summary>An error's field named `status` would be left out of its ProblemDetails, which has its own: a warning.</summary>
     [Fact]
     public void An_error_field_named_status_is_warned_about()

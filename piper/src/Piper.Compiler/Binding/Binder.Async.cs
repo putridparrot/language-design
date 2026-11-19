@@ -16,6 +16,24 @@ public sealed partial class Binder
     /// <summary>Whether an <c>await</c> has been bound in the function or lambda being bound (for the no-await warning).</summary>
     private bool _sawAwait;
 
+    /// <summary>The handler given to an event's <c>+=</c> being bound, which alone may be an async lambda returning nothing.</summary>
+    private ExpressionSyntax? _eventHandler;
+
+    /// <summary>Binds <paramref name="handler"/>, an event's handler, as <see cref="_eventHandler"/>.</summary>
+    private BoundExpression BindEventHandler(ExpressionSyntax handler, TypeSymbol type)
+    {
+        var outer = _eventHandler;
+        _eventHandler = handler;
+        try
+        {
+            return BindExpression(handler, type);
+        }
+        finally
+        {
+            _eventHandler = outer;
+        }
+    }
+
     /// <summary>What an async function returning <paramref name="returnType"/> produces in its body, or null if it can't be async.</summary>
     private static TypeSymbol? AsyncBodyType(TypeSymbol returnType)
     {

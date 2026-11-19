@@ -438,6 +438,8 @@ public sealed partial class Binder
         }
 
         CheckDataRaces([.. boundFunctions, .. boundMethods]);
+        CheckUnobservedTasks([.. boundFunctions, .. boundMethods, .. boundTests.Select(t => t.Function)]);
+        CheckScopeEscapes([.. boundFunctions, .. boundMethods, .. boundTests.Select(t => t.Function)]);
         return new BoundProgram([.. units.Select(u => u.Source)], [.. _files.Select(f => f.Namespace)], [.. types], [_option, _result], boundFunctions, boundMethods, main)
         {
             ExternalConformances = [.. _externalConformances.SelectMany(e => e.Value.Select(c => new ExternalConformance(e.Key, c.Trait, c.File)))],
@@ -526,10 +528,10 @@ public sealed partial class Binder
 
     /// <summary>
     /// Piper.Runtime's names a program uses without `using Piper.Runtime;`: <c>PiperGen</c> and <c>PiperGen&lt;T&gt;</c>, for
-    /// property tests' generators, and <c>PiperSimulation</c>, for simulated ones. Only these, so the rest of Piper.Runtime
-    /// (the compiler's helpers) stays out of sight.
+    /// property tests' generators, <c>PiperSimulation</c>, for simulated ones, and <c>TaskScope</c>, for structured
+    /// concurrency. Only these, so the rest of Piper.Runtime (the compiler's helpers) stays out of sight.
     /// </summary>
-    private static readonly HashSet<string> ImplicitRuntimeNames = ["PiperGen", "PiperSimulation"];
+    private static readonly HashSet<string> ImplicitRuntimeNames = ["PiperGen", "PiperSimulation", "TaskScope"];
 
     private NamespaceSymbol? RuntimeNamespace() =>
         _globalNamespace.LookupMember("Piper", _option, NewMembers) is NamespaceSymbol piper &&

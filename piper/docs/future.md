@@ -49,10 +49,10 @@ them too.
   and tasks, and a `T?` passes to .NET the other way.
 - ~~**`AssertEqual(Ok(age), ParseAge(text))`**~~ (found by samples/testing.piper), done: an argument with no type of
   its own (`None`, `Ok(…)`, `[]`) takes it from a generic call's other arguments, wherever it comes.
-- **Async event handlers** (found by apps/tracker-desktop): `button.Click += async (_, e) => { await Save(); }` is an
-  error, as an async lambda must return a Task. C# allows `async void` there, losing the exceptions it throws to the
-  synchronization context. To decide: allow it for event handlers only, as C# guidance suggests, perhaps with exceptions
-  reported rather than lost.
+- ~~**Async event handlers**~~ (found by apps/tracker-desktop), done: `button.Click += async (_, e) => { await Save(); }`
+  is C#'s `async void`, allowed as an event's handler only (for Piper's events and .NET's); elsewhere an async lambda
+  returning nothing is still an error. What it throws surfaces on the event's synchronization context, as in C#.
+  Still to consider: reporting a handler's failure through a hook, as `[Command]`'s `OnCommandFailed` does.
 - **Found by apps/auction:**
   - ~~**Helper methods in a `statemachine`** (and an `actor`)~~, done: a machine can declare `fn`s, its class's methods.
     And in an `actor`, as local functions where its loop starts, beside its state.
@@ -104,9 +104,8 @@ Weighed against what the apps needed (see each); in rough order of value for the
   `using Piper.Runtime;`~~. Still to come: keeping the failures found, to try first next time (as Hypothesis's
   database does): each failure's shrunk choices kept in a file in the project, and replayed before new cases.
 - **Structured concurrency** (Swift's `async let` and task groups, Kotlin's coroutine scopes): tasks started in a scope
-  are awaited or cancelled when it ends, and their exceptions aren't lost. apps/grid and apps/stock thread
-  cancellation tokens through every worker loop, pair `StartCluster` with `StopCluster` in each test, and stop with a
-  hand-written "cancel, then WhenAll"; the aspects plugin had to stop `[Command]` losing an async exception.
+  are awaited or cancelled when it ends, and their exceptions aren't lost. Designed below:
+  [structured concurrency](#structured-concurrency-a-design).
 - **Doc tests** (Rust, Elixir, Python): examples in `///` comments run by `piper test`, so documentation can't drift
   from the code. Piper has both doc comments and built-in tests, so it's mostly plumbing.
 - **Units of measure** (F#), on hold: `decimal<GBP>`, `int<shares>`, checked at compile time and erased in the C#, so
@@ -122,6 +121,119 @@ Weighed against what the apps needed (see each); in rough order of value for the
   - **Higher-kinded types, effect systems:** a large cost to learn, for little in the programs Piper is for.
   - **Active patterns** (F#): `match` with property and list patterns, and helper functions, covered what the apps
     needed.
+
+### Structured concurrency: a design
+
+**Status:** parts 1 and 2 are done: `TaskScope`, and the three checks. Part 3 is for later.
+
+**The problem.** A task Piper code starts isn't tied to anything. It can outlive the code that started it, and if it
+fails and nothing awaits it, its exception is lost. The apps work around this by hand, the same way each time:
+
+- **apps/grid:** `main.piper` and `grid.tests.piper` each make a `CancellationTokenSource`, collect worker tasks in a
+  list, then `stop.Cancel(); await Task.WhenAll(workers);`. If anything between starting the workers and that line
+  throws (a failed assertion, in a test), the workers are never cancelled, and they keep running against a cluster
+  the test has finished with.
+- **apps/stock:** `load.piper` starts `concurrency` clients with `Task.WhenAll`. One client failing doesn't stop the
+  others: the load runs to the end before the failure is seen.
+- **The aspects plugin:** `[Command]` started an async method and dropped its task, so a failing command did nothing
+  and said nothing, until `OnCommandFailed` was added.
+- **Nothing warns:** calling an async function and not awaiting its task (`Save(order);` in an `async fn`) compiles
+  silently. C# warns for that (CS4014); Piper doesn't.
+
+**The proposal: a library first, then compiler checks.** As Piper's own advice says for a feature that's "run this
+code, somehow": a runtime type used with a trailing closure, with no new syntax. The compiler then adds what only it can
+check.
+
+#### 1. `TaskScope`, in Piper.Runtime
+
+```piper
+await TaskScope.Run { scope =>
+    for i in 1..3 {
+        scope.Start { stop => RunWorkers(nodes[i], coordinator, $"worker-{i}", 1, stop) }
+    }
+    await GridServer(jobs, url).RunAsync();
+    scope.Cancel();                    // the workers run until the server stops
+}                                      // here every task the scope started has finished
+```
+
+- **`TaskScope.Run(body)`** runs `body` with a new scope, and finishes only when the body and every task it started
+  have finished. `Run<T>` gives the body's value. An optional `CancellationToken` links the scope to an outer one.
+- **`scope.Start(work)`** starts `work` (taking the scope's `CancellationToken`) as a child task, and returns its
+  `Task<T>` (or `Task`) to await for its result if wanted. Awaiting it is optional: the scope waits for it anyway.
+- **At the end of the body:** the scope waits for its children, as Kotlin's `coroutineScope`, Swift's task groups
+  and Trio's nurseries do. Nothing is cancelled silently. Work that should stop calls `scope.Cancel()`, as grid's
+  workers do above.
+- **If the body throws:** the children are cancelled and awaited, then the body's exception is rethrown. A failed
+  test can't leave workers running.
+- **If a child fails** (with anything but cancellation): the scope is cancelled, so the other children and anything in
+  the body using `scope.Token` stop. Once all have finished, `Run` throws the child's exception, the first if several
+  failed, as `await Task.WhenAll` does.
+- **Simulated:** `Start` runs its work through `PiperRouting.Run`, as `Task.Run` already does, so scopes work
+  unchanged in `simulate` tests, and a seed repeats which child runs when.
+
+What changes in the apps:
+
+```piper
+// apps/grid/grid.tests.piper. Before: a CancellationTokenSource, a list of tasks, and "cancel, then WhenAll" at the end.
+let view = await TaskScope.Run { scope =>
+    for i in 2..4 {
+        scope.Start { stop => RunWorkers(cluster[i], coordinator.Address, $"w{i}", 1, stop) }
+    }
+    let view = await WaitForJob(jobs, 1);
+    scope.Cancel();
+    view
+};
+
+// apps/stock/load/load.piper. One client failing now stops the rest, and its exception is the one reported.
+await TaskScope.Run { scope =>
+    for _ in 0..<concurrency {
+        scope.Start { stop =>
+            while !stop.IsCancellationRequested && pending.TryDequeue(out let n) {
+                outcomes.Add(await ReserveOne(http, nodes[n % nodes.Count], sku));
+            }
+        }
+    }
+};
+```
+
+Cancellation tokens stay explicit, as in C#: grid's `Work` loop still takes `stop` and checks it. The scope gives the
+token rather than each caller making and threading a `CancellationTokenSource`.
+
+#### 2. Compiler checks
+
+- **An unobserved task is a warning:** a call whose `Task` is neither awaited, stored, returned nor passed on
+  (`Save(order);`), anywhere, not only in `async fn`s as C#'s CS4014. The fix it suggests is `await`, or
+  `scope.Start` if it should run alongside. `let _ = Save(order);` says the task is dropped on purpose.
+- **Data races:** the lambdas a scope `Start`s run at once, so they're checked as the `Task.Run` lambdas given
+  together to `Task.WhenAll` are now (a `List` they all `Add` to, a variable they all assign).
+- **A scope can't escape:** `scope` stored in a field, returned, or captured by a lambda the scope doesn't run is a
+  warning, as starting tasks on it after `Run` has finished would fail.
+
+#### 3. Left for later
+
+- **`async let`** (Swift): `async let a = Fetch(1); async let b = Fetch(2); Print(await a + await b);`, a child task
+  per variable, in an implicit scope for the block. It's shorter for a fixed number of tasks, but it's new syntax C#
+  doesn't have, and `TaskScope` covers the same cases. To reconsider once the apps have used scopes.
+- **Implicit cancellation** (Kotlin's and Swift's): `Task.Delay` and other routed calls seeing the scope's
+  cancellation without being given a token. `PiperRouting` could do it, but code that cancels without saying so is
+  surprising to anyone who knows C#.
+- ~~**Async event handlers**~~ ([above](#language)), done, as C#'s `async void`. A shared hook reporting their
+  failures, as `[Command]`'s are, is still to consider.
+
+#### Decided
+
+1. **The end of the body waits** for the children; nothing is cancelled unless `scope.Cancel()` asks.
+2. **The name is `TaskScope`.**
+3. **The unobserved-task warning applies everywhere**, not only in `async fn`s; `let _ =` drops a task on purpose.
+
+**In order:** ~~`TaskScope`~~, done (see [Structured concurrency](language.md#structured-concurrency-taskscope)),
+with ~~apps/grid and apps/stock moved to it~~ (grid's workers in its main, its tests and `RunWorkers`; stock's load
+clients). An outer token comes first, `TaskScope.Run(stop) { scope => … }`, so the body stays a trailing closure.
+So is ~~the unobserved-task warning~~ (PIP0409, see [Async and await](language.md#async-and-await)): no
+code in the repository's samples, apps or their tests dropped a task, so it needed no `let _ =` anywhere.
+`[ObservedTask]` on a .NET method exempts the task it gives (`scope.Start`). So are ~~the data-race grouping~~ (PIP0387
+for a scope's tasks: each with the others, or with itself when started in a loop) and ~~the escape check~~ (PIP0410;
+a local alias in the body, `scope.Token`, and passing the scope to a function aren't escapes).
 
 ## Production web and services
 
@@ -182,9 +294,12 @@ Server-side HTML belongs with [UI](#ui) (htmx over plain endpoints), not Razor.
 - **Configuration and options:** typed configuration is done (the `config` plugin), and a `server` registers one with
   `config Smtp;` (as `IOptions<Smtp>` too), and so does a `host`, for programs without a web server. Still to come:
   reloading it when appsettings.json changes.
-- **Databases:** the `data` plugin covers EF Core models and queries. Still to come: registering a database with DI
-  (`AddDbContext`, its connection string from a `config`), migrations from `piper` (`piper db migrate`), relationships
-  between tables (navigation properties), and comparing an optional column with an optional variable in a query.
+- **Databases:** the `data` plugin covers EF Core models and queries, and ~~registering a database with DI~~ is done: a
+  server's or host's `database db: TrackerDb from "Database";` (or `(settings.provider, settings.connection)`), the
+  provider chosen by configuration (sqlite, sqlserver, postgres), scoped, and `db` a factory for the clauses after
+  (apps/tracker uses it). Still to come: migrations (`piper db migrate`; to decide: scripts diffed from a checked-in
+  model snapshot and reviewed, applied at startup, or additive only), relationships between tables (navigation
+  properties), and comparing an optional column with an optional variable in a query.
 - ~~**Background work**~~ in a `server`, done: `hosted Mailer;` (`AddHostedService`), and `worker` handlers whose
   parameters are services, run for the app's life or `every` period (apps/auction's clock is one), and in a `host` too.
 - **Composition and testing:** a `services` block including another (a library's), and replacing a registration in a
@@ -431,9 +546,10 @@ More, around the services themselves:
   when scaling from zero, and Piper's runtime uses reflection in places (enum JSON, the data plugin's converters,
   newtypes' delegates). Worth checking Piper programs against AOT early, before more reflection goes in, with
   source-generated JSON where it's needed.
-- **Idempotent endpoints.** A client retrying a POST after a timeout can add an issue twice.
-  `post "/issues" idempotent …` keeps each request's `Idempotency-Key` header and its response, and answers a repeat
-  with the same response. Message handlers get the same through the outbox's de-duplication.
+- ~~**Idempotent endpoints**~~, done (see [plugins](plugins.md#idempotent-endpoints)): `post "/issues" idempotent …`
+  keeps each request's `Idempotency-Key` and its response, in memory or a database (the data plugin's
+  `idempotency;`), and answers a retry with the same response; apps/tracker's posts are. Still to come: a warning
+  for `idempotent` endpoints mapped by hand without `PiperIdempotency.Use(app)` (a `server` always adds it).
 
 ### A messaging plugin
 

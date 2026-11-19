@@ -7,7 +7,7 @@ namespace Piper.Binding;
 /// Warns about data races: code that runs on several threads at once changing what they share without a lock. That's
 /// the body of a <c>Parallel.For</c>, <c>Parallel.ForEach</c> or <c>Parallel.Invoke</c> lambda (what <c>parallel for</c>
 /// becomes), and each <c>Task.Run</c> lambda passed to <c>Task.WhenAll</c> or <c>Task.WaitAll</c> together (what
-/// <c>concurrency { }</c> becomes). In those, it reports:
+/// <c>concurrency { }</c> becomes), and the tasks a <c>TaskScope</c> starts (<c>scope.Start { … }</c>). In those, it reports:
 /// <list type="bullet">
 /// <item>assigning a variable from outside the lambda (<c>total += n</c>), which loses updates;</item>
 /// <item>assigning a field of an object from outside it (<c>this.count += 1</c>);</item>
@@ -68,12 +68,39 @@ public sealed partial class Binder
             var group = runs.SelectMany(run => run.Arguments).Select(Lambda).OfType<BoundLambdaExpression>().ToImmutableArray();
             return runs.Count < 2 ? [] : group.Select(l => (l, group.Remove(l)));
         }
+        if (declaring.FullName == "Piper.Runtime.TaskScope" && method.Name == "Run")
+            return ScopeTasks(call);
         return [];
 
         static IEnumerable<BoundExpression> Flatten(ImmutableArray<BoundExpression> arguments) =>
             arguments.SelectMany(a => Unwrap(a) is BoundCollectionExpression collection ? collection.Elements : [a]);
-        static BoundLambdaExpression? Lambda(BoundExpression expression) => Unwrap(expression) as BoundLambdaExpression;
     }
+
+    /// <summary>
+    /// The tasks a <c>TaskScope.Run</c> body starts (<c>scope.Start { … }</c>), which run alongside each other: each
+    /// with the others, or, started in a loop, alongside itself as well, as a parallel loop's body is.
+    /// </summary>
+    private static IEnumerable<(BoundLambdaExpression Lambda, ImmutableArray<BoundLambdaExpression> Others)> ScopeTasks(BoundClrInvocationExpression run)
+    {
+        if (run.Arguments.Select(Lambda).OfType<BoundLambdaExpression>().FirstOrDefault() is not { Parameters: [var scope] } body)
+            return [];
+        // `scope.Start { … }` on this scope: its own, not a scope nested in it, whose tasks are checked as its own group.
+        bool IsStart(BoundNode node) =>
+            node is BoundClrInvocationExpression { Member.Name: "Start", Receiver: { } receiver } &&
+            Unwrap(receiver) is BoundVariableExpression { Variable: var variable } && variable == scope;
+        var starts = BoundTreeWalker.DescendantsAndSelf(body.Body).Where(IsStart).Cast<BoundClrInvocationExpression>().ToList();
+        var inLoops = BoundTreeWalker.DescendantsAndSelf(body.Body)
+            .Where(n => n is BoundWhileStatement or BoundForStatement or BoundForEachStatement)
+            .SelectMany(BoundTreeWalker.DescendantsAndSelf).Where(IsStart).ToHashSet(ReferenceEqualityComparer.Instance);
+        var tasks = starts.Select(start => (Start: start, Lambda: start.Arguments.Select(Lambda).OfType<BoundLambdaExpression>().FirstOrDefault()))
+            .Where(t => t.Lambda is not null).ToList();
+        var lambdas = tasks.Select(t => t.Lambda!).ToImmutableArray();
+        return tasks
+            .Where(t => inLoops.Contains(t.Start) || tasks.Count > 1)
+            .Select(t => (t.Lambda!, inLoops.Contains(t.Start) ? default : lambdas.Remove(t.Lambda!)));
+    }
+
+    private static BoundLambdaExpression? Lambda(BoundExpression expression) => Unwrap(expression) as BoundLambdaExpression;
 
     private static BoundExpression Unwrap(BoundExpression expression) =>
         expression is BoundConversionExpression conversion ? Unwrap(conversion.Expression) : expression;

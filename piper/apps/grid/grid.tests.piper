@@ -33,11 +33,15 @@ async test "workers on three nodes share a job; a worker cut off mid-chunk has i
     AssertEqual(0, Given(await cutOff.Take("cut-off")));
     cluster.Isolate(1);
 
-    using let stop = CancellationTokenSource();
-    let workers: List<Task> = [...Enumerable.Range(2, 3).Select(i => RunWorkers(cluster[i], coordinator.Address, $"w{i}", 1, stop.Token))];
-    let view = await WaitForJob(jobs, 1);
-    stop.Cancel();
-    await Task.WhenAll(workers);
+    // Three workers until the job's done, then stopped; if waiting for it fails, they're stopped all the same.
+    let view = await TaskScope.Run { scope =>
+        for i in 2..4 {
+            scope.Start { stop => RunWorkers(cluster[i], coordinator.Address, $"w{i}", 1, stop) }
+        }
+        let view = await WaitForJob(jobs, 1);
+        scope.Cancel();
+        view
+    };
 
     // Back again, it sends its chunk's answer: after the job finished without it, so it's ignored.
     cluster.Heal();

@@ -14,6 +14,8 @@ database TrackerDb {
     table Comments: Comment key id index issueId;
     // Messages saved with the changes they tell of (an issue changed), and sent once they're saved.
     outbox;
+    // Idempotent requests' keys and responses, so a client retrying a POST doesn't add an issue twice.
+    idempotency;
 }
 
 /// A database for <paramref name="connection"/>, with its tables made if they aren't there.

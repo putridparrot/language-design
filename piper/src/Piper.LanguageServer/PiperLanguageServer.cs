@@ -574,12 +574,17 @@ public sealed class PiperLanguageServer
         return symbols;
     }
 
+    /// <summary>
+    /// An outline entry. A plugin's declarations (an `args` record's fields, the `UseSecurity` a `policies` block makes,
+    /// `[Notify]` properties) can have names whose spans are in the plugin's template, not this file; the editor
+    /// refuses a whole outline with a name outside its symbol, so such a name is placed at its symbol's start.
+    /// </summary>
     private static JsonObject DocumentSymbol(SourceText source, string name, int kind, TextSpan span, TextSpan selection) => new()
     {
         ["name"] = name,
         ["kind"] = kind,
         ["range"] = Range(source, span),
-        ["selectionRange"] = Range(source, selection),
+        ["selectionRange"] = Range(source, selection.Start >= span.Start && selection.End <= span.End ? selection : new TextSpan(span.Start, 0)),
     };
 
     // Positions and paths

@@ -67,11 +67,12 @@ internal static class HostClauses
         ["bus"] = "The messaging plugin's bus, over the transport the configuration chooses (`bus from \"Messaging\";` reads Messaging:Provider: memory, rabbitmq…), registered as `Bus` (and its transport as `IMessageTransport`), for endpoints and workers and the `consume` and `relay` clauses after. Needs the messaging plugin.",
         ["consume"] = "Runs a `consumer` for as long as it runs, on the `bus`: `consume Billing(db);`, with the consumer's arguments. Stopped as it stops.",
         ["workflows"] = "Runs durable workflows over an event store for as long as it runs: `workflows Fulfil(shop), Returns(shop) from store;` registers each (with its dependencies) on a `WorkflowEngine`, registered for handlers to start them (`Fulfil.Start(engine, id, …)`), resumes the unfinished as it starts, and stops them as it stops. Needs the workflows plugin.",
-        ["relay"] = "Sends an outbox's saved messages on the `bus` for as long as it runs: `relay DatabaseOutbox.Store(() => Shop(options));`. Stopped as it stops.",
+        ["database"] = "A `database` declaration's class, on the database the configuration chooses, registered as a scoped service (one per request): `database TrackerDb from \"Database\";` reads Database:Provider (sqlite, the local one, if unset; sqlserver; postgres) and Database:Connection. `database db: TrackerDb from \"Database\";` also names `db`, a function making one, for the clauses after: `relay DatabaseOutbox.Store(db);`. Needs the data plugin, and the provider's EF Core package.",
+        ["relay"] ="Sends an outbox's saved messages on the `bus` for as long as it runs: `relay DatabaseOutbox.Store(() => Shop(options));`. Stopped as it stops.",
     };
 
     /// <summary>The shared clauses' words, for a message listing what may be written.</summary>
-    public const string Listed = "'config', 'sources', 'provider', 'services', 'singleton', 'scoped', 'transient', 'configure', 'logging', 'telemetry', 'hosted', 'worker', 'stopping', 'shutdown', 'bus', 'consume', 'relay' or 'workflows'";
+    public const string Listed = "'config', 'sources', 'provider', 'database', 'services', 'singleton', 'scoped', 'transient', 'configure', 'logging', 'telemetry', 'hosted', 'worker', 'stopping', 'shutdown', 'bus', 'consume', 'relay' or 'workflows'";
 
     private const string Messaging = "Piper.Messaging";
 
@@ -170,6 +171,42 @@ internal static class HostClauses
                 var value = local ?? p.FreshName("provider");
                 parts.Building.Add(p.Template.Statement($"let $value = {Host}.Provider<$service>(builder, $section);",
                     ("value", value), ("service", service), ("section", section)));
+                return true;
+            }
+
+            case "database":
+            {
+                // `database TrackerDb from "Database";`, or `database db: TrackerDb from "Database";` to use it in the
+                // clauses after: the provider and connection the configuration chooses, the database registered as a
+                // scoped service, and `db` a function making one (`relay DatabaseOutbox.Store(db);`).
+                p.ReadWord();
+                var local = p.Current.Kind == TokenKind.Identifier && p.Peek(1).Kind == TokenKind.Colon ? p.NextToken() : null;
+                if (local is not null)
+                    p.NextToken();
+                // Then `from "Database"` (a section of the configuration), or `(settings.provider, settings.connection)`
+                // (values the program read from its configuration itself, as a `config` record's).
+                var database = p.ParseType();
+                var value = local ?? p.FreshName("database");
+                if (p.Current.Kind == TokenKind.OpenParen)
+                {
+                    var arguments = Arguments(p);
+                    if (arguments.Count != 2)
+                        p.Report(database.Span, "Expected the database's provider and connection: `database TrackerDb(settings.provider, settings.connection);`.");
+                    parts.Building.Add(p.Template.Statement("let $value = Piper.Data.PiperDatabase.Factory<$database>($arguments);",
+                        ("value", value), ("database", database), ("arguments", arguments)));
+                }
+                else
+                {
+                    p.ExpectWord("from");
+                    var section = p.ParseExpression();
+                    parts.Building.Add(p.Template.Statement(
+                        $"let $value = Piper.Data.PiperDatabase.Factory<$database>({Host}.Settings(builder.Configuration, $section));",
+                        ("value", value), ("database", database), ("section", section)));
+                }
+                p.Expect(TokenKind.Semicolon);
+                parts.Building.Add(p.Template.Statement(
+                    $"{DependencyInjection}.ServiceCollectionServiceExtensions.AddScoped<$database>(builder.Services, $services => $value());",
+                    ("database", database), ("services", p.FreshName("services")), ("value", value)));
                 return true;
             }
 

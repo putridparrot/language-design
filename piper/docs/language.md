@@ -1477,10 +1477,62 @@ async fn Main() {                              // no return type: a plain Task
 
 - **`await x`** works on anything awaitable by C#'s rules: a Task, a ValueTask, `ConfigureAwait(false)`, or any type with a `GetAwaiter()`. Its value is the result (`int` for a `Task<int>`; nothing for a plain `Task`). It can appear anywhere in an expression: `if await Ready() { … }`, `$"{await Name()}"`.
 - **Async lambdas:** `async x => await F(x)` and `async () => { … }`, as values of `(int) => Task<int>` and the like, or for .NET APIs such as `Task.Run` and LINQ.
+- **Async event handlers:** an event's handler can be async though it returns nothing, as C#'s `async void`:
+  `button.Click += async (_, e) => { await Save(); }`, for Piper's events and .NET's. Only there: anywhere else an
+  async lambda must return a Task. What a handler throws surfaces on the event's synchronization context (the UI
+  thread), as in C#; to report it instead, catch it in the handler, or run a `[Command]`, whose `OnCommandFailed` hears
+  of it.
 - **`async fn Main()`** may be the entry point.
 - **`await for x in stream { … }`** iterates an `IAsyncEnumerable<T>` (C#'s `await foreach`), and **`await using`** disposes an `IAsyncDisposable` with `DisposeAsync`.
 - `await` only works in an async function or lambda. An async function with no `await` gets a warning, as in C#, since it runs synchronously. `async` and `await` are contextual keywords, as in C#, so they can still be names.
 - A trait's required methods can't be `async` (it's part of a body, not a signature), but an implementation can be.
+- **A task nothing waits for is a warning** (PIP0409): a call giving a `Task` or `ValueTask` whose value is thrown
+  away, as `Save(order);` is, since if it fails, its exception is lost. That's a statement, the last expression of a
+  block, `if` or `match` whose value isn't used, or the body of a lambda returning nothing
+  (`let handler: Action = () => Save(order);`). It's reported in any function, not only async ones as C#'s CS4014
+  is. `await` it, start it in a [`TaskScope`](#structured-concurrency-taskscope), or write `let _ = Save(order);` to
+  drop it on purpose. A .NET method marked `[ObservedTask]` (Piper.Runtime) gives a task something else waits for, as
+  `scope.Start` does.
+
+### Structured concurrency: `TaskScope`
+
+A task started with `Task.Run`, or an async call that isn't awaited, isn't tied to anything: it can outlive the code
+that started it, and if nothing awaits it, its exception is lost. A `TaskScope` ties tasks to a block. They can't
+outlive it, and their failures are reported:
+
+```piper
+await TaskScope.Run { scope =>
+    for i in 1..3 {
+        scope.Start { stop => RunWorker(i, stop) }   // each task is given the scope's CancellationToken
+    }
+    await Serve();
+    scope.Cancel();                                  // the workers run until serving ends
+}                                                    // every task the scope started has finished here
+```
+
+- **`TaskScope.Run { scope => … }`** finishes only when its body and every task the body started have finished. A
+  body with a value gives it: `let total = await TaskScope.Run { scope => … await a + await b };`.
+- **`scope.Start { stop => … }`** starts a task, giving it the scope's token, and returns its `Task` (or `Task<T>`),
+  which can be awaited for its result. The scope waits for it either way.
+- **At the end of the body** the scope waits for its tasks. Nothing is cancelled unless `scope.Cancel()` asks.
+- **If the body throws,** the tasks are cancelled and waited for, then the exception is rethrown. A failed test can't
+  leave workers running.
+- **If a task fails** (with anything but cancellation), the scope is cancelled, so the other tasks, and anything in
+  the body using `scope.Token`, stop. Once they have, `Run` throws the failure, the first if several failed, as
+  `await Task.WhenAll` does.
+- **An outer token:** `TaskScope.Run(stop) { scope => … }` is cancelled when `stop` is as well. The token comes first
+  so the body can be a trailing closure.
+- **Cancellation stays explicit,** as in C#: a task stops when it checks its token, or passes it to what it awaits
+  (`Task.Delay(t, stop)`).
+- **Simulated:** tasks start as `Task.Run`'s do, so a scope runs unchanged in a [simulated test](#simulated-tests).
+- **Data races:** a scope's tasks run at once, so they're checked as the `Task.Run` lambdas given to `Task.WhenAll`
+  together are (PIP0387, see [threads and locks](#threads-and-locks)): each with the others, or, started in a loop, with itself, as
+  a parallel loop's body is. Several tasks `Add`ing to one `List` is a warning; a `ConcurrentBag` isn't.
+- **A scope can't outlive its body** (PIP0410): stored in a variable or field from outside the body (`kept =
+  Some(scope)`), held by a lambda kept for later (`later = () => scope.Cancel()`), or returned, it's a warning, as
+  once `Run` has finished it can't start tasks, and cancelling it does nothing. Using it in the body and its tasks,
+  reading `scope.Token`, and passing it to a function (`StartWorkers(scope)`) are fine.
+- `TaskScope` is in Piper.Runtime, and needs no `using`.
 
 ### Iterators: `yield`
 

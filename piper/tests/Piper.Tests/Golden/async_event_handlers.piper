@@ -1,0 +1,34 @@
+// An event handler can be async (C#'s `async void`), for a Piper event and a .NET one; nowhere else can an async
+// lambda return nothing.
+using System;
+using System.Threading.Tasks;
+
+class Account {
+    event Changed: (amount: int) => unit;
+    fn Deposit(amount: int) { Changed(amount); }
+}
+
+async fn Save(what: string) {
+    await Task.Delay(10);
+    Print($"saved {what}");
+}
+
+async fn Main() {
+    let account = Account();
+    let done = TaskCompletionSource();
+    account.Changed += async amount => {
+        await Save($"deposit {amount}");
+        done.SetResult();
+    };
+    account.Deposit(5);
+    await done.Task;
+
+    let progress = Progress<int>();
+    let reported = TaskCompletionSource();
+    progress.ProgressChanged += async (_, value) => {
+        await Save($"progress {value}");
+        reported.SetResult();
+    };
+    ((IProgress<int>)progress).Report(50);
+    await reported.Task;
+}

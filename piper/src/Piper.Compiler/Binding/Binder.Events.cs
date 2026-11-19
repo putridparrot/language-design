@@ -98,7 +98,7 @@ public sealed partial class Binder
             _diagnostics.ReportEventMisused(name.Span, @event.Name);
             return new BoundErrorExpression();
         }
-        var handler = Convert(RequireValue(BindExpression(syntax.Value, handlerType), syntax.Value.Span), handlerType, syntax.Value.Span);
+        var handler = Convert(RequireValue(BindEventHandler(syntax.Value, handlerType), syntax.Value.Span), handlerType, syntax.Value.Span);
         return new BoundEventSubscription(receiver, @event, syntax.Operator.Kind == TokenKind.PlusEquals, handler);
     }
 

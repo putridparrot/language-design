@@ -14,7 +14,9 @@ class MainViewModel(client: TrackerApi, user: string) {
     /// the issue does. (The search text waits for Refresh, rather than asking the API at each key.)
     static fn Create(client: TrackerApi, user: string) => MainViewModel {
         let model = MainViewModel(client, user);
-        // Through the commands, which run the async methods: an event handler can't be an async lambda in Piper.
+        // Through the commands, which run the async methods and report a failure in the status line (OnCommandFailed).
+        // An async handler (`async (_, e) => { await model.RefreshAsync(); }`) would work too, but would need its own
+        // try/catch to report failures so.
         model.PropertyChanged += (_, e) => {
             if e.PropertyName == "SelectedProjectIndex" || e.PropertyName == "StatusFilter" {
                 model.RefreshCommand.Execute(None);

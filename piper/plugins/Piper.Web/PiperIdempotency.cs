@@ -13,7 +13,7 @@ public sealed class IdempotentEndpoint;
 /// <summary>
 /// How long a request holds its key while it runs (<see cref="Lease"/>, after which one whose process died no longer
 /// blocks its repeats), and how long its response is kept to answer them (<see cref="Keep"/>). Registered as a
-/// singleton to change them: <c>singleton IdempotencyOptions = IdempotencyOptions() with { Keep = … };</c>.
+/// singleton to change them: <c>singleton IdempotencyOptions = IdempotencyOptions() { Keep: … };</c>.
 /// </summary>
 public sealed record IdempotencyOptions
 {

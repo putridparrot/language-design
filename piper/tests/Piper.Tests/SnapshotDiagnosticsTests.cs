@@ -7,9 +7,15 @@ namespace Piper.Tests;
 /// <summary>
 /// A snapshot its store fails to keep doesn't fail the actor's message (its events are kept), but isn't silent: it's
 /// logged (the first failure, and the recovery, not every message while the store is down) and counted every time.
+/// It replaces the process's <see cref="PiperDiagnostics.Log"/>, which a hosting plugin's host (the apps' tests start
+/// them) also sets, so it runs alone rather than alongside them.
 /// </summary>
+[Collection(nameof(SnapshotDiagnosticsTests))]
 public class SnapshotDiagnosticsTests
 {
+    [CollectionDefinition(nameof(SnapshotDiagnosticsTests), DisableParallelization = true)]
+    public sealed class RunsAlone;
+
     /// <summary>A store in memory whose snapshots fail while <see cref="Failing"/>.</summary>
     private sealed class FlakySnapshots : IEventStore
     {

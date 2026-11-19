@@ -41,18 +41,18 @@ public class IdempotencyTests
     [Fact]
     public void The_memory_store_lets_a_key_go_when_its_time_is_up()
     {
-        new PiperSimulation().Run(async () =>
+        PiperSimulation.Run(1, async simulation =>
         {
             var store = new MemoryIdempotencyStore();
             Assert.Equal(IdempotencyState.Claimed, (await store.ClaimAsync("k", "a", TimeSpan.FromMinutes(2))).State);
-            await Task.Delay(TimeSpan.FromMinutes(1), PiperRuntime.Current.Time);
+            await simulation.Delay(TimeSpan.FromMinutes(1));
             Assert.Equal(IdempotencyState.Busy, (await store.ClaimAsync("k", "a", TimeSpan.FromMinutes(2))).State);
             // The request holding it never finished (its process died): after its lease, a repeat runs.
-            await Task.Delay(TimeSpan.FromMinutes(2), PiperRuntime.Current.Time);
+            await simulation.Delay(TimeSpan.FromMinutes(2));
             Assert.Equal(IdempotencyState.Claimed, (await store.ClaimAsync("k", "b", TimeSpan.FromMinutes(2))).State);
 
             await store.CompleteAsync("k", Created, TimeSpan.FromHours(24));
-            await Task.Delay(TimeSpan.FromHours(25), PiperRuntime.Current.Time);
+            await simulation.Delay(TimeSpan.FromHours(25));
             Assert.Equal(IdempotencyState.Claimed, (await store.ClaimAsync("k", "c", TimeSpan.FromMinutes(2))).State);
         });
     }
@@ -107,7 +107,10 @@ public class IdempotencyTests
                     Print((await two.ClaimAsync("k", "b", lease)).State);
                     await one.CompleteAsync("k", IdempotentResponse(201, "application/json", "/issues/1", Encoding.UTF8.GetBytes("{}")), TimeSpan.FromHours(1));
                     let done = await two.ClaimAsync("k", "a", lease);
-                    Print($"{done.State} {done.Response?.Status} {done.Response?.Location} {Encoding.UTF8.GetString(done.Response?.Body ?? [])}");
+                    Print(match done.Response {
+                        Some(r) => $"{done.State} {r.Status} {r.Location ?? ""} {Encoding.UTF8.GetString(r.Body)}",
+                        None => $"{done.State} with no response",
+                    });
 
                     Print((await one.ClaimAsync("failed", "a", lease)).State);
                     await one.ReleaseAsync("failed");
