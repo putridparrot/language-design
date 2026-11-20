@@ -40,6 +40,12 @@ const string Usage = """
                                            Add a NuGet package to the folder's piper.json (default: the current one):
                                            the newest stable version on your NuGet sources unless --version gives one
       piper package remove <id> [<folder>] Remove a package from the folder's piper.json
+      piper db migrate <folder> [--apply --connection <c>]
+                                           Write the next migration of each of the program's databases, if its shape
+                                           changed (SQL scripts, per provider, beside the declaration); --apply applies
+                                           those a database doesn't have yet. `piper db` shows the details
+      piper db status <folder> [--connection <c>]
+                                           List the migrations, and which a database has
       piper lsp                            Run the language server (LSP over stdin and stdout), for editors
       piper --version                      Show the compiler's version
 
@@ -74,6 +80,9 @@ if (args is ["package", .. var packageArguments])
 
 if (args is ["fmt", .. var fmtArguments])
     return Fmt(fmtArguments);
+
+if (args is ["db", .. var dbArguments])
+    return Database.Run(dbArguments);
 
 if (args.Length < 2 || args[0] is not ("build" or "emit" or "run" or "test"))
 {

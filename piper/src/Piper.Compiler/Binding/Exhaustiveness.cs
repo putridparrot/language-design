@@ -441,10 +441,11 @@ public static class Exhaustiveness
     {
         char c => c,
         ulong u => u,
+        TimeSpan t => t.Ticks,
         _ => System.Convert.ToInt64(value),
     };
 
-    /// <summary>All the values of an integer type or char, or null for any other type.</summary>
+    /// <summary>All the values of an integer type or char (or a TimeSpan, counted in ticks), or null for any other type.</summary>
     private static Interval? Domain(TypeSymbol type) =>
         type == TypeSymbol.Int ? new(int.MinValue, int.MaxValue) :
         type == TypeSymbol.Long ? new(long.MinValue, long.MaxValue) :
@@ -455,6 +456,7 @@ public static class Exhaustiveness
         type == TypeSymbol.UInt ? new(uint.MinValue, uint.MaxValue) :
         type == TypeSymbol.ULong ? new(ulong.MinValue, ulong.MaxValue) :
         type == TypeSymbol.Char ? new(char.MinValue, char.MaxValue) :
+        IsDuration(type) ? new(TimeSpan.MinValue.Ticks, TimeSpan.MaxValue.Ticks) :
         null;
 
     private static bool HasIntervalHeads(List<BoundPattern[]> rows) =>
@@ -489,8 +491,30 @@ public static class Exhaustiveness
 
     private static string Format(Interval piece, TypeSymbol type)
     {
-        string Value(Int128 value) => type == TypeSymbol.Char ? $"'{(char)value}'" : value.ToString();
+        string Value(Int128 value) =>
+            type == TypeSymbol.Char ? $"'{(char)value}'" :
+            IsDuration(type) ? Duration((long)value) :
+            value.ToString();
         return piece.Low == piece.High ? Value(piece.Low) : $"{Value(piece.Low)}..{Value(piece.High)}";
+    }
+
+    private static bool IsDuration(TypeSymbol type) => type is ClrTypeSymbol { Type: var clr } && clr == typeof(TimeSpan);
+
+    /// <summary>A TimeSpan's ticks as a duration literal: the largest unit that's exact (<c>1day</c>, <c>90s</c>), down to fractions of a millisecond.</summary>
+    private static string Duration(long ticks)
+    {
+        if (ticks == 0)
+            return "0s";
+        foreach (var (unit, size) in new[]
+                 {
+                     ("days", TimeSpan.TicksPerDay), ("h", TimeSpan.TicksPerHour), ("min", TimeSpan.TicksPerMinute),
+                     ("s", TimeSpan.TicksPerSecond), ("ms", TimeSpan.TicksPerMillisecond),
+                 })
+        {
+            if (ticks % size == 0)
+                return $"{ticks / size}{(unit == "days" && Math.Abs(ticks / size) == 1 ? "day" : unit)}";
+        }
+        return $"{((decimal)ticks / TimeSpan.TicksPerMillisecond).ToString(System.Globalization.CultureInfo.InvariantCulture)}ms";
     }
 
     /// <summary>Patterns every value matches: a property pattern only tests what it contains, since values aren't null.</summary>

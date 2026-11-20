@@ -57,17 +57,43 @@ public sealed class AspectsPlugin : IPiperPlugin
         },
         new Decorator("Retry", Retry)
         {
-            Description = "`[Retry(times)]` or `[Retry(times, delayMs)]` runs the function again when it throws, up to `times` attempts in all. The last attempt's exception escapes. Preconditions are checked once, before the first attempt.",
+            Description = "`[Retry(times)]` or `[Retry(times, delay)]` (a duration, `200ms`, or milliseconds) runs the function again when it throws, up to `times` attempts in all. The last attempt's exception escapes. Preconditions are checked once, before the first attempt.",
         },
         new Decorator("Timeout", Timeout)
         {
-            Description = "`[Timeout(ms)]`: an async function that hasn't finished in `ms` milliseconds throws a TimeoutException to its caller. The work isn't stopped, only waited for no longer; to stop it, pass a CancellationToken.",
+            Description = "`[Timeout(2s)]` (or milliseconds, `[Timeout(2000)]`): an async function that hasn't finished in time throws a TimeoutException to its caller. The work isn't stopped, only waited for no longer; to stop it, pass a CancellationToken.",
         },
         new Decorator("CircuitBreaker", CircuitBreaker)
         {
-            Description = "`[CircuitBreaker(failures, openMs)]`: after `failures` failures in a row, calls throw a CircuitOpenException at once for `openMs` milliseconds, rather than waiting on what's failing; then one is let through to try, closing the circuit if it succeeds. One circuit per function.",
+            Description = "`[CircuitBreaker(failures, open)]`: after `failures` failures in a row, calls throw a CircuitOpenException at once for `open` (a duration, `30s`, or milliseconds), rather than waiting on what's failing; then one is let through to try, closing the circuit if it succeeds. One circuit per function.",
         },
     ];
+
+    /// <summary>
+    /// <c>[Retry]</c> on a function returning a <c>Result</c> whose errors can never be <c>[Transient]</c>: its Errs are
+    /// all given back at once, so only a throw is tried again, which is likely not what was meant.
+    /// </summary>
+    public void Analyze(PluginAnalysis analysis)
+    {
+        var functions = new Dictionary<SyntaxNode, Piper.Binding.FunctionSymbol>(ReferenceEqualityComparer.Instance);
+        foreach (var function in analysis.Program.Functions.Concat(analysis.Program.Methods).Select(f => f.Symbol))
+        {
+            if (function.Declaration is { } syntax)
+                functions[syntax] = function;
+        }
+        foreach (var expansion in analysis.Expansions.Where(e => e.Keyword.Text == "Retry"))
+        {
+            if (expansion.Result is not [var declaration] || !functions.TryGetValue(declaration, out var function))
+                continue;
+            if (function.BodyReturnType is not { IsResult: true } result)
+                continue;
+            var error = result.TypeArguments[1];
+            if (!Transience.CanBeTransient(error))
+                analysis.ReportWarning(expansion.File, expansion.KeywordToken.Span,
+                    $"None of '{error}''s errors are [Transient], so Retry gives back every Err at once and tries again only when " +
+                    $"the function throws. Mark the errors worth trying again [Transient] (a variant, or the whole type), or take Retry off.");
+        }
+    }
 
     private static FunctionDeclarationSyntax Trace(DecoratorContext d)
     {
@@ -416,7 +442,7 @@ public sealed class AspectsPlugin : IPiperPlugin
     {
         if (d.Arguments is not ([_] or [_, _]))
         {
-            d.Report(d.Attribute.Span, "Retry takes the number of attempts, and optionally the milliseconds to wait between them: [Retry(3)] or [Retry(3, 100)].");
+            d.Report(d.Attribute.Span, "Retry takes the number of attempts, and optionally how long to wait between them: [Retry(3)] or [Retry(3, 100ms)].");
             return d.Function;
         }
         if (d.IsIterator)
@@ -444,6 +470,14 @@ public sealed class AspectsPlugin : IPiperPlugin
         var (tryCall, lastCall) = d.ReturnsUnit
             ? ($"{call}; return;", $"{call};")
             : ($"return {call};", $"return {call};");
+        // A function returning a Result is tried again on a transient Err too, as on a throw; any other Err is its
+        // answer, given back at once.
+        if (d.ReturnsResult)
+        {
+            var result = d.FreshName("result");
+            holes.Add(("result", result));
+            tryCall = $"let $result = {call};\nif !Piper.Runtime.PiperTransient.IsTransientFailure($result) {{ return $result; }}";
+        }
         var body = (BlockExpressionSyntax)d.Template.Expression($$"""
             {
                 {{modifier}}fn $attempt(){{signature}} { $body }
@@ -452,9 +486,9 @@ public sealed class AspectsPlugin : IPiperPlugin
                     try {
                         {{tryCall}}
                     } catch (_) {
-                        $tries += 1;
-                        {{wait}}
                     }
+                    $tries += 1;
+                    {{wait}}
                 }
                 {{lastCall}}
             }
@@ -470,7 +504,7 @@ public sealed class AspectsPlugin : IPiperPlugin
     {
         if (d.Arguments is not [var milliseconds])
         {
-            d.Report(d.Attribute.Span, "Timeout takes the milliseconds to wait: [Timeout(500)].");
+            d.Report(d.Attribute.Span, "Timeout takes how long to wait: [Timeout(500ms)].");
             return d.Function;
         }
         if (!d.IsAsync || d.IsIterator)
@@ -491,7 +525,7 @@ public sealed class AspectsPlugin : IPiperPlugin
     {
         if (d.Arguments is not [var failures, var open])
         {
-            d.Report(d.Attribute.Span, "CircuitBreaker takes the failures in a row that open it, and the milliseconds it stays open: [CircuitBreaker(5, 30000)].");
+            d.Report(d.Attribute.Span, "CircuitBreaker takes the failures in a row that open it, and how long it stays open: [CircuitBreaker(5, 30s)].");
             return d.Function;
         }
         if (d.IsIterator)
@@ -502,12 +536,14 @@ public sealed class AspectsPlugin : IPiperPlugin
         // The circuit is found by a name unique to this function, so each decorated function has its own.
         var circuit = d.FreshName("circuit");
         var key = Text(d.Attribute.Span, $"{d.Name}#{circuit.Text}");
+        // A function returning a Result counts only its transient Errs as failures (and throws), as any other Err means
+        // what it called answered.
         var (method, prefix) = (d.IsAsync, d.ReturnsUnit) switch
         {
             (true, true) => ("RunAsync", "await "),
-            (true, false) => ("CallAsync", "return await "),
+            (true, false) => (d.ReturnsResult ? "CallResultAsync" : "CallAsync", "return await "),
             (false, true) => ("Run", ""),
-            (false, false) => ("Call", "return "),
+            (false, false) => (d.ReturnsResult ? "CallResult" : "Call", "return "),
         };
         return Wrapped(d, ("failures", failures), call =>
             $"let $circuit = Piper.Runtime.PiperCircuit.For($key, $name, $failures, $open);\n{prefix}$circuit.{method}(() => {call});",

@@ -286,6 +286,31 @@ public class BinderTests
         Assert.Contains($"'{missing}' is not covered", diagnostic.Message);
     }
 
+    /// <summary>Durations are whole numbers of ticks, so a match on one is checked as a match on an integer is.</summary>
+    [Theory]
+    [InlineData("match t { < 0s => 1, 0s..1min => 2 }", "_")]
+    [InlineData("match t { < 0s => 1, > 1s => 2 }", "0s..1s")]
+    public void Non_exhaustive_duration_matches_name_a_missing_range(string match, string missing)
+    {
+        var diagnostic = Assert.Single(Compilation.Compile($"fn f(t: System.TimeSpan) => int = {match};").Diagnostics);
+        Assert.Equal("PIP0230", diagnostic.Code);
+        Assert.Contains($"'{missing}' is not covered", diagnostic.Message);
+    }
+
+    [Fact]
+    public void A_match_on_durations_can_be_exhaustive_without_a_wildcard()
+    {
+        Assert.Empty(Compilation.Compile("fn f(t: System.TimeSpan) => int = match t { < 0s => 1, 0s => 2, > 0s => 3 };").Diagnostics);
+    }
+
+    [Theory]
+    [InlineData("fn f(n: int) => bool = n is 5s;", "PIP0")]
+    [InlineData("fn f() => int = 30s;", "PIP0")]
+    public void Durations_are_timespans_not_numbers(string program, string code)
+    {
+        Assert.StartsWith(code, Assert.Single(Compilation.Compile(program).Diagnostics).Code);
+    }
+
     [Theory]
     [InlineData("match n { _ => 1, 0 => 2 }")]
     [InlineData("match s { A => 1, A => 2, B(_) => 3 }")]

@@ -32,7 +32,7 @@ async fn WebhookSetup() => Task<(Settings, SqliteConnection, Bus, MemoryTranspor
     let keepAlive = SqliteConnection(connection);
     await keepAlive.OpenAsync();
     let settings = Settings(connection);
-    await Prepare(settings);
+    Prepare(settings);
     using let db = Open(settings);
     db.Projects.Add(Project(ProjectId(0), "WEB", "Website"));
     await db.SaveChangesAsync();

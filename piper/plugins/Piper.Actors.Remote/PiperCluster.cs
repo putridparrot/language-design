@@ -110,25 +110,32 @@ public sealed class PiperCluster : IAsyncDisposable
     private readonly Action<ActorSystem>? _setup;
     private readonly Func<Task<ActorSystem>> _start;
     private readonly string _name;
+    private readonly ClusterOptions _options;
     private readonly HashSet<int> _stopped = [];
 
-    private PiperCluster(List<ActorSystem> nodes, Action<ActorSystem>? setup, Func<Task<ActorSystem>> start, string name)
+    private PiperCluster(List<ActorSystem> nodes, Action<ActorSystem>? setup, Func<Task<ActorSystem>> start, string name, ClusterOptions options)
     {
         _nodes = nodes;
         _setup = setup;
         _start = start;
         _name = name;
+        _options = options;
     }
 
-    /// <summary>Starts <paramref name="count"/> nodes talking in memory, calling <paramref name="setup"/> on each (to spawn its actors).</summary>
-    public static Task<PiperCluster> StartAsync(int count, Action<ActorSystem>? setup = null) =>
-        StartAsync(count, setup, PiperNode.StartInMemoryAsync);
+    /// <summary>
+    /// Starts <paramref name="count"/> nodes talking in memory, calling <paramref name="setup"/> on each (to spawn its
+    /// actors). Their cluster's pace is <paramref name="options"/>, <see cref="Options"/> if not given: a test of faults
+    /// on plain asks, which shouldn't have the cluster finding nodes down mid-test however slow the machine, can give
+    /// one with a long <c>DownAfter</c>.
+    /// </summary>
+    public static Task<PiperCluster> StartAsync(int count, Action<ActorSystem>? setup = null, ClusterOptions? options = null) =>
+        StartAsync(count, setup, PiperNode.StartInMemoryAsync, options ?? Options);
 
     /// <summary>Starts <paramref name="count"/> nodes talking over HTTP/2 on free loopback ports, calling <paramref name="setup"/> on each.</summary>
-    public static Task<PiperCluster> StartOverNetworkAsync(int count, Action<ActorSystem>? setup = null) =>
-        StartAsync(count, setup, () => PiperNode.StartAsync("127.0.0.1", 0));
+    public static Task<PiperCluster> StartOverNetworkAsync(int count, Action<ActorSystem>? setup = null, ClusterOptions? options = null) =>
+        StartAsync(count, setup, () => PiperNode.StartAsync("127.0.0.1", 0), options ?? Options);
 
-    private static async Task<PiperCluster> StartAsync(int count, Action<ActorSystem>? setup, Func<Task<ActorSystem>> start)
+    private static async Task<PiperCluster> StartAsync(int count, Action<ActorSystem>? setup, Func<Task<ActorSystem>> start, ClusterOptions options)
     {
         if (count < 1)
             throw new ArgumentOutOfRangeException(nameof(count), "A cluster has a node at least.");
@@ -137,10 +144,10 @@ public sealed class PiperCluster : IAsyncDisposable
         // and they all know each other when this answers.
         var name = $"test-{Guid.NewGuid():N}";
         foreach (var node in nodes)
-            await Remote.Cluster.JoinAsync(node, new MemoryClusterMembership(), name, Options);
+            await Remote.Cluster.JoinAsync(node, new MemoryClusterMembership(), name, options);
         foreach (var node in nodes)
             setup?.Invoke(node);
-        return new PiperCluster([.. nodes], setup, start, name);
+        return new PiperCluster([.. nodes], setup, start, name, options);
     }
 
     /// <summary>The nodes, in the order they were started (stopped ones included, so the numbers stay).</summary>
@@ -156,7 +163,7 @@ public sealed class PiperCluster : IAsyncDisposable
     public async Task<ActorSystem> AddNodeAsync()
     {
         var node = await _start();
-        await Remote.Cluster.JoinAsync(node, new MemoryClusterMembership(), _name, Options);
+        await Remote.Cluster.JoinAsync(node, new MemoryClusterMembership(), _name, _options);
         _setup?.Invoke(node);
         _nodes.Add(node);
         return node;

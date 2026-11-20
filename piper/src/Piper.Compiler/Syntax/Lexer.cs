@@ -317,6 +317,10 @@ public sealed partial class Lexer
             digits = builder.ToString();
         }
 
+        // Duration units, before C#'s suffixes (which `ms`, `min` and `days` start with): `500ms`, `1.5s`, `5min`.
+        if (radix == 10 && valid && DurationUnit() is { } unit)
+            return ScanDuration(start, digits, unit);
+
         // Suffixes, as in C#: L (Long), U (UInt, or ULong if it doesn't fit), UL (ULong); and on decimal numbers
         // F (Float), D (Double), M (Decimal).
         string suffix = "";
@@ -412,6 +416,67 @@ public sealed partial class Lexer
             value = 0;
         }
         return new Token(TokenKind.IntegerLiteral, span, text, (int)value);
+    }
+
+    /// <summary>The duration units, with how many ticks (100 ns) each is.</summary>
+    private static readonly (string Unit, long Ticks)[] DurationUnits =
+    [
+        ("ms", TimeSpan.TicksPerMillisecond),
+        ("s", TimeSpan.TicksPerSecond),
+        ("min", TimeSpan.TicksPerMinute),
+        ("h", TimeSpan.TicksPerHour),
+        ("days", TimeSpan.TicksPerDay),
+        ("day", TimeSpan.TicksPerDay),
+    ];
+
+    /// <summary>The duration unit written directly after a number here (and not followed by more of a name), if any.</summary>
+    private (string Unit, long Ticks)? DurationUnit()
+    {
+        foreach (var unit in DurationUnits)
+        {
+            bool matches = true;
+            for (int i = 0; i < unit.Unit.Length && matches; i++)
+                matches = Peek(i) == unit.Unit[i];
+            if (matches && !IsIdentifierPart(Peek(unit.Unit.Length)))
+                return unit;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// duration = digits [ "." digits ] ( "ms" | "s" | "min" | "h" | "day" | "days" ) ;
+    /// A <see cref="TimeSpan"/>, worked out exactly: it must be a whole number of ticks (100 ns), and fit in one.
+    /// </summary>
+    private Token ScanDuration(int start, string digits, (string Unit, long Ticks) unit)
+    {
+        _position += unit.Unit.Length;
+        var span = TextSpan.FromBounds(start, _position);
+        var text = _source.ToString(span);
+        if (digits.Contains('e'))
+        {
+            _diagnostics.ReportInvalidDuration(span, text, "a duration can't have an exponent");
+            return new Token(TokenKind.DurationLiteral, span, text, TimeSpan.Zero);
+        }
+        decimal ticks;
+        try
+        {
+            ticks = decimal.Parse(digits, NumberStyles.Float, CultureInfo.InvariantCulture) * unit.Ticks;
+        }
+        catch (OverflowException)
+        {
+            ticks = decimal.MaxValue;
+        }
+        if (ticks > TimeSpan.MaxValue.Ticks)
+        {
+            _diagnostics.ReportInvalidDuration(span, text, "it's longer than a TimeSpan can hold");
+            return new Token(TokenKind.DurationLiteral, span, text, TimeSpan.Zero);
+        }
+        if (ticks != decimal.Truncate(ticks))
+        {
+            _diagnostics.ReportInvalidDuration(span, text, "a TimeSpan counts whole ticks of 100 nanoseconds");
+            return new Token(TokenKind.DurationLiteral, span, text, TimeSpan.Zero);
+        }
+        return new Token(TokenKind.DurationLiteral, span, text, TimeSpan.FromTicks((long)ticks));
     }
 
     private string ScanDigits(int radix)

@@ -29,6 +29,12 @@ public sealed class PluginParser
 
     public IPiperPlugin Plugin { get; }
 
+    /// <summary>
+    /// The file the construct is in. Its <c>FileName</c> is a path when it's on disk, so a plugin can read what sits beside
+    /// it, as the data plugin reads a database's migration scripts.
+    /// </summary>
+    public SourceText File => _parser.Source;
+
     /// <summary>The construct's keyword, which has already been read.</summary>
     public Token Keyword { get; }
 

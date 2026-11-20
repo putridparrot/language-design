@@ -1,0 +1,37 @@
+using System;
+
+// Duration literals are TimeSpans: 500ms, 30s, 5min, 2h, 1day (or 3days), with a fraction where it's exact.
+fn Describe(elapsed: TimeSpan) => string = match elapsed {
+    < 100ms => "fast",
+    100ms..<1s => "slow",
+    1s => "a second exactly",
+    _ => "timed out",
+};
+
+fn Main() {
+    let timeout = 30s;
+    Print(timeout);
+    Print(500ms);
+    Print(1.5s);
+    Print(5min);
+    Print(2h);
+    Print(1day);
+    Print(3days);
+    Print(0s);
+
+    // TimeSpan's own operators work on them.
+    Print(1h + 30min);
+    Print(2 * 45s);
+    Print(-10s);
+    Print(90s > 1min);
+    Print(timeout.TotalMilliseconds);
+
+    Print(Describe(50ms));
+    Print(Describe(250ms));
+    Print(Describe(1000ms));
+    Print(Describe(2s));
+
+    // Negative literals in patterns.
+    let drift = -2s;
+    Print(match drift { -2s => "two seconds behind", _ => "something else" });
+}

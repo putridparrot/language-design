@@ -9,6 +9,8 @@ public enum TokenKind
     Identifier,
     IntegerLiteral,
     DoubleLiteral,
+    /// <summary><c>30s</c>, <c>500ms</c>, <c>5min</c>, <c>2h</c>, <c>1day</c>: its <see cref="Token.Value"/> is a <see cref="System.TimeSpan"/>.</summary>
+    DurationLiteral,
     CharLiteral,
     StringLiteral,
     InterpolatedStringLiteral,

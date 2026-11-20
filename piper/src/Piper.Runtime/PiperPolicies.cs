@@ -9,31 +9,44 @@ namespace Piper.Runtime;
 /// </summary>
 public static class PiperTimeout
 {
-    public static async Task<T> CallAsync<T>(Func<Task<T>> call, int milliseconds, string name)
+    public static Task<T> CallAsync<T>(Func<Task<T>> call, int milliseconds, string name) =>
+        CallAsync(call, TimeSpan.FromMilliseconds(milliseconds), name);
+
+    /// <summary><c>[Timeout(2s)]</c>: the time to wait as a duration.</summary>
+    public static async Task<T> CallAsync<T>(Func<Task<T>> call, TimeSpan within, string name)
     {
         var task = call();
         try
         {
-            return await task.WaitAsync(TimeSpan.FromMilliseconds(milliseconds), PiperRuntime.Current.Time);
+            return await task.WaitAsync(within, PiperRuntime.Current.Time);
         }
         catch (TimeoutException) when (!task.IsCompleted)
         {
-            throw new TimeoutException($"{name} took more than {milliseconds} ms.");
+            throw new TimeoutException($"{name} took more than {Describe(within)}.");
         }
     }
 
-    public static async Task RunAsync(Func<Task> call, int milliseconds, string name)
+    public static Task RunAsync(Func<Task> call, int milliseconds, string name) =>
+        RunAsync(call, TimeSpan.FromMilliseconds(milliseconds), name);
+
+    public static async Task RunAsync(Func<Task> call, TimeSpan within, string name)
     {
         var task = call();
         try
         {
-            await task.WaitAsync(TimeSpan.FromMilliseconds(milliseconds), PiperRuntime.Current.Time);
+            await task.WaitAsync(within, PiperRuntime.Current.Time);
         }
         catch (TimeoutException) when (!task.IsCompleted)
         {
-            throw new TimeoutException($"{name} took more than {milliseconds} ms.");
+            throw new TimeoutException($"{name} took more than {Describe(within)}.");
         }
     }
+
+    /// <summary>"500 ms", or "2.5 s" from a second up.</summary>
+    private static string Describe(TimeSpan time) =>
+        time < TimeSpan.FromSeconds(1)
+            ? $"{time.TotalMilliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture)} ms"
+            : $"{time.TotalSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)} s";
 }
 
 /// <summary>A call refused at once because its circuit is open: what it calls has been failing.</summary>
@@ -63,18 +76,22 @@ public sealed class PiperCircuit
     private DateTime? _openUntil;
     private bool _trying;
 
-    private PiperCircuit(string name, int failures, int openMilliseconds)
+    private PiperCircuit(string name, int failures, TimeSpan open)
     {
         if (failures < 1)
             throw new ArgumentOutOfRangeException(nameof(failures), failures, "A circuit opens after at least one failure.");
         _name = name;
         _failures = failures;
-        _open = TimeSpan.FromMilliseconds(openMilliseconds);
+        _open = open;
     }
 
     /// <summary>The circuit of the function <paramref name="key"/> names (one per decorated function).</summary>
     public static PiperCircuit For(string key, string name, int failures, int openMilliseconds) =>
-        Circuits.GetOrAdd(key, _ => new PiperCircuit(name, failures, openMilliseconds));
+        For(key, name, failures, TimeSpan.FromMilliseconds(openMilliseconds));
+
+    /// <summary><c>[CircuitBreaker(5, 30s)]</c>: how long it stays open as a duration.</summary>
+    public static PiperCircuit For(string key, string name, int failures, TimeSpan open) =>
+        Circuits.GetOrAdd(key, _ => new PiperCircuit(name, failures, open));
 
     /// <summary>Whether calls are being refused now.</summary>
     public bool IsOpen
@@ -121,6 +138,51 @@ public sealed class PiperCircuit
     }
 
     public Task RunAsync(Func<Task> call) => CallAsync(async () => { await call(); return true; });
+
+    /// <summary>
+    /// A call returning a <c>Result</c>: a transient <c>Err</c> counts as a failure, as a throw does. Any other
+    /// <c>Err</c> (not found, not allowed) is a success: what it called answered, so it isn't failing.
+    /// </summary>
+    public Result<T, E> CallResult<T, E>(Func<Result<T, E>> call)
+    {
+        Enter();
+        Result<T, E> result;
+        try
+        {
+            result = call();
+        }
+        catch
+        {
+            Failed();
+            throw;
+        }
+        if (PiperTransient.IsTransientFailure(result))
+            Failed();
+        else
+            Succeeded();
+        return result;
+    }
+
+    /// <summary>An async call returning a <c>Result</c>, as <see cref="CallResult{T, E}"/>.</summary>
+    public async Task<Result<T, E>> CallResultAsync<T, E>(Func<Task<Result<T, E>>> call)
+    {
+        Enter();
+        Result<T, E> result;
+        try
+        {
+            result = await call();
+        }
+        catch
+        {
+            Failed();
+            throw;
+        }
+        if (PiperTransient.IsTransientFailure(result))
+            Failed();
+        else
+            Succeeded();
+        return result;
+    }
 
     /// <summary>Lets a call through, or refuses it while the circuit is open (one is let through to try once it's time).</summary>
     private void Enter()

@@ -204,6 +204,7 @@
       "patterns": [
         { "name": "constant.numeric.hex.piper", "match": "\\b0[xX][0-9A-Fa-f_]+(UL|ul|U|u|L|l)?\\b" },
         { "name": "constant.numeric.binary.piper", "match": "\\b0[bB][01_]+(UL|ul|U|u|L|l)?\\b" },
+        { "name": "constant.numeric.duration.piper", "match": "\\b[0-9][0-9_]*(\\.[0-9][0-9_]*)?(ms|s|min|h|days|day)\\b" },
         { "name": "constant.numeric.decimal.piper", "match": "\\b[0-9][0-9_]*(\\.[0-9][0-9_]*)?([eE][+-]?[0-9]+)?(UL|ul|U|u|L|l|F|f|D|d|M|m)?\\b" }
       ]
     },

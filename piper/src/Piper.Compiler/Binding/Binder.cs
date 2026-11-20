@@ -186,6 +186,8 @@ public sealed partial class Binder
         _builtins.TryDeclare("Url", ClrTypeSymbol.For(typeof(Piper.Runtime.Url)));
         // What shell$"…" makes: a program and its arguments, run without a shell.
         _builtins.TryDeclare("Shell", ClrTypeSymbol.For(typeof(Piper.Runtime.Shell)));
+        // `[Transient]` on an error: worth trying again (see Piper.Runtime's PiperTransient), with no `using`.
+        _builtins.TryDeclare("TransientAttribute", ClrTypeSymbol.For(typeof(Piper.Runtime.TransientAttribute)));
         foreach (var function in BuiltinFunctions.All)
             _builtins.TryDeclare(function);
 

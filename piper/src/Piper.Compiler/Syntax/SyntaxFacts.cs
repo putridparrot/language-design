@@ -209,6 +209,7 @@ public static class SyntaxFacts
             TokenKind.Identifier => "an identifier",
             TokenKind.IntegerLiteral => "an integer literal",
             TokenKind.DoubleLiteral => "a floating-point literal",
+            TokenKind.DurationLiteral => "a duration literal",
             TokenKind.CharLiteral => "a character literal",
             TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral => "a string literal",
             TokenKind.MarkupLiteral => "markup",

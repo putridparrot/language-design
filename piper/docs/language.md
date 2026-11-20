@@ -199,6 +199,8 @@ generic call `a<b, c>(d)`, as in C#.
 - **Comments:** `// line` and `/* block */`. Block comments nest. `///` lines directly above a declaration, method, parameter, field or enum variant are its documentation: the editor shows it, and the generated C# carries it as XML documentation (`piper build --exe` and `--library` also write the `.xml` file).
 - **Integers:** `42`, `1_000_000`, `0xFF`, `0b1010`. Suffixes as in C#: `L` long (`3_000_000_000L`), `U` uint (or ulong if it doesn't fit), `UL` ulong. An unsuffixed literal must fit in int (C# would make a larger one a uint or long; Piper asks for the suffix); as in C#, `-2147483648` and `-9223372036854775808L` are allowed too.
 - **Doubles:** `1.5`, `2e3`, `2.5E-1`. A digit is required after the `.`, so `0..10` is a range. Suffixes `F` (float), `D` (double) and `M` (decimal) work on any decimal number: `1.5f`, `19.99m`, `2m`.
+- **Durations:** `500ms`, `30s`, `1.5s`, `5min`, `2h`, `1day`, `7days` are `TimeSpan`s (see [Durations](#durations)).
+  The unit follows the number directly. C#'s suffixes keep their meaning, so `5m` is a decimal and `1d` a double.
 - **Chars:** `'a'`, `'\n'`.
 - **Strings:** `"..."`, with escapes `\n \t \r \0 \\ \" \' \{ \} \u{1F99C}`.
 - **Raw strings:** as in C# 11, ```"""…"""``` (three or more quotes) has no escapes, so quotes and braces are literal. A multi-line raw string starts on the line after the opening quotes and ends on the line before the closing ones, whose indentation is removed from every line; line breaks are always `\n`.
@@ -294,6 +296,7 @@ fn Area(s: Shape) => double = match s {
 | `Point(x, y)`, `Message.Add(n)` on an `object`, trait or interface | a type test, as C#'s `o is Point(var x, var y)`: a value of that record or variant (of a non-generic type that the matched type can hold), deconstructed. A match on such a value needs a `_` arm |
 | `42`, `-1`, `2.5`, `'c'`, `"text"`, `true` | that literal; an int literal also matches long and double values |
 | `1..10`, `0..<10`, `'a'..'z'` | a range of integer or char values; `..` includes the end, as in Swift, and `..<` stops before it |
+| `30s`, `< 100ms`, `100ms..<1s` | a duration, compared with a `TimeSpan` as numbers are (a match on durations can be exhaustive without `_`: `< 0s`, `0s`, `> 0s`) |
 | `p1 \| p2` | either pattern; alternatives can bind variables if every one binds the same names with the same types, in a match arm (`Click(x, y) \| Touch(x, y) => …`) or an `is` test (`if s is Circle(r) \| Ring(r, _) { … }`) |
 | `p1 and p2` | both patterns: `>= 1 and <= 9`, `[first, ...] and [_, second, ...]`; binds tighter than `\|`, as C#'s `and` does than `or`, and either side can bind variables |
 | `not p` | anything `p` doesn't match: `not null`, `not (Red \| Green)`, `not >= 0`. It can't bind variables, as it matches only when `p` fails |
@@ -798,6 +801,55 @@ fn Compute(a: int, b: int) => Result<int, MathError> {
   `match r { Ok(v) => Ok(v * 2), Err(e) => Err(e) }` is a `Result<int, E>`, though neither arm could say so alone.
 - **No redeclaring:** `Option` and `Result` are built in, so they can't be redeclared. You can extend them with methods, e.g. `extend Option { fn IsNone() => bool = this is None; }`, and make them implement traits.
 - **One runtime:** they're defined once, in the `Piper.Runtime` assembly (as `Piper.Runtime.Option<T>` and `Piper.Runtime.Result<T, E>`), which every compiled Piper program and library references. So Piper libraries can pass them to each other, and C# code can use them too.
+
+### Transient errors
+
+Some errors are worth trying again (a timeout, a service briefly unavailable, a conflict that a moment's wait clears);
+others would only fail the same way (not found, not allowed, invalid). `[Transient]` says which:
+
+```piper
+enum FetchError { [Transient] Timeout, [Transient] Unavailable, NotFound }   // those variants
+[Transient] enum Network { Reset, Refused(port: int) }                       // every variant
+[Transient] record Throttled(retryAfter: TimeSpan);                         // every value of it
+```
+
+- **Policies retry them:** `[Retry]` on a function returning a `Result` tries again on a transient `Err`, as on a throw,
+  and gives any other `Err` back at once; `[CircuitBreaker]` counts only transient `Err`s as failures (see the
+  [aspects plugin](plugins.md#aspects-decorators-trace-timed-retry-timeout-circuitbreaker-and-notify)). A workflow's
+  activity is retried on one too ([workflows](plugins.md#workflows-durable-workflows)).
+- **A `[Retry]` that can't help** is a warning: on a function whose error type can never be transient (an enum with no
+  `[Transient]` on it or a variant, a record without one, a `string`), it would only retry throws.
+- **In code:** `PiperTransient.IsTransient(error)` and `PiperTransient.IsTransientFailure(result)` (in Piper.Runtime)
+  say whether an error, or a `Result`'s `Err`, is transient, for a policy of your own. A `TimeoutException` held as an
+  error always is.
+- **In C#** it's `Piper.Runtime.TransientAttribute` on the variant's (or type's) class, so it's known at run time, and
+  `[Transient]` needs no `using`.
+
+### Durations
+
+`30s`, `500ms`, `5min`, `2h`, `1day` (or `3days`) are `TimeSpan`s, for the timeouts, leases, delays and retries
+distributed code is full of: `await Task.Delay(500ms)`, `[Timeout(2s)]`, `lease: 30s` rather than
+`TimeSpan.FromSeconds(30)`.
+
+```piper
+let timeout = 30s;
+let total = 1h + 30min;                   // TimeSpan's own operators: +, -, * by a number, comparisons
+fn Speed(elapsed: TimeSpan) => string = match elapsed {
+    < 100ms => "fast",
+    100ms..<1s => "slow",
+    _ => "timed out",
+};
+```
+
+- **Exact:** a fraction is fine where it's a whole number of ticks (100 ns): `1.5s`, `0.25ms`. One finer than a tick,
+  longer than a `TimeSpan` holds, or with an exponent (`1e3s`) is an error (PIP0011).
+- **Units:** `ms`, `s`, `min`, `h`, `day`/`days`, directly after the number. C#'s suffixes are unchanged: `5m` is a
+  decimal and `1d` a double, so minutes are `min` and days `day`.
+- **In patterns:** a duration matches a `TimeSpan` as a number does an int: literals, `<`/`>=` and ranges, checked for
+  exhaustiveness (C# gets `{ Ticks: < 1000000L }`, as a `TimeSpan` isn't a C# constant).
+- **In C#** a duration is `TimeSpan.FromSeconds(30)` (the largest unit that's exact). As C# has no `TimeSpan`
+  constants, one can't be a .NET attribute's argument; the aspects plugin's decorators aren't .NET attributes, so
+  `[Timeout(2s)]` works.
 
 ### Programs, namespaces and visibility
 
@@ -1959,6 +2011,7 @@ As in C#, functions and methods are PascalCase (`Print`, `Main`, `Area()`), and 
 | `Shape.Circle(1.0)` | `new Shape.Circle(1.0)` |
 | `match s { Circle(r) if r > 1.0 => a, Empty => b, … }` | `if (s is Shape.Circle(var r) && r > 1.0) { … } else if … else { … }` |
 | patterns `1 \| 2`, `1..9`, `_`, `< 0` | C# patterns `1 or 2`, `>= 1 and <= 9`, `_`, `< 0` |
+| `30s`, `1.5s`; pattern `< 100ms` | `TimeSpan.FromSeconds(30)`, `TimeSpan.FromMilliseconds(1500)`; `{ Ticks: < 1000000L }` |
 | `[Obsolete("x")] fn F()`, `record P([JsonPropertyName("id")] x: int)` | `[global::System.ObsoleteAttribute("x")] public static void F()`, `record P([property: global::…JsonPropertyNameAttribute("id")] int x)` |
 | `[first, ...rest]`, `[_, ..., last]` | list patterns `[var first, .. var rest]`, `[_, .., var last]` |
 | `Point { x: 0 }`, `{ Length: > 5 }` | `Point(0, _)` (positional, for a Piper record or variant), `{ Length: > 5 }` |

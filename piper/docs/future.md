@@ -81,6 +81,13 @@ them too.
 - **Error sets inferred** (as Zig's): `fn Place(…) => Result<Order, _>` gets as its error the union of what its `?`s
   can raise (`StockError | PaymentError`), so a `match` on it must handle exactly those, and a new failure deep down
   shows at every caller that doesn't. In C# it's a generated enum over the errors, or the errors' common trait.
+- ~~**Transient errors, which retries understand**~~, done (see [Transient errors](language.md#transient-errors)):
+  `[Transient]` on a variant, an enum or a record; `[Retry]` on a function returning a `Result` tries again on a
+  transient `Err` and gives the rest back at once, `[CircuitBreaker]` counts only transient `Err`s as failures, a
+  workflow's activity is retried on one, and a `[Retry]` whose errors can never be transient is a warning. Still to
+  come: asks to remote actors (once those take policies, item 4 of [Cloud and distributed](#cloud-and-distributed));
+  a function returning a type alias for a `Result`, which the decorators, reading syntax, don't see as one; and, with
+  inferred error sets (above), a transient failure deep down staying one in every caller's error.
 - **`requires` proven where it can be.** Constant checking already reports a `requires` that constant arguments
   break. Following the code's flow, the compiler could also know that after `if amount > 0m`, `Money(amount)` can't
   fail (and leave the check out), and warn where a `requires` must fail on some path. A light refinement type, with
@@ -90,6 +97,28 @@ them too.
 - **String-literal enums:** `enum Swap { "innerHTML", "outerHTML", "none" }`, which are their strings in JSON, markup
   attributes and parsing, but checked as any enum (and matched exhaustively). Web APIs are full of such strings
   (htmx's `hx-swap`, CSS values, statuses); the markup completion's values could come from them.
+- **What can cross between threads** (Swift's `Sendable`), the check [weighed in place of `pure`](#ideas-from-other-languages):
+  immutable records, newtypes, enums and immutable collections can be shared; a class with `mut` fields can't, unless
+  it's an actor or keeps its state behind a `lock`. Inferred, with nothing to write. Then an actor's messages, a
+  `TaskScope`'s tasks, `Task.Run` lambdas and the parallel plugin's are all checked one way, for what they capture and
+  send, in place of today's separate warnings (the actor plugins' on mutable message fields, the data-race checks).
+- ~~**Duration literals**~~, done (see [Durations](language.md#durations)): `30s`, `500ms`, `1.5s`, `5min`, `2h`,
+  `1day`, as `TimeSpan`s, exact to the tick, in expressions and patterns (exhaustiveness checked, as for integers), and
+  taken by `[Timeout]`, `[Retry]` and `[CircuitBreaker]`. Days are `day`/`days`, as `1d` is already C#'s double. Still
+  to come: durations in the plugins' clauses that read `shutdown 30 seconds` today (a server's, an actor's), and in
+  `const` declarations once there are any.
+- **Regex literals, checked, with typed captures:** `re"(?<year>\d{4})-(?<month>\d\d)"` is a compiled `Regex`, and an
+  invalid pattern is a compile error. As a pattern, its named groups bind variables:
+  `if line is re"(?<year>\d{4})-(?<month>\d\d)"(year, month) { … }`, and in a `match` arm. Alongside `sql$`, `url$`
+  and `shell$`: text whose meaning the compiler knows.
+- **A disposable never disposed is a warning,** as a task nothing waits for is (PIP0409): an `IDisposable` made and
+  dropped without `using`, `defer`, being returned or stored, or passed to something that takes ownership. .NET's own
+  analyzers miss most of these in generated code; the compiler sees them where they're written.
+- **Patch types for `PATCH` endpoints:** `Patch<Issue>`, derived from a record, has each field optional (a field that's
+  already optional, a `T??`: left alone, or set to None), and `patch.ApplyTo(issue)` gives the changed record, checking
+  its `requires` again, or why not. JSON reads only the fields sent, and the OpenAPI schema says so.
+  `patch "/issues/{id:int}" async (id: IssueId, changes: Patch<Issue>, db: TrackerDb) => …` with no hand-written
+  record of optional fields per resource.
 
 ### Ideas from other languages
 
@@ -219,6 +248,20 @@ token rather than each caller making and threading a `CancellationTokenSource`.
   surprising to anyone who knows C#.
 - ~~**Async event handlers**~~ ([above](#language)), done, as C#'s `async void`. A shared hook reporting their
   failures, as `[Command]`'s are, is still to consider.
+- **Whichever happens first** (Go's `select`, made structured): waiting on several things, taking the first, and
+  cancelling the others, as a `TaskScope` cancels its tasks:
+
+  ```piper
+  let outcome = await first {
+      reply from jobs.Take(worker) => Got(reply),
+      after 30s => TimedOut,
+      stop.Cancelled => Stopping,
+  };
+  ```
+
+  Each arm is awaited in the same scope; the first to finish gives the value, the rest are cancelled and waited for,
+  and an arm that fails fails the whole. It replaces `Task.WhenAny` and the cancellation written around it, which
+  apps/grid's leases and workers do by hand. Exhaustive in the sense that matters: every arm's type is the result's.
 
 #### Decided
 
@@ -297,9 +340,9 @@ Server-side HTML belongs with [UI](#ui) (htmx over plain endpoints), not Razor.
 - **Databases:** the `data` plugin covers EF Core models and queries, and ~~registering a database with DI~~ is done: a
   server's or host's `database db: TrackerDb from "Database";` (or `(settings.provider, settings.connection)`), the
   provider chosen by configuration (sqlite, sqlserver, postgres), scoped, and `db` a factory for the clauses after
-  (apps/tracker uses it). Still to come: migrations (designed in [one versioning system](#one-versioning-system-a-design):
-  a database's schema recorded and checked as the other shapes are, and `piper db migrate` writing reviewed SQL
-  scripts from it), relationships between tables (navigation properties), and comparing an optional column with an
+  (apps/tracker uses it), and so are ~~migrations~~ (a database's shape recorded and checked as it builds, and
+  `piper db migrate` writing reviewed SQL scripts from it; see [plugins](plugins.md#migrations-a-databases-shape-and-the-sql-that-changes-it)).
+  Still to come: relationships between tables (navigation properties), and comparing an optional column with an
   optional variable in a query.
 - ~~**Background work**~~ in a `server`, done: `hosted Mailer;` (`AddHostedService`), and `worker` handlers whose
   parameters are services, run for the app's life or `every` period (apps/auction's clock is one), and in a `host` too.
@@ -396,7 +439,27 @@ finishing it), container publishing, and hosted workers; and of actor clustering
      `Cluster:Provider` `postgres`, `sqlite` or `sqlserver`), which apps/stock uses, so its pods are a Deployment with
      no list of nodes; still to come, Kubernetes' endpoints, for nodes with no shared database;
    - tells to an actor that's moving are lost (at most once); queuing them while it starts on its new owner;
-   - placement beyond hashing: keeping an actor near what it uses, or on a node with room.
+   - placement beyond hashing: keeping an actor near what it uses, or on a node with room;
+   - **singletons:** one instance of an actor in the whole cluster (a scheduler, a coordinator such as apps/grid's),
+     started on its owner and moved as members change, as keyed actors already are, with the store's single writer
+     keeping two nodes from running it while they disagree. Most needs for leader election are this, so no consensus
+     algorithm (Raft, Paxos) is planned. A distributed lock (`await cluster.Lock("nightly-report", lease: 30s)`, held
+     with `using`) could come from the same leases membership already keeps in the shared database;
+   - **projections, the read side** (CQRS). An actor's events answer questions about one actor; "every product low
+     on stock" needs them across all of them. A `projection` would consume a persisted actor type's events from the
+     `IEventStore` and keep a view, a table through the data plugin, remembering how far it has read, so it resumes
+     after a restart and can be rebuilt from the start when its code changes:
+
+     ```piper
+     projection LowStock from Product into StockDb {
+         on Received(quantity) { … }        // `this` is the actor's key; update the view's rows
+         on Sold(quantity) { … }
+     }
+     ```
+
+     The compiler checks it handles each of the actor's events (or says which it ignores), and the events' recorded
+     shapes cover it during a rollout. A view lags its events, so reading it is eventually consistent; one that must
+     be current asks the actor instead. In simulated tests, projections run on the simulated clock like everything else.
 4. **Failure policies.** The same patterns were written by hand several times: stock retries once after a dead letter,
    grid lends chunks with a lease and ignores late results, the tracker retries its webhook (with `[Retry]`). The
    aspects plugin could add `[Timeout]` and `[CircuitBreaker]` beside `[Retry]`, and asks to remote actors take the
@@ -410,7 +473,12 @@ finishing it), container publishing, and hosted workers; and of actor clustering
    - supervision trees (a `supervisor` owning child actors, restarting one or all of them), once something needs a
      hierarchy; Piper's actors have no parent yet;
    - `restart` recovering the actor's last state rather than starting empty, once actors keep their state (item 3);
-   - asks to remote actors taking `[Retry]`, `[Timeout]` and `[CircuitBreaker]` as functions do.
+   - asks to remote actors taking `[Retry]`, `[Timeout]` and `[CircuitBreaker]` as functions do;
+   - **`[Bulkhead(max, queue)]`** beside them: at most `max` calls running at once, up to `queue` more waiting, and
+     the rest refused at once, so one slow dependency can't take every thread or connection a service has. On
+     PiperPolicies as the others are, shared by every caller of the function (or named, `[Bulkhead("payments", 10)]`,
+     to share one between functions), and for remote asks too. A refusal is a transient error (see
+     [transient errors](#language)), so a `[Retry]` outside it may try again later.
 5. **An outbox, and queues.** The tracker tells its webhook after saving a change; if the process dies in between, the
    notification is lost. An outbox writes the message in the change's own transaction and sends it afterwards, so it
    can't be lost, which suits the data plugin. ~~The outbox~~ is done (the messaging plugin's, with the data plugin's
@@ -551,6 +619,15 @@ More, around the services themselves:
   keeps each request's `Idempotency-Key` and its response, in memory or a database (the data plugin's
   `idempotency;`), and answers a retry with the same response; apps/tracker's posts are. Still to come: a warning
   for `idempotent` endpoints mapped by hand without `PiperIdempotency.Use(app)` (a `server` always adds it).
+- **Feature flags,** as every cloud service here: an `IFeatureFlags` trait (`flags.IsOn("new-checkout", user.id)`, and
+  variants beyond on and off), a local provider reading configuration (`"Features": { "new-checkout": 10 }` for 10% of
+  keys, hashed so a user's answer stays the same), and others (a flag service, OpenFeature's providers) registered
+  and chosen by `Features:Provider`. A library, not language; what Piper adds is where flags meet its checks:
+  - **In a workflow,** a flag's answer can change between a run and its replay, so reading one is a compile error
+    there (PIP0513) unless through `flow`, which records it as `flow.Now()` is;
+  - **In simulated tests,** each flag read is one of the run's choices, so both sides of a flag are explored and a
+    failure shrinks to the flags that cause it;
+  - flags read in the program are listed by `piper doc --ops` with the configuration, so stale ones can be found.
 
 ### A messaging plugin
 
@@ -642,7 +719,10 @@ an option to read and write it.
 
 ## One versioning system: a design
 
-**Status:** proposed, not started.
+**Status:** the database's shape, its checks and `piper db migrate` are done (parts 1 to 3, with the lock and the
+`migrate` clause; see [plugins](plugins.md#migrations-a-databases-shape-and-the-sql-that-changes-it)). Still to come:
+`piper check --since` (part 4), what's built on it (part 5), and migrating Piper's own tables when their shape
+changes between versions.
 
 **The problem.** A release is safe to deploy only if everything it shares with what's already running still fits: old
 pods during a rolling update, clients already installed, messages already queued, workflows half way through, and the
@@ -751,19 +831,40 @@ piper check apps/tracker --since piper-v1.4.0
 It compares the recorded shapes against those at a git tag (or the last release), so CI can fail a release that would
 break what's running, and the output doubles as the release's notes on what changed for callers.
 
-#### To decide
+#### 5. Built on it
 
-1. **Where migrations run:** the command, as a deploy step (proposed), with the server clause's `migrate` for
-   development and single-instance apps; or always at startup.
-2. **Scripts for several providers:** an app on SQLite locally and PostgreSQL in production needs SQL for each. Generate
-   one script per provider the program brings a package for (`TrackerDb.migrations/sqlite/…`, `…/postgres/…`;
-   proposed), or one provider's only, named in piper.json.
-3. **Breaking schema changes:** errors with `--accept-breaking` (proposed, as the other shapes), or warnings, as some
-   apps (a desktop app's own database) never run two releases at once.
+- **`sql$` checked against the schema.** With each database's shape recorded, every `sql$"…"` query can be checked as
+  it compiles, without a database to connect to: its tables and columns exist, each hole's type suits its column, and
+  the columns it selects fit the record it's read into (`shop.Query<OrderRow>(sql$"select …")`). A column renamed in
+  the model then shows at every query using the old name. As Rust's sqlx checks queries, but from the recorded shape
+  rather than a live database. The SQL is parsed for its table and column references only (a light parser of
+  Piper's own, for the dialects the providers speak), and a query it can't follow is left unchecked, not refused.
+- **Persisted actors' events, versioned.** A persisted actor's events are kept for ever, so changing an event record
+  silently breaks replaying the streams written before. Their shapes are recorded as the others' are, and an old
+  version is upgraded explicitly:
 
-**In order:** the database's shape and its checks (part 1 and 2, compile time only, useful at once); `piper db migrate`
-with SQLite and the baseline (apps/tracker's checked-in `tracker.db` is the first user); PostgreSQL and SQL Server, and
-the lock; `migrate` in the server clause; `piper check --since`.
+  ```piper
+  event Placed version 2 (id: OrderId, total: Money, currency: string);
+  upgrade Placed version 1 (id, total) => Placed(id, total, "GBP");
+  ```
+
+  Each stored event keeps its version; replaying one of an older version runs its upgrades in turn. The compiler
+  checks that every version ever recorded still has a path to the current one, and that a changed event without a
+  new version is an error, so the hardest part of event sourcing is checked rather than left to discipline. Snapshots
+  (`snapshot every 100;`) are versioned the same way, or discarded and rebuilt from the events.
+
+#### Decided
+
+1. **Where migrations run:** `piper db migrate --apply`, as a deploy step, with the server clause's `migrate` (and a
+   database's `Migrate()`) for development and single-instance apps.
+2. **Scripts for several providers:** one script per provider the program brings a package for
+   (`TrackerDb.migrations/sqlite/…`, `…/postgres/…`). Each migration also keeps the shape it reaches
+   (`0002-issues-priority.json`), so a provider added later gets scripts for every migration before.
+3. **Breaking schema changes:** errors, with `--accept-breaking`, as for the other shapes.
+
+**In order:** ~~the database's shape and its checks; `piper db migrate` with SQLite and the baseline (apps/tracker's
+`tracker.db` is the first user); PostgreSQL and SQL Server, and the lock; `migrate` in the server clause~~, done (the
+lock and the PostgreSQL and SQL Server scripts aren't yet tested against those databases); then `piper check --since`.
 
 ## UI
 
@@ -906,3 +1007,55 @@ finds, and what was done.
 - **Language server:**
   - `piper.json` errors while typing, not just on save;
   - signature help inside lambdas.
+- **`piper doc`: documentation from what the compiler knows.** Today `///` comments are shown in the editor and written
+  into the generated C# as XML documentation (`piper build --exe` and `--library` write the `.xml`), which .NET tools
+  such as DocFX can read, but as the C# Piper becomes: Options, newtypes, enums and contracts appear as their C#
+  encodings. `piper doc app/ [-o docs/api]` would document the program as Piper, and what only Piper knows about it:
+  - **The API, as written:** namespaces, records (fields and defaults), enums (variants and their fields), traits and
+    what implements them, classes, functions and `extend` blocks, with their `///` comments. Types as Piper spells
+    them (`string?`, `Result<Order, OrderError>`, `IssueId` with what it's stored as), linked to their pages.
+  - **Contracts:** each record's, newtype's and function's `requires` (and their `else` messages), so a type's rules
+    are part of its documentation: `Money` must be more than 0, a title can't be blank.
+  - **A service's surface:** an `endpoints` block's routes, with their inputs, answers, the error statuses its
+    `[Status]`es give and its policies (`authorize`, `idempotent`, rate limits); a `messages` block's commands and
+    events, where they go and who handles them; remote actors' messages; workflows' inputs and steps. From the same
+    information as the recorded shapes, so it's what's really on the wire.
+  - **Configuration:** every `config`'s keys, with their types, defaults, `requires`, which are secret, and their
+    names in appsettings.json and the environment (`Tracker:Connection`, `Tracker__Connection`), and what a
+    server's `provider`, `database` and `bus` clauses read (`Events:Provider`, `Database:Connection`). What an operator
+    needs to run the program, generated rather than kept by hand.
+  - **Output:** Markdown first (a page per namespace, and an index; GitHub and most viewers render it), with no new
+    dependencies; HTML later, through a small renderer of Piper's own rather than a static site generator.
+  - **With doc tests** (above, [ideas from other languages](#ideas-from-other-languages)): the examples in `///`
+    comments run by `piper test`, and shown in the docs with their output, so documentation can't drift from the code.
+  - **To decide:** what's included (public declarations only, as for a library, or everything, for a service's own
+    team), and whether the service and configuration pages are their own command (`piper doc --ops`), as they're for
+    a different reader.
+- **MCP (Model Context Protocol), both ways.**
+  - **`piper mcp`: the compiler as an MCP server,** for AI agents writing and changing Piper programs. An agent reading
+    files and running the build sees text and error messages; the compiler knows the program. Over MCP (JSON-RPC over
+    stdio, as the language server's LSP is, so written with the same plumbing rather than a new dependency) it would
+    offer tools:
+    - **understand:** a program's diagnostics (with their quick fixes), the type and documentation at a position,
+      definitions and references, what calls a function and what it calls, and what it reaches (the clock, the
+      database, the network, as the simulation and workflow checks already work out);
+    - **check:** the recorded shapes and whether a change breaks them (API, messages, workflows and, with
+      [versioning](#one-versioning-system-a-design), the database), `piper fmt`'s layout, and the generated C#;
+    - **run:** tests, by name, with a property test's or simulation's seed to repeat a failure, and its shrunk
+      timeline;
+    - **know:** Piper's own reference (language.md and plugins.md, by topic), and a program's configuration keys and
+      service surface (as [`piper doc`](#tools) would describe them),
+
+    and resources for the recorded shapes and schemas. Running tests runs the program's code, so, as the language
+    server does, only in a workspace the client trusts. Answers are structured (types as Piper spells them, spans,
+    codes), not prose to parse. A language built so that an agent can ask it rather than guess is unusual, and suits
+    how programs are increasingly written.
+  - **An `mcp` clause in a server: a Piper service's endpoints as MCP tools,** for AI agents to call. The web plugin
+    already knows each endpoint's inputs, answers and errors (the same as OpenAPI's and the recorded shapes'), so
+    `mcp "/mcp" { tools Api; }` would serve the endpoints named as tools, with JSON schemas from their records (Options
+    as optional, newtypes as their values, enums as their variants, `requires` as constraints where JSON Schema can say
+    them), the endpoints' policies applying to each call (`authorize`, rate limits, `idempotent`). Descriptions come from
+    the endpoints' `///` comments. As OpenAPI made an API describable to code, this makes it callable by agents with no
+    hand-written tool definitions to drift from it.
+  - **To decide:** whether `piper mcp` edits (applying a quick fix, renaming) or only reads and runs, leaving changes
+    to the agent's own file tools; and whether the server-side `mcp` is in the web plugin or a plugin of its own.

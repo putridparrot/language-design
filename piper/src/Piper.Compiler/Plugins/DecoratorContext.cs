@@ -70,6 +70,18 @@ public sealed class DecoratorContext
     };
 
     /// <summary>
+    /// Whether the value it gives is a <c>Result</c>: <c>Result&lt;T, E&gt;</c>, or an async function's
+    /// <c>Task&lt;Result&lt;T, E&gt;&gt;</c>. Read from the declared type as written, so a type alias for one isn't seen.
+    /// A policy can then treat an <c>Err</c> as a failure, as it does a throw (see <c>PiperTransient</c>).
+    /// </summary>
+    public bool ReturnsResult => Function.ReturnType switch
+    {
+        NamedTypeSyntax { Name.Text: "Result", TypeArguments.Length: 2 } => true,
+        NamedTypeSyntax { Name.Text: "Task" or "ValueTask", TypeArguments: [NamedTypeSyntax { Name.Text: "Result", TypeArguments.Length: 2 }] } => IsAsync,
+        _ => false,
+    };
+
+    /// <summary>
     /// Builds Piper syntax from source text with holes (see <see cref="SyntaxTemplate"/>). Its own syntax gets the
     /// attribute's span, so an error in the code a decorator writes points at the attribute.
     /// </summary>

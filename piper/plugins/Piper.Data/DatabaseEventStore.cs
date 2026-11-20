@@ -35,7 +35,7 @@ public sealed class DatabaseEventStore : IEventStore
     internal static readonly (string Name, string Package, string Extensions, string Method)[] Databases =
     [
         ("sqlite", "Microsoft.EntityFrameworkCore.Sqlite", "Microsoft.EntityFrameworkCore.SqliteDbContextOptionsBuilderExtensions", "UseSqlite"),
-        ("sqlserver", "Microsoft.EntityFrameworkCore.SqlServer", "Microsoft.EntityFrameworkCore.SqlServerDbContextOptionsBuilderExtensions", "UseSqlServer"),
+        ("sqlserver", "Microsoft.EntityFrameworkCore.SqlServer", "Microsoft.EntityFrameworkCore.SqlServerDbContextOptionsExtensions", "UseSqlServer"),
         ("postgres", "Npgsql.EntityFrameworkCore.PostgreSQL", "Microsoft.EntityFrameworkCore.NpgsqlDbContextOptionsBuilderExtensions", "UseNpgsql"),
     ];
 

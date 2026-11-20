@@ -77,10 +77,11 @@ server TrackerServer(settings: Settings, clock: Clock, notifier: Notifier, urls:
     consume Webhook(settings, notifier);
 }
 
-/// Makes the database's tables, if they aren't there.
-async fn Prepare(settings: Settings) {
+/// Brings the database up to date: its migrations (store/TrackerDb.migrations, written by `piper db migrate`) that it
+/// hasn't had yet, each once. A database made before there were migrations takes the baseline's missing tables only.
+fn Prepare(settings: Settings) {
     using let db = Open(settings);
-    await db.Database.EnsureCreatedAsync();
+    db.Migrate();
 }
 
 /// The notifier the settings ask for: a webhook, or no one.

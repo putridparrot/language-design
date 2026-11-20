@@ -30,9 +30,14 @@ piper test apps/tracker                             # its tests
 **Stopping it:** Ctrl+C in its terminal.
 
 **Its data** is in `tracker.db` (with `tracker.db-shm` and `tracker.db-wal` beside it while it runs), in the folder
-it was started from, so `piper/tracker.db` when started as above. The database and its tables are made the first
-time it starts. To start again with nothing, stop it and delete those three files. The tests use databases of their
-own, so they never touch it.
+it was started from, so `piper/tracker.db` when started as above. The database is brought up to date each time it
+starts, by its migrations (store/TrackerDb.migrations, made the first time). To start again with nothing, stop it and
+delete those three files. The tests use databases of their own, so they never touch it.
+
+**Changing what it stores:** change the types (an `Issue`'s fields), build, and `piper db migrate apps/tracker` writes
+the SQL that changes the database, `store/TrackerDb.migrations/sqlite/0002-….sql`, for you to review and check in. A
+change that would break the release already running, such as a new required field, is an error as it builds (see
+[migrations](../../docs/plugins.md#migrations-a-databases-shape-and-the-sql-that-changes-it)).
 
 **Admin commands** work on the database directly, with the API running or not:
 

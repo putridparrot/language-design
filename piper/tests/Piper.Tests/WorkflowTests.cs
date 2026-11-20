@@ -145,6 +145,45 @@ public class WorkflowTests
             output);
     }
 
+    /// <summary>
+    /// An activity giving a Result is retried on a transient Err, as on a throw; any other Err is its result at once,
+    /// recorded like any value (it's the workflow's to handle, not a failure).
+    /// </summary>
+    [Fact]
+    public void An_activity_is_retried_on_a_transient_err_but_not_on_another()
+    {
+        var output = Run("""
+            enum PayError { [Transient] Busy, Declined }
+
+            class Tries { public mut n = 0; }
+
+            async fn Charge(tries: Tries, busyFor: int) => Task<Result<string, PayError>> {
+                tries.n += 1;
+                if tries.n <= busyFor { Err(PayError.Busy) } else { Err(PayError.Declined) }
+            }
+
+            async fn Pay(sim: PiperSimulation) => Task<string> {
+                let engine = WorkflowEngine(MemoryEventStore());
+                let tries = Tries();
+                engine.Register<int, string>("Pay", async (flow, busyFor) => {
+                    tries.n = 0;
+                    let charged = await flow.Activity("Charge", () => Charge(tries, busyFor), ActivityOptions() { Attempts: 3 });
+                    $"{charged} after {tries.n}"
+                });
+                await engine.StartAsync("Pay", "busy-once", 1);
+                let once = await engine.ResultAsync<string>("Pay", "busy-once");
+                await engine.StartAsync("Pay", "always-busy", 5);
+                let always = await engine.ResultAsync<string>("Pay", "always-busy");
+                $"{once} | {always}"
+            }
+
+            fn Main() {
+                Print(PiperSimulation.Run(1, Pay));
+            }
+            """);
+        Assert.Equal("Err(Declined) after 2 | Err(Busy) after 3\n", output);
+    }
+
     [Fact]
     public void Code_changed_under_a_running_workflow_fails_it_saying_where()
     {

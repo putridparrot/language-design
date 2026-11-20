@@ -430,7 +430,7 @@ class, tracing each of its methods. `[Notify]` goes on classes:
 
 ```piper
 [Trace]                       // writes "→ Fetch(url = …)" and "← Fetch" to standard error
-[Retry(3, 100)]               // up to 3 attempts, 100 ms apart
+[Retry(3, 100ms)]             // up to 3 attempts, 100 ms apart
 fn Fetch(url: string) => string requires url != "" { … }
 
 [Timed(Console.Out)]          // writes "Report took 12.3 ms", here to standard output
@@ -440,10 +440,10 @@ fn Report() { … }
 - **`[Trace]`** writes each call, with its arguments, and each return. **`[Timed]`** writes how long each call took.
   Both write to standard error, or to the `TextWriter` given as an argument. Each is a statement or two and a `defer`
   before the body, so they work on async functions and iterators too.
-- **`[Retry(times)]`** and **`[Retry(times, delayMs)]`** run the body again when it throws, up to `times` attempts in
-  all. The last attempt's exception escapes. In an async function the delay is awaited. Preconditions are checked
-  once, before the first attempt, so a broken one isn't retried. An iterator can't be retried, as it runs only when
-  it's read.
+- **`[Retry(times)]`** and **`[Retry(times, delay)]`** run the body again when it throws, up to `times` attempts in
+  all. The last attempt's exception escapes. The delay is a duration (`100ms`), or a number of milliseconds; in an
+  async function it's awaited. Preconditions are checked once, before the first attempt, so a broken one isn't
+  retried. An iterator can't be retried, as it runs only when it's read.
 
 `[Retry(3)]` on `fn Load() => string { … }` becomes:
 
@@ -452,31 +452,49 @@ fn Load() => string {
     fn __attempt_1() => string { … }          // the body, whose `return`s still return its value
     mut __tries_2 = 1;
     while __tries_2 < 3 {
-        try { return __attempt_1(); } catch (_) { __tries_2 += 1; }
+        try { return __attempt_1(); } catch (_) { }
+        __tries_2 += 1;
     }
     return __attempt_1();                     // the last attempt, whose exception escapes
 }
 ```
 
+**Errors as values:** on a function returning a `Result` (or an async one's `Task<Result<…>>`), `[Retry]` also tries
+again when it gives an `Err` holding a **transient** error, one marked `[Transient]` (see
+[transient errors](language.md#transient-errors)): a timeout, a service briefly unavailable. Any other `Err` (not
+found, not allowed) is given back at once, as trying again would only fail the same way; and the last attempt's result,
+`Ok` or `Err`, is the function's.
+
+```piper
+enum FetchError { [Transient] Timeout, [Transient] Unavailable, NotFound }
+
+[Retry(3, 200ms)]
+async fn Fetch(id: string) => Task<Result<Page, FetchError>> { … }   // Timeout, then Ok: Ok. NotFound: at once.
+```
+
+A `[Retry]` on a function whose `Result` can never hold a transient error (an enum with no `[Transient]` on it or any
+variant, a record without one, a `string`) is a warning, as it would try again only on a throw.
+
 Two more policies, for calls to something that can be slow or down (both in Piper.Runtime's
 [PiperPolicies](../src/Piper.Runtime/PiperPolicies.cs)):
 
 ```piper
-[Retry(3, 200)]                 // outermost: a refused or timed-out attempt is tried again
-[CircuitBreaker(5, 30000)]      // 5 failures in a row: refuse calls at once for 30 s
-[Timeout(2000)]                 // innermost: each attempt waits at most 2 s
+[Retry(3, 200ms)]               // outermost: a refused or timed-out attempt is tried again
+[CircuitBreaker(5, 30s)]        // 5 failures in a row: refuse calls at once for 30 s
+[Timeout(2s)]                   // innermost: each attempt waits at most 2 s
 async fn Quote(sku: string) => Task<Price> { … }
 ```
 
-- **`[Timeout(ms)]`:** an async function that hasn't finished in `ms` milliseconds throws a `TimeoutException` ("Quote
-  took more than 2000 ms.") to its caller. The work isn't stopped, only waited for no longer, since nothing outside
-  it can stop it safely; a function that should stop takes a `CancellationToken` and passes it on. A synchronous
-  function can't have one: its caller can't stop waiting for it.
-- **`[CircuitBreaker(failures, openMs)]`:** after `failures` failures in a row, calls throw a `CircuitOpenException`
-  at once for `openMs` milliseconds, rather than waiting on what's failing and adding to its load. Its `RetryAfter`
-  says how long is left. Then one call is let through to try: if it succeeds the circuit closes, and if it throws it
+- **`[Timeout(time)]`:** an async function that hasn't finished in `time` (a duration, `2s`, or a number of
+  milliseconds) throws a `TimeoutException` ("Quote took more than 2 s.") to its caller. The work isn't stopped, only
+  waited for no longer, since nothing outside it can stop it safely; a function that should stop takes a
+  `CancellationToken` and passes it on. A synchronous function can't have one: its caller can't stop waiting for it.
+- **`[CircuitBreaker(failures, open)]`:** after `failures` failures in a row, calls throw a `CircuitOpenException`
+  at once for `open` (a duration, `30s`, or milliseconds), rather than waiting on what's failing and adding to its
+  load. Its `RetryAfter` says how long is left. Then one call is let through to try: if it succeeds the circuit closes, and if it throws it
   opens again. A success resets the count. Each decorated function has one circuit, shared by all its callers (a
-  service that's down is down for everyone); it works on async and synchronous functions.
+  service that's down is down for everyone); it works on async and synchronous functions. On a function returning a
+  `Result`, a transient `Err` is a failure too, and any other `Err` a success: what it called answered.
 - **Together,** decorators nest with the first written outermost, so the order above retries a refused or timed-out
   attempt, counts each timeout as a failure, and times each attempt on its own.
 
@@ -953,8 +971,10 @@ async fn Main() => Task = await TrackerServer(Load(), SystemClock()).RunAsync();
   also names `db`, a function making one, for the clauses after: `relay DatabaseOutbox.Store(db);`.
   `database db: TrackerDb(settings.provider, settings.connection);` takes them from a `config` record the program
   has instead, as apps/tracker's server does, whose tests give each its own database. An unknown provider, a missing
-  connection or a missing package stops the app as it starts, saying which. A `host` has it too; it needs the data
-  plugin.
+  connection or a missing package stops the app as it starts, saying which. `migrate` at the end
+  (`database db: TrackerDb from "Database" migrate;`) applies the database's waiting
+  [migrations](#migrations-a-databases-shape-and-the-sql-that-changes-it) as the app starts. A `host` has it too; it
+  needs the data plugin.
 - **`sources`:** `sources (configuration: IConfigurationBuilder) => configuration.AddAzureKeyVault(…);` adds where
   configuration comes from beyond appsettings.json and the environment, from any provider (a key vault, a cloud's
   secrets manager, mounted files), chosen by the app. It's added before anything reads configuration, wherever it's
@@ -1358,6 +1378,60 @@ let big = await shop.Orders.Where(o => o.total > 100m).OrderBy(o => o.placed).To
   only one request can do.
 - **Checked:** a `key` or `index` naming a field its type doesn't have (a class's must be public, as EF Core maps
   properties), and a table declared twice.
+
+#### Migrations: a database's shape, and the SQL that changes it
+
+Building a program records each database's shape in `Shop.schema.json`, beside the declaration, as an api's calls are
+recorded in its `.shape.json`. The shape lists each table's columns, both as Piper types and as what they're stored
+as, along with the key, the indexes and Piper's own tables. The shape is the same for every provider. A change that
+would break the release still running beside the new one is an error where the table is declared:
+
+| Change | Alongside the old release |
+|---|---|
+| a table, an optional column, an index | compatible: recorded |
+| a required column added | **breaking**: the old release adds rows without it |
+| a column or table removed or renamed, or its stored type changed | **breaking**: the old release still reads and writes it |
+| a column made required | **breaking**: the old release leaves it empty |
+| a column made optional | compatible |
+
+The usual way through is expand, then contract. Add the new column as an Option, and have the release write it. Once
+every instance runs that release, a later one makes the column required or drops the old one. `--accept-breaking`
+records a breaking change anyway, for when the downtime is deliberate, such as a database only one process uses.
+
+`piper db migrate` turns the change since the last migration into SQL:
+
+```
+piper db migrate apps/tracker                       # write the next migration, if the shape changed
+piper db migrate apps/tracker --apply --connection "Data Source=tracker.db"   # and apply what's waiting
+piper db status apps/tracker [--connection …]       # which migrations there are, and which a database has
+```
+
+- **Scripts, not code:** each migration is the shape it reaches, `TrackerDb.migrations/0002-issues-priority.json`,
+  and a SQL script for each provider whose EF Core package the program has, `sqlite/0002-issues-priority.sql`. You
+  review the scripts and check them in. A migration is named after its first change (`--name` names it yourself),
+  and the first is the baseline.
+- **Written by EF Core:** the two shapes become EF Core models, and its model differ and the provider's SQL generator
+  write the script, as `EnsureCreated` does for a whole model. There's no Design package and no generated C#. Each
+  provider gets its own SQL: SQLite rebuilds a table to change what it can't alter, and SQL Server and PostgreSQL alter
+  the column. If a provider is added later, the next `piper db migrate` writes its scripts for every migration so far,
+  from their shapes.
+- **Compiled in:** the program carries its scripts. Its database class gets `Migrate()`, which applies those it
+  hasn't had yet and returns their names, and `MigrationStatus()`. In a server or host,
+  `database db: Shop from "Database" migrate;` applies them as the program starts. That suits development and a
+  single instance. For a cluster, run `piper db migrate --apply` as a deploy step instead.
+- **Applied once each:** a `PiperMigrations` table records each migration applied, with its number, name, the
+  script's hash and when it ran. Each migration runs in a transaction together with its row. A script changed after
+  it was applied is an error, and so is a database with a migration the program doesn't have. Applying holds a lock
+  (SQL Server's and PostgreSQL's application locks, SQLite's write lock), so two instances starting together don't
+  both apply a migration.
+- **A database made before migrations** (by `EnsureCreated`) takes the baseline without remaking what's there: the
+  baseline's statements making a table or index that already exists are skipped, and the rest run. apps/tracker's
+  `tracker.db` had no `PiperIdempotency` table, and the baseline added it.
+- **Tests** can keep using `EnsureCreated`, which makes a database of the current shape. Piper's own tests check
+  that applying every migration in turn makes the same schema as `EnsureCreated`.
+- **Not yet:** a column's type that migrations can't store (a list, a record) is a warning, and it's left out of the
+  shape. So is a table of a .NET type, whose fields the compiler can't see. Changes to Piper's own tables between Piper
+  versions aren't migrated yet. `piper check --since` (one answer for a release, across every shape) is still to come.
 
 ### `deploy` (Kubernetes manifests)
 
@@ -2116,7 +2190,10 @@ consumer Payments(engine: WorkflowEngine) {                                 // a
 - **Activities** run at least once: one interrupted after running but before its result was saved runs again, so
   they should be idempotent. One that throws is retried (`ActivityOptions`: 3 attempts, backoff from a second,
   doubling); after its last attempt the failure is recorded, and thrown in the workflow as an `ActivityFailedException`,
-  then and on every replay, which it can catch to compensate (refund, apologise).
+  then and on every replay, which it can catch to compensate (refund, apologise). One giving a `Result` is retried on
+  a [transient](language.md#transient-errors) `Err` too (`[Transient] Busy`), and any other `Err` is its result at
+  once; if its last attempt gives a transient one, that's its result, recorded like any value, for the workflow to
+  handle.
 - **One runner:** starting is idempotent, and an instance is run by one engine at a time: another writing its history
   meanwhile (two processes resuming it) is refused by the store's optimistic concurrency, and stops. `ResumeAsync`
   finds unfinished instances in an index stream (`Workflows`).

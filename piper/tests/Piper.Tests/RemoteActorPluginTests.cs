@@ -95,10 +95,11 @@ public class RemoteActorPluginTests
                 on Add() => string { count += 1; $"node {node}: {count}" }
             }
 
-            /// Asks node `to`'s counter from node `from`, within a quarter of a second.
+            /// Asks node `to`'s counter from node `from`, within a second: long enough for a busy machine (a CI runner's) to
+            /// answer one that gets through.
             async fn Ask(cluster: PiperCluster, from: int, to: int) => Task<string> {
                 try {
-                    return await Counter.Connect(cluster[from], cluster.Addresses[to], "counter").WithTimeout(TimeSpan.FromMilliseconds(250)).Add();
+                    return await Counter.Connect(cluster[from], cluster.Addresses[to], "counter").WithTimeout(TimeSpan.FromSeconds(1)).Add();
                 } catch (_: TimeoutException) {
                     return $"node {to}: timed out";
                 }
@@ -114,10 +115,13 @@ public class RemoteActorPluginTests
 
             async fn Main() {
                 mut started = 0;
+                // The faults are on plain asks, not the cluster's membership: a node isolated longer than the cluster's
+                // one second (several timeouts, on a slow machine) would be found down, failing asks to it after it's
+                // healed. So the cluster here finds no node down for a minute.
                 let cluster = await PiperCluster.{{start}}(3, node => {
                     Counter.Spawn(node, "counter", started);
                     started += 1;
-                });
+                }, ClusterOptions(TimeSpan.FromMilliseconds(100), TimeSpan.FromMinutes(1)));
                 Print(await Line(cluster, [(0, 1), (1, 2), (2, 0)]));
                 cluster.Isolate(1);
                 Print(await Line(cluster, [(0, 1), (2, 1), (1, 0), (1, 1), (0, 2)]));
@@ -128,7 +132,7 @@ public class RemoteActorPluginTests
                 cluster.Drop(0, 1);
                 Print(await Line(cluster, [(0, 1), (1, 0)]));
                 cluster.Heal();
-                cluster.Slow(2, TimeSpan.FromMilliseconds(400));
+                cluster.Slow(2, TimeSpan.FromSeconds(2));       // longer than an ask waits
                 Print(await Line(cluster, [(0, 2)]));
                 cluster.Heal();
                 await cluster.StopAsync(2);

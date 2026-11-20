@@ -1,0 +1,134 @@
+{
+  "name": "TrackerDb",
+  "tables": {
+    "Projects": {
+      "entity": "Project",
+      "key": [
+        "id"
+      ],
+      "generated": true,
+      "columns": {
+        "id": {
+          "type": "ProjectId",
+          "stored": "int",
+          "newtype": true
+        },
+        "code": {
+          "type": "string",
+          "stored": "string"
+        },
+        "name": {
+          "type": "string",
+          "stored": "string"
+        }
+      },
+      "indexes": [
+        [
+          "code"
+        ]
+      ]
+    },
+    "Issues": {
+      "entity": "Issue",
+      "key": [
+        "id"
+      ],
+      "generated": true,
+      "columns": {
+        "id": {
+          "type": "IssueId",
+          "stored": "int",
+          "newtype": true
+        },
+        "projectId": {
+          "type": "ProjectId",
+          "stored": "int",
+          "newtype": true
+        },
+        "title": {
+          "type": "string",
+          "stored": "string"
+        },
+        "description": {
+          "type": "string",
+          "stored": "string"
+        },
+        "priority": {
+          "type": "Priority",
+          "stored": "string"
+        },
+        "status": {
+          "type": "WorkflowState",
+          "stored": "string"
+        },
+        "assignee": {
+          "type": "string?",
+          "stored": "string",
+          "optional": true
+        },
+        "resolution": {
+          "type": "string?",
+          "stored": "string",
+          "optional": true
+        },
+        "created": {
+          "type": "DateTime",
+          "stored": "DateTime"
+        },
+        "updated": {
+          "type": "DateTime",
+          "stored": "DateTime"
+        }
+      },
+      "indexes": [
+        [
+          "projectId"
+        ],
+        [
+          "projectId",
+          "status"
+        ]
+      ]
+    },
+    "Comments": {
+      "entity": "Comment",
+      "key": [
+        "id"
+      ],
+      "generated": true,
+      "columns": {
+        "id": {
+          "type": "CommentId",
+          "stored": "int",
+          "newtype": true
+        },
+        "issueId": {
+          "type": "IssueId",
+          "stored": "int",
+          "newtype": true
+        },
+        "author": {
+          "type": "string",
+          "stored": "string"
+        },
+        "text": {
+          "type": "string",
+          "stored": "string"
+        },
+        "created": {
+          "type": "DateTime",
+          "stored": "DateTime"
+        }
+      },
+      "indexes": [
+        [
+          "issueId"
+        ]
+      ]
+    }
+  },
+  "piper": [
+    "outbox",
+    "idempotency"
+  ]
+}

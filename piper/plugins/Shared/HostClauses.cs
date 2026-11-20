@@ -67,7 +67,7 @@ internal static class HostClauses
         ["bus"] = "The messaging plugin's bus, over the transport the configuration chooses (`bus from \"Messaging\";` reads Messaging:Provider: memory, rabbitmq…), registered as `Bus` (and its transport as `IMessageTransport`), for endpoints and workers and the `consume` and `relay` clauses after. Needs the messaging plugin.",
         ["consume"] = "Runs a `consumer` for as long as it runs, on the `bus`: `consume Billing(db);`, with the consumer's arguments. Stopped as it stops.",
         ["workflows"] = "Runs durable workflows over an event store for as long as it runs: `workflows Fulfil(shop), Returns(shop) from store;` registers each (with its dependencies) on a `WorkflowEngine`, registered for handlers to start them (`Fulfil.Start(engine, id, …)`), resumes the unfinished as it starts, and stops them as it stops. Needs the workflows plugin.",
-        ["database"] = "A `database` declaration's class, on the database the configuration chooses, registered as a scoped service (one per request): `database TrackerDb from \"Database\";` reads Database:Provider (sqlite, the local one, if unset; sqlserver; postgres) and Database:Connection. `database db: TrackerDb from \"Database\";` also names `db`, a function making one, for the clauses after: `relay DatabaseOutbox.Store(db);`. Needs the data plugin, and the provider's EF Core package.",
+        ["database"] = "A `database` declaration's class, on the database the configuration chooses, registered as a scoped service (one per request): `database TrackerDb from \"Database\";` reads Database:Provider (sqlite, the local one, if unset; sqlserver; postgres) and Database:Connection. `database db: TrackerDb from \"Database\";` also names `db`, a function making one, for the clauses after: `relay DatabaseOutbox.Store(db);`. `migrate` at the end (`database TrackerDb from \"Database\" migrate;`) applies its waiting migrations as the program starts. Needs the data plugin, and the provider's EF Core package.",
         ["relay"] ="Sends an outbox's saved messages on the `bus` for as long as it runs: `relay DatabaseOutbox.Store(() => Shop(options));`. Stopped as it stops.",
     };
 
@@ -203,10 +203,17 @@ internal static class HostClauses
                         $"let $value = Piper.Data.PiperDatabase.Factory<$database>({Host}.Settings(builder.Configuration, $section));",
                         ("value", value), ("database", database), ("section", section)));
                 }
+                // `migrate`: its waiting migrations applied as the program starts (for development, and an app running once).
+                var migrate = p.AtWord("migrate") ? p.ReadWord() : null;
                 p.Expect(TokenKind.Semicolon);
                 parts.Building.Add(p.Template.Statement(
                     $"{DependencyInjection}.ServiceCollectionServiceExtensions.AddScoped<$database>(builder.Services, $services => $value());",
                     ("database", database), ("services", p.FreshName("services")), ("value", value)));
+                if (migrate is not null)
+                {
+                    parts.Building.Add(p.Template.Statement("Piper.Data.PiperMigrations.Migrate($value, ($db: $database) => $db.Migrate());",
+                        ("value", value), ("db", p.FreshName("db")), ("database", database)));
+                }
                 return true;
             }
 

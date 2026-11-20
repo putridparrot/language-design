@@ -535,7 +535,7 @@ public sealed partial class Binder
     {
         if (expected == TypeSymbol.Error)
             return new BoundWildcardPattern(expected);
-        if (!expected.IsNumeric && expected != TypeSymbol.Char)
+        if (!expected.IsNumeric && expected != TypeSymbol.Char && !IsDuration(expected))
         {
             _diagnostics.ReportRelationalPatternType(syntax.Span, syntax.Operator.Text, expected);
             return new BoundWildcardPattern(expected);
@@ -557,7 +557,7 @@ public sealed partial class Binder
         if (expected == TypeSymbol.Error)
             return new BoundWildcardPattern(expected);
 
-        if (!expected.IsIntegral && expected != TypeSymbol.Char)
+        if (!expected.IsIntegral && expected != TypeSymbol.Char && !IsDuration(expected))
         {
             _diagnostics.ReportInvalidRangePattern(syntax.Span, expected);
             return new BoundWildcardPattern(expected);
@@ -604,6 +604,10 @@ public sealed partial class Binder
             }
         }
 
+        // A duration (`30s`) matches a TimeSpan, the one .NET type with literals of its own.
+        if (syntax.Value is TimeSpan duration && IsDuration(expected))
+            return duration;
+
         // Only builtin types have literals, so compare by identity rather than trusting the name (records could shadow it).
         bool builtinTarget = TypeSymbol.Builtins.Contains(expected);
         if (converted is not null && builtinTarget)
@@ -616,4 +620,7 @@ public sealed partial class Binder
         }
         return null;
     }
+
+    /// <summary>Whether <paramref name="type"/> is <c>TimeSpan</c>, the type of duration literals (<c>30s</c>).</summary>
+    private static bool IsDuration(TypeSymbol type) => type is ClrTypeSymbol { Type: var clr } && clr == typeof(TimeSpan);
 }

@@ -42,6 +42,9 @@ public sealed partial class Parser
     /// <summary>Where the most recent trailing closure ended, so a statement ending with one needs no `;`.</summary>
     private int _trailingClosureEnd = -1;
 
+    /// <summary>The file being parsed.</summary>
+    internal SourceText Source => _source;
+
     private Parser(SourceText source, DiagnosticBag diagnostics, ImmutableArray<Token> tokens)
     {
         _source = source;
@@ -2229,7 +2232,7 @@ public sealed partial class Parser
 
         switch (Current.Kind)
         {
-            case TokenKind.IntegerLiteral or TokenKind.DoubleLiteral or TokenKind.CharLiteral or TokenKind.StringLiteral:
+            case TokenKind.IntegerLiteral or TokenKind.DoubleLiteral or TokenKind.DurationLiteral or TokenKind.CharLiteral or TokenKind.StringLiteral:
             {
                 var literal = NextToken();
                 return new LiteralExpressionSyntax(literal.Span, literal, LiteralValue(literal));
@@ -2474,7 +2477,7 @@ public sealed partial class Parser
 
     /// <summary>Tokens that can start an operand, so that `await` before one is the operator rather than a name.</summary>
     private static bool StartsOperand(TokenKind kind) => kind is
-        TokenKind.Identifier or TokenKind.PredefinedTypeKeyword or TokenKind.IntegerLiteral or TokenKind.DoubleLiteral or
+        TokenKind.Identifier or TokenKind.PredefinedTypeKeyword or TokenKind.IntegerLiteral or TokenKind.DoubleLiteral or TokenKind.DurationLiteral or
         TokenKind.CharLiteral or TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral or TokenKind.MarkupLiteral or TokenKind.OpenParen or
         TokenKind.OpenBracket or TokenKind.ThisKeyword or TokenKind.TrueKeyword or TokenKind.FalseKeyword or
         TokenKind.NullKeyword or TokenKind.Bang or TokenKind.Tilde or TokenKind.IfKeyword or TokenKind.MatchKeyword;
@@ -2501,7 +2504,7 @@ public sealed partial class Parser
                     depth++;
                     break;
                 case TokenKind.CloseParen when --depth == 0:
-                    return Peek(offset + 1).Kind is TokenKind.Identifier or TokenKind.PredefinedTypeKeyword or TokenKind.IntegerLiteral or TokenKind.DoubleLiteral
+                    return Peek(offset + 1).Kind is TokenKind.Identifier or TokenKind.PredefinedTypeKeyword or TokenKind.IntegerLiteral or TokenKind.DoubleLiteral or TokenKind.DurationLiteral
                         or TokenKind.CharLiteral or TokenKind.StringLiteral or TokenKind.InterpolatedStringLiteral or TokenKind.OpenParen
                         or TokenKind.Bang or TokenKind.Tilde or TokenKind.ThisKeyword or TokenKind.TrueKeyword or TokenKind.FalseKeyword or TokenKind.NullKeyword;
                 case TokenKind.CloseParen or TokenKind.Identifier or TokenKind.PredefinedTypeKeyword or TokenKind.Dot or TokenKind.Less or TokenKind.Greater
@@ -2774,10 +2777,10 @@ public sealed partial class Parser
     {
         { Kind: TokenKind.Identifier, Text: "and" } => false,
         { Kind: TokenKind.OpenBrace } => IsPropertyPatternStart(offset),
-        { Kind: TokenKind.Minus } => Peek(offset + 1).Kind is TokenKind.IntegerLiteral or TokenKind.DoubleLiteral,
+        { Kind: TokenKind.Minus } => Peek(offset + 1).Kind is TokenKind.IntegerLiteral or TokenKind.DoubleLiteral or TokenKind.DurationLiteral,
         var token => token.Kind is TokenKind.Identifier or TokenKind.NullKeyword or TokenKind.OpenParen or TokenKind.OpenBracket
             or TokenKind.Less or TokenKind.LessEquals or TokenKind.Greater or TokenKind.GreaterEquals
-            or TokenKind.IntegerLiteral or TokenKind.DoubleLiteral or TokenKind.CharLiteral or TokenKind.StringLiteral
+            or TokenKind.IntegerLiteral or TokenKind.DoubleLiteral or TokenKind.DurationLiteral or TokenKind.CharLiteral or TokenKind.StringLiteral
             or TokenKind.TrueKeyword or TokenKind.FalseKeyword,
     };
 
@@ -2921,7 +2924,7 @@ public sealed partial class Parser
 
     private LiteralPatternSyntax? ParseLiteralPattern()
     {
-        if (Current.Kind == TokenKind.Minus && Peek(1).Kind is TokenKind.IntegerLiteral or TokenKind.DoubleLiteral)
+        if (Current.Kind == TokenKind.Minus && Peek(1).Kind is TokenKind.IntegerLiteral or TokenKind.DoubleLiteral or TokenKind.DurationLiteral)
         {
             var minus = NextToken();
             var number = NextToken();
@@ -2930,6 +2933,7 @@ public sealed partial class Parser
                 int i => -i,
                 long l => -l,
                 double d => -d,
+                TimeSpan t => -t,
                 NegatableLiteral min => min.Negated,
                 _ => null,
             };
@@ -2938,7 +2942,7 @@ public sealed partial class Parser
 
         switch (Current.Kind)
         {
-            case TokenKind.IntegerLiteral or TokenKind.DoubleLiteral or TokenKind.CharLiteral or TokenKind.StringLiteral:
+            case TokenKind.IntegerLiteral or TokenKind.DoubleLiteral or TokenKind.DurationLiteral or TokenKind.CharLiteral or TokenKind.StringLiteral:
             {
                 var literal = NextToken();
                 return new LiteralPatternSyntax(literal.Span, literal, LiteralValue(literal));

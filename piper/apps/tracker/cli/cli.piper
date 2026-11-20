@@ -24,7 +24,7 @@ async fn Main(args: string[]) {
         Some(connection) => { ...configured, connection: connection },
         None => configured,
     };
-    await Prepare(settings);
+    Prepare(settings);
     Environment.ExitCode = await Run(command.words, settings, command.port);
 }
 

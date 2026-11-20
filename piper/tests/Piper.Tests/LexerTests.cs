@@ -85,6 +85,48 @@ public class LexerTests
         Assert.Equal(expected, Single(text).Value);
     }
 
+    [Theory]
+    [InlineData("500ms", 500 * TimeSpan.TicksPerMillisecond)]
+    [InlineData("30s", 30 * TimeSpan.TicksPerSecond)]
+    [InlineData("1.5s", 15 * TimeSpan.TicksPerSecond / 10)]
+    [InlineData("5min", 5 * TimeSpan.TicksPerMinute)]
+    [InlineData("2h", 2 * TimeSpan.TicksPerHour)]
+    [InlineData("1day", TimeSpan.TicksPerDay)]
+    [InlineData("7days", 7 * TimeSpan.TicksPerDay)]
+    [InlineData("1_000ms", TimeSpan.TicksPerSecond)]
+    [InlineData("0.0001ms", 1L)]
+    public void Durations_are_timespans(string text, long ticks)
+    {
+        var token = Single(text);
+        Assert.Equal(TokenKind.DurationLiteral, token.Kind);
+        Assert.Equal(TimeSpan.FromTicks(ticks), token.Value);
+    }
+
+    /// <summary>C#'s suffixes keep their meaning: `5m` is a decimal and `1d` a double, not minutes or a day.</summary>
+    [Fact]
+    public void Csharp_suffixes_are_not_durations()
+    {
+        Assert.Equal(5m, Single("5m").Value);
+        Assert.Equal(1.0, Single("1d").Value);
+        Assert.Equal(2.5f, Single("2.5f").Value);
+    }
+
+    [Theory]
+    [InlineData("0.00001ms")]      // less than a tick
+    [InlineData("1e3s")]           // an exponent
+    [InlineData("99999999days")]   // more than a TimeSpan holds
+    public void Durations_must_be_exact_ticks(string text)
+    {
+        Assert.Equal("PIP0011", ErrorCode(text));
+    }
+
+    [Fact]
+    public void A_unit_followed_by_more_of_a_name_is_not_a_duration()
+    {
+        Assert.Equal("PIP0005", ErrorCode("5sec"));
+        Assert.Equal("PIP0005", ErrorCode("3hours"));
+    }
+
     [Fact]
     public void Range_is_not_mistaken_for_a_decimal_point()
     {

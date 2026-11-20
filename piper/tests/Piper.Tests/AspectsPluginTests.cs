@@ -684,9 +684,173 @@ public class AspectsPluginTests
         Assert.Equal("2\nSlow took more than 50 ms.\nNothing took more than 50 ms.\n", output);
     }
 
+    /// <summary>
+    /// [Retry] on a function returning a Result tries again on a transient Err, as on a throw; another Err is given back
+    /// at once; and after the last attempt its Err is the result.
+    /// </summary>
+    [Fact]
+    public void Retry_tries_again_on_a_transient_err_only()
+    {
+        var output = Run("""
+            using System.Collections.Generic;
+            using System.Threading.Tasks;
+
+            enum FetchError { [Transient] Timeout, [Transient] Unavailable, NotFound }
+
+            class State { public static mut calls = 0; }
+
+            fn Answer(errors: List<FetchError>) => Result<string, FetchError> {
+                State.calls += 1;
+                if State.calls <= errors.Count { Err(errors[State.calls - 1]) } else { Ok($"after {State.calls}") }
+            }
+
+            [Retry(3)]
+            fn Fetch(errors: List<FetchError>) => Result<string, FetchError> = Answer(errors);
+
+            [Retry(3, 1ms)]
+            async fn FetchAsync(errors: List<FetchError>) => Task<Result<string, FetchError>> {
+                await Task.Yield();
+                Answer(errors)
+            }
+
+            async fn Main() {
+                for errors in [[FetchError.Timeout], [FetchError.Unavailable, FetchError.Timeout], [FetchError.NotFound],
+                               [FetchError.Timeout, FetchError.NotFound], [FetchError.Timeout, FetchError.Timeout, FetchError.Unavailable]] {
+                    State.calls = 0;
+                    let sync = Fetch(errors);
+                    State.calls = 0;
+                    Print($"{sync} / {await FetchAsync(errors)} in {State.calls}");
+                }
+            }
+            """);
+        Assert.Equal(
+            "Ok(after 2) / Ok(after 2) in 2\n" +
+            "Ok(after 3) / Ok(after 3) in 3\n" +
+            "Err(NotFound) / Err(NotFound) in 1\n" +
+            "Err(NotFound) / Err(NotFound) in 2\n" +
+            "Err(Unavailable) / Err(Unavailable) in 3\n",
+            output);
+    }
+
+    /// <summary>[Transient] on a whole enum (or record) marks every error of it.</summary>
+    [Fact]
+    public void Transient_on_a_type_marks_all_its_errors()
+    {
+        var output = Run("""
+            [Transient] enum Network { Reset, Refused(port: int) }
+            [Transient] record Throttled(seconds: int);
+
+            class State { public static mut calls = 0; }
+
+            [Retry(2)]
+            fn Connect() => Result<int, Network> { State.calls += 1; Err(Network.Refused(80)) }
+
+            [Retry(2)]
+            fn Call() => Result<int, Throttled> { State.calls += 1; Err(Throttled(1)) }
+
+            fn Main() {
+                Print($"{Connect()} in {State.calls}");
+                State.calls = 0;
+                Print($"{Call()} in {State.calls}");
+            }
+            """);
+        Assert.Equal("Err(Refused { port = 80 }) in 2\nErr(Throttled { seconds = 1 }) in 2\n", output);
+    }
+
+    /// <summary>
+    /// A circuit counts transient Errs as failures, as throws; another Err (not found) means what's called answered, so
+    /// it doesn't count, and resets the count as a success does.
+    /// </summary>
+    [Fact]
+    public void A_circuit_opens_on_transient_errs_only()
+    {
+        var output = Run("""
+            enum FetchError { [Transient] Unavailable, NotFound }
+
+            [CircuitBreaker(2, 1min)]
+            fn Lookup(error: FetchError) => Result<int, FetchError> = Err(error);
+
+            fn Try(error: FetchError) => string {
+                try { return $"{Lookup(error)}"; } catch (_: Piper.Runtime.CircuitOpenException) { return "open"; }
+            }
+
+            fn Main() {
+                Print(Try(FetchError.Unavailable));
+                Print(Try(FetchError.NotFound));        // resets the count
+                Print(Try(FetchError.Unavailable));
+                Print(Try(FetchError.NotFound));
+                Print(Try(FetchError.NotFound));
+                Print(Try(FetchError.Unavailable));
+                Print(Try(FetchError.Unavailable));     // the second in a row: it opens
+                Print(Try(FetchError.NotFound));
+            }
+            """);
+        Assert.Equal("Err(Unavailable)\nErr(NotFound)\nErr(Unavailable)\nErr(NotFound)\nErr(NotFound)\nErr(Unavailable)\nErr(Unavailable)\nopen\n", output);
+    }
+
+    [Theory]
+    [InlineData("enum E { A, B }", "Result<int, E>", true)]
+    [InlineData("enum E { A, [Transient] B }", "Result<int, E>", false)]
+    [InlineData("[Transient] enum E { A, B }", "Result<int, E>", false)]
+    [InlineData("record E(code: int);", "Result<int, E>", true)]
+    [InlineData("[Transient] record E(code: int);", "Result<int, E>", false)]
+    [InlineData("", "Result<int, string>", true)]
+    [InlineData("", "Result<int, System.Exception>", false)]   // a subclass could be
+    [InlineData("trait E {}", "Result<int, E>", false)]          // an implementation could be
+    [InlineData("enum E { A }", "int", false)]                   // not a Result: only throws to retry
+    public void Retry_warns_when_no_err_can_be_transient(string declarations, string returns, bool warns)
+    {
+        var result = Compile($$"""
+            {{declarations}}
+            [Retry(3)]
+            fn F() => {{returns}} { throw System.Exception("x") }
+            fn Main() {}
+            """);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var warnings = result.Diagnostics.Where(d => d.Message.Contains("[Transient]")).ToList();
+        Assert.Equal(warns, warnings.Count == 1);
+        Assert.True(warnings.Count <= 1);
+    }
+
+    /// <summary>The policies take durations (`50ms`, `1min`) as well as milliseconds.</summary>
+    [Fact]
+    public void Policies_take_durations()
+    {
+        var output = Run("""
+            using System;
+            using System.Threading.Tasks;
+
+            class State { public static mut tries = 0; }
+
+            [Timeout(50ms)]
+            async fn Slow() => Task<int> {
+                await Task.Delay(2s);
+                1
+            }
+
+            [Retry(3, 1ms)]
+            fn Flaky() => int {
+                State.tries += 1;
+                if State.tries < 3 { throw InvalidOperationException("not yet"); }
+                State.tries
+            }
+
+            [CircuitBreaker(1, 1min)]
+            fn Broken() => int { throw InvalidOperationException("down"); }
+
+            async fn Main() {
+                try { await Slow(); } catch (e: TimeoutException) { Print(e.Message); }
+                Print(Flaky());
+                try { Broken(); } catch (e: InvalidOperationException) { Print(e.Message); }
+                try { Broken(); } catch (e: Piper.Runtime.CircuitOpenException) { Print(e.RetryAfter <= 1min); }
+            }
+            """);
+        Assert.Equal("Slow took more than 50 ms.\n3\ndown\nTrue\n", output);
+    }
+
     [Theory]
     [InlineData("[Timeout(50)]\nfn Sync() => int = 1;", "Timeout needs an async function")]
-    [InlineData("[Timeout]\nasync fn A() => System.Threading.Tasks.Task { }", "Timeout takes the milliseconds to wait")]
+    [InlineData("[Timeout]\nasync fn A() => System.Threading.Tasks.Task { }", "Timeout takes how long to wait")]
     [InlineData("[CircuitBreaker(5)]\nfn A() => int = 1;", "CircuitBreaker takes the failures in a row that open it")]
     public void Policies_are_given_what_they_need(string function, string message)
     {

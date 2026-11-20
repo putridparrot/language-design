@@ -75,6 +75,7 @@ public sealed partial class Binder
         char value => new BoundLiteralExpression(value, TypeSymbol.Char),
         string value => new BoundLiteralExpression(value, TypeSymbol.String),
         bool value => new BoundLiteralExpression(value, TypeSymbol.Bool),
+        TimeSpan value => new BoundLiteralExpression(value, ClrTypeSymbol.For(typeof(TimeSpan))),
         _ => new BoundErrorExpression(),
     };
 

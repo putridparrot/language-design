@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+- **Database migrations:** building a program records each `database`'s shape in `Name.schema.json` beside it: its
+  tables' columns as Piper types and as stored, keys, indexes and Piper's own tables. A change that would break the
+  release still running is an error (PIP0503) unless built with `--accept-breaking`: a column removed or added required,
+  a stored type changed, a key changed. **`piper db migrate <folder>`** writes the next migration when the shape
+  changed: the shape it reaches (`Name.migrations/0002-orders-region.json`), and a reviewed SQL script for each
+  provider the program has the EF Core package of (`sqlite/0002-orders-region.sql`), written by EF Core's model differ
+  and the provider's SQL generator, with no Design package. `--apply --connection …` applies the waiting ones, and
+  **`piper db status`** lists them. Programs carry their scripts: a database's class has `Migrate()` and
+  `MigrationStatus()`, and a server's or host's `database … migrate;` applies them as it starts. Each migration is
+  applied once, in a transaction with its row in `PiperMigrations` (a script changed since is an error), under a lock;
+  a database `EnsureCreated` made takes the baseline's missing tables only. apps/tracker migrates, which gave its
+  `tracker.db` the `PiperIdempotency` table it lacked. A plugin's parser can now read its file (`PluginParser.File`),
+  and a plugin can record a shape of its own (`PluginAnalysis.CheckRecordedShape`).
+
+- **Fixed:** the `sqlserver` database provider (for event stores, cluster membership and a server's `database`) looked
+  for `UseSqlServer` on the wrong class, so it never loaded.
+
+- **Duration literals:** `500ms`, `30s`, `1.5s`, `5min`, `2h`, `1day` (or `7days`) are `TimeSpan`s, exact to the tick
+  (one finer, too long, or with an exponent is error PIP0011), with TimeSpan's own operators (`1h + 30min`,
+  `2 * 45s`). They work in patterns as numbers do (`< 100ms`, `100ms..<1s`), checked for exhaustiveness, and in C#
+  become `TimeSpan.FromSeconds(30)` and `{ Ticks: < 1000000L }`. C#'s suffixes are unchanged: `5m` is a decimal and
+  `1d` a double, so minutes are `min` and days `day`. `[Timeout(2s)]`, `[Retry(3, 200ms)]` and
+  `[CircuitBreaker(5, 30s)]` take them (or milliseconds, as before); a timeout's message says "2 s" from a second up.
+
+- **Transient errors:** `[Transient]` on an enum variant, a whole enum or a record marks errors worth trying again.
+  `[Retry]` on a function returning a `Result` (or `Task<Result<…>>`) tries again on a transient `Err` as on a throw,
+  and gives any other `Err` back at once; `[CircuitBreaker]` counts only transient `Err`s as failures (any other is a
+  success: what it called answered); a workflow's activity giving a `Result` is retried on one. A `[Retry]` whose
+  `Result` can never hold a transient error is a warning. `PiperTransient.IsTransient` and `IsTransientFailure` (in
+  Piper.Runtime) are there for policies of your own, and decorators can ask `DecoratorContext.ReturnsResult`.
+
 - **`piper package add <id>`** adds a NuGet package to a folder's piper.json (made if there's none) at its newest
   stable version on your NuGet sources, found with `dotnet package search` (so private feeds work), or at
   `--version`'s, looking nothing up; `--prerelease` includes previews. A package already there has its version changed.

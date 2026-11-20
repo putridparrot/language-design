@@ -53,6 +53,9 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportInvalidNumber(TextSpan span, string text) =>
         Error("PIP0005", span, $"Invalid numeric literal '{text}'.");
 
+    public void ReportInvalidDuration(TextSpan span, string text, string reason) =>
+        Error("PIP0011", span, $"Invalid duration '{text}': {reason}.");
+
     public void ReportUnterminatedComment(TextSpan span) =>
         Error("PIP0006", span, "Unterminated block comment.");
 
@@ -228,7 +231,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     private static string Describe(Token token) => token.Kind switch
     {
         TokenKind.EndOfFile => "end of file",
-        TokenKind.Identifier or TokenKind.IntegerLiteral or TokenKind.DoubleLiteral => $"'{token.Text}'",
+        TokenKind.Identifier or TokenKind.IntegerLiteral or TokenKind.DoubleLiteral or TokenKind.DurationLiteral => $"'{token.Text}'",
         _ when token.Text.Length > 0 && token.Text.Length <= 20 => $"'{token.Text}'",
         _ => SyntaxFacts.Describe(token.Kind),
     };

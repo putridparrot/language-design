@@ -21,7 +21,7 @@ async fn StartTrackerTelling(searchesPerMinute: int, notifier: Notifier) => Task
     let keepAlive = SqliteConnection(connection);
     await keepAlive.OpenAsync();
     let settings = Settings(connection, searchesPerMinute);
-    await Prepare(settings);
+    Prepare(settings);
     let client = await TestClient.Start(() => TrackerServer(settings, FixedClock(Noon()), notifier, ""));
     Running(client, keepAlive)
 }

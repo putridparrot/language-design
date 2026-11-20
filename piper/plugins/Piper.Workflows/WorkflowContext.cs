@@ -42,7 +42,8 @@ public sealed class WorkflowContext
 
     /// <summary>
     /// Runs the activity called <paramref name="name"/>, once: its result is recorded, and replaying gives it back without
-    /// running it again. It's retried as <paramref name="options"/> say if it throws; after the last attempt the failure
+    /// running it again. It's retried as <paramref name="options"/> say if it throws, or gives a transient <c>Err</c> (see
+    /// <see cref="PiperTransient"/>, which is then its result if the last attempt gives one too); after the last attempt a throw
     /// is recorded and thrown, as an <see cref="ActivityFailedException"/>, now and on every replay.
     /// </summary>
     public async Task<T> Activity<T>(string name, [PiperEffects] Func<Task<T>> run, ActivityOptions? options = null)
@@ -67,6 +68,13 @@ public sealed class WorkflowContext
                     await AppendAsync(new HistoryEvent("activityFailed", step, name, Error: why, At: _runtime.UtcNow));
                     throw new ActivityFailedException(name, why);
                 }
+                await _runtime.Delay(options.Backoff * Math.Pow(2, attempt - 1), _stopping);
+                continue;
+            }
+            // An activity giving a Result is tried again on a transient Err, as on a throw; after its last attempt, the
+            // Err is its result, recorded as any other (the workflow decides what to do about it).
+            if (attempt < options.Attempts && PiperTransient.IsTransientFailure(result))
+            {
                 await _runtime.Delay(options.Backoff * Math.Pow(2, attempt - 1), _stopping);
                 continue;
             }

@@ -2197,7 +2197,10 @@ public sealed partial class CSharpEmitter
         BoundBindingPattern binding => $"var {Escape(_names.Declare(binding.Variable))}",
         BoundTypePattern { Variable: { } variable } typed => $"{TypeName(typed.TestedType)} {Escape(_names.Declare(variable))}",
         BoundTypePattern typed => TypeName(typed.TestedType),
+        BoundLiteralPattern { Value: TimeSpan } literal => DurationPattern(Ticks(literal.Value)),
         BoundLiteralPattern literal => Literal(literal.Value),
+        BoundRangePattern { Lower: TimeSpan } range =>
+            DurationPattern($">= {Ticks(range.Lower)} and {(range.IsInclusive ? "<=" : "<")} {Ticks(range.Upper)}"),
         BoundRangePattern range =>
             $">= {Literal(range.Lower)} and {(range.IsInclusive ? "<=" : "<")} {Literal(range.Upper)}",
         BoundConstructorPattern { Constructor: VariantSymbol { Enum.BuiltinKind: not BuiltinEnumKind.None } } builtin => BuiltinPattern(builtin),
@@ -2208,6 +2211,7 @@ public sealed partial class CSharpEmitter
         BoundListPattern list => ListPattern(list),
         BoundPropertyPattern properties =>
             $"{{ {string.Join(", ", properties.Properties.Select(p => $"{Escape(p.Member.Name)}: {Pattern(p.Pattern)}"))} }}",
+        BoundRelationalPattern { Value: TimeSpan } relational => DurationPattern($"{relational.Operator} {Ticks(relational.Value)}"),
         BoundRelationalPattern relational => $"{relational.Operator} {Literal(relational.Value)}",
         BoundOrPattern alternatives => string.Join(" or ", alternatives.Alternatives.Select(a =>
             a is BoundRangePattern ? $"({Pattern(a)})" : Pattern(a))),
@@ -2391,8 +2395,36 @@ public sealed partial class CSharpEmitter
         bool b => b ? "true" : "false",
         char c => c == '\'' ? "'\\''" : c == '"' ? "'\"'" : $"'{EscapeString(c.ToString(), interpolated: false)}'",
         string s => $"\"{EscapeString(s, interpolated: false)}\"",
+        TimeSpan t => DurationLiteral(t),
         _ => throw new InvalidOperationException($"Unexpected literal {value.GetType().Name}"),
     };
+
+    /// <summary>
+    /// A duration literal (<c>30s</c>) as the clearest <c>TimeSpan.From…</c> that's exact: <c>FromSeconds(30)</c>,
+    /// <c>FromMilliseconds(1500)</c>, or <c>FromTicks</c> for what no whole number of a unit gives.
+    /// </summary>
+    private static string DurationLiteral(TimeSpan value)
+    {
+        long ticks = value.Ticks;
+        foreach (var (unit, size) in new[]
+                 {
+                     ("Days", TimeSpan.TicksPerDay), ("Hours", TimeSpan.TicksPerHour), ("Minutes", TimeSpan.TicksPerMinute),
+                     ("Seconds", TimeSpan.TicksPerSecond), ("Milliseconds", TimeSpan.TicksPerMillisecond),
+                 })
+        {
+            if (ticks != 0 && ticks % size == 0)
+                return $"global::System.TimeSpan.From{unit}({(ticks / size).ToString(CultureInfo.InvariantCulture)})";
+        }
+        return ticks == 0 ? "global::System.TimeSpan.Zero" : $"global::System.TimeSpan.FromTicks({ticks.ToString(CultureInfo.InvariantCulture)}L)";
+    }
+
+    /// <summary>
+    /// A duration as C# can match it: a <c>TimeSpan</c> isn't a constant, so a pattern tests its <c>Ticks</c>
+    /// (<c>{ Ticks: &lt; 1000000L }</c>).
+    /// </summary>
+    private static string DurationPattern(string test) => $"{{ Ticks: {test} }}";
+
+    private static string Ticks(object value) => Literal(((TimeSpan)value).Ticks);
 
     private static string DoubleLiteral(double value)
     {

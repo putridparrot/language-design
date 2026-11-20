@@ -227,7 +227,7 @@ public sealed partial class Binder
     /// <summary>What C# accepts as an attribute argument: a literal, a `typeof`, an enum member or const field, or an operator on those.</summary>
     private static bool IsAttributeConstant(BoundExpression expression) => expression switch
     {
-        BoundLiteralExpression or BoundTypeOfExpression => true,
+        BoundLiteralExpression { Value: not TimeSpan } or BoundTypeOfExpression => true,
         BoundClrMemberExpression { Receiver: null, Member: FieldInfo { IsLiteral: true } } => true,
         BoundConversionExpression conversion => IsAttributeConstant(conversion.Expression),
         BoundUnaryExpression unary => IsAttributeConstant(unary.Operand),
