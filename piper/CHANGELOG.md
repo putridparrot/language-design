@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **`sql$` queries checked against the database, as they compile:** each `sql$"…"` given to the data plugin's
+  `Query`, `Execute` or `ExecuteAsync` is checked against the recorded shape of the database it runs on, with no
+  database to connect to. Its tables and columns must exist (the error points at the name in the string), each hole
+  must suit the column it's compared with, inserted into or set to, `db.Query<T>`'s select must give what `T` reads
+  (one column named `Value`, or a column per field), and a table's `Query` must give whole rows. An optional hole
+  compared with `=` is a warning, since `= NULL` matches nothing. Aliases, joins, `group by`/`having`, functions and
+  the names a select gives are understood. Subqueries, `union`, `with`, schema-qualified names, the databases' own
+  tables, SQL in a hole and queries built elsewhere are left unchecked rather than refused.
+
 - **Fixed: stale reads after a cluster's network splits.** While a node was cut off, another could run its persisted
   actors and save new events. Once the network healed, the node's own copy, still running from before, answered reads
   from what it had (apps/stock's simulation found this: reservations granted during a split didn't show). Now a node

@@ -96,7 +96,7 @@ internal static class DatabaseSchema
         type.ToString() is var name && name.Length > 0 && "AEIOUaeiou".Contains(name[0]) ? $"an {name}" : $"a {name}";
 
     /// <summary>What a field of <paramref name="type"/> is stored as, and whether it may be NULL; null if it can't be a column.</summary>
-    private static (string Stored, bool Optional, bool Newtype)? Stored(TypeSymbol type)
+    internal static (string Stored, bool Optional, bool Newtype)? Stored(TypeSymbol type)
     {
         if (type.IsOption)
             return Stored(type.TypeArguments[0]) is { Optional: false } inner ? inner with { Optional = true } : null;

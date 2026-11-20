@@ -248,6 +248,7 @@ public sealed class DataPlugin : IPiperPlugin
     /// </summary>
     public void Analyze(PluginAnalysis analysis)
     {
+        var shapes = new List<(DatabaseData, System.Text.Json.Nodes.JsonObject)>();
         foreach (var expansion in analysis.Expansions)
         {
             if (expansion.Data is not DatabaseData database)
@@ -278,8 +279,12 @@ public sealed class DataPlugin : IPiperPlugin
             if (database.Name.IsMissing)
                 continue;
             var shape = DatabaseSchema.Describe(database, analysis.Program, (span, message) => analysis.ReportWarning(expansion.File, span, message));
+            shapes.Add((database, shape));
             analysis.CheckRecordedShape(expansion.File, database.Name.Span, database.Name.Text, $"{database.Name.Text}.schema.json", shape,
                 before => DatabaseSchema.Breaking(before, shape, database));
         }
+
+        // The program's `sql$"…"` queries, checked against the databases they run on.
+        SqlChecks.Check(analysis, shapes);
     }
 }

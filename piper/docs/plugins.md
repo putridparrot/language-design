@@ -1367,6 +1367,22 @@ let big = await shop.Orders.Where(o => o.total > 100m).OrderBy(o => o.placed).To
   `shop.Query<string>(sql$"select name as Value from …")` selects values, and `await shop.ExecuteAsync(sql$"update …")`
   runs a command, giving the rows it changed. EF Core's `FromSql($"…")` works too. Its `FromSqlRaw` and
   `ExecuteSqlRaw`, given an interpolated string, are a warning (PIP0405), as they'd put its holes in the SQL as text.
+- **Raw SQL is checked as it compiles,** against the database's [shape](#migrations-a-databases-shape-and-the-sql-that-changes-it),
+  with no database to connect to, as Rust's sqlx checks queries. Each `sql$"…"` given to `Query`, `Execute` or
+  `ExecuteAsync` is checked against the database it runs on:
+  - **Names:** its tables and columns exist (`'Orders' has no column 'custId'`, pointing at `custId` in the string).
+    Aliases are understood (`from Orders o … o.total`), and so are names a select gives (`order by spent`).
+  - **Holes:** each hole suits the column it's compared with, inserted into or set to. A `string` compared with a
+    `decimal` column is an error; numbers suit numbers, and a newtype suits its value's column. An optional hole
+    compared with `=` is a warning: when it's None, `note = NULL` matches no rows.
+  - **What reads it:** `db.Query<string>(…)` needs one column named `Value`, and `db.Query<Summary>(…)` needs a column
+    for each of Summary's fields. `db.Orders.Query(…)` needs every column of the table, which `select *` gives. An
+    insert needs as many values as columns.
+
+  So a column renamed in the model shows at every query still using the old name. The SQL is read only as far as its
+  names, by a small reader of Piper's own. What it can't follow is left unchecked rather than refused: a subquery, a
+  `union` or `with`, a name with a schema, a database's own tables (`sqlite_master`), SQL in a hole (`Sql.Raw`), and a
+  query built elsewhere and passed in.
 - **In a server or host,** the `database` clause registers one on the provider the configuration chooses (see
   [A server](#a-server)): `database db: Shop from "Database";`.
 - **Packages:** the plugin brings EF Core. The program's piper.json adds its database's provider, such as

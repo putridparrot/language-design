@@ -1062,8 +1062,9 @@ query.Parameters  // [1, 2, "ann"]
   variable's type, a function's result (`fn ByTitle(…) => Sql = $"…"`). Given to a .NET `FormattableString`
   parameter, it's one, as in C#, so EF Core's `FromSql($"…")` makes its holes parameters too.
 - **Running it:** `sql.ToCommand(connection)` is an ADO.NET command with the text and parameters;
-  `sql.ToFormattableString()` is what EF Core takes. The data plugin runs it on a database (see
-  [plugins](plugins.md#data-ef-core-databases)). `@` parameters suit SQL Server, SQLite, PostgreSQL and MySQL.
+  `sql.ToFormattableString()` is what EF Core takes. The data plugin runs it on a database, and checks it against
+  the database's tables and columns as the program compiles (see [plugins](plugins.md#data-ef-core-databases)). `@`
+  parameters suit SQL Server, SQLite, PostgreSQL and MySQL.
 - **Warnings:** an interpolated string given to EF Core's `FromSqlRaw`, `SqlQueryRaw` or `ExecuteSqlRaw` puts its
   holes in the SQL as text (PIP0405). As in C#, a method with overloads taking a string and a `FormattableString`
   (or an `Sql`) takes a `$"…"` as the string; that's a warning too (PIP0406).

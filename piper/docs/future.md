@@ -833,8 +833,10 @@ break what's running, and the output doubles as the release's notes on what chan
 
 #### 5. Built on it
 
-- **`sql$` checked against the schema.** With each database's shape recorded, every `sql$"…"` query can be checked as
-  it compiles, without a database to connect to: its tables and columns exist, each hole's type suits its column, and
+- ~~**`sql$` checked against the schema.**~~ Done (see [plugins](plugins.md#data-ef-core-databases)) for queries given
+  straight to `Query`, `Execute` and `ExecuteAsync`; still to come: a query built in a function and run elsewhere.
+  With each database's shape recorded, every `sql$"…"` query can be checked as it compiles, without a database to
+  connect to: its tables and columns exist, each hole's type suits its column, and
   the columns it selects fit the record it's read into (`shop.Query<OrderRow>(sql$"select …")`). A column renamed in
   the model then shows at every query using the old name. As Rust's sqlx checks queries, but from the recorded shape
   rather than a live database. The SQL is parsed for its table and column references only (a light parser of
