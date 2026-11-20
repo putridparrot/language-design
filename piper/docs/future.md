@@ -863,8 +863,8 @@ break what's running, and the output doubles as the release's notes on what chan
 3. **Breaking schema changes:** errors, with `--accept-breaking`, as for the other shapes.
 
 **In order:** ~~the database's shape and its checks; `piper db migrate` with SQLite and the baseline (apps/tracker's
-`tracker.db` is the first user); PostgreSQL and SQL Server, and the lock; `migrate` in the server clause~~, done (the
-lock and the PostgreSQL and SQL Server scripts aren't yet tested against those databases); then `piper check --since`.
+`tracker.db` is the first user); PostgreSQL and SQL Server, and the lock; `migrate` in the server clause~~, done, and tested against PostgreSQL and SQL Server in containers (the tests skip
+without Docker); then `piper check --since`.
 
 ## UI
 

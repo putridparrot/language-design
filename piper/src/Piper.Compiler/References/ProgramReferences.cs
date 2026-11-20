@@ -288,8 +288,9 @@ public sealed record ProgramReferences(ImmutableArray<string> Assemblies, Immuta
         var work = Path.Combine(Path.GetFullPath(directory), "obj", "piper");
         // One per platform, so publishing for a container doesn't undo what this machine's builds remembered.
         var cachePath = Path.Combine(work, $"references.{rid}.json");
-        // Native libraries are per platform, so the platform is part of what's cached.
-        var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text + "\n" + rid)));
+        // Native libraries are per platform, so the platform is part of what's cached; and "runtime assets" since
+        // packages' assemblies for this platform have been resolved too, so caches made before then are made again.
+        var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text + "\n" + rid + "\nruntime assets")));
         if (ReadCache(cachePath, key) is { } cached)
             return (cached.Assemblies, cached.Natives ?? [], null);
 
@@ -340,9 +341,20 @@ public sealed record ProgramReferences(ImmutableArray<string> Assemblies, Immuta
             string? Metadata(JsonElement item, string name) =>
                 item.TryGetProperty(name, out var value) ? value.GetString() : null;
 
+            // A package's assembly for this platform (runtimes/win/lib/net9.0/Microsoft.Data.SqlClient.dll) replaces the one
+            // for every platform in lib/, which may only throw PlatformNotSupportedException: the most specific platform's,
+            // as `win-x64` falls back to `win`, and `linux-x64` to `linux`, then `unix`.
+            var fallbacks = RuntimeFallbacks(rid);
+            var forPlatform = Items("RuntimeTargetsCopyLocalItems")
+                .Where(item => Metadata(item, "AssetType") == "runtime" && fallbacks.Contains(Metadata(item, "RuntimeIdentifier") ?? ""))
+                .Select(item => (Path: item.GetProperty("FullPath").GetString()!, Rank: fallbacks.IndexOf(Metadata(item, "RuntimeIdentifier")!)))
+                .Where(item => item.Path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                .GroupBy(item => Path.GetFileName(item.Path), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.MinBy(item => item.Rank).Path, StringComparer.OrdinalIgnoreCase);
             var assemblies = Items("RuntimeCopyLocalItems")
                 .Select(item => item.GetProperty("FullPath").GetString()!)
                 .Where(path => path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                .Select(path => forPlatform.GetValueOrDefault(Path.GetFileName(path), path))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             var natives = Items("NativeCopyLocalItems")
@@ -364,6 +376,19 @@ public sealed record ProgramReferences(ImmutableArray<string> Assemblies, Immuta
     /// This platform as NuGet's portable runtime identifiers name it (<c>win-x64</c>, <c>linux-arm64</c>, <c>osx-arm64</c>),
     /// which packages' native libraries are filed under (<c>runtimes/win-x64/native/e_sqlite3.dll</c>).
     /// </summary>
+    /// <summary>
+    /// The runtime identifiers a package's platform-specific assets for <paramref name="rid"/> may be filed under, most
+    /// specific first: <c>win-x64</c>, <c>win</c>; <c>linux-arm64</c>, <c>linux</c>, <c>unix</c>.
+    /// </summary>
+    private static List<string> RuntimeFallbacks(string rid)
+    {
+        var os = rid.Split('-')[0];
+        List<string> fallbacks = [rid, os];
+        if (os is "linux" or "osx" or "linux-musl")
+            fallbacks.Add("unix");
+        return fallbacks;
+    }
+
     private static string NativeRuntimeIdentifier()
     {
         var os = OperatingSystem.IsWindows() ? "win" : OperatingSystem.IsMacOS() ? "osx" : "linux";

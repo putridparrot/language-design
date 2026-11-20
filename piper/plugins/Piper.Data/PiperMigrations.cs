@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Piper.Runtime;
 
 namespace Piper.Data;
@@ -173,6 +174,22 @@ public static class PiperMigrations
     {
         var connection = db.Database.GetDbConnection();
         var opened = connection.State != ConnectionState.Open;
+        // Applying makes the database itself if it isn't there (a new one on a server), as EF Core's migrations do.
+        // Another process may make it meanwhile; then it's there, which is all that's wanted.
+        if (apply && opened)
+        {
+            var creator = db.GetService<Microsoft.EntityFrameworkCore.Storage.IRelationalDatabaseCreator>();
+            if (!creator.Exists())
+            {
+                try
+                {
+                    creator.Create();
+                }
+                catch (Exception) when (creator.Exists())
+                {
+                }
+            }
+        }
         if (opened)
             connection.Open();
         try

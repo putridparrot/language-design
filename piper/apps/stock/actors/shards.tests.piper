@@ -44,6 +44,29 @@ async test "a node cut off from the others shows as down, its products served by
     AssertEqual(5, healed.Single(v => v.address == level.node).products.Single().onHand);
 }
 
+async test "a node cut off while the others change its products shows their changes once it's back" simulate runs 10 {
+    let cluster = await StartNodes();
+    let shards = Sharded(cluster);
+    let level = await shards[0].Ask("bolt", p => p.Receive(10));
+    let owner = [...cluster.Addresses].IndexOf(level.node);
+    let other = (owner + 1) % 3;
+
+    // Cut off, the owner keeps its copy of the product; the others start one of their own, which reserves three.
+    cluster.Isolate(owner);
+    Assert(await cluster.WaitForMembersAsync(other, 2), "the others see it gone");
+    let reservation = await shards[other].Ask("bolt", p => p.Reserve(3));
+    Assert(reservation.granted);
+    Assert(reservation.node != level.node);
+
+    // Back, the owner's copy from before mustn't answer: it starts again, from what was saved meanwhile.
+    cluster.Heal();
+    Assert(await cluster.SettleAsync(), "they agree again");
+    let after = await shards[owner].Ask("bolt", p => p.Show());
+    AssertEqual(level.node, after.node);
+    AssertEqual(7, after.onHand);
+    AssertEqual(3, after.reserved);
+}
+
 async test "every node picks the same owner for a product, and products spread over the nodes" simulate runs 5 {
     let cluster = await StartCluster();
     let skus = [...Enumerable.Range(0, 300).Select(i => $"sku-{i}")];

@@ -1423,7 +1423,8 @@ piper db status apps/tracker [--connection …]       # which migrations there a
   script's hash and when it ran. Each migration runs in a transaction together with its row. A script changed after
   it was applied is an error, and so is a database with a migration the program doesn't have. Applying holds a lock
   (SQL Server's and PostgreSQL's application locks, SQLite's write lock), so two instances starting together don't
-  both apply a migration.
+  both apply a migration. A database that isn't there yet (a new one on a server) is created first. Piper's tests
+  apply migrations to PostgreSQL and SQL Server in containers, as well as SQLite.
 - **A database made before migrations** (by `EnsureCreated`) takes the baseline without remaking what's there: the
   baseline's statements making a table or index that already exists are skipped, and the rest run. apps/tracker's
   `tracker.db` had no `PiperIdempotency` table, and the baseline added it.
@@ -1933,7 +1934,10 @@ await tea.Reserve(1);                          // goes to tea's owner now, which
 - **Not exact:** while nodes disagree on the members (a split network, or the moment one joins), two may each start an
   actor. A persisted actor's store refuses the second writer (`EventStreamConflictException`), and the plugin's code
   stops an actor that's refused, so the next message starts it again from what was saved: its events are never
-  written twice. An actor that isn't persisted has no such guard.
+  written twice. Reads are covered too. A node that another took to be down restarts its persisted actors once the
+  two see each other again, so each replays what the other's copy saved meanwhile. Otherwise the copy still running
+  from before the split would answer from what it had. Each ping says how many times its sender has taken the
+  receiver to be down, which catches a network lost one way only. An actor that isn't persisted has no such guard.
 - **Delivery** is as for any remote actor: at most once. A tell to an actor that's moving can be lost.
 
 [apps/stock](../apps/stock/README.md) runs a cluster as pods in Kubernetes (AKS). Products are actors in the cluster,

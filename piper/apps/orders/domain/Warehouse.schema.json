@@ -1,0 +1,57 @@
+{
+  "name": "Warehouse",
+  "tables": {
+    "Stock": {
+      "entity": "StockLevel",
+      "key": [
+        "sku"
+      ],
+      "columns": {
+        "sku": {
+          "type": "string",
+          "stored": "string"
+        },
+        "available": {
+          "type": "int",
+          "stored": "int"
+        }
+      }
+    },
+    "Reservations": {
+      "entity": "Reservation",
+      "key": [
+        "orderId"
+      ],
+      "columns": {
+        "orderId": {
+          "type": "string",
+          "stored": "string"
+        },
+        "sku": {
+          "type": "string",
+          "stored": "string"
+        },
+        "quantity": {
+          "type": "int",
+          "stored": "int"
+        }
+      }
+    },
+    "Shipments": {
+      "entity": "Shipment",
+      "key": [
+        "orderId"
+      ],
+      "columns": {
+        "orderId": {
+          "type": "string",
+          "stored": "string"
+        },
+        "tracking": {
+          "type": "string",
+          "stored": "string"
+        }
+      }
+    }
+  }
+}

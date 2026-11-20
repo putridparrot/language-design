@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **Fixed: stale reads after a cluster's network splits.** While a node was cut off, another could run its persisted
+  actors and save new events. Once the network healed, the node's own copy, still running from before, answered reads
+  from what it had (apps/stock's simulation found this: reservations granted during a split didn't show). Now a node
+  that another took to be down restarts its persisted actors once they see each other again, and they replay what was
+  saved. Pings say how many times their sender has taken the receiver to be down (new optional fields, so nodes on an
+  older Piper still understand them), which catches a network lost one way only. `Cluster.Host` takes `persisted`,
+  which the remote actors plugin passes. apps/stock has a test of the case, which failed on every run before the fix.
+
+- **Migrations on PostgreSQL and SQL Server, tested:** the tests start each in a container (skipping without Docker,
+  or using `PIPER_POSTGRES` and `PIPER_SQLSERVER`) and check that applying every migration in turn makes the schema
+  `EnsureCreated` does, that the baseline completes an existing database, and that eight programs migrating at once
+  apply each migration once, under the lock. Applying now creates a database that isn't there yet.
+
+- **Fixed: a package's assembly for this platform** is the one referenced. Packages such as Microsoft.Data.SqlClient
+  (which SQL Server's EF Core provider uses) ship a placeholder in `lib/` that only throws
+  PlatformNotSupportedException, and the real assembly under `runtimes/win/lib` or `runtimes/unix/lib`. Piper took
+  the placeholder, so the `sqlserver` provider couldn't connect. It now takes the most specific platform's assembly
+  (`win-x64`, then `win`; `linux-x64`, then `linux`, then `unix`), when running and when publishing for a container.
+
 - **Database migrations:** building a program records each `database`'s shape in `Name.schema.json` beside it: its
   tables' columns as Piper types and as stored, keys, indexes and Piper's own tables. A change that would break the
   release still running is an error (PIP0503) unless built with `--accept-breaking`: a column removed or added required,

@@ -245,7 +245,7 @@ public sealed class RemoteActorPlugin : IPiperPlugin
                 /// for it arrives here, its owner, given the node, the name to spawn it under, and the key:
                 /// `(node, name, key) => {{actor}}.Spawn(node, name, …)`.
                 static fn HostInCluster(cluster: {{Remote}}.Cluster, activate: ({{Remote}}.ActorSystem, string, string) => {{actor}}) {
-                    cluster.Host("{{actor}}", (__node, __name, __key) => { activate(__node, __name, __key); });
+                    cluster.Host("{{actor}}", (__node, __name, __key) => { activate(__node, __name, __key); }, {{(persisted ? "true" : "false")}});
                 }
 
                 /// A copy whose asks wait up to `timeout` for a reply before throwing a TimeoutException.

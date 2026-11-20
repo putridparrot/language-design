@@ -49,8 +49,12 @@ public sealed record ClusterOptions(TimeSpan Heartbeat, TimeSpan DownAfter)
     public static readonly ClusterOptions Default = new(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5));
 }
 
-/// <summary>What a cluster's nodes say to each other: a ping (answered with the nodes the receiver knows) or that one is leaving.</summary>
-public sealed record ClusterMessage(string Kind, string From, string[] Known);
+/// <summary>
+/// What a cluster's nodes say to each other: a ping (answered with the nodes the receiver knows) or that one is leaving.
+/// A ping also says how many times its sender has taken the receiver to be down (<paramref name="Downs"/>), and whether
+/// it takes it to be up now (<paramref name="Up"/>), so the receiver knows when its actors may have run elsewhere.
+/// </summary>
+public sealed record ClusterMessage(string Kind, string From, string[] Known, int Downs = 0, bool Up = false);
 
 /// <summary>
 /// A cluster: nodes that share out actors among themselves, each actor (a kind and a key, <c>Product/tea</c>) running on
@@ -69,7 +73,9 @@ public sealed record ClusterMessage(string Kind, string From, string[] Known);
 /// on where it was if the nodes share their event store.</item>
 /// <item><b>Not exact:</b> while nodes disagree on the members (a split network, or the moment a node joins) two may
 /// each start an actor. A persisted actor's store refuses the second writer (<c>EventStreamConflictException</c>), and
-/// the plugin's code stops an actor that's refused, so it starts again from what's saved.</item>
+/// the plugin's code stops an actor that's refused, so it starts again from what's saved. And a node that another took
+/// to be down, so may have run its actors meanwhile, restarts its persisted ones once that node sees it again, so they
+/// replay what was saved: one still running from before would otherwise answer reads from what it had.</item>
 /// </list>
 /// </summary>
 public sealed class Cluster
@@ -85,6 +91,10 @@ public sealed class Cluster
     private readonly ConcurrentDictionary<string, Action<ActorSystem, string, string>> _kinds = new();
     private readonly ConcurrentDictionary<string, long> _known = new();     // node -> when it was last heard from (0: never)
     private readonly ConcurrentDictionary<string, long> _left = new();      // node -> when it said it was leaving
+    private readonly ConcurrentDictionary<string, int> _downs = new();      // node -> how many times this one took it to be down
+    private readonly ConcurrentDictionary<string, int> _reported = new();   // node -> how many times it said it took this one to be down
+    private readonly ConcurrentDictionary<string, bool> _suspect = new();    // node -> it took this one to be down, and doesn't see it yet
+    private readonly ConcurrentDictionary<string, bool> _persisted = new();
     private readonly CancellationTokenSource _stop = new();
     private readonly Lock _activating = new();
     private readonly Lock _recomputing = new();
@@ -146,11 +156,16 @@ public sealed class Cluster
     /// Makes this node host actors of <paramref name="kind"/>: when a message for one reaches this node, its owner, and
     /// it isn't running, <paramref name="activate"/> starts it, given the node, the name to spawn it under, and its key.
     /// </summary>
-    public void Host(string kind, Action<ActorSystem, string, string> activate)
+    /// <param name="persisted">
+    /// Its actors keep their state as events in a shared store, so one can be restarted to replay them: as this node
+    /// does when another took it to be down, and may have run them meanwhile.
+    /// </param>
+    public void Host(string kind, Action<ActorSystem, string, string> activate, bool persisted = false)
     {
         if (kind.Contains('/'))
             throw new ArgumentException($"A kind of actor can't contain '/': '{kind}'.", nameof(kind));
         _kinds[kind] = activate;
+        _persisted[kind] = persisted;
     }
 
     /// <summary>The node that owns the actor called <paramref name="name"/> (<c>kind/key</c>), as this node sees the members.</summary>
@@ -246,6 +261,7 @@ public sealed class Cluster
         }
         Heard(message.From);
         Learn(message.Known);
+        Reported(message);
         // A ping says its sender is up: a node joining is a member from its first ping, not the next round.
         Recompute();
         context.Respond<string[]>([.. Known]);
@@ -289,7 +305,8 @@ public sealed class Cluster
         try
         {
             var theirs = await _node.RequestAsync<ClusterMessage, string[]>(
-                new ActorRef(member, ActorName), new ClusterMessage(Ping, _node.Address, [.. _known.Keys.Order(StringComparer.Ordinal)]), _options.Heartbeat);
+                new ActorRef(member, ActorName), new ClusterMessage(Ping, _node.Address, [.. _known.Keys.Order(StringComparer.Ordinal)],
+                    _downs.GetValueOrDefault(member), Members.Contains(member)), _options.Heartbeat);
             Heard(member);
             Learn(theirs);
         }
@@ -344,9 +361,17 @@ public sealed class Cluster
         Volatile.Write(ref _members, members);
         // Asks waiting on a node now down won't be answered: they fail now, rather than at their timeout.
         if (before.Except(members).ToHashSet() is { Count: > 0 } down)
+        {
             _node.FailAsksTo(down);
+            foreach (var member in down)
+                _downs.AddOrUpdate(member, 1, (_, count) => count + 1);
+        }
         foreach (var name in HostedHere().Where(name => OwnerOf(name) != _node.Address))
             _ = _node.StopAsync(new ActorRef(_node.Address, name));
+        // A node back from being down (to this one) may have taken this one to be down too, and run its actors: they
+        // replay what's saved. (A node joining for the first time hasn't; nothing restarts for it.)
+        if (members.Except(before).Any(member => _downs.GetValueOrDefault(member) > 0))
+            RestartPersisted();
         try
         {
             Changed?.Invoke(members);
@@ -354,6 +379,45 @@ public sealed class Cluster
         catch (Exception error)
         {
             Console.Error.WriteLine($"Piper.Actors: a handler of the cluster's changes threw: {error.Message}");
+        }
+    }
+
+    /// <summary>
+    /// What a ping says of this node: if its sender has taken this node to be down since it last said, it may have run
+    /// this node's actors meanwhile, writing to their streams. Once it sees this node again (so it has stopped its own
+    /// copies), this node restarts its persisted actors, which replay those streams. This catches a network lost one
+    /// way only, where this node never took the sender to be down, so <see cref="RecomputeLocked"/> doesn't.
+    /// </summary>
+    private void Reported(ClusterMessage message)
+    {
+        var before = _reported.GetValueOrDefault(message.From);
+        _reported[message.From] = message.Downs;
+        if (message.Downs > before)
+            _suspect[message.From] = true;
+        if (message.Up && _suspect.TryRemove(message.From, out _))
+            RestartPersisted();
+    }
+
+    /// <summary>
+    /// Restarts the persisted actors this node owns: each finishes its message and stops, and starts again at once,
+    /// replaying its events from the store, so it has what another node's copy of it saved meanwhile.
+    /// </summary>
+    private void RestartPersisted()
+    {
+        foreach (var name in HostedHere().Where(name => _persisted.GetValueOrDefault(name[..name.IndexOf('/')]) && OwnerOf(name) == _node.Address))
+            _ = RestartAsync(name);
+
+        async Task RestartAsync(string name)
+        {
+            try
+            {
+                await _node.StopAsync(new ActorRef(_node.Address, name));
+                TryActivate(name);
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine($"Piper.Actors: {name} couldn't be restarted on {_node.Address}: {error.Message}");
+            }
         }
     }
 
