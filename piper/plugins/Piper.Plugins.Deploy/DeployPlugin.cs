@@ -322,7 +322,7 @@ public sealed class DeployPlugin : IPiperPlugin
     {
         foreach (var expansion in analysis.Expansions)
         {
-            if (expansion.Data is not Deployment deployment || analysis.ShapeMode == WireShapeMode.Check)
+            if (expansion.Data is not Deployment deployment || !analysis.RecordsShapes)
                 continue;
             if (!File.Exists(expansion.File.FileName))
                 continue;

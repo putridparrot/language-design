@@ -69,42 +69,25 @@ public sealed class PluginAnalysis
     /// </summary>
     public void CheckWireShape(SourceText file, TextSpan span, string name, IEnumerable<WireOperation> operations, bool replayed)
     {
-        // A program with errors has types that couldn't be bound: compared, they'd look like changes; recorded, wrong.
+        // A program with errors has types that couldn't be bound: described, they'd be wrong.
         if (!File.Exists(file.FileName) || _diagnostics.HasErrors)
             return;
-        var path = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(file.FileName))!, $"{name}.shape.json");
         var now = WireShapes.Describe(name, operations);
-        var text = WireShapes.Write(now);
-
-        string? recorded = File.Exists(path) ? File.ReadAllText(path) : null;
-        if (recorded is not null && ShapeMode != WireShapeMode.AcceptBreaking)
-        {
-            System.Text.Json.Nodes.JsonObject? before;
-            try
-            {
-                before = System.Text.Json.Nodes.JsonNode.Parse(recorded) as System.Text.Json.Nodes.JsonObject;
-            }
-            catch (System.Text.Json.JsonException)
-            {
-                before = null;
-            }
-            if (before is null)
-            {
-                ReportError(file, span, $"{Path.GetFileName(path)} isn't a shape Piper can read; delete it to record {name}'s shape afresh.");
-                return;
-            }
-            var breaking = WireShapes.Breaking(before, now, replayed);
-            foreach (var change in breaking)
-            {
-                ReportError(file, span,
-                    $"A breaking change to {name}: {change}. If it's meant, build with --accept-breaking, which records the new shape in {Path.GetFileName(path)}.");
-            }
-            if (!breaking.IsEmpty)
-                return;
-        }
-        if (ShapeMode != WireShapeMode.Check && recorded?.ReplaceLineEndings("\n") != text)
-            File.WriteAllText(path, text);
+        CheckRecordedShape(file, span, name, $"{name}.shape.json", now,
+            before => WireShapes.Breaking(before, now, replayed).Select(change => (span, change)));
     }
+
+    /// <summary>Whether shapes (and what a plugin writes beside the program, as a deploy's manifest) are written: a build, run or test.</summary>
+    public bool RecordsShapes => ShapeMode is WireShapeMode.Record or WireShapeMode.AcceptBreaking;
+
+    /// <summary>
+    /// Reads a shape recorded earlier, by the path it's recorded at now, for <see cref="WireShapeMode.Compare"/>
+    /// (<c>piper check --since</c> reads it from git); null for none there. Otherwise, and by default, from disk.
+    /// </summary>
+    internal Func<string, string?>? Baseline { get; init; }
+
+    /// <summary>Where <see cref="WireShapeMode.Compare"/> puts what it found.</summary>
+    internal List<ShapeComparison>? Comparisons { get; init; }
 
     /// <summary>
     /// The same for a shape a plugin describes itself, recorded as <paramref name="fileName"/> beside
@@ -121,18 +104,18 @@ public sealed class PluginAnalysis
             return;
         var path = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(file.FileName))!, fileName);
         var text = WireShapes.Write(shape);
-        string? recorded = File.Exists(path) ? File.ReadAllText(path) : null;
+        string? recorded = ShapeMode == WireShapeMode.Compare && Baseline is not null ? Baseline(path)
+            : File.Exists(path) ? File.ReadAllText(path) : null;
+        if (ShapeMode == WireShapeMode.Compare)
+        {
+            var earlier = Parse(recorded);
+            var breaks = earlier is null ? [] : breaking(earlier).Select(b => new ShapeBreak(file, b.Span, b.Change)).ToImmutableArray();
+            Comparisons?.Add(new ShapeComparison(Plugin.Name, name, path, earlier, shape, breaks, Unreadable: recorded is not null && earlier is null));
+            return;
+        }
         if (recorded is not null && ShapeMode != WireShapeMode.AcceptBreaking)
         {
-            System.Text.Json.Nodes.JsonObject? before;
-            try
-            {
-                before = System.Text.Json.Nodes.JsonNode.Parse(recorded) as System.Text.Json.Nodes.JsonObject;
-            }
-            catch (System.Text.Json.JsonException)
-            {
-                before = null;
-            }
+            var before = Parse(recorded);
             if (before is null)
             {
                 ReportError(file, span, $"{fileName} isn't a shape Piper can read; delete it to record {name}'s shape afresh.");
@@ -144,8 +127,23 @@ public sealed class PluginAnalysis
             if (changes.Count > 0)
                 return;
         }
-        if (ShapeMode != WireShapeMode.Check && recorded?.ReplaceLineEndings("\n") != text)
+        if (RecordsShapes && recorded?.ReplaceLineEndings("\n") != text)
             File.WriteAllText(path, text);
+    }
+
+    /// <summary>A recorded shape's JSON, or null for none, or for text that isn't a JSON object.</summary>
+    private static System.Text.Json.Nodes.JsonObject? Parse(string? recorded)
+    {
+        if (recorded is null)
+            return null;
+        try
+        {
+            return System.Text.Json.Nodes.JsonNode.Parse(recorded) as System.Text.Json.Nodes.JsonObject;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>Reports an error at <paramref name="span"/> in <paramref name="file"/>; the message is followed by the plugin's name.</summary>

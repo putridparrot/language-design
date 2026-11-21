@@ -1448,7 +1448,42 @@ piper db status apps/tracker [--connection …]       # which migrations there a
   that applying every migration in turn makes the same schema as `EnsureCreated`.
 - **Not yet:** a column's type that migrations can't store (a list, a record) is a warning, and it's left out of the
   shape. So is a table of a .NET type, whose fields the compiler can't see. Changes to Piper's own tables between Piper
-  versions aren't migrated yet. `piper check --since` (one answer for a release, across every shape) is still to come.
+  versions aren't migrated yet.
+
+#### Checking a release: `piper check`
+
+Each shape a program records (an `api`'s, a remote actor's messages, a `messages` block's, a workflow's steps, a
+database's) is checked as it builds, against the one beside it. `piper check` answers the question a deploy asks of
+all of them at once: what does this release change for what's already running?
+
+```
+piper check apps/tracker --since piper-v1.4.0     # against the shapes checked in at a tag, branch or commit
+piper check apps/tracker                          # against those recorded on disk
+```
+
+```
+Shapes of apps/tracker since piper-v1.4.0:
+  data TrackerDb           compatible
+      added: Issues.priority
+      migrations added: 0002-issues-priority
+  messaging Notifications  no change
+  api TrackerApi           BREAKING
+      breaks: NewComment has a new field, 'mood', which callers built before don't send; give it a default, or make it optional (apps/tracker-core/api.piper(26,1))
+      added: GET /api/ping, NewComment.mood
+```
+
+- **Nothing is written:** the program is compiled with its shapes compared, not recorded, so it's safe in CI. With
+  `--since`, the shapes it compares with are read from git (`git show <ref>:<path>`), by the paths they're at now.
+- **Each shape** is `new` (nothing recorded then), `no change`, `compatible`, or `BREAKING`, with the plugin's own
+  reasons, as a build would report them, and where. Below come what was added, removed and changed, named as people
+  name them (`Issues.priority`, `GET /api/count`, `Format.Audio`), so the output doubles as the release's notes.
+- **A shape recorded then that the program no longer has** (an api removed) is breaking: what was built against it
+  still uses it.
+- **A database with migrations** lists those added since, and says when none reaches its shape yet (run
+  `piper db migrate`), so a schema change isn't released without its script.
+- **It fails** (exit code 1) when anything is breaking, or the program doesn't compile.
+- **Not yet:** whether a migration is applied to a database (`piper db status --connection …` says), and a default
+  for `--since` (the last release's tag).
 
 ### `deploy` (Kubernetes manifests)
 

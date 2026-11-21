@@ -16,6 +16,13 @@ public enum WireShapeMode
 
     /// <summary>Record the shape even over breaking changes (<c>--accept-breaking</c>): the change is deliberate.</summary>
     AcceptBreaking,
+
+    /// <summary>
+    /// Compare with a shape recorded earlier (on disk, or at a git tag: <see cref="CompilationOptions.ShapeBaseline"/>),
+    /// collecting what changed in <see cref="CompilationResult.Shapes"/> rather than reporting it; never write
+    /// (<c>piper check</c>).
+    /// </summary>
+    Compare,
 }
 
 /// <summary>

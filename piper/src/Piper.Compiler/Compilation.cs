@@ -27,6 +27,12 @@ public sealed record CompilationResult(ImmutableArray<SourceText> Sources, Immut
     /// <summary>What the program references beyond the platform, which running or writing it needs (from <see cref="CompilationOptions.References"/>).</summary>
     public ProgramReferences References { get; init; } = ProgramReferences.None;
 
+    /// <summary>
+    /// With <see cref="WireShapeMode.Compare"/>, each recorded shape the program describes (an api's, a database's),
+    /// compared with the one recorded earlier, in the order the plugins described them.
+    /// </summary>
+    public ImmutableArray<ShapeComparison> Shapes { get; init; } = [];
+
     /// <summary>All generated C#; with several files each is preceded by a <c>// ==== name ====</c> line.</summary>
     public string? CSharp => !Success
         ? null
@@ -69,6 +75,12 @@ public sealed record CompilationOptions(bool LineDirectives = false, bool Includ
     /// only checked, as by default, or recorded too, as <c>piper build</c>, <c>run</c> and <c>test</c> do.
     /// </summary>
     public WireShapeMode WireShapes { get; init; } = WireShapeMode.Check;
+
+    /// <summary>
+    /// With <see cref="WireShapeMode.Compare"/>, reads the shape recorded earlier by its path (<c>piper check --since</c>
+    /// reads it from git at a tag), or null for none; without it, the shapes on disk are compared with.
+    /// </summary>
+    public Func<string, string?>? ShapeBaseline { get; init; }
 }
 
 /// <summary>Runs the whole pipeline over a program's files: lex → parse → bind → lower → emit C#.</summary>
@@ -85,14 +97,15 @@ public static class Compilation
         // Bind even after syntax errors: missing tokens and error nodes bind silently to the
         // error type, so the user still sees genuine semantic errors elsewhere in the file.
         var program = Binder.BindProgram(units, diagnostics, clr: ClrTypeIndex.For(options.References.Assemblies));
-        plugins.Analyze(program, diagnostics, options.WireShapes);
+        var shapes = new List<ShapeComparison>();
+        plugins.Analyze(program, diagnostics, options.WireShapes, options.ShapeBaseline, shapes);
 
         var sorted = diagnostics
             .OrderBy(d => d.Source is null ? -1 : files.IndexOf(d.Source))
             .ThenBy(d => d.Span.Start)
             .ToImmutableArray();
         if (diagnostics.HasErrors)
-            return new CompilationResult(files, sorted, []);
+            return new CompilationResult(files, sorted, []) { Shapes = [.. shapes] };
 
         var lowered = Lowerer.Lower(program);
         if (options.IncludeTests)
@@ -102,6 +115,7 @@ public static class Compilation
             HasMain = program.Main is not null,
             TestCount = program.Tests.Length,
             References = options.References,
+            Shapes = [.. shapes],
         };
     }
 

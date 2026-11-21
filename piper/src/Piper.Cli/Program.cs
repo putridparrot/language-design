@@ -46,7 +46,10 @@ const string Usage = """
                                            those a database doesn't have yet. `piper db` shows the details
       piper db status <folder> [--connection <c>]
                                            List the migrations, and which a database has
-      piper lsp                            Run the language server (LSP over stdin and stdout), for editors
+      piper check <folder> [--since <ref>] Compare the shapes the program records (apis, messages, workflows,
+                                           databases) with those at a git tag or commit (or on disk), listing what
+                                           changed and whether it's compatible; fails if anything is breaking
+      piper lsp                           Run the language server (LSP over stdin and stdout), for editors
       piper --version                      Show the compiler's version
 
     Inputs are .piper files or directories (searched recursively for .piper files);
@@ -83,6 +86,9 @@ if (args is ["fmt", .. var fmtArguments])
 
 if (args is ["db", .. var dbArguments])
     return Database.Run(dbArguments);
+
+if (args is ["check", .. var checkArguments])
+    return Check.Run(checkArguments);
 
 if (args.Length < 2 || args[0] is not ("build" or "emit" or "run" or "test"))
 {

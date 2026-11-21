@@ -44,6 +44,7 @@ piper build src/ --library    # compile to bin/src.dll; --name and -o choose the
 piper build api/ --publish    # compile for a container: bin/publish, with a Dockerfile; then docker build bin/publish
 piper test src/               # run the program's test blocks (--filter picks some by name)
 piper build src/ --accept-breaking   # record an api's shape over a deliberate breaking change (see docs/plugins.md)
+piper check app --since v1.4  # what this release changes in its apis, messages, workflows and databases; fails on a break
 piper emit hello.piper        # print the C#
 piper fmt src/                # lay out .piper files as Piper is written (--check lists them, failing if any would change)
 piper package add Dapper      # add a NuGet package's newest stable version to piper.json (--version, --prerelease, a folder)

@@ -720,9 +720,9 @@ an option to read and write it.
 ## One versioning system: a design
 
 **Status:** the database's shape, its checks and `piper db migrate` are done (parts 1 to 3, with the lock and the
-`migrate` clause; see [plugins](plugins.md#migrations-a-databases-shape-and-the-sql-that-changes-it)). Still to come:
-`piper check --since` (part 4), what's built on it (part 5), and migrating Piper's own tables when their shape
-changes between versions.
+`migrate` clause; see [plugins](plugins.md#migrations-a-databases-shape-and-the-sql-that-changes-it)), and so is
+`piper check --since` (part 4) and `sql$` checked against the schema (part 5). Still to come: versioned events (part
+5), and migrating Piper's own tables when their shape changes between versions.
 
 **The problem.** A release is safe to deploy only if everything it shares with what's already running still fits: old
 pods during a rolling update, clients already installed, messages already queued, workflows half way through, and the
@@ -818,6 +818,12 @@ piper db status apps/tracker             # which are applied, which are waiting
 
 #### 4. One answer for a release
 
+~~Done~~ (see [plugins](plugins.md#checking-a-release-piper-check)): `piper check <folder> [--since <ref>]` lists each
+shape with what was added, removed and changed, the plugin's reasons for any break (with where), shapes the program no
+longer has, and a database's migrations added since and whether one reaches its shape; it fails on a break. It doesn't
+yet say whether a migration is applied (that needs a connection: `piper db status`), nor default to the last release's
+tag. The design as written:
+
 With the database a shape like the others, one command answers the question a deploy asks:
 
 ```
@@ -866,7 +872,7 @@ break what's running, and the output doubles as the release's notes on what chan
 
 **In order:** ~~the database's shape and its checks; `piper db migrate` with SQLite and the baseline (apps/tracker's
 `tracker.db` is the first user); PostgreSQL and SQL Server, and the lock; `migrate` in the server clause~~, done, and tested against PostgreSQL and SQL Server in containers (the tests skip
-without Docker); then `piper check --since`.
+without Docker); then ~~`piper check --since`~~, done.
 
 ## UI
 

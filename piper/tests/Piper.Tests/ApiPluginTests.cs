@@ -295,6 +295,61 @@ public class ApiPluginTests
         }
     }
 
+    /// <summary>
+    /// Comparing (<c>piper check</c>) collects each shape's changes, breaking or not, rather than reporting them as
+    /// errors, against a shape recorded earlier that <see cref="CompilationOptions.ShapeBaseline"/> reads (git, at a
+    /// tag); it writes nothing.
+    /// </summary>
+    [Fact]
+    public void Comparing_shapes_lists_what_changed_and_what_breaks_without_writing()
+    {
+        var folder = Directory.CreateTempSubdirectory("piper-shape").FullName;
+        try
+        {
+            var path = Path.Combine(folder, "Shelf.shape.json");
+            Assert.True(CompileIn(folder, Catalogue, WireShapeMode.Record).Success);
+            var released = File.ReadAllText(path);
+            File.Delete(path);
+
+            var changed = Catalogue
+                .Replace("""fn Books(q: string?) => List<Book> = get "/books";""", """fn Books(q: string?) => List<Book> = get "/books"; fn Count() => int = get "/count";""")
+                .Replace("record NewBook(title: string, format: Format);", "record NewBook(title: string, format: Format, isbn: string);");
+            File.WriteAllText(Path.Combine(folder, "shelf.piper"), changed);
+            var result = Compilation.Compile([new SourceText(changed, Path.Combine(folder, "shelf.piper"))], new CompilationOptions
+            {
+                Plugins = Plugins.Value.Plugins,
+                References = Plugins.Value.References,
+                WireShapes = WireShapeMode.Compare,
+                ShapeBaseline = at => string.Equals(at, path, StringComparison.OrdinalIgnoreCase) ? released : null,
+            });
+            Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+            Assert.False(File.Exists(path));
+
+            var shelf = Assert.Single(result.Shapes);
+            Assert.Equal(("api", "Shelf"), (shelf.Plugin, shelf.Name));
+            Assert.False(shelf.IsNew);
+            var change = Assert.Single(shelf.Breaking);
+            Assert.Contains("NewBook has a new field, 'isbn'", change.Change);
+            Assert.Equal(
+                [new ShapeChange(ShapeChangeKind.Added, "GET /api/count"), new ShapeChange(ShapeChangeKind.Added, "NewBook.isbn")],
+                shelf.Changes.OrderBy(c => c.Path, StringComparer.Ordinal));
+
+            // Nothing recorded then: it's new.
+            var fresh = Compilation.Compile([new SourceText(changed, Path.Combine(folder, "shelf.piper"))], new CompilationOptions
+            {
+                Plugins = Plugins.Value.Plugins,
+                References = Plugins.Value.References,
+                WireShapes = WireShapeMode.Compare,
+                ShapeBaseline = _ => null,
+            });
+            Assert.True(Assert.Single(fresh.Shapes).IsNew);
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
     /// <summary>A change that would break clients built against the recorded shape is an error, and isn't recorded.</summary>
     [Theory]
     [InlineData("""fn Book(id: BookId) => Book? = get "/books/{id:int}";""", "",

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **`piper check <folder> [--since <ref>]`: one answer for a release.** Compares every shape the program records
+  (apis, remote actors' and `messages` blocks' messages, workflows' steps, databases) with those checked in at a git
+  tag, branch or commit, or with those on disk, without writing any. Each is listed as new, unchanged, compatible or
+  BREAKING, with the plugin's reasons for a break and where, then what was added, removed and changed
+  (`Issues.priority`, `GET /api/count`). A shape the program no longer has is breaking; a database's migrations added
+  since are listed, with a note when none reaches its shape yet. It fails when anything breaks, for CI. Plugins get
+  this for free: shapes they check with `CheckWireShape` or `CheckRecordedShape` are compared in the new
+  `WireShapeMode.Compare` (and `PluginAnalysis.RecordsShapes` says whether to write what they write beside a program).
+
 - **`sql$` queries checked against the database, as they compile:** each `sql$"…"` given to the data plugin's
   `Query`, `Execute` or `ExecuteAsync` is checked against the recorded shape of the database it runs on, with no
   database to connect to. Its tables and columns must exist (the error points at the name in the string), each hole
