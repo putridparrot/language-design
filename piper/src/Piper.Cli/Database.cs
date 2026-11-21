@@ -145,7 +145,7 @@ internal static class Database
                 }
                 if (database.Recorded().Count == 0)
                     Console.WriteLine("  no migrations yet: `piper db migrate` writes the first, the baseline");
-                else if (database.Changed)
+                else if (database.Changed(loaded.References))
                     Console.WriteLine("  its shape has changed since the last migration: `piper db migrate` writes the next");
             }
             return 0;

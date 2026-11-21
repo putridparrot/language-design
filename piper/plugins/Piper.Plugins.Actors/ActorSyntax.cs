@@ -29,10 +29,23 @@ internal sealed record ActorDeclaration(Token Name, ImmutableArray<ParameterSynt
 
     /// <summary>`snapshot every 100;`: how many events between the snapshots of its state; null for none.</summary>
     public ExpressionSyntax? SnapshotEvery { get; init; }
+
+    /// <summary>Its events' upgrades (`upgrade Placed version 1 (…) => Placed(…);`), which read events saved as an older version.</summary>
+    public List<ActorUpgrade> Upgrades { get; init; } = [];
 }
 
-/// <summary>An event of a persisted actor: its fields, and how it changes the state (replayed as the actor starts).</summary>
-internal sealed record ActorEvent(Token Name, ImmutableArray<ParameterSyntax> Parameters, BlockExpressionSyntax Body);
+/// <summary>
+/// An event of a persisted actor: its fields, and how it changes the state (replayed as the actor starts).
+/// <paramref name="Version"/> is its current version (`event Placed version 2 (…)`), 1 unless it says.
+/// </summary>
+internal sealed record ActorEvent(Token Name, ImmutableArray<ParameterSyntax> Parameters, BlockExpressionSyntax Body, int Version = 1);
+
+/// <summary>
+/// `upgrade Placed version 1 (id: OrderId, total: Money) => Placed(id, total, "GBP");`: how an event saved as version
+/// <paramref name="Version"/>, with those fields, is read now. <paramref name="Body"/> makes the next version, calling
+/// the event by its name with that version's fields; replaying runs the upgrades in turn, up to the current version.
+/// </summary>
+internal sealed record ActorUpgrade(Token Name, int Version, ImmutableArray<ParameterSyntax> Parameters, ExpressionSyntax Body);
 
 /// <summary>
 /// `on failure resume|rollback|stop|restart [n per unit];`: what an actor does when a handler throws. <paramref name="Limit"/>
@@ -44,7 +57,11 @@ internal sealed record FailurePolicy(Token Word, string Kind, ExpressionSyntax? 
 /// What an actor plugin notes for its analysis: the actor's name, its failure policy, its state's names, and whether
 /// it's persisted (whose state, like rollback's, must be immutable).
 /// </summary>
-internal sealed record ActorData(Token Name, FailurePolicy? Failure, List<string> State, bool Persisted = false);
+internal sealed record ActorData(Token Name, FailurePolicy? Failure, List<string> State, bool Persisted = false)
+{
+    /// <summary>A persisted actor's events' current versions, by name, for the shape of its events (<see cref="ActorSyntax.CheckEventShapes"/>).</summary>
+    public IReadOnlyDictionary<string, int> Versions { get; init; } = new Dictionary<string, int>();
+}
 
 /// <summary>
 /// What the actor plugins share: reading an `actor` declaration (the same syntax whether actors run in one process or
@@ -76,6 +93,9 @@ internal static class ActorSyntax
         ["snapshot"] = "`snapshot every 100;`: keep the persisted actor's state (all but its transient state) after every 100 events saved, so starting again restores the latest " +
                        "and replays only the events since. One kept as other types than the state's now is ignored, and every event replayed.",
         ["every"] = "How many events between a persisted actor's snapshots: `snapshot every 100;`.",
+        ["version"] = "An event's version: `event Placed version 2 (…) { … }`. Events are saved with theirs, so one of an older version is read through its `upgrade`.",
+        ["upgrade"] = "How an event saved as an older version is read now: `upgrade Placed version 1 (id: OrderId, total: Money) => Placed(id, total, \"GBP\");`. " +
+                      "The event's name makes the next version; replaying runs the upgrades in turn, up to the current one.",
     };
 
     private static readonly string[] Policies = ["resume", "rollback", "restart", "stop"];
@@ -129,18 +149,34 @@ internal static class ActorSyntax
         var state = new List<StatementSyntax>();
         var handlers = new List<ActorHandler>();
         var events = new List<ActorEvent>();
+        var upgrades = new List<ActorUpgrade>();
         var functions = new List<StatementSyntax>();
         var transient = new HashSet<string>();
         ExpressionSyntax? snapshotEvery = null;
         FailurePolicy? failure = null;
         while (p.Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
         {
-            if (p.AtWord("event") && p.Peek(1).Kind == TokenKind.Identifier && p.Peek(2).Kind == TokenKind.OpenParen)
+            if (p.AtWord("event") && p.Peek(1).Kind == TokenKind.Identifier &&
+                (p.Peek(2).Kind == TokenKind.OpenParen || p.Peek(2) is { Kind: TokenKind.Identifier, Text: "version" }))
             {
                 p.ReadWord();
                 var eventName = p.Expect(TokenKind.Identifier);
+                var version = ParseVersion(p, ref valid) ?? 1;
                 var fields = Parameters(p, ref valid);
-                events.Add(new ActorEvent(eventName, fields, p.ParseBlock()));
+                events.Add(new ActorEvent(eventName, fields, p.ParseBlock(), version));
+                continue;
+            }
+            // `upgrade Placed version 1 (id: OrderId, total: Money) => Placed(id, total, "GBP");`
+            if (p.AtWord("upgrade") && p.Peek(1).Kind == TokenKind.Identifier && p.Peek(2) is { Kind: TokenKind.Identifier, Text: "version" })
+            {
+                p.ReadWord();
+                var eventName = p.Expect(TokenKind.Identifier);
+                var version = ParseVersion(p, ref valid) ?? 1;
+                var fields = Parameters(p, ref valid);
+                p.Expect(TokenKind.FatArrow);
+                var body = p.ParseExpression();
+                p.Expect(TokenKind.Semicolon);
+                upgrades.Add(new ActorUpgrade(eventName, version, fields, body));
                 continue;
             }
             // `transient mut seen = …;`: a persisted actor's state that isn't kept, which its handlers change themselves.
@@ -267,11 +303,102 @@ internal static class ActorSyntax
         }
         if (!CheckEvents(p, name, persisted, events, handlers, mutable, transient, failure))
             valid = false;
+        if (!CheckUpgrades(p, name, persisted, events, upgrades))
+            valid = false;
         // After all the state, which they may use.
         state.AddRange(functions);
         return valid
-            ? new ActorDeclaration(name, parameters, state, handlers) { Failure = failure, Mutable = mutable, PersistedBy = persistedBy, Events = events, Transient = transient, SnapshotEvery = snapshotEvery }
+            ? new ActorDeclaration(name, parameters, state, handlers)
+            {
+                Failure = failure, Mutable = mutable, PersistedBy = persistedBy, Events = events, Transient = transient, SnapshotEvery = snapshotEvery,
+                Upgrades = upgrades,
+            }
             : null;
+    }
+
+    /// <summary>Each event's current version, by name.</summary>
+    public static IReadOnlyDictionary<string, int> Versions(ActorDeclaration actor) =>
+        actor.Events.GroupBy(e => e.Name.Text).ToDictionary(g => g.Key, g => g.First().Version);
+
+    /// <summary>`version 2`, after an event's or upgrade's name: a whole number from 1. Null when there's none.</summary>
+    private static int? ParseVersion(PluginParser p, ref bool valid)
+    {
+        if (!p.AtWord("version"))
+            return null;
+        p.ReadWord();
+        var number = p.Expect(TokenKind.IntegerLiteral);
+        if (number.IsMissing)
+        {
+            valid = false;
+            return 1;
+        }
+        if (!int.TryParse(number.Text.Replace("_", ""), out var version) || version < 1)
+        {
+            p.Report(number.Span, "A version is a whole number from 1: 'version 2'.");
+            valid = false;
+            return 1;
+        }
+        return version;
+    }
+
+    /// <summary>
+    /// An event's upgrades: each names one of the actor's events, at a version before its current one, once; each
+    /// version's upgrade makes the next, so the next must be the current version or have an upgrade of its own; and its
+    /// body, like an event's, is replayed, so it can't await or emit.
+    /// </summary>
+    private static bool CheckUpgrades(PluginParser p, Token name, Token? persisted, List<ActorEvent> events, List<ActorUpgrade> upgrades)
+    {
+        bool valid = true;
+        void Error(TextSpan span, string message)
+        {
+            p.Report(span, message);
+            valid = false;
+        }
+
+        if (persisted is null)
+        {
+            foreach (var upgrade in upgrades)
+                Error(upgrade.Name.Span, $"An upgrade reads events saved before, which only a persisted actor keeps: 'actor {name.Text}(…) persisted by id {{ … }}'.");
+            return valid;
+        }
+        var current = events.GroupBy(e => e.Name.Text).ToDictionary(g => g.Key, g => g.First().Version);
+        var declared = new HashSet<(string, int)>();
+        foreach (var upgrade in upgrades)
+        {
+            var eventName = upgrade.Name.Text;
+            if (!current.TryGetValue(eventName, out var version))
+            {
+                Error(upgrade.Name.Span, $"{name.Text} has no event '{eventName}' to upgrade; its events are {string.Join(", ", current.Keys.Order())}.");
+                continue;
+            }
+            if (upgrade.Version >= version)
+            {
+                Error(upgrade.Name.Span, version == 1
+                    ? $"'{eventName}' is version 1, so there's nothing older to upgrade; when its fields change, make it 'event {eventName} version 2 (…)', and upgrade version 1 to it."
+                    : $"'{eventName}' is version {version}, so an upgrade reads an older one: version 1 to {version - 1}.");
+                continue;
+            }
+            if (!declared.Add((eventName, upgrade.Version)))
+                Error(upgrade.Name.Span, $"{name.Text} already upgrades '{eventName}' version {upgrade.Version}.");
+        }
+        foreach (var upgrade in upgrades)
+        {
+            if (current.TryGetValue(upgrade.Name.Text, out var version) && upgrade.Version < version && upgrade.Version + 1 < version &&
+                !declared.Contains((upgrade.Name.Text, upgrade.Version + 1)))
+            {
+                Error(upgrade.Name.Span,
+                    $"Upgrading '{upgrade.Name.Text}' version {upgrade.Version} makes version {upgrade.Version + 1}, which is upgraded in turn, " +
+                    $"but there's no 'upgrade {upgrade.Name.Text} version {upgrade.Version + 1} (…) => {upgrade.Name.Text}(…);'.");
+            }
+            foreach (var node in SyntaxWalker.DescendantsAndSelf(upgrade.Body))
+            {
+                if (node is AwaitExpressionSyntax wait)
+                    Error(wait.Span, "An upgrade is run as the actor replays its events, so it can't await.");
+                else if (node is NameExpressionSyntax emitted && emitted.Identifier.Text.StartsWith(EmitPrefix, StringComparison.Ordinal))
+                    Error(emitted.Span, "An upgrade makes the event's next version; it can't emit another.");
+            }
+        }
+        return valid;
     }
 
     /// <summary>
@@ -500,14 +627,58 @@ internal static class ActorSyntax
                    $"    let __event = {type}.{e.Name.Text}{arguments};\n    __apply(__event);\n    __events.Add(__event);\n}}\n";
         });
         // The stream is the actor's name and its identity, written invariantly (a template's hole can't go in a $"…").
+        var (pastEnum, upgrades) = UpgradeCode(actor, hole, type);
         var setup =
             $"let __events = Piper.Runtime.PiperEventLog<{type}>(store, System.String.Concat(\"{actor.Name.Text}/\", " +
             $"System.Convert.ToString({hole[identity]}, System.Globalization.CultureInfo.InvariantCulture)));\n" +
             $"fn __apply(__applied: {type}) {{\n    match __applied {{\n{string.Join("\n", arms)}\n    }}\n}}\n" +
             string.Concat(emits) +
+            upgrades +
             (actor.SnapshotEvery is null ? "" : SnapshotCode(actor));
         // Indented: a `fn` that starts a line is read as the next top-level declaration, not a local function.
-        return ($"enum {type} {{\n{string.Join(",\n", variants)}\n}}\n", string.Join("\n", setup.Split('\n').Select(line => "    " + line)));
+        return ($"enum {type} {{\n{string.Join(",\n", variants)}\n}}\n" + pastEnum, string.Join("\n", setup.Split('\n').Select(line => "    " + line)));
+    }
+
+    /// <summary>
+    /// For an actor whose events have versions: <c>Enum</c>, <c>{Actor}PastEvent</c>, a variant for each older version
+    /// an upgrade reads (<c>Placed_1(id: OrderId, total: Money)</c>); and <c>Setup</c>, an <c>__upgrade_Placed_1</c> for
+    /// each, in which the event's name makes the next version (the current one, or the next upgrade's), then
+    /// <c>__upgrade</c>, which upgrades any of them to the current version, given to the event log with each event's
+    /// current version, so it saves events with theirs and reads older ones through the upgrades.
+    /// </summary>
+    private static (string Enum, string Setup) UpgradeCode(ActorDeclaration actor, TemplateHoles hole, string type)
+    {
+        var versions = string.Join(",", actor.Events.Where(e => e.Version > 1).Select(e => $"{e.Name.Text}:{e.Version}"));
+        if (actor.Upgrades.Count == 0)
+            return ("", versions.Length == 0 ? "" : $"__events.Versions(\"{versions}\");\n");
+
+        var past = actor.Name.Text + "PastEvent";
+        static string Variant(ActorUpgrade u) => $"{u.Name.Text}_{u.Version}";
+        static string Names(ImmutableArray<ParameterSyntax> fields) => string.Join(", ", fields.Select(f => f.Name.Text));
+        string Typed(ImmutableArray<ParameterSyntax> fields) => string.Join(", ", fields.Select(f => $"{f.Name.Text}: {hole[f.Type]}"));
+
+        var functions = new System.Text.StringBuilder();
+        // The latest first: each calls the next version's.
+        foreach (var upgrade in actor.Upgrades.OrderBy(u => u.Name.Text, StringComparer.Ordinal).ThenByDescending(u => u.Version))
+        {
+            var current = actor.Events.First(e => e.Name.Text == upgrade.Name.Text);
+            var next = actor.Upgrades.FirstOrDefault(u => u.Name.Text == upgrade.Name.Text && u.Version == upgrade.Version + 1);
+            var nextFields = next?.Parameters ?? current.Parameters;
+            var made = next is not null ? $"__upgrade_{Variant(next)}({Names(nextFields)})"
+                : nextFields.IsEmpty ? $"{type}.{current.Name.Text}"
+                : $"{type}.{current.Name.Text}({Names(nextFields)})";
+            functions.Append($"fn __upgrade_{Variant(upgrade)}({Typed(upgrade.Parameters)}) => {type} {{\n")
+                .Append($"    fn {upgrade.Name.Text}({Typed(nextFields)}) => {type} = {made};\n")
+                .Append($"    {hole[upgrade.Body]}\n}}\n");
+        }
+        var arms = actor.Upgrades.Select(u => u.Parameters.IsEmpty
+            ? $"{past}.{Variant(u)} => __upgrade_{Variant(u)}(),"
+            : $"{past}.{Variant(u)}({Names(u.Parameters)}) => __upgrade_{Variant(u)}({Names(u.Parameters)}),");
+        functions.Append($"fn __upgrade(__past: {past}) => {type} {{\n    match __past {{\n{string.Join("\n", arms)}\n    }}\n}}\n")
+            .Append($"__events.Upgrades<{past}>(\"{versions}\", (__past) => __upgrade(__past));\n");
+
+        var variants = actor.Upgrades.Select(u => u.Parameters.IsEmpty ? Variant(u) : $"{Variant(u)}({hole[u.Parameters]}: unit)");
+        return ($"enum {past} {{\n{string.Join(",\n", variants)}\n}}\n", functions.ToString());
     }
 
     /// <summary>
@@ -532,6 +703,80 @@ internal static class ActorSyntax
     }
 
     private static string Capitalized(string word) => char.ToUpperInvariant(word[0]) + word[1..];
+
+    /// <summary>
+    /// A persisted actor's events are kept for ever, and read back by every later version of it, so each version of
+    /// each event it reads (the current one, and those its upgrades read) is recorded in <c>Name.events.json</c> beside
+    /// it, with the types they hold. A change that events already saved couldn't be read as is an error: a version
+    /// recorded that nothing reads now (an event removed, or an upgrade), a new field they don't have, a field of
+    /// another type, or a change to a type they hold. Changing an event's fields means a new version, with an upgrade
+    /// from the old one. As every shape is, it's recorded when it's new or the change compatible.
+    /// </summary>
+    public static void CheckEventShapes(PluginAnalysis analysis)
+    {
+        foreach (var expansion in analysis.Expansions)
+        {
+            if (expansion.Data is not ActorData { Persisted: true } data)
+                continue;
+            bool Generated(SyntaxNode? node) => node is not null && expansion.Result.Any(r => ReferenceEquals(r, node));
+            var enums = analysis.Program.Types.OfType<EnumSymbol>().Where(e => Generated(e.Declaration)).ToList();
+            var actor = data.Name.Text;
+            if (enums.FirstOrDefault(e => e.Name == actor + "Event") is not { } events)
+                continue;
+            static WireOperation Version(string name, int version, IEnumerable<FieldSymbol> fields) =>
+                new($"{name} version {version}", $"{name} version {version}", [.. fields.Select(f => (f.Name, f.Type))], null, []);
+            var operations = events.Variants.Select(v => Version(v.Name, data.Versions.GetValueOrDefault(v.Name, 1), v.Fields)).ToList();
+            if (enums.FirstOrDefault(e => e.Name == actor + "PastEvent") is { } past)
+            {
+                foreach (var variant in past.Variants)
+                {
+                    var at = variant.Name.LastIndexOf('_');
+                    operations.Add(Version(variant.Name[..at], int.Parse(variant.Name[(at + 1)..], System.Globalization.CultureInfo.InvariantCulture), variant.Fields));
+                }
+            }
+            var shape = WireShapes.Describe(actor, operations);
+            analysis.CheckRecordedShape(expansion.File, data.Name.Span, $"{actor} events", $"{actor}.events.json", shape,
+                before => EventBreaks(actor, before, shape).Select(change => (data.Name.Span, change)));
+        }
+    }
+
+    /// <summary>What in <paramref name="now"/> events saved as <paramref name="before"/> recorded couldn't be read as.</summary>
+    private static IEnumerable<string> EventBreaks(string actor, System.Text.Json.Nodes.JsonObject before, System.Text.Json.Nodes.JsonObject now)
+    {
+        const string Saved = "events saved already";
+        static string? Text(System.Text.Json.Nodes.JsonNode? node) =>
+            node is System.Text.Json.Nodes.JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
+        var newVersions = now["calls"] as System.Text.Json.Nodes.JsonObject ?? [];
+        foreach (var (key, oldNode) in before["calls"] as System.Text.Json.Nodes.JsonObject ?? [])
+        {
+            var at = key.LastIndexOf(" version ", StringComparison.Ordinal);
+            var (name, version) = at < 0 ? (key, "1") : (key[..at], key[(at + " version ".Length)..]);
+            var change = $"or give '{name}' a new version, with an upgrade from version {version}";
+            if (newVersions[key] is not System.Text.Json.Nodes.JsonObject newVersion)
+            {
+                yield return newVersions.Any(v => v.Key.StartsWith(name + " version ", StringComparison.Ordinal))
+                    ? $"{name} events of version {version} may be saved already, but nothing reads them now; add 'upgrade {name} version {version} (…) => {name}(…);'"
+                    : $"{actor} has no event '{name}' now, but {Saved} include them; keep it, so replaying them changes the state as it did";
+                continue;
+            }
+            var oldFields = oldNode?["inputs"] as System.Text.Json.Nodes.JsonObject ?? [];
+            foreach (var (field, type) in newVersion["inputs"] as System.Text.Json.Nodes.JsonObject ?? [])
+            {
+                var typeText = Text(type) ?? "";
+                if (oldFields[field] is not { } oldType)
+                {
+                    if (!typeText.EndsWith('?'))
+                        yield return $"{name} version {version} has a new field, '{field}' ({typeText}), which {Saved} don't have; make it optional ({typeText}?), {change}";
+                }
+                else if (Text(oldType) != typeText)
+                {
+                    yield return $"{name} version {version} has '{field}' as {typeText}, but {Saved} have {Text(oldType)}; {change}";
+                }
+            }
+        }
+        foreach (var change in WireShapes.BreakingTypes(before, now, Saved))
+            yield return change;
+    }
 
     /// <summary>
     /// <c>rollback</c> and <c>restart</c> put the state back by keeping its values, which only works if they're

@@ -211,6 +211,60 @@ public class MigrationTests
         Assert.Equal("0001-baseline\n0\nTrue\nTrue\n0001-baseline True\n", output);
     }
 
+    /// <summary>
+    /// Piper's own tables have versions: a migration records the version of each it makes, and when a later Piper.Data
+    /// makes another, the next migration is the change, applied as any other. Piper.Data's test table, <c>probe</c>, has
+    /// two: a database whose last migration made version 1 (named as a list, as migrations were before versions were
+    /// recorded) gets version 2's column and index. A shape of a version this Piper.Data doesn't have is an error.
+    /// </summary>
+    [Fact]
+    public void A_later_version_of_one_of_Pipers_tables_is_the_next_migration()
+    {
+        using var folder = new Folder();
+        File.WriteAllText(folder.File("Shop.schema.json"), """{ "name": "Shop", "tables": {}, "piper": ["probe"] }""");
+        Directory.CreateDirectory(folder.File("Shop.migrations"));
+        File.WriteAllText(folder.File("Shop.migrations/0001-baseline.json"), """{ "name": "Shop", "tables": {}, "piper": ["probe"] }""");
+
+        Assert.True(folder.Database.Changed(Plugins.Value.References));
+        var written = DatabaseMigrations.Write(Plugins.Value.References, folder.Database);
+        Assert.Equal(["0002-piper-probe-2.json", "0001-baseline.sql", "0002-piper-probe-2.sql"], written.Files.Select(Path.GetFileName));
+        Assert.Contains("\"probe\": 2", File.ReadAllText(folder.File("Shop.migrations/0002-piper-probe-2.json")));
+        var baseline = File.ReadAllText(folder.File("Shop.migrations/sqlite/0001-baseline.sql"));
+        Assert.Contains("CREATE TABLE \"PiperProbe\"", baseline);
+        Assert.DoesNotContain("Note", baseline);
+        var upgrade = File.ReadAllText(folder.File("Shop.migrations/sqlite/0002-piper-probe-2.sql"));
+        Assert.Contains("ALTER TABLE \"PiperProbe\" ADD \"Note\" TEXT NULL;", upgrade);
+        Assert.Contains("CREATE INDEX \"IX_PiperProbe_Note\" ON \"PiperProbe\" (\"Note\");", upgrade);
+
+        Assert.Empty(DatabaseMigrations.Write(Plugins.Value.References, folder.Database).Files);
+        Assert.False(folder.Database.Changed(Plugins.Value.References));
+        var applied = DatabaseMigrations.Apply(Plugins.Value.References, folder.Database, "sqlite", $"Data Source={folder.File("shop.db")}");
+        Assert.Contains(applied, line => line.Contains("0002-piper-probe-2"));
+
+        File.WriteAllText(folder.File("Shop.migrations/0003-later.json"), """{ "name": "Shop", "tables": {}, "piper": { "probe": 3 } }""");
+        var error = Assert.Throws<InvalidOperationException>(() => DatabaseMigrations.Write(Plugins.Value.References, folder.Database));
+        Assert.Contains("Piper's probe table at version 3, but this Piper.Data has versions 1 to 2", error.Message);
+    }
+
+    /// <summary>
+    /// A migration recorded before Piper's tables had versions names them as a list: that's version 1 of each, what
+    /// they all are now, so it needs no migration; one written now records their versions.
+    /// </summary>
+    [Fact]
+    public void Pipers_tables_named_as_a_list_are_version_1()
+    {
+        using var folder = new Folder();
+        File.WriteAllText(folder.File("Shop.schema.json"), """{ "name": "Shop", "tables": {}, "piper": ["outbox", "idempotency"] }""");
+        var written = DatabaseMigrations.Write(Plugins.Value.References, folder.Database);
+        var recorded = (JsonObject)JsonNode.Parse(File.ReadAllText(written.Files[0]))!;
+        Assert.Equal(1, (int)recorded["piper"]!["outbox"]!);
+        Assert.Equal(1, (int)recorded["piper"]!["idempotency"]!);
+
+        File.WriteAllText(written.Files[0], """{ "name": "Shop", "tables": {}, "piper": ["outbox", "idempotency"] }""");
+        Assert.False(folder.Database.Changed(Plugins.Value.References));
+        Assert.Empty(DatabaseMigrations.Write(Plugins.Value.References, folder.Database).Files);
+    }
+
     [Fact]
     public void A_change_to_the_shape_is_the_next_migration_and_an_unchanged_one_writes_nothing()
     {
@@ -218,10 +272,10 @@ public class MigrationTests
         Assert.True(Compile(folder, Shop(Order)).Success);
         DatabaseMigrations.Write(Plugins.Value.References, folder.Database);
         Assert.Empty(DatabaseMigrations.Write(Plugins.Value.References, folder.Database).Files);
-        Assert.False(folder.Database.Changed);
+        Assert.False(folder.Database.Changed(Plugins.Value.References));
 
         Assert.True(Compile(folder, Shop(Order + ", region: string?", "table Orders: Order key id index customer index region;")).Success);
-        Assert.True(folder.Database.Changed);
+        Assert.True(folder.Database.Changed(Plugins.Value.References));
         var written = DatabaseMigrations.Write(Plugins.Value.References, folder.Database);
         Assert.Equal(["0002-orders-region-and-more.json", "0002-orders-region-and-more.sql"], written.Files.Select(Path.GetFileName));
         var script = File.ReadAllText(folder.File("Shop.migrations/sqlite/0002-orders-region-and-more.sql"));

@@ -20,8 +20,15 @@ public sealed record DeclaredDatabase(string Name, string Schema)
     /// <summary>The migrations recorded so far, in order.</summary>
     public IReadOnlyList<RecordedMigration> Recorded() => DatabaseMigrations.Recorded(Migrations);
 
-    /// <summary>Whether its shape has changed since its last migration (or it has none), so <c>piper db migrate</c> would write one.</summary>
-    public bool Changed => Recorded() is var recorded && (recorded.Count == 0 || !DatabaseMigrations.Same(recorded[^1].Shape, File.ReadAllText(Schema)));
+    /// <summary>
+    /// Whether its shape has changed since its last migration (or it has none), so <c>piper db migrate</c> would write
+    /// one: its own tables, or Piper's, whose versions are those the program's Piper.Data (in <paramref name="references"/>) makes.
+    /// </summary>
+    public bool Changed(ProgramReferences references) => Changed(references, File.ReadAllText(Schema));
+
+    /// <summary>The same, for the shape <paramref name="shape"/> rather than the one recorded beside it.</summary>
+    public bool Changed(ProgramReferences references, string shape) =>
+        Recorded() is var recorded && (recorded.Count == 0 || !DatabaseMigrations.Same(recorded[^1].Shape, DatabaseMigrations.Stamp(references, shape)));
 }
 
 /// <summary>What <see cref="DatabaseMigrations.Write"/> did: the files it wrote, and what it warns of.</summary>
@@ -69,7 +76,8 @@ public static partial class DatabaseMigrations
             warnings.Add($"{database.Name}'s {stale} scripts aren't being written: the program doesn't have that provider's EF Core package.");
 
         var recorded = Recorded(folder).ToList();
-        var now = File.ReadAllText(database.Schema).ReplaceLineEndings("\n");
+        // With the versions of Piper's own tables this Piper.Data makes, so upgrading Piper is a migration when they changed.
+        var now = Stamp(references, File.ReadAllText(database.Schema)).ReplaceLineEndings("\n");
         if (recorded.Count == 0 || !Same(recorded[^1].Shape, now))
         {
             var number = recorded.Count == 0 ? 1 : recorded[^1].Number + 1;
@@ -123,7 +131,37 @@ public static partial class DatabaseMigrations
             .OrderBy(m => m.Number)];
     }
 
-    internal static bool Same(string a, string b) => JsonNode.DeepEquals(JsonNode.Parse(a), JsonNode.Parse(b));
+    /// <summary>
+    /// <paramref name="shape"/> with each of Piper's own tables it names (<c>"piper": ["outbox"]</c>) stamped with the
+    /// version the program's Piper.Data makes (<c>{"outbox": 1}</c>), as a migration records it.
+    /// </summary>
+    public static string Stamp(ProgramReferences references, string shape) =>
+        (string)Call(references, "Piper.Data.PiperTables", "Stamp", shape)!;
+
+    /// <summary>
+    /// Whether two shapes are the same. Piper's own tables named as a list, as a migration written before their versions
+    /// were stamped names them, are version 1 of each.
+    /// </summary>
+    public static bool Same(string a, string b) => JsonNode.DeepEquals(Versioned(JsonNode.Parse(a)), Versioned(JsonNode.Parse(b)));
+
+    private static JsonNode? Versioned(JsonNode? shape)
+    {
+        if (shape is JsonObject root && root["piper"] is JsonArray names)
+        {
+            var copy = (JsonObject)root.DeepClone();
+            var versions = new JsonObject();
+            foreach (var name in names.Select(n => (string?)n).OfType<string>())
+                versions[name] = 1;
+            copy["piper"] = versions;
+            return copy;
+        }
+        return shape;
+    }
+
+    /// <summary>Piper's own tables in a shape, and their versions (a list, from before versions were stamped, is version 1 of each).</summary>
+    private static Dictionary<string, int> PiperTables(JsonObject? shape) => (Versioned(shape) as JsonObject)?["piper"] is JsonObject versions
+        ? versions.ToDictionary(v => v.Key, v => (int?)v.Value ?? 1)
+        : [];
 
     /// <summary>A name for the change from <paramref name="before"/> to <paramref name="now"/>, from its first part: <c>issues-priority</c>.</summary>
     public static string Describe(JsonObject? before, JsonObject? now)
@@ -146,8 +184,14 @@ public static partial class DatabaseMigrations
                 names.Add($"{table}-indexes");
         }
         names.AddRange(oldTables.Where(t => !newTables.ContainsKey(t.Key)).Select(t => $"drop-{t.Key}"));
-        var piper = (now?["piper"] as JsonArray ?? []).Select(p => (string?)p).Except((before?["piper"] as JsonArray ?? []).Select(p => (string?)p));
-        names.AddRange(piper.OfType<string>());
+        var oldPiper = PiperTables(before);
+        foreach (var (table, version) in PiperTables(now))
+        {
+            if (!oldPiper.TryGetValue(table, out var old))
+                names.Add(table);
+            else if (old != version)
+                names.Add($"piper-{table}-{version}");
+        }
         return names.Count == 0 ? "changes" : Slug(names[0] + (names.Count > 1 ? "-and-more" : ""));
     }
 

@@ -433,6 +433,38 @@ public class RemoteActorPluginTests
     }
 
     /// <summary>
+    /// The same versions and upgrades as in one process: an event saved as an older version is upgraded as a remote
+    /// actor replays it, and its new events are saved with their version.
+    /// </summary>
+    [Fact]
+    public void A_persisted_remote_actor_upgrades_events_saved_as_older_versions()
+    {
+        var result = Compile(Node + """
+            actor Tally(id: string) persisted by id {
+                mut total = 0;
+                event Added version 2 (pence: int) { total += pence; }
+                upgrade Added version 1 (pounds: int) => Added(pounds * 100);
+                on Add(pence: int) => int { emit Added(pence); total }
+            }
+
+            async fn Main() {
+                let store = Piper.Runtime.MemoryEventStore();
+                await store.AppendAsync("Tally/visits", 0, ["{\"kind\":\"Added\",\"pounds\":2}"]);
+                let node = await StartNode();
+                Tally.Spawn(node, "tally", store, "visits");
+                Print(await Tally.Connect(node, node.Address, "tally").Add(5));
+                Print(System.Linq.Enumerable.Last(await store.LoadAsync("Tally/visits")));
+                await node.StopAsync();
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Empty(result.Diagnostics);
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("205\n{\"kind\":\"Added\",\"pence\":5,\"$version\":2}\n", run.Output.Replace("\r\n", "\n"));
+    }
+
+    /// <summary>
     /// The proto-actor plugin's transport: the same actors, with Proto.Actor's remoting carrying their messages. Asks,
     /// faults and dead letters behave as on the built-in transport, and the plugin registers <c>proto</c> beside
     /// <c>http</c> and <c>memory</c>, so configuration can choose it.

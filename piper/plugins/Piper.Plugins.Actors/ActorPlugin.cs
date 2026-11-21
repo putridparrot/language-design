@@ -62,12 +62,14 @@ public sealed class ActorPlugin : IPiperPlugin
                     $"'{field.Name}' holds a {mutable}, which the sender and the actor could both change at once. Send something immutable instead, such as a record or an ImmutableList.");
         }
         ActorSyntax.CheckPolicies(analysis, traitsAreOpaque: false);
+        ActorSyntax.CheckEventShapes(analysis);
     }
 
     private static ImmutableArray<DeclarationSyntax> Expand(PluginParser p, ActorDeclaration declaration)
     {
         p.Data = new ActorData(declaration.Name, declaration.Failure, [.. declaration.State.OfType<VariableDeclarationSyntax>().Select(v => v.Name.Text)],
-            declaration.PersistedBy is not null);
+            declaration.PersistedBy is not null)
+        { Versions = ActorSyntax.Versions(declaration) };
         return Generate(p, declaration);
     }
 
@@ -94,6 +96,7 @@ public sealed class ActorPlugin : IPiperPlugin
         var variants = new List<string>();
         var arms = new List<string>();
         var stoppedArms = new List<string>();
+        var unreplayedArms = new List<string>();
         var methods = new List<string>();
         foreach (var handler in declaration.Handlers)
         {
@@ -132,6 +135,7 @@ public sealed class ActorPlugin : IPiperPlugin
                     """);
                 var ignored = string.Join(", ", names.Select(_ => "_").Append("__reply"));
                 stoppedArms.Add($"{handler.Name.Text}({ignored}) => __reply.SetException(System.InvalidOperationException(\"{actor} has stopped.\")),");
+                unreplayedArms.Add($"{handler.Name.Text}({ignored}) => __reply.SetException(System.InvalidOperationException(System.String.Concat(\"{actor} couldn't replay its events: \", __failed.Message), __failed)),");
                 methods.Add($$"""
                     async fn {{hole[handler.Name]}}({{hole[handler.Parameters]}}: unit) => {{Tasks}}.Task<{{hole[handler.Result]}}> {
                         let __reply = {{Tasks}}.TaskCompletionSource<{{hole[handler.Result]}}>({{Tasks}}.TaskCreationOptions.RunContinuationsAsynchronously);
@@ -143,6 +147,14 @@ public sealed class ActorPlugin : IPiperPlugin
         }
         // A stopped actor's tells are dropped; a match of only asks needs no catch-all (it would be unreachable).
         var ignoreTells = stoppedArms.Count < declaration.Handlers.Count ? "_ => {}" : "";
+        // Events it can't replay (one saved by a later version of the program, or that no upgrade reads) leave it without
+        // its state, so it handles nothing: each ask fails, saying why, rather than waiting for ever, and tells are dropped.
+        if (persisted)
+        {
+            setup += "mut __unreplayed: System.Exception? = None;\n";
+            replay = $"try {{ {replay}}} catch (__error: System.Exception) {{ System.Console.Error.WriteLine(System.String.Concat(\"{actor} couldn't replay its events: \", __error.Message)); __unreplayed = Some(__error); }}\n" +
+                     $"if __unreplayed is Some(__failed) {{ await for __message in __channel.Reader.ReadAllAsync() {{ match __message {{ {string.Join("\n", unreplayedArms)} {ignoreTells} }} }} }}";
+        }
 
         var template = $$"""
             {{eventEnum}}

@@ -107,7 +107,7 @@ internal static class Check
                 Console.WriteLine($"      breaks: {change.Change} ({Relative(change.Location)})");
             foreach (var line in Summary(changes))
                 Console.WriteLine($"      {line}");
-            foreach (var note in Migrations(shape, git))
+            foreach (var note in Migrations(shape, git, loaded.References))
                 Console.WriteLine($"      {note}");
         }
         foreach (var path in removed)
@@ -145,7 +145,7 @@ internal static class Check
     /// For a database whose migrations are recorded (<c>piper db migrate</c>): those added since <c>--since</c>, and
     /// whether its shape now has one, so a change isn't released without the script that makes it.
     /// </summary>
-    private static IEnumerable<string> Migrations(ShapeComparison shape, Git? git)
+    private static IEnumerable<string> Migrations(ShapeComparison shape, Git? git, ProgramReferences references)
     {
         if (!shape.Path.EndsWith(".schema.json", StringComparison.OrdinalIgnoreCase))
             yield break;
@@ -160,7 +160,17 @@ internal static class Check
             if (added.Count > 0)
                 yield return $"migrations added: {string.Join(", ", added)}";
         }
-        if (!JsonNode.DeepEquals(JsonNode.Parse(recorded[^1].Shape), shape.Now))
+        // With the versions of Piper's own tables this program's Piper.Data makes: upgrading Piper may need a migration too.
+        bool changed;
+        try
+        {
+            changed = database.Changed(references, WireShapes.Write(shape.Now));
+        }
+        catch (InvalidOperationException)
+        {
+            changed = !DatabaseMigrations.Same(recorded[^1].Shape, WireShapes.Write(shape.Now));
+        }
+        if (changed)
             yield return $"no migration reaches this shape yet: write it with 'piper db migrate'";
     }
 

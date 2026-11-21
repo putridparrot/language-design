@@ -721,8 +721,11 @@ an option to read and write it.
 
 **Status:** the database's shape, its checks and `piper db migrate` are done (parts 1 to 3, with the lock and the
 `migrate` clause; see [plugins](plugins.md#migrations-a-databases-shape-and-the-sql-that-changes-it)), and so is
-`piper check --since` (part 4) and `sql$` checked against the schema (part 5). Still to come: versioned events (part
-5), and migrating Piper's own tables when their shape changes between versions.
+`piper check --since` (part 4), and part 5: `sql$` checked against the schema, and versioned events, and so is
+migrating Piper's own tables in a program's shape (the outbox's and idempotency keys') when a later Piper changes them
+([plugins](plugins.md#migrations-a-databases-shape-and-the-sql-that-changes-it)). Still to come: the same for the
+tables stores make as they open (the event store's and cluster's), which would need a record of each one's version in
+the database, as they aren't in a shape.
 
 **The problem.** A release is safe to deploy only if everything it shares with what's already running still fits: old
 pods during a rolling update, clients already installed, messages already queued, workflows half way through, and the
@@ -847,7 +850,11 @@ break what's running, and the output doubles as the release's notes on what chan
   the model then shows at every query using the old name. As Rust's sqlx checks queries, but from the recorded shape
   rather than a live database. The SQL is parsed for its table and column references only (a light parser of
   Piper's own, for the dialects the providers speak), and a query it can't follow is left unchecked, not refused.
-- **Persisted actors' events, versioned.** A persisted actor's events are kept for ever, so changing an event record
+- ~~**Persisted actors' events, versioned.**~~ Done (see [plugins](plugins.md#keeping-state-persisted-actors)), in
+  both actor plugins, with each version recorded in `Name.events.json`. An upgrade declares the old version's field
+  types (`upgrade Placed version 1 (id: OrderId, total: Money) => …`), as they're how it's read, and snapshots needed
+  nothing new: one of other types is already discarded and rebuilt from the events. The design as written:
+  A persisted actor's events are kept for ever, so changing an event record
   silently breaks replaying the streams written before. Their shapes are recorded as the others' are, and an old
   version is upgraded explicitly:
 

@@ -165,7 +165,18 @@ public static class WireShapes
             if (Text(oldCall?["output"]) != Text(newCall["output"]))
                 breaks.Add($"{name} answers {Text(newCall["output"])}, but {callers} read {Text(oldCall?["output"])}");
         }
+        breaks.AddRange(BreakingTypes(before, now, callers));
+        return [.. breaks];
+    }
 
+    /// <summary>
+    /// What in <paramref name="now"/>'s records, enums and newtypes breaks <paramref name="callers"/> of
+    /// <paramref name="before"/> (<c>"events saved already"</c>, for a contract of a plugin's own): a field or variant
+    /// a side can't read, a type changed.
+    /// </summary>
+    public static ImmutableArray<string> BreakingTypes(JsonObject before, JsonObject now, string callers)
+    {
+        var breaks = new List<string>();
         var newTypes = now["types"] as JsonObject ?? new JsonObject();
         foreach (var (typeName, oldNode) in before["types"] as JsonObject ?? new JsonObject())
         {

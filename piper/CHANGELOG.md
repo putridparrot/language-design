@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- **Piper's own tables are migrated when a later Piper changes them.** The outbox's, idempotency keys' and
+  migrations' tables (Piper.Data's `PiperTables`) each keep every version they've had. `piper db migrate` records the
+  version of each in the shape a migration reaches (`"piper": {"outbox": 1}`; a migration from before names them as a
+  list, version 1), so after an upgrade the change is the next migration (`0004-piper-outbox-2`), and `piper db
+  status` and `piper check` say one is due. A migration of a version this Piper.Data doesn't have is an error. No table
+  has a second version yet; the tests use one of their own. `DeclaredDatabase.Changed` now takes the program's
+  references, as it needs its Piper.Data. Not yet: the event store's and cluster's tables, which their stores make as
+  they open.
+
+- **Versioned events for persisted actors:** `event Paid version 3 (…) { … }` and `upgrade Paid version 1 (pounds: int)
+  => Paid(pounds * 100, "GBP");`, in both actor plugins. An event after version 1 is saved with its version
+  (`"$version": 3`); replaying one of an older version runs its upgrades in turn, each making the next version. Each
+  version an actor reads is recorded in `Name.events.json` beside it, so changing an event in a way saved events
+  couldn't be read as (a new required field, a type changed, an event removed) is an error until it's a new version
+  with an upgrade, and removing an upgrade whose version may still be saved is an error too. `piper check` lists the
+  shape. The remote actors plugin no longer records events in `Name.shape.json`; a shape recorded with them
+  (`"Product events"`) reads as compatible, and the next build drops them.
+
+- **Fixed: an actor that can't replay its events hung its callers.** A persisted actor (in one process) whose replay
+  threw left every ask waiting for ever. Now each ask fails with why (`Till couldn't replay its events: …`), and the
+  error is written to standard error.
+
 - **`piper check <folder> [--since <ref>]`: one answer for a release.** Compares every shape the program records
   (apis, remote actors' and `messages` blocks' messages, workflows' steps, databases) with those checked in at a git
   tag, branch or commit, or with those on disk, without writing any. Each is listed as new, unchanged, compatible or

@@ -1446,9 +1446,18 @@ piper db status apps/tracker [--connection …]       # which migrations there a
   `tracker.db` had no `PiperIdempotency` table, and the baseline added it.
 - **Tests** can keep using `EnsureCreated`, which makes a database of the current shape. Piper's own tests check
   that applying every migration in turn makes the same schema as `EnsureCreated`.
+- **Piper's own tables have versions.** The outbox's, the idempotency keys' and the migrations' tables are
+  Piper.Data's, so a later Piper may change one. A migration records the version of each it makes
+  (`"piper": {"outbox": 1}`; one written before versions were recorded names them as a list, which is version 1), and
+  after upgrading Piper, `piper db migrate` (and `piper db status`, and `piper check`) see the change and write it as
+  the next migration (`0004-piper-outbox-2`), applied as any other. A migration of a version this Piper.Data doesn't
+  have (written by a later Piper) is an error. Piper changes its tables only in ways the release still running can use
+  (a table, an index, an optional column), so they need no expand-and-contract. No table has a second version yet;
+  Piper's tests check the mechanism with a table of their own.
 - **Not yet:** a column's type that migrations can't store (a list, a record) is a warning, and it's left out of the
-  shape. So is a table of a .NET type, whose fields the compiler can't see. Changes to Piper's own tables between Piper
-  versions aren't migrated yet.
+  shape. So is a table of a .NET type, whose fields the compiler can't see. The event store's and cluster's tables
+  (`PiperEvents`, `PiperSnapshots`, the members') aren't in a program's shape: they're made, whole, when their store
+  opens, so a later version of one won't reach a database that has it. The migrations table can't migrate itself.
 
 #### Checking a release: `piper check`
 
@@ -1819,9 +1828,27 @@ let tea = Shelf.Spawn(store, "tea");          // Spawn(system, name, store, …)
 - **Checked at compile time:** a handler assigning the state itself (rather than emitting), an `emit` of an event
   the actor doesn't have, an event's body that awaits or emits (replaying it would do that again), a persisted actor
   without events, events in an actor that isn't persisted, and state that isn't immutable values (as for `rollback`).
-- **Changing events:** across processes, the events are recorded in the actor's `Name.shape.json` with its
-  messages, so a change that old streams couldn't be read as (an event removed, a new field needed) is a breaking
-  change, reported as one.
+- **Changing events: versions and upgrades.** Events are kept for ever, and every later version of the program
+  replays them, so an event's fields can't simply change. Each version it reads is recorded in `Name.events.json`
+  beside the actor (in either actor plugin), and a change that events already saved couldn't be read as is an error:
+  a new field they don't have (unless it's optional: they read as `None`), a field of another type, a change to a type
+  they hold, or an event removed. To change one, give it a new version, and say how the old one is read:
+
+  ```piper
+  event Paid version 3 (pence: int, currency: string, note: string) { total += pence; }
+  upgrade Paid version 1 (pounds: int) => Paid(pounds * 100, "GBP");
+  upgrade Paid version 2 (pence: int, currency: string) => Paid(pence, currency, "");
+  ```
+
+  An upgrade takes the old version's fields, and the event's name makes the next version (in `upgrade Paid version 1`,
+  `Paid(…)` is version 2), so each is written against the version after it, and replaying runs them in turn: a
+  version 1 event becomes 2, then 3. An event of version 2 or later is saved with it (`{"kind": "Paid", "$version": 3,
+  …}`); one without is version 1, so streams saved before versions existed read as they are. The compiler checks that
+  each upgrade's version is before the event's, that each version's upgrade reaches the next, and, against the
+  recorded history, that every version ever recorded is still read: removing an upgrade while events of its version
+  may be saved is an error. An event saved by a later program than this one (a version this one doesn't know) isn't
+  guessed at: the actor fails to start, and each ask fails saying so, as it does for any event it can't replay.
+  Snapshots need no versions: one kept as other types than the state's now is ignored, and the events replayed.
 - **Where events are kept is configuration:** an actor takes an `IEventStore`, and which one is the app's choice at
   startup, not code (see [Providers](#providers-chosen-by-configuration)):
 
@@ -1837,7 +1864,8 @@ let tea = Shelf.Spawn(store, "tea");          // Spawn(system, name, store, …)
   event is a row keyed by its stream and place in it, so two writers racing for one stream can't both succeed, even on
   two machines: the second gets `EventStreamConflictException`. A test, or a program wanting its own, passes a store
   directly: `Shelf.Spawn(MemoryEventStore(), "tea")`, or `DatabaseEventStore.Open(options)`.
-- **Not yet:** snapshots for long streams (every event is replayed as the actor starts).
+- **Not yet:** a field with a default (`note: string = ""`) added to an event counts as breaking, as saved events
+  don't have it; make it optional, or a new version. An upgrade can only make the next version of its own event.
 
 ### `actor` across processes and machines
 

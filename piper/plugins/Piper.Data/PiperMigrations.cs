@@ -341,7 +341,7 @@ public static class PiperMigrations
         using var transaction = connection.BeginTransaction();
         if (!Exists(connection, transaction, provider, "TABLE", Table))
         {
-            foreach (var (sql, _) in Statements(PiperSchema.Script(null, """{ "piper": ["migrations"] }""", provider)))
+            foreach (var (sql, _) in Statements(PiperSchema.Script(null, PiperTables.Stamp("""{ "piper": ["migrations"] }"""), provider)))
                 Execute(connection, transaction, sql);
         }
         transaction.Commit();

@@ -562,6 +562,126 @@ public class ActorPluginTests
             output);
     }
 
+    /// <summary>
+    /// An event's versions: saved with its version when that's after 1, and an older one read through its upgrades,
+    /// in turn (1 to 2 to 3), whichever form it was saved in; one saved by a later program is an error, not a guess.
+    /// </summary>
+    [Fact]
+    public void A_persisted_actor_upgrades_events_saved_as_older_versions()
+    {
+        var output = Run("""
+            using System;
+            using System.Linq;
+            using Piper.Runtime;
+
+            actor Till(id: string) persisted by id {
+                mut total = 0;
+                mut log = "";
+                event Paid version 3 (pence: int, currency: string, note: string) { total += pence; log = $"{log}[{pence} {currency} {note}]"; }
+                event Opened version 2 (by: string) { log = $"{log}(opened by {by})"; }
+                upgrade Paid version 1 (pounds: int) => Paid(pounds * 100, "GBP");
+                upgrade Paid version 2 (pence: int, currency: string) => Paid(pence, currency, "-");
+                upgrade Opened version 1 () => Opened("nobody");
+                on Pay(pence: int, currency: string) { emit Paid(pence, currency, "new"); }
+                on Show() => string { $"{total}: {log}" }
+            }
+
+            async fn Main() {
+                let store = MemoryEventStore();
+                await store.AppendAsync("Till/t", 0, [
+                    "\"Opened\"",
+                    "{\"kind\":\"Paid\",\"pounds\":2}",
+                    "{\"kind\":\"Paid\",\"$version\":2,\"pence\":50,\"currency\":\"EUR\"}",
+                    "{\"kind\":\"Paid\",\"$version\":3,\"pence\":7,\"currency\":\"USD\",\"note\":\"tip\"}",
+                ]);
+                let till = Till.Spawn(store, "t");
+                till.Pay(1, "GBP");
+                Print(await till.Show());
+                await till.Stop();
+                Print((await store.LoadAsync("Till/t")).Last());
+
+                let later = MemoryEventStore();
+                await later.AppendAsync("Till/t", 0, ["{\"kind\":\"Paid\",\"$version\":4,\"pence\":1}"]);
+                try {
+                    Print(await Till.Spawn(later, "t").Show());
+                } catch (e: Exception) {
+                    Print(e.Message.Contains("version 4, saved by a later version of the program") ? "refused" : e.Message);
+                }
+            }
+            """);
+        Assert.Equal(
+            "258: (opened by nobody)[200 GBP -][50 EUR -][7 USD tip][1 GBP new]\n" +
+            "{\"kind\":\"Paid\",\"pence\":1,\"currency\":\"GBP\",\"note\":\"new\",\"$version\":3}\n" +
+            "refused\n",
+            output);
+    }
+
+    /// <summary>
+    /// A persisted actor's events are recorded, each version it reads, in Name.events.json: changing an event's fields
+    /// in a way saved events couldn't be read as is an error, until it's a new version with an upgrade from the old;
+    /// and dropping that upgrade later is an error too, as events of the old version may still be saved.
+    /// </summary>
+    [Fact]
+    public void A_persisted_actors_events_are_recorded_with_their_versions()
+    {
+        var folder = Directory.CreateTempSubdirectory("piper-events").FullName;
+        try
+        {
+            CompilationResult CompileIn(string events, WireShapeMode mode = WireShapeMode.Record)
+            {
+                var text = $"fn Main() {{}}\nactor Till(id: string) persisted by id {{\nmut total = 0;\n{events}\non Get() => int {{ total }}\n}}";
+                var path = Path.Combine(folder, "till.piper");
+                File.WriteAllText(path, text);
+                return Compilation.Compile([new SourceText(text, path)], new CompilationOptions { Plugins = Actors.Value, WireShapes = mode });
+            }
+            string Errors(CompilationResult result) => string.Join("\n", result.FormattedDiagnostics);
+
+            var first = CompileIn("event Paid(pounds: int) { total += pounds * 100; }");
+            Assert.True(first.Success, Errors(first));
+            var recorded = File.ReadAllText(Path.Combine(folder, "Till.events.json"));
+            Assert.Contains("\"Paid version 1\"", recorded);
+
+            Assert.Contains("Paid version 1 has a new field, 'currency' (string), which events saved already don't have",
+                Errors(CompileIn("event Paid(pounds: int, currency: string) { total += pounds * 100; }")));
+            Assert.Contains("Paid version 1 has 'pounds' as string, but events saved already have int",
+                Errors(CompileIn("event Paid(pounds: string) { total += 1; }")));
+            Assert.Contains("Paid events of version 1 may be saved already, but nothing reads them now; add 'upgrade Paid version 1",
+                Errors(CompileIn("event Paid version 2 (pence: int, currency: string) { total += pence; }")));
+            Assert.Contains("Till has no event 'Paid' now", Errors(CompileIn("event Taken(pence: int) { total += pence; }")));
+            // An optional field is read as None from the events saved without it.
+            Assert.True(CompileIn("event Paid(pounds: int, note: string?) { total += pounds * 100; }", WireShapeMode.Check).Success);
+
+            var upgraded = CompileIn("event Paid version 2 (pence: int, currency: string) { total += pence; }\nupgrade Paid version 1 (pounds: int) => Paid(pounds * 100, \"GBP\");");
+            Assert.True(upgraded.Success, Errors(upgraded));
+            Assert.Contains("\"Paid version 2\"", File.ReadAllText(Path.Combine(folder, "Till.events.json")));
+            Assert.Contains("Paid events of version 1 may be saved already",
+                Errors(CompileIn("event Paid version 2 (pence: int, currency: string) { total += pence; }")));
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("event Added(k: int) { n += k; }\nupgrade Added version 1 (k: int) => Added(k);", "Added version 1 (k",
+        "'Added' is version 1, so there's nothing older to upgrade")]
+    [InlineData("event Added version 2 (k: int) { n += k; }\nupgrade Added version 2 (k: int) => Added(k);", "Added version 2 (k: int) =>",
+        "'Added' is version 2, so an upgrade reads an older one")]
+    [InlineData("event Added version 3 (k: int) { n += k; }\nupgrade Added version 1 (k: int) => Added(k);", "Added version 1",
+        "there's no 'upgrade Added version 2 (…) => Added(…);'")]
+    [InlineData("event Added version 2 (k: int) { n += k; }\nupgrade Lost version 1 (k: int) => Lost(k);", "Lost version 1",
+        "A has no event 'Lost' to upgrade")]
+    [InlineData("event Added version 2 (k: int) { n += k; }\nupgrade Added version 1 (k: int) => Added(k);\nupgrade Added version 1 (k: int) => Added(k);", "Added version 1 (k: int) => Added(k);\non",
+        "A already upgrades 'Added' version 1")]
+    [InlineData("event Added version 0 (k: int) { n += k; }", "0 (k", "A version is a whole number from 1")]
+    public void An_events_upgrades_are_checked(string events, string at, string message)
+    {
+        var text = $"fn Main() {{}}\nactor A(id: string) persisted by id {{\nmut n = 0;\n{events}\non Add(k: int) {{ emit Added(k); }}\non Get() => int {{ n }}\n}}";
+        var error = Assert.Single(Compile(text).Diagnostics, d => d.Message.Contains(message));
+        Assert.Equal(text.IndexOf(at, StringComparison.Ordinal), error.Span.Start);
+    }
+
     [Theory]
     [InlineData("mut n = 0;\nevent Added(k: int) { n += k; }\non Add(k: int) { n += k; }", "n += k; }\non Get",
         "A persisted actor's state changes only through its events")]

@@ -68,7 +68,8 @@ public sealed class RemoteActorPlugin : IPiperPlugin
         foreach (var parameter in clashing)
             p.Report(parameter.Span, $"'Spawn' takes '{parameter.Name.Text}' itself, so the actor's own parameter needs another name.");
         p.Data = new ActorData(actor.Name, actor.Failure, [.. actor.State.OfType<VariableDeclarationSyntax>().Select(v => v.Name.Text)],
-            actor.PersistedBy is not null);
+            actor.PersistedBy is not null)
+        { Versions = ActorSyntax.Versions(actor) };
         return clashing.Count == 0 ? Expand(p, actor) : [];
     }
 
@@ -121,12 +122,25 @@ public sealed class RemoteActorPlugin : IPiperPlugin
                     reply?.ToString() ?? "nothing (a tell)",
                     reply is null ? [] : [reply]);
             }).ToList();
-            // A persisted actor's saved events are read back by later versions of it: one that old streams can't be read
-            // as (a variant gone, a new field needed) is a breaking change, as a message is.
-            if (generatedEnums.FirstOrDefault(e => e.Name == actor.Name + "Event") is { } events)
-                operations.Add(new WireOperation($"{actor.Name} events", $"{actor.Name} events", [("event", events)], null, []));
-            analysis.CheckWireShape(expansion.File, actor.Declaration.Name.Span, actor.Name, operations);
+            // A persisted actor's events are recorded in a shape of their own (Name.events.json), with their versions. A
+            // shape recorded when they were among its messages ("Product events") has them moved, not removed.
+            var shape = WireShapes.Describe(actor.Name, operations);
+            var span = actor.Declaration.Name.Span;
+            analysis.CheckRecordedShape(expansion.File, span, actor.Name, $"{actor.Name}.shape.json", shape,
+                before => WireShapes.Breaking(WithoutEvents(before, actor.Name), shape).Select(change => (span, change)));
         }
+        ActorSyntax.CheckEventShapes(analysis);
+    }
+
+    /// <summary>A shape recorded before events had their own, without its <c>"Product events"</c> call and the event enum it sent.</summary>
+    private static System.Text.Json.Nodes.JsonObject WithoutEvents(System.Text.Json.Nodes.JsonObject before, string actor)
+    {
+        if (before["calls"] is not System.Text.Json.Nodes.JsonObject calls || !calls.ContainsKey($"{actor} events"))
+            return before;
+        var copy = (System.Text.Json.Nodes.JsonObject)before.DeepClone();
+        ((System.Text.Json.Nodes.JsonObject)copy["calls"]!).Remove($"{actor} events");
+        (copy["types"] as System.Text.Json.Nodes.JsonObject)?.Remove($"{actor}Event");
+        return copy;
     }
 
     private static ImmutableArray<DeclarationSyntax> Expand(PluginParser p, ActorDeclaration declaration)

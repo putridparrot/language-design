@@ -114,8 +114,8 @@ public static class PiperSchema
 
     internal sealed record Table(string Name, List<string> Key, bool Generated, List<Column> Columns, List<List<string>> Indexes);
 
-    /// <summary>A recorded shape: its tables, and Piper's own tables it has (<c>outbox</c>, <c>idempotency</c>).</summary>
-    internal sealed record Shape(string Text, Dictionary<string, Table> Tables, HashSet<string> Piper)
+    /// <summary>A recorded shape: its tables, and Piper's own tables it has (<c>outbox</c>, <c>idempotency</c>), each at its version (<see cref="PiperTables"/>).</summary>
+    internal sealed record Shape(string Text, Dictionary<string, Table> Tables, Dictionary<string, int> Piper)
     {
         public static Shape Parse(string json)
         {
@@ -140,8 +140,7 @@ public static class PiperSchema
                     columns,
                     [.. (table["indexes"] as JsonArray ?? []).Select(i => (i as JsonArray ?? []).Select(c => (string)c!).ToList())]);
             }
-            var piper = (root["piper"] as JsonArray ?? []).Select(p => (string)p!).ToHashSet();
-            return new Shape(json, tables, piper);
+            return new Shape(json, tables, PiperTables.Recorded(root["piper"]));
         }
     }
 
@@ -196,12 +195,9 @@ public static class PiperSchema
                         entity.HasIndex([.. index]);
                 });
             }
-            if (shape.Piper.Contains("outbox"))
-                DatabaseOutbox.Configure(model);
-            if (shape.Piper.Contains("idempotency"))
-                DatabaseIdempotency.Configure(model);
-            if (shape.Piper.Contains("migrations"))
-                PiperMigrations.Configure(model);
+            // Piper's own tables as the versions the shape records, so a later version's changes are a migration too.
+            foreach (var (table, version) in shape.Piper.OrderBy(p => p.Key, StringComparer.Ordinal))
+                PiperTables.Configure(model, table, version);
             PiperModel.Configure(model);
         }
     }

@@ -1,0 +1,66 @@
+{
+  "name": "Jobs",
+  "calls": {
+    "Cancelled version 1": {
+      "name": "Cancelled version 1",
+      "inputs": {
+        "at": "DateTime"
+      },
+      "output": null
+    },
+    "Completed version 1": {
+      "name": "Completed version 1",
+      "inputs": {
+        "at": "DateTime",
+        "tally": "Tally"
+      },
+      "output": null
+    },
+    "Started version 1": {
+      "name": "Started version 1",
+      "inputs": {
+        "at": "DateTime",
+        "spec": "JobSpec"
+      },
+      "output": null
+    },
+    "Taken version 1": {
+      "name": "Taken version 1",
+      "inputs": {
+        "at": "DateTime",
+        "worker": "string"
+      },
+      "output": null
+    }
+  },
+  "types": {
+    "JobSpec": {
+      "sent": "request",
+      "kind": "record",
+      "fields": {
+        "chunks": "int",
+        "scenarios": "int",
+        "seed": "int"
+      }
+    },
+    "Sample": {
+      "sent": "request",
+      "kind": "record",
+      "fields": {
+        "counts": "ImmutableList<int>",
+        "total": "double"
+      }
+    },
+    "Tally": {
+      "sent": "request",
+      "kind": "record",
+      "fields": {
+        "job": "int",
+        "chunk": "int",
+        "worker": "string",
+        "sample": "Sample",
+        "milliseconds": "long"
+      }
+    }
+  }
+}

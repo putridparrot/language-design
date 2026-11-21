@@ -1,13 +1,6 @@
 {
   "name": "Product",
   "calls": {
-    "Product events": {
-      "name": "Product events",
-      "inputs": {
-        "event": "ProductEvent"
-      },
-      "output": null
-    },
     "Product.Receive": {
       "name": "Product.Receive",
       "inputs": {
@@ -37,18 +30,6 @@
         "onHand": "int",
         "reserved": "int",
         "node": "string"
-      }
-    },
-    "ProductEvent": {
-      "sent": "request",
-      "kind": "enum",
-      "variants": {
-        "Received": {
-          "quantity": "int"
-        },
-        "Reserved": {
-          "quantity": "int"
-        }
       }
     },
     "Reservation": {
