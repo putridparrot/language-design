@@ -93,7 +93,7 @@ public sealed partial class CSharpEmitter
         _topLevelNames =
         [
             .. program.Types.Select(t => t.Name), .. program.BuiltinTypes.Select(t => t.Name),
-            .. program.Functions.Select(f => f.Symbol.Name), EntryPointClassName,
+            .. program.Functions.Select(f => f.Symbol.Name), .. program.Constants.Select(c => c.Name), EntryPointClassName,
             // The entry point's own Main method would hide a module class of that name.
             "Main",
         ];
@@ -128,7 +128,7 @@ public sealed partial class CSharpEmitter
     {
         RecordSymbol record => record.Fields.Select(f => f.Name),
         ClassSymbol @class => @class.Fields.Concat(@class.StaticFields).Select(f => f.Name)
-            .Concat(@class.Events.Select(e => e.Name)).Concat(@class.Parameters.Select(p => p.Name)),
+            .Concat(@class.Constants.Select(c => c.Name)).Concat(@class.Events.Select(e => e.Name)).Concat(@class.Parameters.Select(p => p.Name)),
         EnumSymbol @enum => @enum.Variants.Select(v => v.Name),
         _ => [],
     };
@@ -217,7 +217,7 @@ public sealed partial class CSharpEmitter
             var functions = _program.Functions.Where(f => f.Symbol.DeclaringFile == file).ToList();
             var moduleFunctions = functions.Where(f => !InFileClass(f.Symbol)).ToList();
             var fileFunctions = functions.Where(f => InFileClass(f.Symbol)).ToList();
-            if (moduleFunctions.Count > 0 || file == _runtimeFile)
+            if (moduleFunctions.Count > 0 || file == _runtimeFile || ModuleConstants(file).Count > 0)
                 sections.Add(() => EmitModuleClass(file, moduleFunctions, fileClass: false));
             if (fileFunctions.Count > 0)
                 sections.Add(() => EmitModuleClass(file, fileFunctions, fileClass: true));
@@ -271,11 +271,16 @@ public sealed partial class CSharpEmitter
     private void EmitModuleClass(SourceText file, List<BoundFunction> functions, bool fileClass)
     {
         // Public only when it holds a public function, so a library exports no empty class.
-        var access = fileClass ? "file" : functions.Any(f => f.Symbol.IsExported) ? "public" : "internal";
+        var constants = fileClass ? [] : ModuleConstants(file);
+        var access = fileClass ? "file" : functions.Any(f => f.Symbol.IsExported) || constants.Any(c => c.IsExported) ? "public" : "internal";
         _writer.WriteLine($"{access} static class {ModuleClassName(file, fileClass)}");
         _writer.OpenBrace();
         _moduleFile = file;
         _inFileClass = fileClass;
+        foreach (var constant in constants)
+            EmitConstant(constant, constant.IsExported ? "public" : "internal");
+        if (constants.Count > 0 && functions.Count > 0)
+            _writer.WriteLine();
         for (int i = 0; i < functions.Count; i++)
         {
             if (i > 0)
@@ -285,6 +290,19 @@ public sealed partial class CSharpEmitter
         _moduleFile = null;
         _inFileClass = false;
         _writer.CloseBrace();
+    }
+
+    /// <summary>A file's constants that C# may name. Piper's own uses hold their values, so a private one needn't be written.</summary>
+    private List<ConstantSymbol> ModuleConstants(SourceText file) =>
+        [.. _program.Constants.Where(c => c.DeclaringFile == file && !c.IsPrivate)];
+
+    /// <summary>A C# <c>const</c>; a duration is a <c>static readonly</c> field, as C# has no TimeSpan constants.</summary>
+    private void EmitConstant(ConstantSymbol constant, string access)
+    {
+        EmitDocumentation(constant, []);
+        EmitAttributes(constant);
+        var modifier = constant.Value is BoundLiteralExpression { Value: TimeSpan } ? "static readonly" : "const";
+        _writer.WriteLine($"{access} {modifier} {TypeName(constant.Type)} {Escape(constant.Name)} = {Expr(constant.Value!, AssignmentPrecedence)};");
     }
 
     /// <summary>Writes <paramref name="body"/> inside a <c>namespace</c> block (none for the global namespace).</summary>
@@ -562,6 +580,9 @@ public sealed partial class CSharpEmitter
         var firstStored = @class.Fields.FirstOrDefault(f => f.Initializer is not null);
         if (checks.Length > 0 && firstStored is null)
             _writer.WriteLine($"private readonly bool __PiperInvariants = {checks};");
+        var constants = @class.Constants.Where(c => c.IsPublic || c.IsProtected).ToList();
+        foreach (var constant in constants)
+            EmitConstant(constant, constant.IsPublic ? "public" : "protected");
         // What stores a value first (fields and automatic properties), static ones first, in order: C# runs their
         // initializers in the order they're written.
         var stored = @class.StaticFields.Concat(@class.Fields).Where(f => f.Initializer is not null).ToList();
@@ -593,7 +614,7 @@ public sealed partial class CSharpEmitter
         var properties = @class.StaticFields.Concat(@class.Fields).Where(f => f.IsProperty && f.Initializer is null).ToList();
         // A property an extend block adds to the class has no field; it's emitted with the methods.
         var methods = MethodsFrom(@class, file).Where(m => !m.IsHidden || (PropertyOf(m) is not null && !@class.Fields.Concat(@class.StaticFields).Any(f => f.Getter == m))).ToList();
-        bool any = stored.Count > 0 || !@class.Events.IsEmpty;
+        bool any = constants.Count > 0 || stored.Count > 0 || !@class.Events.IsEmpty;
         foreach (var property in properties)
         {
             if (any)
@@ -1663,7 +1684,11 @@ public sealed partial class CSharpEmitter
 
         var (text, precedence) = expression switch
         {
-            BoundLiteralExpression literal => (Literal(literal.Value), PrimaryPrecedence),
+            // C# has no literals of the small integer types; a constant of one is a cast.
+            BoundLiteralExpression { Value: byte or sbyte or short or ushort } small =>
+                ($"({TypeName(small.Type)})({Literal(small.Value)})", UnaryPrecedence),
+            // A constant may be negative: `-5`, which is an operator to C#.
+            BoundLiteralExpression literal when Literal(literal.Value) is var written => (written, written[0] == '-' ? UnaryPrecedence : PrimaryPrecedence),
             BoundTypeOfExpression typeOf => ($"typeof({TypeName(typeOf.Operand)})", PrimaryPrecedence),
             BoundVariableExpression { Variable.Kind: VariableKind.This } => (_thisName, PrimaryPrecedence),
             BoundVariableExpression { Variable.Kind: VariableKind.Base } => ("base", PrimaryPrecedence),
@@ -2389,11 +2414,13 @@ public sealed partial class CSharpEmitter
         int i => i.ToString(CultureInfo.InvariantCulture),
         long l => l.ToString(CultureInfo.InvariantCulture) + "L",
         uint u => u.ToString(CultureInfo.InvariantCulture) + "u",
-        // Only as pattern constants, where C# converts the integer literal to the matched type.
+        // In a pattern, C# converts the integer literal to the matched type; elsewhere it's cast (see Expr).
         byte or sbyte or short or ushort => System.Convert.ToString(value, CultureInfo.InvariantCulture)!,
         ulong u => u.ToString(CultureInfo.InvariantCulture) + "UL",
+        float f when !float.IsFinite(f) => float.IsNaN(f) ? "float.NaN" : f > 0 ? "float.PositiveInfinity" : "float.NegativeInfinity",
         float f => f.ToString("R", CultureInfo.InvariantCulture) + "f",
         decimal m => m.ToString(CultureInfo.InvariantCulture) + "m",
+        double d when !double.IsFinite(d) => double.IsNaN(d) ? "double.NaN" : d > 0 ? "double.PositiveInfinity" : "double.NegativeInfinity",
         double d => DoubleLiteral(d),
         bool b => b ? "true" : "false",
         char c => c == '\'' ? "'\\''" : c == '"' ? "'\"'" : $"'{EscapeString(c.ToString(), interpolated: false)}'",

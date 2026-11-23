@@ -169,7 +169,7 @@ public sealed partial class Binder
 
     private Binder(DiagnosticBag diagnostics, SemanticModel? semantic, ClrTypeIndex clr)
     {
-        _diagnostics = diagnostics;
+        _diagnostics = _programDiagnostics = diagnostics;
         _semantic = semantic;
         (_option, _result) = EnumSymbol.CreateBuiltins();
 
@@ -284,6 +284,7 @@ public sealed partial class Binder
         // Aliases name types, generic ones included, so they come once types and their parameters are declared, and
         // before anything (bounds included) may use them.
         DeclareTypeAliases();
+        var constants = DeclareConstants(types.OfType<ClassSymbol>());
         foreach (var (definition, syntax, scope) in typeParameterSyntax)
         {
             InFile(FileOf(definition));
@@ -306,7 +307,7 @@ public sealed partial class Binder
             if (type is not NamedTypeDefinition definition)
                 continue;
             InFile(FileOf(definition));
-            WithScope(TypeParameterScope(definition, _file), () =>
+            WithScope(definition is ClassSymbol scoped ? ClassScope(scoped, _file) : TypeParameterScope(definition, _file), () =>
             {
                 if (definition is RecordSymbol record)
                     record.Fields = BindFields(record.Declaration.Fields, record.Name);
@@ -361,6 +362,8 @@ public sealed partial class Binder
             }
         }
 
+        BindConstants();
+
         // Field initializers can call functions, so classes' members come once every function is declared.
         BindClassMembers(types.OfType<ClassSymbol>());
         CheckClassMethods(types.OfType<ClassSymbol>());
@@ -411,6 +414,7 @@ public sealed partial class Binder
         }
 
         BindAttributes(types, functions.Concat(methods));
+        BindConstantAttributes(constants.Concat(types.OfType<ClassSymbol>().SelectMany(c => c.Constants)));
         BindContracts(types, functions.Concat(methods));
         CheckExposure(types, functions, methods);
 
@@ -446,6 +450,7 @@ public sealed partial class Binder
         {
             ExternalConformances = [.. _externalConformances.SelectMany(e => e.Value.Select(c => new ExternalConformance(e.Key, c.Trait, c.File)))],
             Tests = boundTests,
+            Constants = constants,
         };
     }
 
@@ -1799,7 +1804,7 @@ public sealed partial class Binder
     {
         // A type position looks past functions and variables of the name, to a type further out.
         if (syntax.Qualifier.IsEmpty)
-            return _scope.Lookup(syntax.Name.Text, symbol => symbol is not (FunctionSymbol or VariableSymbol));
+            return _scope.Lookup(syntax.Name.Text, symbol => symbol is not (FunctionSymbol or VariableSymbol or ConstantSymbol));
 
         if (_scope.Lookup(syntax.Qualifier[0].Text) is not NamespaceSymbol @namespace)
         {
@@ -1933,7 +1938,7 @@ public sealed partial class Binder
         foreach (var local in syntax.Statements.OfType<LocalFunctionStatementSyntax>())
             DeclareLocalFunction(local);
 
-        var statements = syntax.Statements.Select(BindStatement).ToImmutableArray();
+        var statements = syntax.Statements.Select(s => (Syntax: s, Bound: BindStatement(s))).Where(s => s.Syntax is not ConstStatementSyntax).Select(s => s.Bound).ToImmutableArray();
         var trailing = syntax.Trailing is null ? null : BindExpression(syntax.Trailing, expected);
 
         _scope = outer;
@@ -1966,6 +1971,7 @@ public sealed partial class Binder
     private BoundStatement BindStatementCore(StatementSyntax syntax) => syntax switch
     {
         VariableDeclarationSyntax s => BindVariableDeclaration(s),
+        ConstStatementSyntax s => BindConstStatement(s),
         LetElseStatementSyntax s => BindLetElse(s),
         DeconstructionDeclarationSyntax s => BindDeconstructionDeclaration(s),
         ExpressionStatementSyntax s => new BoundExpressionStatement(BindExpression(s.Expression)),

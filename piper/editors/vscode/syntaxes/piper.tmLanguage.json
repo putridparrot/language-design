@@ -220,6 +220,7 @@
         { "name": "keyword.control.piper", "match": "^\\s*\\block\\b(?=\\s*[\\w(])" },
         { "name": "keyword.declaration.piper", "match": "^\\s*\\b(type|newtype|event)\\b(?=\\s+\\w)" },
         { "name": "storage.modifier.piper", "match": "\\bparams\\b(?=\\s+\\w+\\s*:)" },
+        { "name": "keyword.declaration.piper", "match": "\\bconst\\b(?=\\s+[A-Za-z_])" },
         { "name": "keyword.declaration.piper", "match": "\\b(fn|record|struct|class|enum|trait|extend|namespace|using|let|mut|test|operator|requires)\\b" },
         { "name": "storage.modifier.piper", "match": "\\b(static|private|public|protected|async|out|ref|abstract|sealed|virtual|override)\\b" },
         { "name": "keyword.operator.word.piper", "match": "\\bis\\b" },

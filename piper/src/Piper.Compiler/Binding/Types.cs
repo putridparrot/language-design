@@ -246,6 +246,9 @@ public sealed class ClassSymbol : NamedTypeDefinition
     /// <summary>Its `static` fields, in the order they're declared (and initialized).</summary>
     public ImmutableArray<FieldSymbol> StaticFields { get; internal set; } = [];
 
+    /// <summary>Its `const` members.</summary>
+    public ImmutableArray<ConstantSymbol> Constants { get; internal set; } = [];
+
     /// <summary>The class it derives from: a <see cref="ClassSymbol"/>, a .NET class, or null for <c>object</c>.</summary>
     public TypeSymbol? Base { get; internal set; }
 

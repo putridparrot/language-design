@@ -11,6 +11,7 @@ public static class SymbolDisplay
 
     private static string DescribeCore(Symbol symbol) => symbol switch
     {
+        ConstantSymbol c => $"const {c.Name}: {c.Type}{(c.Value is BoundLiteralExpression literal ? $" = {ConstantText(literal.Value)}" : "")}",
         VariableSymbol { Kind: VariableKind.Parameter } v => $"{v.Name}: {v.Type}",
         VariableSymbol { Kind: VariableKind.This } v => $"this: {v.Type}",
         VariableSymbol { Kind: VariableKind.StaticField } v => $"static {(v.IsMutable ? "mut" : "let")} {v.Name}: {v.Type}",
@@ -42,6 +43,14 @@ public static class SymbolDisplay
         TypeSymbol type => type.Name,
         NamespaceSymbol n => $"namespace {n.FullName}",
         _ => symbol.Name,
+    };
+
+    private static string ConstantText(object value) => value switch
+    {
+        string s => $"\"{s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n")}\"",
+        char c => $"'{c}'",
+        bool b => b ? "true" : "false",
+        _ => Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture)!,
     };
 
     private static string Access(bool isPublic, bool isProtected) => isPublic ? "" : isProtected ? "protected " : "private ";

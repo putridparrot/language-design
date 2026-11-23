@@ -46,6 +46,9 @@ public sealed class BoundProgram(
 
     public FunctionSymbol? Main { get; } = main;
 
+    /// <summary>Top-level `const` declarations. Their uses hold their values; these are for tooling, and C# that names them.</summary>
+    public ImmutableArray<ConstantSymbol> Constants { get; init; } = [];
+
     /// <summary>Traits implemented by builtin, .NET and runtime types, which are boxed to be used as the trait.</summary>
     public ImmutableArray<ExternalConformance> ExternalConformances { get; init; } = [];
 
@@ -54,6 +57,21 @@ public sealed class BoundProgram(
 
     /// <summary>Methods left out of the build, as only tests use them (<see cref="TestOnlyCode"/>): not emitted with their types.</summary>
     public ImmutableHashSet<MethodSymbol> OmittedMethods { get; init; } = [];
+
+    /// <summary>The program with only the constants that C# outside it may name: Piper's own uses hold their values.</summary>
+    public BoundProgram WithConstantsFor(ProgramRoots roots) =>
+        new(Files, FileNamespaces, Types, BuiltinTypes, Functions, Methods, Main)
+        {
+            ExternalConformances = ExternalConformances,
+            Tests = Tests,
+            OmittedMethods = OmittedMethods,
+            Constants = roots switch
+            {
+                ProgramRoots.Visible => Constants,
+                ProgramRoots.Exported => [.. Constants.Where(c => c.IsExported)],
+                _ => [],
+            },
+        };
 
     /// <summary>The program with its tests added to its functions, so they're emitted (each marked with PiperTestAttribute).</summary>
     public BoundProgram WithTestsAsFunctions() =>

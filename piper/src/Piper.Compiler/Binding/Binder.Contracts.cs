@@ -48,7 +48,7 @@ public sealed partial class Binder
         foreach (var @class in types.OfType<ClassSymbol>().Where(c => !c.Declaration.Requires.IsEmpty))
         {
             InFile(FileOf(@class));
-            var statics = new Scope(TypeParameterScope(@class, _file));
+            var statics = new Scope(ClassScope(@class, _file));
             foreach (var field in @class.StaticFields)
                 statics.TryDeclare(StaticFieldVariable(field, @class.SelfType));
             // Instance methods too, so calling one is reported as needing an instance rather than as unknown.

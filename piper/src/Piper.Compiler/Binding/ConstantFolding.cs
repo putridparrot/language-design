@@ -42,6 +42,88 @@ public static class ConstantFolding
     };
 
     /// <summary>
+    /// The value of a constant expression of any type: numbers, as <see cref="Value"/>; chars, bools, strings (joined
+    /// with `+` or interpolated) and durations; comparisons and logic on them. Null if it isn't constant.
+    /// </summary>
+    public static object? Constant(BoundExpression expression)
+    {
+        switch (expression)
+        {
+            case BoundLiteralExpression literal:
+                return literal.Value;
+            case BoundClrMemberExpression { Receiver: null, Member: FieldInfo { IsLiteral: true } field }:
+                return field.GetRawConstantValue();
+            case BoundConversionExpression conversion:
+                return Constant(conversion.Expression) is { } converted ? ConvertTo(converted, conversion.Type) : null;
+            case BoundCastExpression cast:
+                return Constant(cast.Operand) is { } operand ? ConvertTo(operand, cast.Type) : null;
+            case BoundUnaryExpression { Operator: BoundUnaryOperatorKind.LogicalNot } not:
+                return Constant(not.Operand) is bool b ? !b : null;
+            case BoundUnaryExpression { Operator: BoundUnaryOperatorKind.Negate } negate when Constant(negate.Operand) is { } negated:
+                return IsNumber(negated) && Negate(negated, out var negative) == Failure.None ? negative : null;
+            case BoundInterpolatedStringExpression interpolated:
+                return interpolated.Parts.All(p => Constant(p) is string) ? string.Concat(interpolated.Parts.Select(p => (string)Constant(p)!)) : null;
+            case BoundBinaryExpression binary:
+            {
+                if (Constant(binary.Left) is not { } left || Constant(binary.Right) is not { } right)
+                    return null;
+                switch (left, right)
+                {
+                    case (string a, string c) when binary.Operator == BoundBinaryOperatorKind.Add:
+                        return a + c;
+                    case (bool a, bool c):
+                        return binary.Operator switch
+                        {
+                            BoundBinaryOperatorKind.LogicalAnd or BoundBinaryOperatorKind.BitwiseAnd => a && c,
+                            BoundBinaryOperatorKind.LogicalOr or BoundBinaryOperatorKind.BitwiseOr => a || c,
+                            BoundBinaryOperatorKind.ExclusiveOr or BoundBinaryOperatorKind.NotEquals => a != c,
+                            BoundBinaryOperatorKind.Equals => a == c,
+                            _ => null,
+                        };
+                }
+                return binary.Operator switch
+                {
+                    BoundBinaryOperatorKind.Equals or BoundBinaryOperatorKind.NotEquals or BoundBinaryOperatorKind.Less or BoundBinaryOperatorKind.LessOrEqual
+                        or BoundBinaryOperatorKind.Greater or BoundBinaryOperatorKind.GreaterOrEqual => Compare(binary.Operator, left, right),
+                    _ when IsNumber(left) && IsNumber(right) => Binary(binary.Operator, left, right, out var result) == Failure.None ? result : null,
+                    _ => null,
+                };
+            }
+            default:
+                return Value(expression);
+        }
+
+        static object? ConvertTo(object value, TypeSymbol type)
+        {
+            if (ClrTypes.ToClr(type) == value.GetType())
+                return value;
+            return Cast(value, type, out var result) == Failure.None ? result : null;
+        }
+    }
+
+    /// <summary>C#'s comparison operators on two constants of one type (so NaN equals nothing, itself included).</summary>
+    private static object? Compare(BoundBinaryOperatorKind kind, object left, object right)
+    {
+        if (left.GetType() != right.GetType())
+            return null;
+        if (left is double.NaN or float.NaN || right is double.NaN or float.NaN)
+            return kind == BoundBinaryOperatorKind.NotEquals;
+        if (kind is BoundBinaryOperatorKind.Equals or BoundBinaryOperatorKind.NotEquals)
+            return Equals(left, right) == (kind == BoundBinaryOperatorKind.Equals);
+        // C# has no `<` on strings, so the binder has reported one.
+        if (left is string || left is not IComparable comparable)
+            return null;
+        int order = comparable.CompareTo(right);
+        return kind switch
+        {
+            BoundBinaryOperatorKind.Less => order < 0,
+            BoundBinaryOperatorKind.LessOrEqual => order <= 0,
+            BoundBinaryOperatorKind.Greater => order > 0,
+            _ => order >= 0,
+        };
+    }
+
+    /// <summary>
     /// The value of a condition built from constants and variables of known value (<paramref name="values"/>): literals,
     /// conversions, arithmetic, comparisons, equality, `!`, `&&` and `||`. Null if any part isn't known.
     /// </summary>

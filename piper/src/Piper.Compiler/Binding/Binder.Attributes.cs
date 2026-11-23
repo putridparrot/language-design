@@ -235,6 +235,15 @@ public sealed partial class Binder
         _ => false,
     };
 
+    private void BindConstantAttributes(IEnumerable<ConstantSymbol> constants)
+    {
+        foreach (var constant in constants)
+        {
+            InFile(FileOf(constant));
+            constant.Attributes = BindAttributeList(constant.Declaration.Attributes, AttributeTargets.Field, "a constant");
+        }
+    }
+
     private readonly HashSet<(Piper.Text.SourceText, int)> _obsoleteReported = [];
 
     /// <summary>Warns about a use of a declaration marked <c>[Obsolete]</c> (an error with <c>[Obsolete("…", true)]</c>), as C# does.</summary>

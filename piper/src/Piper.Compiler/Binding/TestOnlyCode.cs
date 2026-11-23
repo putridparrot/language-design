@@ -70,6 +70,7 @@ public static class TestOnlyCode
             program.Main)
         {
             ExternalConformances = program.ExternalConformances,
+            Constants = program.Constants,
             Tests = program.Tests,
             OmittedMethods = [.. program.Methods.Select(m => (MethodSymbol)m.Symbol).Where(Gone)],
         };

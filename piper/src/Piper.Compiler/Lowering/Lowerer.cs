@@ -43,6 +43,7 @@ public sealed class Lowerer
         {
             Tests = [.. program.Tests.Select(t => t with { Function = LowerAll([t.Function])[0], Generators = LowerAll(t.Generators) })],
             ExternalConformances = program.ExternalConformances,
+            Constants = program.Constants,
         };
     }
 

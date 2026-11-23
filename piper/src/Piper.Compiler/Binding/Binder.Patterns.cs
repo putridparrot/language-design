@@ -125,6 +125,10 @@ public sealed partial class Binder
                     return new BoundWildcardPattern(expected);
                 }
 
+                // A constant's name matches its value, as in C#.
+                if (PatternConstant(syntax) is not null)
+                    return BindConstantPattern(syntax, expected);
+
                 if (!allowBindings)
                 {
                     _diagnostics.ReportBindingInOrPattern(syntax.Span);
@@ -151,6 +155,10 @@ public sealed partial class Binder
                 return new BoundBindingPattern(variable);
             }
 
+            // `Limits.Max`: a class's or namespace's constant.
+            case ConstructorPatternSyntax { HasArgumentList: false, Qualifier: not null } when PatternConstant(syntax) is not null:
+                return BindConstantPattern(syntax, expected);
+
             // `Point(x, y)` on a `Point?` or an `object?` (such as a nullable .NET property): there's a value and it
             // matches, so `Some(Point(x, y))`. None doesn't match, as null doesn't in C#'s `o is Point(var x, var y)`.
             case ConstructorPatternSyntax constructor when expected.IsOption && !NamesOptionVariant(constructor):
@@ -163,10 +171,8 @@ public sealed partial class Binder
             case TypePatternSyntax typed:
                 return BindTypePattern(typed, expected, allowBindings);
 
-            case LiteralPatternSyntax literal:
-                return ConvertPatternLiteral(literal, expected) is { } value
-                    ? new BoundLiteralPattern(value, expected)
-                    : new BoundWildcardPattern(expected);
+            case LiteralPatternSyntax:
+                return BindConstantPattern(syntax, expected);
 
             case RangePatternSyntax range:
                 return BindRangePattern(range, expected);
@@ -206,6 +212,9 @@ public sealed partial class Binder
                 throw new InvalidOperationException($"Unexpected pattern {syntax.GetType().Name}");
         }
     }
+
+    private BoundPattern BindConstantPattern(PatternSyntax syntax, TypeSymbol expected) =>
+        ConvertPatternConstant(syntax, expected) is { } value ? new BoundLiteralPattern(value, expected) : new BoundWildcardPattern(expected);
 
     /// <summary>Whether the pattern is Option's own <c>Some(…)</c> or <c>None</c> (bare or qualified).</summary>
     private static bool NamesOptionVariant(ConstructorPatternSyntax pattern) =>
@@ -379,7 +388,7 @@ public sealed partial class Binder
 
         var binding = syntax.Name.Text == "_"
             ? null
-            : BindPattern(new IdentifierPatternSyntax(syntax.Name.Span, syntax.Name), tested, allowBindings) as BoundBindingPattern;
+            : BindPattern(new IdentifierPatternSyntax(syntax.Name.Span, syntax.Name) { IsBinding = true }, tested, allowBindings) as BoundBindingPattern;
         return tested == TypeSymbol.Error && binding is null
             ? new BoundWildcardPattern(expected)
             : new BoundTypePattern(tested, binding?.Variable, always, expected);
@@ -507,7 +516,7 @@ public sealed partial class Binder
             if (shape is { CanSlice: false })
                 _diagnostics.ReportSlicePattern(element.Span, $"'...{binding.Text}' can't bind the rest of a '{expected}'; only arrays, strings and Lists can be sliced. Write '...' alone.");
             else
-                slice = BindPattern(new IdentifierPatternSyntax(binding.Span, binding), expected, allowBindings);
+                slice = BindPattern(new IdentifierPatternSyntax(binding.Span, binding) { IsBinding = true }, expected, allowBindings);
         }
         return shape is null ? new BoundWildcardPattern(expected) : new BoundListPattern([.. elements], sliceIndex, slice, elementType, expected);
     }
@@ -540,7 +549,7 @@ public sealed partial class Binder
             _diagnostics.ReportRelationalPatternType(syntax.Span, syntax.Operator.Text, expected);
             return new BoundWildcardPattern(expected);
         }
-        if (ConvertPatternLiteral(syntax.Value, expected) is not { } value)
+        if (ConvertPatternConstant(syntax.Value, expected) is not { } value)
             return new BoundWildcardPattern(expected);
 
         var pattern = new BoundRelationalPattern(syntax.Operator.Text, value, expected);
@@ -563,8 +572,8 @@ public sealed partial class Binder
             return new BoundWildcardPattern(expected);
         }
 
-        if (ConvertPatternLiteral(syntax.Start, expected) is not { } lower ||
-            ConvertPatternLiteral(syntax.End, expected) is not { } upper)
+        if (ConvertPatternConstant(syntax.Start, expected) is not { } lower ||
+            ConvertPatternConstant(syntax.End, expected) is not { } upper)
         {
             return new BoundWildcardPattern(expected);
         }
@@ -580,44 +589,53 @@ public sealed partial class Binder
     }
 
     /// <summary>
-    /// Converts a literal pattern's value to the matched type, as C# converts a constant (widening, or an Int that fits
-    /// a Byte), or reports a mismatch.
+    /// Converts a literal's or constant's value in a pattern to the matched type, as C# converts a constant (widening, or
+    /// an Int that fits a Byte), or reports a mismatch.
     /// </summary>
-    private object? ConvertPatternLiteral(LiteralPatternSyntax syntax, TypeSymbol expected)
+    private object? ConvertPatternConstant(PatternSyntax syntax, TypeSymbol expected)
     {
-        object? converted = (syntax.Value, expected.Name) switch
+        BoundExpression bound;
+        string what;
+        if (syntax is LiteralPatternSyntax literalSyntax)
         {
-            (null, _) => null,
-            (_, "?") => null,
-            (char c, "char") => c,
-            (string s, "string") => s,
-            (bool b, "bool") => b,
-            _ => null,
-        };
-        if (syntax.Value is not (null or char or string or bool) && expected.IsNumeric)
+            if (literalSyntax.Value is null)
+                return null;
+            bound = BindLiteral(new LiteralExpressionSyntax(syntax.Span, literalSyntax.Literal, literalSyntax.Value));
+            what = $"A literal of type '{bound.Type}'";
+        }
+        else if (PatternConstant(syntax) is { } constant)
         {
-            var literal = BindLiteral(new LiteralExpressionSyntax(syntax.Span, syntax.Literal, syntax.Value));
-            if ((Operators.IsImplicitlyConvertible(literal.Type, expected) || ConstantFolding.FitsImplicitly(literal, expected)) &&
-                ConstantFolding.Cast(syntax.Value, expected, out var value) == ConstantFolding.Failure.None)
+            UsePatternConstant(syntax, constant);
+            bound = ConstantValue(constant);
+            if (bound is BoundErrorExpression)
+                return null;
+            what = $"The constant '{constant.Name}', of type '{constant.Type}',";
+        }
+        else
+        {
+            _diagnostics.ReportNotConstant(syntax.Span, $"'{_file.Source.ToString(syntax.Span)}' isn't a constant, which a pattern's bound must be: a literal, or the name of a 'const'.");
+            return null;
+        }
+
+        // Only builtin types have literals, so compare by identity rather than trusting the name (records could shadow it).
+        if (bound is BoundLiteralExpression literal && TypeSymbol.Builtins.Contains(expected))
+        {
+            if (literal.Type == expected)
+                return literal.Value;
+            if (literal.Type.IsNumeric && expected.IsNumeric &&
+                (Operators.IsImplicitlyConvertible(literal.Type, expected) || ConstantFolding.FitsImplicitly(literal, expected)) &&
+                ConstantFolding.Cast(literal.Value, expected, out var value) == ConstantFolding.Failure.None)
             {
-                converted = value;
+                return value;
             }
         }
 
         // A duration (`30s`) matches a TimeSpan, the one .NET type with literals of its own.
-        if (syntax.Value is TimeSpan duration && IsDuration(expected))
+        if (bound is BoundLiteralExpression { Value: TimeSpan duration } && IsDuration(expected))
             return duration;
 
-        // Only builtin types have literals, so compare by identity rather than trusting the name (records could shadow it).
-        bool builtinTarget = TypeSymbol.Builtins.Contains(expected);
-        if (converted is not null && builtinTarget)
-            return converted;
-
-        if (syntax.Value is not null && expected != TypeSymbol.Error)
-        {
-            var literalType = BindLiteral(new LiteralExpressionSyntax(syntax.Span, syntax.Literal, syntax.Value)).Type;
-            _diagnostics.ReportPatternTypeMismatch(syntax.Span, $"A literal of type '{literalType}'", expected);
-        }
+        if (expected != TypeSymbol.Error)
+            _diagnostics.ReportPatternTypeMismatch(syntax.Span, what, expected);
         return null;
     }
 

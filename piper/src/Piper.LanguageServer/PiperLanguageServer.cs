@@ -470,6 +470,7 @@ public sealed class PiperLanguageServer
         var type = analysis.Semantic.OccurrenceAt(source, position)?.Symbol switch
         {
             VariableSymbol variable => variable.Type,
+            ConstantSymbol constant => constant.Type,
             FieldSymbol field => field.Type,
             IndexerSymbol indexer => indexer.Type,
             FunctionSymbol function => function.ReturnType,
@@ -550,11 +551,13 @@ public sealed class PiperLanguageServer
             var (kind, children) = declaration switch
             {
                 FunctionDeclarationSyntax or TestDeclarationSyntax => (12, []),
+                ConstDeclarationSyntax => (14, []),
                 RecordDeclarationSyntax r => (23, r.Fields.Select(f => (f.Name, f.Span, 8))),
                 EnumDeclarationSyntax e => (10, e.Variants.Select(v => (v.Name, v.Span, 22))),
                 TraitDeclarationSyntax t => (11, t.Methods.Select(m => (m.Name, m.Span, 6))),
                 ExtendDeclarationSyntax x => (3, x.Methods.Select(m => (m.Name, m.Span, 6))),
                 ClassDeclarationSyntax c => (5, c.Fields.Select(f => (f.Name, f.Span, f.IsProperty ? 7 : 8))
+                    .Concat(c.Constants.Select(k => (k.Name, k.Span, 14)))
                     .Concat(c.Methods.Select(m => m.Constructor is { } constructor ? (constructor.ClassName, m.Span, 9) : (m.Name, m.Span, 6)))),
                 _ => (13, Enumerable.Empty<(Token, TextSpan, int)>()),
             };

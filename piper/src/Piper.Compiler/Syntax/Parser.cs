@@ -240,6 +240,8 @@ public sealed partial class Parser
                 return ParseTypeAlias();
             case TokenKind.Identifier when IsNewtypeStart():
                 return ParseNewtype();
+            case TokenKind.Identifier when IsConstStart():
+                return ParseConst();
             case TokenKind.EnumKeyword:
                 return ParseEnum();
             case TokenKind.TraitKeyword:
@@ -248,7 +250,7 @@ public sealed partial class Parser
                 return ParseExtend();
             default:
                 ReportOnce(Current.Span, () => _diagnostics.ReportExpectedDeclaration(Current.Span, Current));
-                while (!IsDeclarationStart(Current.Kind) && !IsClassStart() && !IsTypeAliasStart() && !IsNewtypeStart() && Current.Kind != TokenKind.EndOfFile)
+                while (!IsDeclarationStart(Current.Kind) && !IsClassStart() && !IsTypeAliasStart() && !IsNewtypeStart() && !IsConstStart() && Current.Kind != TokenKind.EndOfFile)
                     NextToken();
                 return null;
         }
@@ -671,6 +673,26 @@ public sealed partial class Parser
         return new TypeAliasDeclarationSyntax(SpanFrom(keyword), name, target);
     }
 
+    /// <summary>`const` is a keyword only here, where a declaration or statement can start; the word is reserved, so it can't be a name.</summary>
+    private bool IsConstStart() => Current is { Kind: TokenKind.Identifier, Text: "const" } && Peek(1).Kind == TokenKind.Identifier;
+
+    /// <summary>const = "const" IDENT [ ":" type ] "=" expression ";" ;</summary>
+    private ConstDeclarationSyntax ParseConst()
+    {
+        var keyword = NextToken();
+        var name = Expect(TokenKind.Identifier);
+        TypeSyntax? type = null;
+        if (Current.Kind == TokenKind.Colon)
+        {
+            NextToken();
+            type = ParseType();
+        }
+        Expect(TokenKind.Equals);
+        var value = ParseExpression();
+        Expect(TokenKind.Semicolon);
+        return new ConstDeclarationSyntax(SpanFrom(keyword), name, type, value);
+    }
+
     /// <summary>`newtype` is a keyword only here, at the start of a declaration; the word is reserved, so it can't be a name.</summary>
     private bool IsNewtypeStart() => Current is { Kind: TokenKind.Identifier, Text: "newtype" } && Peek(1).Kind == TokenKind.Identifier;
 
@@ -754,6 +776,7 @@ public sealed partial class Parser
         var fields = ImmutableArray.CreateBuilder<ClassFieldSyntax>();
         var methods = ImmutableArray.CreateBuilder<FunctionDeclarationSyntax>();
         var events = ImmutableArray.CreateBuilder<ClassEventSyntax>();
+        var constants = ImmutableArray.CreateBuilder<ConstDeclarationSyntax>();
         if (Current.Kind == TokenKind.Semicolon)
         {
             NextToken();
@@ -764,7 +787,7 @@ public sealed partial class Parser
             while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile))
             {
                 int start = _position;
-                ParseClassMember(name, fields, methods, events);
+                ParseClassMember(name, fields, methods, events, constants);
                 if (_position == start)
                     NextToken();
             }
@@ -777,6 +800,7 @@ public sealed partial class Parser
             Sealed = @sealed,
             Requires = requires,
             Events = events.ToImmutable(),
+            Constants = constants.ToImmutable(),
         };
     }
 
@@ -984,7 +1008,8 @@ public sealed partial class Parser
         return (body, isIterator);
     }
 
-    private void ParseClassMember(Token className, ImmutableArray<ClassFieldSyntax>.Builder fields, ImmutableArray<FunctionDeclarationSyntax>.Builder methods, ImmutableArray<ClassEventSyntax>.Builder events)
+    private void ParseClassMember(Token className, ImmutableArray<ClassFieldSyntax>.Builder fields, ImmutableArray<FunctionDeclarationSyntax>.Builder methods, ImmutableArray<ClassEventSyntax>.Builder events,
+        ImmutableArray<ConstDeclarationSyntax>.Builder constants)
     {
         var documentation = DocumentationBefore(Current.Span.Start);
         var attributes = Current.Kind == TokenKind.OpenBracket ? ParseAttributes() : [];
@@ -1012,6 +1037,19 @@ public sealed partial class Parser
             {
                 Private = @private,
                 Attributes = NoDecorators(attributes, "an event", allowMarkers: true),
+                Documentation = documentation,
+            });
+            return;
+        }
+
+        if (IsConstStart())
+        {
+            constants.Add(ParseConst() with
+            {
+                Public = @public,
+                Private = @private,
+                Protected = @protected,
+                Attributes = NoDecorators(attributes, "a constant"),
                 Documentation = documentation,
             });
             return;
@@ -1078,7 +1116,7 @@ public sealed partial class Parser
         if (!AtFunctionStart())
         {
             ReportOnce(Current.Span, () => _diagnostics.ReportClassMember(Current.Span,
-                $"Expected a field ('let' or 'mut'), a property ('prop') or a method ('fn') in the class, but found '{Current.Text}'."));
+                $"Expected a field ('let' or 'mut'), a constant ('const'), a property ('prop') or a method ('fn') in the class, but found '{Current.Text}'."));
             // Skip the rest of the member, so one mistake is one error.
             while (Current.Kind is not (TokenKind.CloseBrace or TokenKind.EndOfFile or TokenKind.LetKeyword or TokenKind.MutKeyword) &&
                    !AtFunctionStart() && !IsMethodModifier(0) && !IsPropertyStart(0))
@@ -1472,6 +1510,12 @@ public sealed partial class Parser
                 case TokenKind.LetKeyword or TokenKind.MutKeyword:
                     statements.Add(ParseVariableDeclaration());
                     break;
+                case TokenKind.Identifier when IsConstStart():
+                {
+                    var constant = ParseConst();
+                    statements.Add(new ConstStatementSyntax(constant.Span, constant));
+                    break;
+                }
                 case TokenKind.WhileKeyword:
                     statements.Add(ParseWhile());
                     break;
@@ -2787,8 +2831,8 @@ public sealed partial class Parser
     /// <summary>
     /// primaryPattern = "_" | IDENT | IDENT ":" type | [ IDENT "." ] IDENT [ "(" [ pattern { "," pattern } [ "," ] ] ")" | properties ]
     ///                | properties | "[" [ listElement { "," listElement } [ "," ] ] "]"
-    ///                | ( "<" | "<=" | ">" | ">=" ) literalPattern
-    ///                | literalPattern [ ( ".." | "..<" ) literalPattern ] ;
+    ///                | ( "<" | "<=" | ">" | ">=" ) constantPattern
+    ///                | constantPattern [ ( ".." | "..<" ) constantPattern ] ;
     /// properties     = "{" [ IDENT ":" pattern { "," IDENT ":" pattern } [ "," ] ] "}" ;
     /// listElement    = pattern | "..." [ IDENT ] ;
     /// literalPattern = [ "-" ] ( INT | DOUBLE ) | CHAR | STRING | "true" | "false" ;
@@ -2812,7 +2856,7 @@ public sealed partial class Parser
         if (Current.Kind is TokenKind.Less or TokenKind.LessEquals or TokenKind.Greater or TokenKind.GreaterEquals)
         {
             var comparison = NextToken();
-            if (ParseLiteralPattern() is { } value)
+            if (ParseConstantPattern() is { } value)
                 return new RelationalPatternSyntax(SpanFrom(comparison), comparison, value);
             ReportOnce(Current.Span, () => _diagnostics.ReportExpectedPattern(Current.Span, Current));
             return new ErrorPatternSyntax(comparison.Span);
@@ -2867,9 +2911,11 @@ public sealed partial class Parser
             if (IsPropertyPatternStart())
                 return ParsePropertyPattern(qualifier ?? name, qualifier, name);
 
-            return qualifier is null
+            PatternSyntax named = qualifier is null
                 ? new IdentifierPatternSyntax(name.Span, name)
                 : new ConstructorPatternSyntax(SpanFrom(qualifier), qualifier, name, [], HasArgumentList: false);
+            // `Low..High`: a range between constants.
+            return Current.Kind is TokenKind.DotDot or TokenKind.DotDotLess ? ParseRangePattern(named) : named;
         }
 
         if (ParseLiteralPattern() is not { } literal)
@@ -2878,16 +2924,31 @@ public sealed partial class Parser
             return new ErrorPatternSyntax(new TextSpan(Current.Span.Start, 0));
         }
 
-        if (Current.Kind is not (TokenKind.DotDot or TokenKind.DotDotLess))
-            return literal;
+        return Current.Kind is TokenKind.DotDot or TokenKind.DotDotLess ? ParseRangePattern(literal) : literal;
+    }
 
+    private PatternSyntax ParseRangePattern(PatternSyntax start)
+    {
         var op = NextToken();
-        if (ParseLiteralPattern() is not { } end)
+        if (ParseConstantPattern() is not { } end)
         {
             ReportOnce(Current.Span, () => _diagnostics.ReportExpectedPattern(Current.Span, Current));
-            return new ErrorPatternSyntax(TextSpan.FromBounds(literal.Span.Start, op.Span.End));
+            return new ErrorPatternSyntax(TextSpan.FromBounds(start.Span.Start, op.Span.End));
         }
-        return new RangePatternSyntax(Span(literal, end), literal, op, end);
+        return new RangePatternSyntax(Span(start, end), start, op, end);
+    }
+
+    /// <summary>constantPattern = literalPattern | IDENT [ "." IDENT ] ;  a bound: a literal, or a constant's name.</summary>
+    private PatternSyntax? ParseConstantPattern()
+    {
+        if (Current.Kind != TokenKind.Identifier)
+            return ParseLiteralPattern();
+        var name = NextToken();
+        if (Current.Kind != TokenKind.Dot)
+            return new IdentifierPatternSyntax(name.Span, name);
+        NextToken();
+        var member = Expect(TokenKind.Identifier);
+        return new ConstructorPatternSyntax(SpanFrom(name), name, member, [], HasArgumentList: false);
     }
 
     /// <summary>

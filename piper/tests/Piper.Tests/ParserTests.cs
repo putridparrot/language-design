@@ -208,7 +208,7 @@ public class ParserTests
         var arms = Assert.IsType<MatchExpressionSyntax>(body.Trailing).Arms;
         Assert.Equal(2, Assert.IsType<OrPatternSyntax>(arms[0].Pattern).Alternatives.Length);
         var range = Assert.IsType<RangePatternSyntax>(arms[1].Pattern);
-        Assert.Equal((-9, -1, true), (range.Start.Value, range.End.Value, range.IsInclusive));
+        Assert.Equal((-9, -1, true), (((LiteralPatternSyntax)range.Start).Value, ((LiteralPatternSyntax)range.End).Value, range.IsInclusive));
         var rect = Assert.IsType<ConstructorPatternSyntax>(arms[2].Pattern);
         Assert.Equal("Shape", rect.Qualifier!.Text);
         Assert.IsType<ConstructorPatternSyntax>(rect.Arguments[0]);

@@ -62,6 +62,7 @@ public static class SemanticTokens
             VariableSymbol { Kind: VariableKind.This } => null,
             VariableSymbol { Kind: VariableKind.Parameter } => ("parameter", 0),
             VariableSymbol variable => ("variable", variable.IsMutable ? 0 : Readonly),
+            ConstantSymbol => ("variable", Readonly),
             FieldSymbol { IsStatic: true } field => ("property", (field.IsMutable ? 0 : Readonly) | Static),
             FieldSymbol => ("property", Readonly),
             VariantSymbol => ("enumMember", 0),

@@ -298,6 +298,7 @@ public sealed partial class Parser
         EnumDeclarationSyntax => "an enum",
         TraitDeclarationSyntax => "a trait",
         TestDeclarationSyntax => "a test",
+        ConstDeclarationSyntax => "a constant",
         _ => "this declaration",
     };
 

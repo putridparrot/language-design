@@ -44,7 +44,9 @@ them too.
 
 ## Language
 
-- **`const` declarations,** usable in patterns and attribute arguments (`const` is reserved).
+- ~~**`const` declarations**~~, done (see [Constants](language.md#constants)), usable in patterns, attribute arguments
+  and default values. Still to come: constant arithmetic on durations (`2 * Timeout`), .NET enum constants in patterns,
+  and constants in extend blocks and traits.
 - ~~**`using` on an Option**~~ (found writing the actor tracing test), done: `using let span = source.StartActivity("x");` (an `Activity?`) disposes it if there is one, as C#'s `using` skips a null.
 - **Spans:** `Span<T>` and `ReadOnlySpan<T>` (and ref structs generally), so APIs such as `AsSpan` and span overloads can be called. They can't be captured by lambdas or live across `await`, as in C#.
 - **Namespace-qualified variants in patterns** (`Library.Loans.LoanError.UnknownBook(code)`).
@@ -114,8 +116,7 @@ them too.
 - ~~**Duration literals**~~, done (see [Durations](language.md#durations)): `30s`, `500ms`, `1.5s`, `5min`, `2h`,
   `1day`, as `TimeSpan`s, exact to the tick, in expressions and patterns (exhaustiveness checked, as for integers), and
   taken by `[Timeout]`, `[Retry]` and `[CircuitBreaker]`. Days are `day`/`days`, as `1d` is already C#'s double. Still
-  to come: durations in the plugins' clauses that read `shutdown 30 seconds` today (a server's, an actor's), and in
-  `const` declarations once there are any.
+  to come: durations in the plugins' clauses that read `shutdown 30 seconds` today (a server's, an actor's).
 - **Regex literals, checked, with typed captures:** `re"(?<year>\d{4})-(?<month>\d\d)"` is a compiled `Regex`, and an
   invalid pattern is a compile error. As a pattern, its named groups bind variables:
   `if line is re"(?<year>\d{4})-(?<month>\d\d)"(year, month) { … }`, and in a `match` arm. Alongside `sql$`, `url$`

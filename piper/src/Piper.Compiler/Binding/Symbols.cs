@@ -92,6 +92,28 @@ public sealed class FieldSymbol(string name, TypeSymbol type) : Symbol(name)
 }
 
 /// <summary>
+/// <c>const MaxRetries: int = 5;</c>: a named value known when compiling. Each use is bound as the value itself, so
+/// whatever a literal can do (match, be an attribute's argument or a default value, convert as a constant), it can.
+/// </summary>
+public sealed class ConstantSymbol(ConstDeclarationSyntax declaration) : Symbol(declaration.Name.Text)
+{
+    public ConstDeclarationSyntax Declaration { get; } = declaration;
+
+    public TypeSymbol Type { get; internal set; } = TypeSymbol.Error;
+
+    /// <summary>A literal, or a .NET enum's member (or a combination of them); null if it's not valid.</summary>
+    public BoundExpression? Value { get; internal set; }
+
+    /// <summary>The class it's declared in, if it is.</summary>
+    public ClassSymbol? Owner { get; init; }
+
+    public bool IsProtected => Declaration.Protected is not null;
+
+    /// <summary>In a class: marked `public`; otherwise (unless protected) only the class can use it.</summary>
+    public bool IsPublic => Declaration.Public is not null;
+}
+
+/// <summary>
 /// A class's indexer, <c>prop this[index: int]: T { … }</c>, used as <c>value[index]</c>: its accessors are the methods
 /// <c>get_Item(index)</c> and <c>set_Item(index, value)</c>, as .NET names them.
 /// </summary>

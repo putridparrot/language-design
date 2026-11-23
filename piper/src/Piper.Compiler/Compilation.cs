@@ -117,6 +117,7 @@ public static class Compilation
         var lowered = Lowerer.Lower(program);
         // Tests are compiled in for `piper test`; otherwise they're left out, and so is what only they use.
         lowered = options.IncludeTests ? lowered.WithTestsAsFunctions() : TestOnlyCode.Remove(lowered, options.Roots);
+        lowered = lowered.WithConstantsFor(options.Roots);
         return new CompilationResult(files, sorted, CSharpEmitter.Emit(lowered, options.LineDirectives, options.References.Aliases, [.. options.Plugins.SelectMany(p => p.Providers).Distinct()]))
         {
             HasMain = program.Main is not null,

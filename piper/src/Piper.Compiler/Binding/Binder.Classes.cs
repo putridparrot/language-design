@@ -26,7 +26,7 @@ public sealed partial class Binder
         foreach (var @class in types.OfType<ClassSymbol>().Where(c => c.DeclaringFile == file.Source))
         {
             var syntax = @class.Declaration;
-            var typeParameterScope = TypeParameterScope(@class, file);
+            var typeParameterScope = ClassScope(@class, file);
             var traits = new List<(TypeSymbol Trait, TypeSyntax Syntax)>();
             for (int i = 0; i < syntax.Bases.Length; i++)
             {
@@ -267,10 +267,12 @@ public sealed partial class Binder
             var outerClass = _currentClass;
             _currentClass = @class;
             var names = new HashSet<string>(@class.Methods.Select(m => m.Name));
+            foreach (var constant in @class.Constants.Where(c => !names.Add(c.Name)))
+                ReportMemberClash(constant.Declaration.Name);
 
             // Static fields first, as C# initializes them before any instance exists. Their initializers run in order,
             // so each sees the static fields before it (and the static methods), but no instance or parameters.
-            var staticScope = new Scope(TypeParameterScope(@class, file));
+            var staticScope = new Scope(ClassScope(@class, file));
             foreach (var method in @class.Methods.Where(m => m.IsStatic && !m.IsHidden))
                 staticScope.TryDeclare(method);
             var staticFields = ImmutableArray.CreateBuilder<FieldSymbol>();
@@ -283,7 +285,7 @@ public sealed partial class Binder
             }
             @class.StaticFields = staticFields.ToImmutable();
 
-            var parameterScope = new Scope(TypeParameterScope(@class, file));
+            var parameterScope = new Scope(ClassScope(@class, file));
             foreach (var parameter in @class.Parameters)
                 parameterScope.TryDeclare(parameter);
             foreach (var field in @class.StaticFields)
@@ -322,9 +324,13 @@ public sealed partial class Binder
                 scope.TryDeclare(@event);
             foreach (var method in @class.Methods.Where(m => !m.IsHidden))
                 scope.TryDeclare(method);
+            foreach (var constant in @class.Constants)
+                scope.TryDeclare(constant);
             foreach (var @base in SelfAndBaseTypes(@class.SelfType).Skip(1).Where(b => b.OriginalDefinition is ClassSymbol))
             {
                 var baseClass = (ClassSymbol)@base.OriginalDefinition;
+                foreach (var constant in baseClass.Constants.Where(c => c.IsPublic || c.IsProtected))
+                    scope.TryDeclare(constant);
                 foreach (var field in baseClass.Fields.Where(f => f.IsPublic || f.IsProtected))
                     scope.TryDeclare(FieldVariable(field, TypeSubstitution.FieldType(field, @base)));
                 foreach (var field in baseClass.StaticFields.Where(f => f.IsPublic || f.IsProtected))
@@ -541,6 +547,13 @@ public sealed partial class Binder
     /// <summary><c>account.count</c> where <c>count</c> is static: reported, as it belongs to the class. True if it was one.</summary>
     private bool ReportStaticFieldThroughInstance(TypeSymbol type, Token member)
     {
+        if (FindConstant(type, member.Text) is { Owner: var owner } constant)
+        {
+            Record(member, constant);
+            _diagnostics.ReportInvalidClassMember(member.Span,
+                $"'{constant.Name}' is a constant, so it belongs to the class, not an instance: use '{owner!.Name}.{constant.Name}'.");
+            return true;
+        }
         if (FindStaticField(type, member.Text) is not var (field, container))
             return false;
         Record(member, field);
@@ -723,7 +736,7 @@ public sealed partial class Binder
                 continue;
             }
 
-            var statics = new Scope(TypeParameterScope(@class, file));
+            var statics = new Scope(ClassScope(@class, file));
             foreach (var field in @class.StaticFields)
                 statics.TryDeclare(StaticFieldVariable(field, @class.SelfType));
             foreach (var staticMethod in @class.Methods.Where(m => m.IsStatic && !m.IsHidden))

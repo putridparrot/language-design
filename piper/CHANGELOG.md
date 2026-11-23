@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **`const` declarations:** `const MaxRetries: int = 5;`, at the top level, in a class (`Page.DefaultSize`) and in a
+  block, of a number, bool, char, string, duration or .NET enum. A constant can be used wherever a literal can: in
+  patterns (`MaxRetries => …`, `< Max`, `Low..High`), attribute arguments and default values. They can refer to each
+  other in any order; a value not known when compiling is PIP0411, and one that depends on itself PIP0412. C# sees
+  those that aren't private as `const` fields. Completion, hover (with the value), rename and the outline know them.
+  See [constants](docs/language.md#constants).
+
 - **WPF programs, and windowed ones:** `[STAThread]` on `Main` is put on the generated entry point, so WPF and Windows
   Forms get their single-threaded apartment, and `piper run` runs such a Main on an STA thread of its own. piper.json's
   `"output": "winexe"` makes a windowed program, whose launcher is a GUI program (no console opens with it) and whose

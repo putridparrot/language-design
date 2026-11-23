@@ -35,8 +35,9 @@ Notation: `{ x }` is zero or more, `[ x ]` is optional, `|` separates alternativ
 compilationUnit = { using } [ "namespace" qualifiedName ";" ] { using } { attributes [ "public" | "private" ] declaration } EOF ;
 using           = "using" qualifiedName ";" ;                (* a Piper or .NET namespace *)
 qualifiedName   = IDENT { "." IDENT } ;
-declaration     = function | record | class | enum | trait | extend | typeAlias | newtype | test | pluginDeclaration ;
+declaration     = function | record | class | enum | trait | extend | typeAlias | newtype | const | test | pluginDeclaration ;
 typeAlias       = "type" IDENT "=" type ";" ;                 (* another name for the type; "type" is a keyword only here *)
+const           = "const" IDENT [ ":" type ] "=" expression ";" ;   (* a value known when compiling *)
 newtype         = "newtype" IDENT "=" type { requires } ";" ; (* a distinct type over the value; a keyword only here *)
 pluginDeclaration = KEYWORD … ;                               (* a plugin's syntax: see plugins.md *)
 test            = [ "async" ] "test" STRING [ "for" "(" property { "," property } ")" [ "runs" INT ] { requires } ]
@@ -52,7 +53,7 @@ class           = [ "abstract" | "sealed" ] "class" IDENT [ typeParameters ] [ "
                   [ ":" baseType { "," baseType } ] { requires } "{" { classMember } "}" ;
 baseType        = type [ "(" [ arguments ] ")" ] ;               (* a base class first, with its constructor arguments; then traits and interfaces *)
 classMember     = attributes [ "public" | "private" | "protected" ]
-                  ( field | event | constructor | [ "static" ] [ "virtual" | "override" | "abstract" ] ( function | property ) ) ;
+                  ( field | const | event | constructor | [ "static" ] [ "virtual" | "override" | "abstract" ] ( function | property ) ) ;
 event           = "event" IDENT ":" type ";" ;               (* a delegate type returning nothing; public unless "private" *)
 field           = [ "static" ] ( "let" | "mut" ) IDENT [ ":" type ] "=" expression ";" ;   (* private unless "public"; methods are public unless "private" *)
 property        = "prop" ( IDENT | "this" "[" parameters "]" )                            (* "this[…]": an indexer; public unless "private" *)
@@ -78,7 +79,7 @@ tupleElement    = [ IDENT ":" ] type ;                        (* (x: int, y: int
 namedType       = qualifiedName [ "<" type { "," type } [ "," ] ">" ] ;   (* e.g. System.Text.StringBuilder, List<int> *)
 
 block           = "{" { statement } [ expression ] "}" ;      (* final expression = block's value *)
-statement       = variableDecl | [ IDENT ":" ] ( while | for ) | return | try | using | lock | defer | yield   (* "outer: for …" labels a loop *)
+statement       = variableDecl | const | [ IDENT ":" ] ( while | for ) | return | try | using | lock | defer | yield   (* "outer: for …" labels a loop *)
                 | "break" [ IDENT ] ";" | "continue" [ IDENT ] ";"   (* the label of a loop around this one *)
                 | blockLike [ ";" ] | expression ";" | ";" | pluginStatement | localFunction ;
 localFunction   = function ;                                  (* indented: an `fn` starting a line is taken to be the next top-level function *)
@@ -150,10 +151,11 @@ primaryPattern  = "_"                                         (* wildcard *)
                 | [ IDENT "." ] IDENT [ "(" [ pattern { "," pattern } [ "," ] ] ")" ]   (* variant / record *)
                 | [ [ IDENT "." ] IDENT ] properties                      (* property pattern *)
                 | "[" [ listElement { "," listElement } [ "," ] ] "]"     (* list pattern *)
-                | ( "<" | "<=" | ">" | ">=" ) literalPattern              (* relational pattern *)
-                | literalPattern [ ( ".." | "..<" ) literalPattern ] ;
+                | ( "<" | "<=" | ">" | ">=" ) constantPattern              (* relational pattern *)
+                | constantPattern [ ( ".." | "..<" ) constantPattern ] ;
 properties      = "{" [ IDENT ":" pattern { "," IDENT ":" pattern } [ "," ] ] "}" ;
 listElement     = pattern | "..." [ IDENT ] ;
+constantPattern = literalPattern | IDENT [ "." IDENT ] ;      (* a literal, or a const's name *)
 literalPattern  = [ "-" ] ( INT | DOUBLE ) | CHAR | STRING | "true" | "false" ;
 ```
 
@@ -194,7 +196,7 @@ generic call `a<b, c>(d)`, as in C#.
 ### Lexical structure
 
 - **Identifiers:** ASCII letters, digits and `_`, not starting with a digit.
-- **Reserved words:** `requires` is a keyword only after a signature, but can't be a name anywhere. `const operator test where type newtype impl module import self base public internal protected sealed abstract override virtual class struct interface` aren't keywords yet but may become ones, so they can't be used as names (of variables, parameters, fields, functions or types). `class`, `abstract`, `sealed`, `virtual`, `override`, `protected` and `base` are used by [classes](#classes), `type` by [type aliases](#type-aliases), `newtype` by [newtypes](#newtypes), and `struct` by [record structs](#types), and still can't be names. `lock`, `event`, `params`, `typeof` and `nameof` are keywords only where they start their constructs, so they can be names elsewhere. `prop`, `get`, `set`, `init` and `value` are keywords only where properties use them, and `not` and `and` only in [patterns](#pattern-matching) (`not` before a pattern, `and` after one), so they can be names elsewhere. They can still follow a dot, to reach a .NET member of that name.
+- **Reserved words:** `requires` is a keyword only after a signature, but can't be a name anywhere. `const operator test where type newtype impl module import self base public internal protected sealed abstract override virtual class struct interface` aren't keywords yet but may become ones, so they can't be used as names (of variables, parameters, fields, functions or types). `class`, `abstract`, `sealed`, `virtual`, `override`, `protected` and `base` are used by [classes](#classes), `type` by [type aliases](#type-aliases), `newtype` by [newtypes](#newtypes), `const` by [constants](#constants), and `struct` by [record structs](#types), and still can't be names. `lock`, `event`, `params`, `typeof` and `nameof` are keywords only where they start their constructs, so they can be names elsewhere. `prop`, `get`, `set`, `init` and `value` are keywords only where properties use them, and `not` and `and` only in [patterns](#pattern-matching) (`not` before a pattern, `and` after one), so they can be names elsewhere. They can still follow a dot, to reach a .NET member of that name.
 - **Keywords:** `fn let mut if else while for in return break continue record enum match trait extend static this null is namespace using private try catch finally defer throw out true false`; `async`, `await`, `yield` and `ref`, which are contextual as in C# (still usable as names); and the builtin type names `int long double bool string char object byte sbyte short ushort uint ulong float decimal unit`.
 - **Comments:** `// line` and `/* block */`. Block comments nest. `///` lines directly above a declaration, method, parameter, field or enum variant are its documentation: the editor shows it, and the generated C# carries it as XML documentation (`piper build --exe` and `--library` also write the `.xml` file).
 - **Integers:** `42`, `1_000_000`, `0xFF`, `0b1010`. Suffixes as in C#: `L` long (`3_000_000_000L`), `U` uint (or ulong if it doesn't fit), `UL` ulong. An unsuffixed literal must fit in int (C# would make a larger one a uint or long; Piper asks for the suffix); as in C#, `-2147483648` and `-9223372036854775808L` are allowed too.
@@ -295,6 +297,7 @@ fn Area(s: Shape) => double = match s {
 | `c: Circle`, `s: string`, `_: Circle` | a type test, as C#'s `shape is Circle c`: a value of that type, bound to the name as one (unless it's `_`). The matched value must be able to hold one: of a base class, a trait or interface the type implements, or `object`. Other values fall through, so a match needs a later arm for them |
 | `Point(x, y)`, `Message.Add(n)` on an `object`, trait or interface | a type test, as C#'s `o is Point(var x, var y)`: a value of that record or variant (of a non-generic type that the matched type can hold), deconstructed. A match on such a value needs a `_` arm |
 | `42`, `-1`, `2.5`, `'c'`, `"text"`, `true` | that literal; an int literal also matches long and double values |
+| `MaxRetries`, `Limits.Max`, `< Max`, `Low..High` | a [constant](#constants)'s value, or a comparison or range with one; a bare name is a constant if one is in scope, otherwise a binding |
 | `1..10`, `0..<10`, `'a'..'z'` | a range of integer or char values; `..` includes the end, as in Swift, and `..<` stops before it |
 | `30s`, `< 100ms`, `100ms..<1s` | a duration, compared with a `TimeSpan` as numbers are (a match on durations can be exhaustive without `_`: `< 0s`, `0s`, `> 0s`) |
 | `p1 \| p2` | either pattern; alternatives can bind variables if every one binds the same names with the same types, in a match arm (`Click(x, y) \| Touch(x, y) => …`) or an `is` test (`if s is Circle(r) \| Ring(r, _) { … }`) |
@@ -1189,7 +1192,7 @@ fn LegacyParse(text: string) => int = int.Parse(text);
 ```
 
 - **Names:** `Obsolete` means `ObsoleteAttribute` (tried first) or `Obsolete`, found like any type name, so it needs a `using` or a qualified name (`System.Obsolete`). It must be a .NET attribute class; Piper can't declare attributes.
-- **Arguments** are the constructor's, which must be constants (literals, `typeof(…)`, `nameof(…)`, .NET enum members such as `AttributeTargets.Method`, constant fields, and operators on those), followed by `Name = value` for the attribute's settable properties and fields: `[Obsolete("Old", DiagnosticId = "APP001")]`. Several attributes can share brackets: `[Serializable, Obsolete]`.
+- **Arguments** are the constructor's, which must be constants (literals, [`const`s](#constants), `typeof(…)`, `nameof(…)`, .NET enum members such as `AttributeTargets.Method`, constant fields, and operators on those), followed by `Name = value` for the attribute's settable properties and fields: `[Obsolete("Old", DiagnosticId = "APP001")]`. Several attributes can share brackets: `[Serializable, Obsolete]`.
 - **Where they go:** on records, enums, enum variants (`[Status(404)] UnknownBook(code: string)`, on the variant's C# class), traits and classes (C# classes and interfaces), functions, methods and constructors, parameters, record and variant fields, and a class's fields, properties and indexers (see [Classes](#classes) for where a class field's attribute lands). A record field's attribute goes on the C# property when it applies to properties (`[property: …]`, so System.Text.Json and similar see it), otherwise on the backing field, otherwise the constructor parameter. An attribute that can't go where it's written (`[Serializable]` on a function) is an error, as is repeating one that doesn't allow it.
 - **Decorators:** a plugin can handle an attribute itself, such as the `aspects` plugin's `[Trace]` and `[Retry(3)]`,
   rewriting the function it's on at compile time. Such an attribute isn't a .NET attribute and isn't passed on to C#.
@@ -1234,7 +1237,7 @@ record Options(verbose: bool = false, label: string? = null);
 let quiet = Options();
 ```
 
-- **Defaults** must be constants (literals, .NET constants and enum members, operators on those) or `null` for an optional, and come after the parameters without them. Operators can't have them.
+- **Defaults** must be constants (literals, [`const`s](#constants), .NET constants and enum members, operators on those) or `null` for an optional, and come after the parameters without them. Operators can't have them.
 - **Named arguments** come after the positional ones, each naming a parameter once; parameters with defaults can be left out. Arguments are evaluated in the order they're written, whatever order the parameters are in.
 - **They work for** Piper functions, methods and records, and .NET methods and constructors (`Math.Round(x, digits: 2)`, `DateTime(year: 2026, month: 3, day: 14)`). Not for function values (lambdas and delegates) or attributes, whose properties are set with `Name = value`.
 - **Through traits:** a trait method's defaults apply when it's called through a generic bound too.
@@ -1252,6 +1255,46 @@ let quiet = Options();
     out, it's empty.
   - **Where it can be:** functions and methods. Not records, constructors, indexers or operators.
   - **In the C#** it's `params`, so C# code calling a Piper library can use it too.
+
+### Constants
+
+`const` names a value known when compiling, as in C#, declared as `let` is: the type can be left out.
+
+```piper
+const MaxRetries: int = 5;
+const Greeting = $"Hello, {Product}";
+const Product = "Piper";              // in any order, in any file
+const Timeout = 30s;
+
+class Page(size: int = DefaultSize) {
+    public const DefaultSize = 20;    // Page.DefaultSize elsewhere
+}
+
+[Obsolete(Greeting)]
+fn Describe(n: int, limit: int = MaxRetries) => string = match n {
+    MaxRetries => "the last try",
+    0..MaxRetries => "a try",
+    > Page.DefaultSize => "far too many",
+    _ => "too many",
+};
+```
+
+- **Where:** at the top level, in a class (private unless `public` or `protected`, as fields are, and used through the
+  class, `Page.DefaultSize`, or bare inside it) and in a block, which sees it from there on.
+- **Types:** numbers, `bool`, `char`, `string`, durations (`TimeSpan`) and .NET enums. Not optionals, records or newtypes.
+- **Values:** literals, other constants, .NET constants (`int.MaxValue`) and enum members, `nameof`, casts, and
+  operators on those; strings joined with `+` or interpolated from constant strings. Arithmetic is checked, as for any
+  constant. Anything else (a call, say) is an error (PIP0411), as is a constant that depends on itself (PIP0412).
+  Arithmetic on durations isn't constant yet.
+- **Uses:** anywhere a literal can go: [patterns](#pattern-matching), attribute arguments, default values, and
+  conversions that depend on the value (`let b: byte = MaxRetries;`). As with a literal, a duration can be a pattern but
+  not an attribute argument or default value. A .NET enum constant can't be a pattern.
+- **In patterns,** a bare name that's a constant matches its value, as in C#, where any other name binds. A nearer
+  variable of the name hides the constant, and a variant of the matched enum comes first. The names in `c: Circle` and
+  `...rest` always bind.
+- **In the C#** each use is the value itself. Constants that aren't private are also `const` fields, for C# to use (a
+  duration is `static readonly`); as in C#, code compiled against a library keeps the value it was compiled with. An
+  executable leaves top-level ones out.
 
 ### Type aliases
 

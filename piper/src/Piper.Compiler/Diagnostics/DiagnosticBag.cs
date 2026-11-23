@@ -79,7 +79,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Error("PIP0101", span, $"Expected an expression but found {Describe(actual)}.");
 
     public void ReportExpectedDeclaration(TextSpan span, Token actual) =>
-        Error("PIP0102", span, $"Expected 'fn', 'record', 'class', 'enum', 'trait' or 'extend' but found {Describe(actual)}.");
+        Error("PIP0102", span, $"Expected 'fn', 'record', 'class', 'enum', 'trait', 'extend' or 'const' but found {Describe(actual)}.");
 
     public void ReportExpectedType(TextSpan span, Token actual) =>
         Error("PIP0103", span, $"Expected a type but found {Describe(actual)}.");
@@ -772,6 +772,12 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportConstantOverflow(TextSpan span) =>
         Error("PIP0292", span, "This constant expression overflows. Constant arithmetic is checked, as in C#; use a long or a variable if wrapping around is intended.");
+
+    public void ReportNotConstant(TextSpan span, string reason) =>
+        Error("PIP0411", span, reason);
+
+    public void ReportConstantCycle(TextSpan span, string name) =>
+        Error("PIP0412", span, $"The value of the constant '{name}' depends on itself.");
 
     public void ReportConstantDivisionByZero(TextSpan span) =>
         Error("PIP0293", span, "Division by constant zero.");

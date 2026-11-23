@@ -16,11 +16,11 @@ public static class Completion
     [
         "fn", "let", "mut", "if", "else", "while", "for", "in", "return", "break", "continue", "record", "enum", "match",
         "trait", "extend", "static", "this", "null", "is", "namespace", "using", "private", "try", "catch", "finally",
-        "defer", "throw", "out", "true", "false", "async", "await", "yield", "ref", "typeof", "nameof", "type", "newtype", "lock", "event", "params",
+        "defer", "throw", "out", "true", "false", "async", "await", "yield", "ref", "typeof", "nameof", "type", "newtype", "const", "lock", "event", "params",
     ];
 
     // LSP CompletionItemKind values.
-    private const int MethodKind = 2, FunctionKind = 3, FieldKind = 5, VariableKind = 6, ClassKind = 7, InterfaceKind = 8,
+    private const int MethodKind = 2, FunctionKind = 3, FieldKind = 5, VariableKind = 6, ConstantKind = 21, ClassKind = 7, InterfaceKind = 8,
         ModuleKind = 9, PropertyKind = 10, EnumKind = 13, KeywordKind = 14, EnumMemberKind = 20, StructKind = 22, EventKind = 23,
         TypeParameterKind = 25;
 
@@ -155,6 +155,8 @@ public static class Completion
             yield return Item(type);
         foreach (var function in analysis.Program.Functions.Select(f => f.Symbol).Where(f => !f.IsPrivate || f.DeclaringFile == source))
             yield return Item(function);
+        foreach (var constant in analysis.Program.Constants.Where(c => !c.IsPrivate || c.DeclaringFile == source))
+            yield return Item(constant);
         foreach (var type in TypeSymbol.Builtins.Where(t => t != TypeSymbol.Unit))
             yield return (type.Name, KeywordKind, null, null);
         foreach (var keyword in Keywords)
@@ -168,6 +170,7 @@ public static class Completion
     private static int KindOf(Symbol symbol) => symbol switch
     {
         VariableSymbol => VariableKind,
+        ConstantSymbol => ConstantKind,
         MethodSymbol => MethodKind,
         FunctionSymbol => FunctionKind,
         RecordSymbol => StructKind,
@@ -205,6 +208,11 @@ public static class Completion
         {
             foreach (var field in @class.SelfAndBases().SelectMany(c => instance ? c.Fields : c.StaticFields).Where(f => f.IsPublic).DistinctBy(f => f.Name))
                 yield return (field.Name, field.IsProperty ? PropertyKind : FieldKind, SymbolDisplay.Describe(field), field.Documentation);
+        }
+        if (!instance && definition is ClassSymbol withConstants)
+        {
+            foreach (var constant in withConstants.SelfAndBases().SelectMany(c => c.Constants).Where(c => c.IsPublic).DistinctBy(c => c.Name))
+                yield return Item(constant);
         }
         if (instance && type is TupleTypeSymbol tuple)
         {

@@ -164,6 +164,9 @@ public sealed record ClassDeclarationSyntax(
     /// <summary>Its events, <c>event Changed: EventHandler;</c>.</summary>
     public ImmutableArray<ClassEventSyntax> Events { get; init; } = [];
 
+    /// <summary>Its constants, <c>const Max = 5;</c>, private unless `public` or `protected`, as fields are.</summary>
+    public ImmutableArray<ConstDeclarationSyntax> Constants { get; init; } = [];
+
     /// <summary>The conditions of its `requires` clauses: invariants its constructor's arguments must meet, checked when one is made.</summary>
     public ImmutableArray<ExpressionSyntax> Requires { get; init; } = [];
 }
@@ -279,6 +282,16 @@ public sealed record AccessorSyntax(TextSpan Span, Token Keyword, BlockExpressio
 /// <summary><c>type Lookup = Dictionary&lt;string, List&lt;int&gt;&gt;;</c>: another name for a type, interchangeable with it, as C#'s <c>using Lookup = …;</c>.</summary>
 public sealed record TypeAliasDeclarationSyntax(TextSpan Span, Token Name, TypeSyntax Target) : DeclarationSyntax(Span, Name);
 
+/// <summary>
+/// <c>const MaxRetries: int = 5;</c>, at the top level, in a class or (as a <see cref="ConstStatementSyntax"/>) in a block:
+/// a value known when compiling, usable in patterns, attribute arguments and default values. Its type can be left out.
+/// </summary>
+public sealed record ConstDeclarationSyntax(TextSpan Span, Token Name, TypeSyntax? Type, ExpressionSyntax Value) : DeclarationSyntax(Span, Name)
+{
+    /// <summary>In a class, `protected`: usable in its class and classes deriving from it.</summary>
+    public Token? Protected { get; init; }
+}
+
 public sealed record RecordDeclarationSyntax(
     TextSpan Span,
     Token Name,
@@ -380,6 +393,9 @@ public sealed record FunctionTypeSyntax(TextSpan Span, ImmutableArray<TypeSyntax
 // Statements
 
 public abstract record StatementSyntax(TextSpan Span) : SyntaxNode(Span);
+
+/// <summary><c>const Max = 5;</c> in a block.</summary>
+public sealed record ConstStatementSyntax(TextSpan Span, ConstDeclarationSyntax Declaration) : StatementSyntax(Span);
 
 public sealed record VariableDeclarationSyntax(
     TextSpan Span,
@@ -757,7 +773,11 @@ public sealed record WildcardPatternSyntax(TextSpan Span) : PatternSyntax(Span);
 public sealed record TypePatternSyntax(TextSpan Span, Token Name, TypeSyntax Type) : PatternSyntax(Span);
 
 /// <summary>A bare name: a fieldless variant of the matched enum if one has that name, otherwise a new binding.</summary>
-public sealed record IdentifierPatternSyntax(TextSpan Span, Token Identifier) : PatternSyntax(Span);
+public sealed record IdentifierPatternSyntax(TextSpan Span, Token Identifier) : PatternSyntax(Span)
+{
+    /// <summary>Where only a new variable can be (the <c>c</c> in <c>c: Circle</c>), so it isn't a constant of the name.</summary>
+    public bool IsBinding { get; init; }
+}
 
 /// <summary>
 /// <c>Circle(r)</c>, <c>Shape.Circle(r)</c>, <c>Shape.Empty</c> or a record deconstruction <c>Point(x, 0)</c>.
@@ -774,7 +794,7 @@ public sealed record ConstructorPatternSyntax(
 public sealed record LiteralPatternSyntax(TextSpan Span, Token Literal, object? Value) : PatternSyntax(Span);
 
 /// <summary><c>1..10</c> includes its end, as in Swift; <c>1..&lt;10</c> stops before it.</summary>
-public sealed record RangePatternSyntax(TextSpan Span, LiteralPatternSyntax Start, Token Operator, LiteralPatternSyntax End)
+public sealed record RangePatternSyntax(TextSpan Span, PatternSyntax Start, Token Operator, PatternSyntax End)
     : PatternSyntax(Span)
 {
     public bool IsInclusive => Operator.Kind == TokenKind.DotDot;
@@ -808,7 +828,7 @@ public sealed record PropertyPatternSyntax(TextSpan Span, Token? Qualifier, Toke
 public sealed record PropertySubpatternSyntax(TextSpan Span, Token Name, PatternSyntax Pattern) : SyntaxNode(Span);
 
 /// <summary><c>&lt; 0</c>, <c>&gt;= 'a'</c>: compares the value with a constant (C#'s relational pattern).</summary>
-public sealed record RelationalPatternSyntax(TextSpan Span, Token Operator, LiteralPatternSyntax Value) : PatternSyntax(Span);
+public sealed record RelationalPatternSyntax(TextSpan Span, Token Operator, PatternSyntax Value) : PatternSyntax(Span);
 
 /// <summary><c>null</c> in a pattern: the same as <c>None</c>.</summary>
 public sealed record NullPatternSyntax(TextSpan Span) : PatternSyntax(Span);

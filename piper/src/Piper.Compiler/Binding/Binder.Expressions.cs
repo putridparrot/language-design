@@ -405,6 +405,8 @@ public sealed partial class Binder
                 return new BoundErrorExpression();
             case VariableSymbol variable:
                 return new BoundVariableExpression(variable);
+            case ConstantSymbol constant:
+                return ConstantValue(constant);
             case VariantSymbol variant:
                 // A built-in variant used bare: `None`.
                 return BindVariantCreation(variant.Enum, variant, null, span, expected);
@@ -1053,6 +1055,12 @@ public sealed partial class Binder
             return BindVariantCreation(@enum, variant, arguments, span, type == @enum ? expected : type);
         }
 
+        // `Account.Max`: a class's constant.
+        if (arguments is null && FindConstant(type, member.Text) is { } constant)
+        {
+            UseClassConstant(constant, member);
+            return ConstantValue(constant);
+        }
         // `Account.count`: a class's static field.
         if (arguments is null && type.OriginalDefinition is ClassSymbol && BindStaticFieldAccess(type, member) is { } staticField)
             return staticField;
