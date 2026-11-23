@@ -47,14 +47,34 @@ public static class Runner
             return PlatformReferences.Value;
         var platform = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
-            .Select(Path.GetFileNameWithoutExtension)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .GroupBy(path => Path.GetFileNameWithoutExtension(path), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        // A reference named as a platform assembly is left out for the platform's, unless the platform's is an older
+        // stand-in: the core runtime's WindowsBase 4.0, where WPF needs the Windows Desktop framework's.
+        var replacing = references.CompileAssemblies
+            .Where(path => platform.TryGetValue(Path.GetFileNameWithoutExtension(path), out var own) && Newer(path, own))
+            .ToList();
+        var replaced = replacing.Select(path => platform[Path.GetFileNameWithoutExtension(path)]).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var aliases = references.Aliases;
-        return PlatformReferences.Value.AddRange(references.CompileAssemblies
-            .Where(path => !platform.Contains(Path.GetFileNameWithoutExtension(path)))
+        var kept = PlatformReferences.Value.Where(r => r is not PortableExecutableReference { FilePath: { } file } || !replaced.Contains(file));
+        return [.. kept, .. references.CompileAssemblies
+            .Where(path => !platform.ContainsKey(Path.GetFileNameWithoutExtension(path)) || replacing.Contains(path))
             .Select(path => aliases.TryGetValue(Path.GetFileNameWithoutExtension(path), out var alias)
                 ? MetadataReference.CreateFromFile(path).WithAliases([alias])
-                : (MetadataReference)MetadataReference.CreateFromFile(path)));
+                : (MetadataReference)MetadataReference.CreateFromFile(path))];
+    }
+
+    /// <summary>Whether the assembly at <paramref name="path"/> is a later version than the one at <paramref name="than"/>.</summary>
+    private static bool Newer(string path, string than)
+    {
+        try
+        {
+            return AssemblyName.GetAssemblyName(path).Version > AssemblyName.GetAssemblyName(than).Version;
+        }
+        catch (Exception ex) when (ex is BadImageFormatException or FileLoadException or FileNotFoundException)
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -130,7 +150,8 @@ public static class Runner
 
     /// <param name="executable">Build a console application whose entry point is the program's `main`, rather than a library.</param>
     /// <param name="references">What the program references beyond the platform (<see cref="CompilationResult.References"/>).</param>
-    public static CSharpBuildResult Build(IEnumerable<GeneratedFile> files, string assemblyName = "PiperProgram", bool executable = false, ProgramReferences? references = null)
+    public static CSharpBuildResult Build(
+        IEnumerable<GeneratedFile> files, string assemblyName = "PiperProgram", bool executable = false, ProgramReferences? references = null, bool windowed = false)
     {
         // Parse doc comments, so `///` comments go into the XML documentation file (without warnings for missing ones).
         var options = new CSharpParseOptions(LanguageVersion.Latest, DocumentationMode.Parse);
@@ -140,7 +161,7 @@ public static class Runner
             trees,
             References(references),
             new CSharpCompilationOptions(
-                executable ? OutputKind.ConsoleApplication : OutputKind.DynamicallyLinkedLibrary,
+                !executable ? OutputKind.DynamicallyLinkedLibrary : windowed ? OutputKind.WindowsApplication : OutputKind.ConsoleApplication,
                 mainTypeName: executable ? CSharpEmitter.EntryPointClassName : null,
                 nullableContextOptions: NullableContextOptions.Enable));
 
@@ -420,6 +441,18 @@ public static class Runner
 
     private static RunResult RunDirect(MethodInfo entryPoint, string[] args)
     {
+        // A `[STAThread]` Main (a WPF or Windows Forms program) runs on a thread of its own in a single-threaded
+        // apartment, as .NET starts such a program, rather than on the caller's (`piper run`'s).
+        if (OperatingSystem.IsWindows() && entryPoint.IsDefined(typeof(STAThreadAttribute)) &&
+            Thread.CurrentThread.GetApartmentState() != ApartmentState.STA)
+        {
+            RunResult? result = null;
+            var thread = new Thread(() => result = RunDirect(entryPoint, args));
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+            return result!;
+        }
         // The generated Main switches to the invariant culture; don't leak that into the host thread.
         var culture = Thread.CurrentThread.CurrentCulture;
         try

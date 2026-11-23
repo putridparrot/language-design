@@ -29,6 +29,49 @@ public sealed class AssemblyOutputTests : IDisposable
         return (process.ExitCode, output.ReplaceLineEndings("\n"));
     }
 
+    /// <summary>
+    /// A WPF program: its types come from the Windows Desktop framework (whose WindowsBase is a later one than the
+    /// core runtime's stand-in), its <c>[STAThread]</c> Main runs in a single-threaded apartment (as a window needs),
+    /// under <c>piper run</c> and as an executable, and a windowed one's launcher is a GUI program, so it opens no
+    /// console. Only on Windows, with the desktop runtime installed.
+    /// </summary>
+    [Fact]
+    public void A_WPF_program_runs_in_a_single_threaded_apartment_without_a_console()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        var (references, errors) = ProgramReferences.Resolve(Path.GetTempPath(), new Dictionary<string, string>(), ["Microsoft.WindowsDesktop.App"], []);
+        if (!errors.IsEmpty)
+            return;
+        var result = Compilation.Compile("""
+            using System;
+            using System.Threading;
+            using System.Windows;
+
+            [STAThread]
+            fn Main() {
+                let window = Window();
+                window.Title = "Piper";
+                Print($"{Thread.CurrentThread.GetApartmentState()} {window.Title}");
+            }
+            """, "app.piper", new CompilationOptions { References = references });
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        Assert.Matches(@"\[global::System\.STAThread(Attribute)?\]\s*public static void Main\(string\[\] args\)", result.CSharp!);
+
+        var run = Runner.Run(result.Files, references: references);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("STA Piper\n", run.Output.ReplaceLineEndings("\n"));
+
+        var output = AssemblyWriter.Write(result.Files, _directory, "app", executable: true, references, windowed: true);
+        Assert.True(output.Success, string.Join("\n", output.Errors));
+        if (output.Launcher is not { } launcher)
+            return;
+        var bytes = File.ReadAllBytes(launcher);
+        var pe = BitConverter.ToInt32(bytes, 0x3C);
+        Assert.Equal(2, BitConverter.ToUInt16(bytes, pe + 4 + 20 + 68));     // IMAGE_SUBSYSTEM_WINDOWS_GUI
+        Assert.Equal((0, "STA Piper\n"), Run(launcher));
+    }
+
     [Fact]
     public void An_executable_runs_on_its_own()
     {

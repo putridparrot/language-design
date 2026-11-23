@@ -56,9 +56,16 @@ public sealed record ProgramReferences(ImmutableArray<string> Assemblies, Immuta
     /// (<c>piper_ref1::Microsoft.Extensions.Logging.LoggingBuilderExtensions</c>), and Roslyn references them by it.
     /// </summary>
     public ImmutableDictionary<string, string> Aliases =>
-        CompileAssemblies.IsEmpty
+        CompileAssemblies.IsEmpty || !Aliased
             ? ImmutableDictionary<string, string>.Empty
             : AliasCache.GetOrAdd(string.Join(Path.PathSeparator, CompileAssemblies), _ => FindAliases(CompileAssemblies));
+
+    /// <summary>
+    /// Whether the generated code gives clashing assemblies <see cref="Aliases"/>: not when it's compiled by a .NET
+    /// project (Piper.Build), whose references MSBuild passes without them. There, as in the project's own C#, a type
+    /// two references declare is ambiguous only where it's named.
+    /// </summary>
+    public bool Aliased { get; init; } = true;
 
     private static ImmutableDictionary<string, string> FindAliases(ImmutableArray<string> assemblies)
     {

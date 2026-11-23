@@ -1823,7 +1823,17 @@ class Grid(width: int, height: int) requires width > 0, height > 0 { … }
 ### Tests
 
 A `test` block checks something, with `Assert` and `AssertEqual`. `piper test` runs them; other builds type-check them
-but leave them out, so they cost nothing in the program.
+but leave them out, so they cost nothing in the program. So does what only tests use: a helper, a fixture's record or
+enum, or a method only a test calls is left out too.
+
+- **What counts as used** is what the program reaches from its roots, following calls, constructions, the types in
+  signatures and fields, traits, and functions used as values. The roots are an executable's `Main` (`piper run`,
+  `piper build --exe`), a library's `public` declarations (`--library`), or, for C# written out (`piper build`
+  without either, `piper emit`, a Piper.Build project), everything not `private`, as other C# compiled with it may
+  call it.
+- **Kept regardless:** a declaration with an attribute (.NET may find it by reflection), what the tests don't use at
+  all (only test-only code goes; dead code is as it was), and a type's operators, overrides, accessors, constructors,
+  trait implementations and the methods C# calls by name (`ToString`, `Parse`, `GetEnumerator`, …).
 
 ```piper
 using System.Threading.Tasks;

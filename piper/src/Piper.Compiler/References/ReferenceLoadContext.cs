@@ -15,11 +15,24 @@ public sealed class ReferenceLoadContext : AssemblyLoadContext
 {
     private static readonly ConcurrentDictionary<string, ReferenceLoadContext> Contexts = new(StringComparer.OrdinalIgnoreCase);
 
-    private static readonly Lazy<HashSet<string>> PlatformNames = new(() =>
-        [.. ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") ?? "")
+    /// <summary>The platform's assemblies (the process's own), by simple name, with their versions.</summary>
+    private static readonly Lazy<Dictionary<string, Version?>> PlatformNames = new(() =>
+        ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") ?? "")
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
-            .Select(Path.GetFileNameWithoutExtension)
-            .OfType<string>()]);
+            .GroupBy(path => Path.GetFileNameWithoutExtension(path), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => VersionOf(g.First()), StringComparer.OrdinalIgnoreCase));
+
+    private static Version? VersionOf(string path)
+    {
+        try
+        {
+            return AssemblyName.GetAssemblyName(path).Version;
+        }
+        catch (Exception ex) when (ex is BadImageFormatException or FileLoadException or FileNotFoundException)
+        {
+            return null;
+        }
+    }
 
     private readonly Dictionary<string, string> _paths = new(StringComparer.OrdinalIgnoreCase);
 
@@ -32,8 +45,15 @@ public sealed class ReferenceLoadContext : AssemblyLoadContext
     public static ReferenceLoadContext For(ImmutableArray<string> references) =>
         Contexts.GetOrAdd(string.Join(Path.PathSeparator, references.Order(StringComparer.OrdinalIgnoreCase)), _ => new ReferenceLoadContext(references));
 
-    /// <summary>Whether <paramref name="name"/> is one of the references (and not a platform assembly, which the process has).</summary>
-    public bool Has(AssemblyName name) => name.Name is { } simple && !PlatformNames.Value.Contains(simple) && _paths.ContainsKey(simple);
+    /// <summary>
+    /// Whether <paramref name="name"/> is one of the references, and not a platform assembly, which the process has.
+    /// Except where the platform's is only a stand-in older than the version asked for: .NET's core runtime has a
+    /// <c>WindowsBase</c> 4.0 for old code, but WPF's PresentationFramework needs the Windows Desktop framework's 10.0,
+    /// which the references have.
+    /// </summary>
+    public bool Has(AssemblyName name) =>
+        name.Name is { } simple && _paths.ContainsKey(simple) &&
+        (!PlatformNames.Value.TryGetValue(simple, out var platform) || platform is not null && name.Version is { } wanted && wanted > platform);
 
     protected override Assembly? Load(AssemblyName name) =>
         Has(name) ? LoadFromAssemblyPath(_paths[name.Name!]) : null;

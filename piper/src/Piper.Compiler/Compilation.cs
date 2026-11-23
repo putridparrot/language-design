@@ -81,6 +81,13 @@ public sealed record CompilationOptions(bool LineDirectives = false, bool Includ
     /// reads it from git at a tag), or null for none; without it, the shapes on disk are compared with.
     /// </summary>
     public Func<string, string?>? ShapeBaseline { get; init; }
+
+    /// <summary>
+    /// What calls the program besides its own code, so what only its tests use can be left out of a build (without
+    /// <see cref="CompilationOptions.IncludeTests"/>): an executable's Main, a library's public declarations, or by
+    /// default anything not private.
+    /// </summary>
+    public ProgramRoots Roots { get; init; } = ProgramRoots.Visible;
 }
 
 /// <summary>Runs the whole pipeline over a program's files: lex → parse → bind → lower → emit C#.</summary>
@@ -108,8 +115,8 @@ public static class Compilation
             return new CompilationResult(files, sorted, []) { Shapes = [.. shapes] };
 
         var lowered = Lowerer.Lower(program);
-        if (options.IncludeTests)
-            lowered = lowered.WithTestsAsFunctions();
+        // Tests are compiled in for `piper test`; otherwise they're left out, and so is what only they use.
+        lowered = options.IncludeTests ? lowered.WithTestsAsFunctions() : TestOnlyCode.Remove(lowered, options.Roots);
         return new CompilationResult(files, sorted, CSharpEmitter.Emit(lowered, options.LineDirectives, options.References.Aliases, [.. options.Plugins.SelectMany(p => p.Providers).Distinct()]))
         {
             HasMain = program.Main is not null,

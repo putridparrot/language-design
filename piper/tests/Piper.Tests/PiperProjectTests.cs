@@ -33,13 +33,21 @@ public class PiperProjectTests
         Assert.Equal(new PiperProject("greeter", PiperOutput.Library), project);
     }
 
+    [Fact]
+    public void A_windowed_program_is_winexe()
+    {
+        var (project, errors) = Parse("""{ "name": "paint", "output": "winexe" }""");
+        Assert.Empty(errors);
+        Assert.Equal(new PiperProject("paint", PiperOutput.WinExe), project);
+    }
+
     [Theory]
     [InlineData("{ \"sources\": {} }", "Unknown key \"sources\"")]
     [InlineData("{ \"packages\": [\"Humanizer\"] }", "\"packages\" must map NuGet package names to versions")]
     [InlineData("{ \"packages\": { \"Humanizer\": 2 } }", "\"packages\" must map NuGet package names to versions")]
     [InlineData("{ \"frameworks\": \"Microsoft.AspNetCore.App\" }", "\"frameworks\" must be a list")]
     [InlineData("{ \"references\": [\"\"] }", "\"references\" must be a list")]
-    [InlineData("{ \"output\": \"dll\" }", "\"output\" must be \"exe\" or \"library\"")]
+    [InlineData("{ \"output\": \"dll\" }", "\"output\" must be \"exe\", \"winexe\" (a windowed program, without a console) or \"library\"")]
     [InlineData("{ \"name\": \"\" }", "\"name\" must be a non-empty string")]
     [InlineData("{ \"name\": \"a/b\" }", "\"name\" must be a non-empty string")]
     [InlineData("{ \"name\": 3 }", "\"name\" must be a non-empty string")]

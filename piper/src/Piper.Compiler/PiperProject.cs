@@ -10,6 +10,9 @@ public enum PiperOutput
 {
     Exe,
     Library,
+
+    /// <summary>A windowed executable (WPF, Windows Forms, Avalonia), as MSBuild's <c>WinExe</c>: on Windows, no console opens with it.</summary>
+    WinExe,
 }
 
 /// <summary>
@@ -112,11 +115,11 @@ public sealed record PiperProject(string? Name, PiperOutput? Output)
                     case "name":
                         Error(key, "\"name\" must be a non-empty string that can be a file name, such as \"app\".");
                         break;
-                    case "output" when property.Value.ValueKind == JsonValueKind.String && property.Value.GetString() is "exe" or "library":
-                        output = property.Value.GetString() == "exe" ? PiperOutput.Exe : PiperOutput.Library;
+                    case "output" when property.Value.ValueKind == JsonValueKind.String && property.Value.GetString() is "exe" or "winexe" or "library":
+                        output = property.Value.GetString() switch { "exe" => PiperOutput.Exe, "winexe" => PiperOutput.WinExe, _ => PiperOutput.Library };
                         break;
                     case "output":
-                        Error(key, "\"output\" must be \"exe\" or \"library\".");
+                        Error(key, "\"output\" must be \"exe\", \"winexe\" (a windowed program, without a console) or \"library\".");
                         break;
                     case "plugins" when StringList(property.Value) is { } paths:
                         plugins = paths;

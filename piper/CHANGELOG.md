@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- **WPF programs, and windowed ones:** `[STAThread]` on `Main` is put on the generated entry point, so WPF and Windows
+  Forms get their single-threaded apartment, and `piper run` runs such a Main on an STA thread of its own. piper.json's
+  `"output": "winexe"` makes a windowed program, whose launcher is a GUI program (no console opens with it) and whose
+  assembly a Windows application, as MSBuild's `WinExe`.
+
+- **Fixed: WPF's types couldn't be used.** With `"frameworks": ["Microsoft.WindowsDesktop.App"]`, no WPF type was
+  found: the core runtime has a `WindowsBase` 4.0 stand-in, which was taken for the desktop framework's 10.0, so
+  PresentationFramework didn't load, and C# didn't compile against it. A reference now replaces a platform assembly of
+  the same name when it's the later version, in the binder and the C# compiler.
+
+- **Piper.Build: the Piper code uses the project's references.** A .NET project's `.piper` files were checked against
+  .NET's own assemblies only, so a package the project referenced was unknown to them. The targets now write the
+  resolved references to `obj/…/piper.references` (shared frameworks by name), and `piper build`/`emit`/`run`/`test`
+  take them with `--references <file>`. The generated code then names no extern aliases, as the project's compiler
+  gets its references without them (`ProgramReferences.Aliased`).
+
+- **Builds leave out what only tests use.** A helper, a fixture's record or enum, or a method only `test` blocks call
+  isn't in the binary any more. What's kept is what the program reaches from its roots: `Main` for `piper run` and
+  `piper build --exe`, the `public` declarations for `--library`, and anything not private for C# written out (which
+  other C# may call). Declarations with attributes, those the tests don't use at all, and the methods C# finds by
+  name or through a trait are kept. `CompilationOptions.Roots` (`ProgramRoots`) says which; `piper test` keeps all.
+
 - **Piper's own tables are migrated when a later Piper changes them.** The outbox's, idempotency keys' and
   migrations' tables (Piper.Data's `PiperTables`) each keep every version they've had. `piper db migrate` records the
   version of each in the shape a migration reaches (`"piper": {"outbox": 1}`; a migration from before names them as a

@@ -16,6 +16,8 @@ const string Usage = """
       piper build <inputs...> --library [-o <dir>] [--name <name>]
                                            Compile to a library: <name>.dll, .pdb and Piper.Runtime.dll
       piper emit  <inputs...>              Print the generated C# to stdout
+                                           (build, emit, run and test take --references <file>: the assemblies a .NET
+                                           project references, a path a line, or framework:<name>; Piper.Build writes it)
       piper run   <inputs...> [--watch] [-- <args...>]
                                            Transpile, compile and run; <args> go to Main(args: string[]). The `--` can be
                                            left out when the first starts with '-': piper run app --port 8001.
@@ -54,7 +56,7 @@ const string Usage = """
 
     Inputs are .piper files or directories (searched recursively for .piper files);
     all of them are compiled together as one program. A single directory may have a piper.json,
-    { "name": "app", "output": "exe" | "library" }, which 'piper build' follows when given no --exe,
+    { "name": "app", "output": "exe" | "winexe" | "library" }, which 'piper build' follows when given no --exe,
     --library or --name, whose "plugins" can name those that come with piper: ["services", "web"], and
     whose "projects" name other program folders whose code it shares: ["../shared"].
 
@@ -104,6 +106,8 @@ string? filter = null;
 int? seed = null;
 bool executable = false, library = false, watch = false, publish = false, acceptBreaking = false;
 string? runtime = null;
+string? referencesFile = null;
+bool windowed = false;
 string[] programArguments = [];
 for (int i = 1; i < args.Length; i++)
 {
@@ -132,6 +136,8 @@ for (int i = 1; i < args.Length; i++)
         runtime = args[++i];
     else if (args[i] == "--accept-breaking" && command != "emit")
         acceptBreaking = true;
+    else if (args[i] == "--references" && i + 1 < args.Length)
+        referencesFile = args[++i];
     else if (args[i] == "--library" && command == "build")
         library = true;
     // Before the program's own options, so `piper run app --watch --port 8001` watches; `--` passes a --watch of its own.
@@ -184,7 +190,36 @@ if (command == "run")
 ImmutableArray<IPiperPlugin> plugins = [];
 var references = ProgramReferences.None;
 ImmutableArray<string> sharedFiles = [];
-if (inputs is [var folder] && Directory.Exists(folder) && File.Exists(Path.Combine(folder, PiperProject.FileName)))
+var hasProject = inputs is [var only] && Directory.Exists(only) && File.Exists(Path.Combine(only, PiperProject.FileName));
+if (referencesFile is not null)
+{
+    // A Piper.Build project's references, as MSBuild resolved them (its targets write the file): an assembly's path on
+    // each line, or `framework:Microsoft.AspNetCore.App` for a shared framework. A program folder says its own in piper.json.
+    if (hasProject)
+    {
+        Console.Error.WriteLine($"--references is for files a .NET project compiles; a folder with a {PiperProject.FileName} lists its references there.");
+        return 2;
+    }
+    if (!File.Exists(referencesFile))
+    {
+        Console.Error.WriteLine($"File not found: {referencesFile}");
+        return 2;
+    }
+    var lines = File.ReadAllLines(referencesFile).Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+    var frameworks = lines.Where(l => l.StartsWith("framework:", StringComparison.Ordinal)).Select(l => l["framework:".Length..]).ToList();
+    // Piper's own runtime is the compiler's already.
+    var assemblies = lines.Where(l => !l.StartsWith("framework:", StringComparison.Ordinal) &&
+        !Path.GetFileName(l).Equals("Piper.Runtime.dll", StringComparison.OrdinalIgnoreCase)).ToList();
+    var (resolved, referenceErrors) = ProgramReferences.Resolve(
+        Path.GetDirectoryName(Path.GetFullPath(referencesFile))!, ImmutableDictionary<string, string>.Empty, frameworks, assemblies);
+    foreach (var error in referenceErrors)
+        Console.Error.WriteLine(error.Format());
+    if (!referenceErrors.IsEmpty)
+        return 2;
+    // The project's C# compiler gets these references from MSBuild, without extern aliases.
+    references = resolved with { Aliased = false };
+}
+if (inputs is [var folder] && hasProject)
 {
     // Publishing for a container: its packages' native libraries are Linux's (or --runtime's), not this machine's.
     var (loaded, errors) = LoadedProject.Load(folder, runtime: publish ? runtime ?? "linux-x64" : null);
@@ -203,9 +238,11 @@ if (inputs is [var folder] && Directory.Exists(folder) && File.Exists(Path.Combi
     }
     if (command == "build" && !executable && !library)
     {
-        executable = project.Output == PiperOutput.Exe;
+        executable = project.Output is PiperOutput.Exe or PiperOutput.WinExe;
         library = project.Output == PiperOutput.Library;
     }
+    // A windowed program's launcher opens no console beside its window.
+    windowed = project.Output == PiperOutput.WinExe;
     assemblyName ??= project.Name;
 }
 
@@ -219,6 +256,9 @@ var result = Compilation.Compile(sources, new CompilationOptions(LineDirectives:
     SharedFiles = [.. sources.Take(sharedFiles.Length).Select(s => s.FileName)],
     // An api's shape (Name.shape.json) is checked, and recorded when it's new or the change is compatible; emit only reads.
     WireShapes = command == "emit" ? WireShapeMode.Check : acceptBreaking ? WireShapeMode.AcceptBreaking : WireShapeMode.Record,
+    // What only tests use is left out; what else may call the program decides what that is. C# written out (build
+    // without --exe or --library, and emit) may be compiled with other C#, which can call anything not private.
+    Roots = command == "run" || executable ? Piper.Binding.ProgramRoots.Main : library ? Piper.Binding.ProgramRoots.Exported : Piper.Binding.ProgramRoots.Visible,
 });
 foreach (var diagnostic in result.FormattedDiagnostics)
     Console.Error.WriteLine(diagnostic);
@@ -273,7 +313,7 @@ switch (command)
         var directory = outputDirectory ?? Path.Combine(Directory.Exists(first) ? first : Path.GetDirectoryName(first)!, "bin", publish ? "publish" : "");
         var output = publish
             ? AssemblyWriter.Publish(result.Files, directory, name, result.References)
-            : AssemblyWriter.Write(result.Files, directory, name, executable, result.References);
+            : AssemblyWriter.Write(result.Files, directory, name, executable, result.References, windowed: windowed);
         foreach (var error in output.Errors)
             Console.Error.WriteLine(error);
         if (!output.Success)

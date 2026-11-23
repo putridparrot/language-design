@@ -66,7 +66,10 @@ follows (flags override it):
 }
 ```
 
-- **`output`** is `"exe"` or `"library"`.
+- **`output`** is `"exe"`, `"library"`, or `"winexe"` for a windowed program (WPF, Windows Forms, Avalonia), whose
+  launcher opens no console window beside it, as MSBuild's `WinExe`. A WPF or Windows Forms `Main` says
+  `[STAThread]`, which its entry point, and `piper run`, honour; WPF's types come with
+  `"frameworks": ["Microsoft.WindowsDesktop.App"]`.
 - **`packages`** are NuGet packages. They're restored with the .NET SDK, using your NuGet configuration, and remembered
   in the folder's `obj/piper`, so that only happens again when they change. `piper package add <id>` adds one at its
   newest stable version on your NuGet sources (found with `dotnet package search`), or at `--version`'s, changing only
@@ -110,7 +113,9 @@ For a self-contained or single-file build, AOT, or mixing with C#, use a project
 
 Every `.piper` file in the project becomes part of one Piper program, which the project's C# can call. It also brings in
 `Piper.Runtime`, the small library defining `Option` and `Result` that all compiled Piper code shares. Errors are
-reported against `.piper` lines, and stack traces and the debugger show Piper source.
+reported against `.piper` lines, and stack traces and the debugger show Piper source. The Piper code can use what the
+project references, as its C# can: its `PackageReference`s, `ProjectReference`s, `Reference`s and shared frameworks
+(`<FrameworkReference Include="Microsoft.AspNetCore.App" />`).
 
 ## Editor support
 

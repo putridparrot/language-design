@@ -5,7 +5,11 @@ program compiling or change what it means.
 
 ## Builds
 
-### Remove code only tests use
+### ~~Remove code only tests use~~
+
+Done (see [Tests](language.md#tests)): an executable keeps what `Main` reaches, a library what its public
+declarations reach, and C# written out what anything not private reaches; every app and sample builds and runs as
+before. Still to come: the "Later" below. The requirement as written:
 
 A normal build leaves out `test` blocks, but compiles everything they call. Functions, records, enums, traits and
 methods used only by tests still end up in the binary.
@@ -26,7 +30,12 @@ from tests. The binary should hold the bare minimum the program needs.
 - **Later:** extend the same analysis to remove anything unreachable, test-only or not, behind an option, since a
   library's public API must stay intact.
 
-### References in a Piper.Build project
+### ~~References in a Piper.Build project~~
+
+Done: the targets write the project's resolved references (`@(ReferencePath)`, frameworks by name) to
+`obj/…/piper.references`, which `piper build --references` reads, and the Piper code is compiled again when they change.
+Found on the way: a `fn Main` in a Piper.Build project that's an executable gives C# two entry points (`MainModule.Main`
+and `PiperEntryPoint.Main`); the project's C# has to be the entry point for now.
 
 `piper.json`'s `"packages"`, `"frameworks"` and `"references"` work for a program folder. In a project using Piper.Build,
 the `.piper` files are still only checked against .NET's own assemblies, not the project's `PackageReference`s. The
@@ -888,13 +897,12 @@ Piper programs can be consoles and servers; a UI should come from .NET's UI fram
 
 - **Desktop through interop (first):** code-first samples, to find what's missing. Avalonia (cross-platform, from
   NuGet) is done: [apps/tracker-desktop](../apps/tracker-desktop) ([what it found](../apps/tracker/NOTES.md#phase-5-a-desktop-client-avalonia)).
-  WPF (`"frameworks": ["Microsoft.WindowsDesktop.App"]`) is next. Two gaps remain:
-  - `[STAThread]` on `Main` doesn't reach the generated entry point (`PiperEntryPoint.Main`), which WPF and WinForms
-    need (Avalonia runs without it). `piper run` calls `Main` on the CLI's thread, so it would need to start an STA
-    thread too.
-  - No piper.json setting for a windowed program (MSBuild's `WinExe`), so a console window opens alongside it. The
-    launcher piper writes from the SDK's apphost would need its PE subsystem set to GUI, as the SDK does.
-  XAML is out of scope: it relies on generated `InitializeComponent` partials the binder can't see.
+  WPF (`"frameworks": ["Microsoft.WindowsDesktop.App"]`) works too: ~~`[STAThread]` reaching the generated entry
+  point~~ (and `piper run` running such a Main on an STA thread) and ~~a windowed program~~ (`"output": "winexe"`,
+  whose launcher's PE subsystem is GUI, as the SDK makes `WinExe`'s) are done. So is what they found: WPF's types
+  didn't bind at all, as the core runtime's `WindowsBase` 4.0 stand-in was taken for the desktop framework's 10.0.
+  Still to come: a WPF sample app, as tracker-desktop is for Avalonia. XAML is out of scope: it relies on generated
+  `InitializeComponent` partials the binder can't see.
 - **An MVU plugin:** Model-View-Update (as Elm and F#'s Fabulous) suits Piper: a record for the model, updated by
   spreading; an enum of messages, handled by an exhaustive `match`; and a view function returning a control tree. The
   plugin would supply the runtime (diffing the view, dispatching messages) over Avalonia. For the classic MVVM style

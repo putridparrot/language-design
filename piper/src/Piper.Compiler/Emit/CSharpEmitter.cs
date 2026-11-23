@@ -315,7 +315,7 @@ public sealed partial class CSharpEmitter
     };
 
     private IEnumerable<MethodSymbol> MethodsFrom(GenericTypeDefinition type, SourceText file) =>
-        MethodsOf(type).Where(m => (m.DeclaringFile ?? _runtimeFile) == file);
+        MethodsOf(type).Where(m => (m.DeclaringFile ?? _runtimeFile) == file && !_program.OmittedMethods.Contains(m));
 
     private IEnumerable<TypeSymbol> TraitsFrom(GenericTypeDefinition type, SourceText file) =>
         type is NamedTypeDefinition definition
@@ -324,7 +324,7 @@ public sealed partial class CSharpEmitter
 
     /// <summary>Other files add to this type with extend blocks, so every C# part must be <c>partial</c>.</summary>
     private bool IsPartial(GenericTypeDefinition type) =>
-        MethodsOf(type).Any(m => (m.DeclaringFile ?? _runtimeFile) != HomeFile(type)) ||
+        MethodsOf(type).Any(m => (m.DeclaringFile ?? _runtimeFile) != HomeFile(type) && !_program.OmittedMethods.Contains(m)) ||
         (type is NamedTypeDefinition definition && definition.Conformances.Any(c => (c.File ?? _runtimeFile) != HomeFile(type)));
 
     private IEnumerable<GenericTypeDefinition> ForeignContributions(SourceText file) =>
@@ -1133,6 +1133,9 @@ public sealed partial class CSharpEmitter
             _writer.WriteLine();
             _writer.WriteLine($"internal static class {EntryPointClassName}");
             _writer.OpenBrace();
+            // `[STAThread]` on Main (WPF and Windows Forms need it) belongs on the real entry point, which .NET reads it from.
+            foreach (var attribute in main.Attributes.Where(a => a.Type.ToString() is "System.STAThreadAttribute" or "System.MTAThreadAttribute" or "STAThreadAttribute" or "MTAThreadAttribute"))
+                _writer.WriteLine($"[global::System.{attribute.Type.ToString().Split('.')[^1]}]");
             _writer.WriteLine("public static void Main(string[] args)");
             _writer.OpenBrace();
             // Piper output must not depend on the machine's locale (e.g. "1,5" vs "1.5").

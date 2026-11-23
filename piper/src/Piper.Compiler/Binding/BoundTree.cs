@@ -52,6 +52,9 @@ public sealed class BoundProgram(
     /// <summary>`test` blocks, which are only compiled in for `piper test` (see <see cref="WithTestsAsFunctions"/>).</summary>
     public ImmutableArray<BoundTest> Tests { get; init; } = [];
 
+    /// <summary>Methods left out of the build, as only tests use them (<see cref="TestOnlyCode"/>): not emitted with their types.</summary>
+    public ImmutableHashSet<MethodSymbol> OmittedMethods { get; init; } = [];
+
     /// <summary>The program with its tests added to its functions, so they're emitted (each marked with PiperTestAttribute).</summary>
     public BoundProgram WithTestsAsFunctions() =>
         new(Files, FileNamespaces, Types, BuiltinTypes, [.. Functions, .. Tests.SelectMany(t => t.Generators.Prepend(t.Function))], Methods, Main)

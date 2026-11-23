@@ -22,10 +22,31 @@
     <UpToDateCheckInput Include="@(PiperCompile)" />
   </ItemGroup>
 
+  <!--
+    The project's references, as MSBuild resolved them (its PackageReferences, ProjectReferences and References), for
+    the Piper code to use too: an assembly's path a line, and a shared framework (ASP.NET Core's) by name. Written
+    only when they change, so the Piper code is compiled again only then.
+  -->
+  <Target Name="PiperReferences"
+          DependsOnTargets="ResolveReferences"
+          BeforeTargets="PiperCompile"
+          Condition="'@(PiperCompile)' != ''">
+    <ItemGroup>
+      <_PiperReference Include="@(ReferencePath->'%(FullPath)')" Condition="'%(ReferencePath.FrameworkReferenceName)' == ''" />
+      <_PiperFramework Include="%(ReferencePath.FrameworkReferenceName)" Condition="'%(ReferencePath.FrameworkReferenceName)' != ''" />
+      <_PiperReference Include="@(_PiperFramework->'framework:%(Identity)')" />
+    </ItemGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <WriteLinesToFile File="$(IntermediateOutputPath)piper.references" Lines="@(_PiperReference->Distinct())" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <FileWrites Include="$(IntermediateOutputPath)piper.references" />
+    </ItemGroup>
+  </Target>
+
   <Target Name="PiperCompile"
           BeforeTargets="CoreCompile"
           Condition="'@(PiperCompile)' != ''"
-          Inputs="@(PiperCompile);$(PiperCompilerPath)"
+          Inputs="@(PiperCompile);$(PiperCompilerPath);$(IntermediateOutputPath)piper.references"
           Outputs="$(PiperOutputPath)piper.stamp">
     <!-- Start clean so C# from deleted or renamed .piper files doesn't linger. Full paths make #line point at the real files. -->
     <RemoveDir Directories="$(PiperOutputPath)" />
@@ -33,7 +54,7 @@
       Piper's errors are in MSBuild's format (file(line,col): error PIP0000: …), so Exec reports them against the .piper
       files, which fails the build. Exit code 1 means exactly that; any other failure (a crash) gets an error of its own.
     -->
-    <Exec Command="dotnet &quot;$(PiperCompilerPath)&quot; build @(PiperCompile->'&quot;%(FullPath)&quot;', ' ') -o &quot;$(PiperOutputPath.TrimEnd('\'))&quot;"
+    <Exec Command="dotnet &quot;$(PiperCompilerPath)&quot; build @(PiperCompile->'&quot;%(FullPath)&quot;', ' ') -o &quot;$(PiperOutputPath.TrimEnd('\'))&quot; --references &quot;$(MSBuildProjectDirectory)\$(IntermediateOutputPath)piper.references&quot;"
           IgnoreExitCode="true">
       <Output TaskParameter="ExitCode" PropertyName="_PiperExitCode" />
     </Exec>

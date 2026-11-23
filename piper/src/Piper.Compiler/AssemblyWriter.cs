@@ -29,11 +29,16 @@ public static class AssemblyWriter
     /// executable's runtimeconfig.json names the shared frameworks.
     /// </param>
     /// <param name="launcher">For an executable, whether to make a native launcher for this machine (not for a container).</param>
+    /// <param name="windowed">
+    /// A windowed program (piper.json's <c>"output": "winexe"</c>, MSBuild's <c>WinExe</c>): its launcher is a GUI
+    /// program on Windows, so no console window opens beside the program's own.
+    /// </param>
     public static AssemblyOutput Write(
-        IEnumerable<GeneratedFile> files, string directory, string name, bool executable, ProgramReferences? references = null, bool launcher = true)
+        IEnumerable<GeneratedFile> files, string directory, string name, bool executable, ProgramReferences? references = null, bool launcher = true,
+        bool windowed = false)
     {
         references ??= ProgramReferences.None;
-        var build = Runner.Build(files, name, executable, references);
+        var build = Runner.Build(files, name, executable, references, windowed);
         if (!build.Success)
             return new AssemblyOutput([], null, build.Errors);
 
@@ -65,7 +70,7 @@ public static class AssemblyWriter
             return new AssemblyOutput([.. written], null, []);
 
         Write(name + ".runtimeconfig.json", Encoding.UTF8.GetBytes(RuntimeConfig(references.Frameworks)));
-        var made = launcher ? WriteLauncher(directory, name) : null;
+        var made = launcher ? WriteLauncher(directory, name, windowed) : null;
         if (made is not null)
             written.Add(made);
         return new AssemblyOutput([.. written], made, []);
@@ -139,7 +144,7 @@ public static class AssemblyWriter
     /// Copies the SDK's apphost template for this platform, with the DLL's name written into its placeholder, as the SDK
     /// does. Null if there's no template (only a runtime is installed) or the placeholder isn't where it's expected.
     /// </summary>
-    private static string? WriteLauncher(string directory, string name)
+    private static string? WriteLauncher(string directory, string name, bool windowed = false)
     {
         if (FindAppHostTemplate() is not { } template)
             return null;
@@ -152,6 +157,8 @@ public static class AssemblyWriter
             return null;
         Array.Clear(bytes, index, placeholder.Length);
         appPath.CopyTo(bytes, index);
+        if (windowed && OperatingSystem.IsWindows())
+            MakeGuiProgram(bytes);
 
         var launcher = Path.Combine(directory, OperatingSystem.IsWindows() ? name + ".exe" : name);
         File.WriteAllBytes(launcher, bytes);
@@ -162,6 +169,27 @@ public static class AssemblyWriter
                 UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
         }
         return launcher;
+    }
+
+    /// <summary>The Windows PE subsystems: a console program (Windows opens a console for it), and a GUI one.</summary>
+    private const ushort ConsoleSubsystem = 3, GuiSubsystem = 2;
+
+    /// <summary>
+    /// Marks a launcher (a Windows PE file) as a GUI program, as the SDK does for <c>WinExe</c>: its optional header's
+    /// Subsystem, at the same offset in PE32 and PE32+, after the PE signature (found from the DOS header's
+    /// <c>e_lfanew</c>) and the file header. Left as it is if it isn't the console program it should be.
+    /// </summary>
+    private static void MakeGuiProgram(byte[] bytes)
+    {
+        if (bytes.Length < 0x40 || bytes[0] != 'M' || bytes[1] != 'Z')
+            return;
+        var pe = BitConverter.ToInt32(bytes, 0x3C);
+        const int SignatureSize = 4, FileHeaderSize = 20, SubsystemOffset = 68;
+        var subsystem = pe + SignatureSize + FileHeaderSize + SubsystemOffset;
+        if (pe < 0 || subsystem + 2 > bytes.Length || BitConverter.ToUInt32(bytes, pe) != 0x00004550 ||
+            BitConverter.ToUInt16(bytes, subsystem) != ConsoleSubsystem)
+            return;
+        BitConverter.TryWriteBytes(bytes.AsSpan(subsystem), GuiSubsystem);
     }
 
     /// <summary>
