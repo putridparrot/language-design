@@ -110,8 +110,15 @@ async fn Drain(worker: Worker, queue: ConcurrentQueue<Chunk>, results: Concurren
 
 /// Shares the job among the workers on the nodes at `addresses`, and adds up their answers.
 async fn Run(system: ActorSystem, addresses: List<string>, limit: long, chunks: int) => Task<long> {
-    let found = await Task.WhenAll(addresses.Select(address => ConnectWorkers(system, address)));
-    mut workers = found.SelectMany(w => w).ToList();
+    // If no node answers (they're still starting, or this machine is busy), ask again before giving up.
+    mut workers: List<Worker> = [];
+    for attempt in 1..5 {
+        let found = await Task.WhenAll(addresses.Select(address => ConnectWorkers(system, address)));
+        workers = found.SelectMany(w => w).ToList();
+        if workers.Count > 0 {
+            break;
+        }
+    }
 
     let queue = ConcurrentQueue<Chunk>(Chunks(limit, chunks));
     let results = ConcurrentDictionary<int, ChunkResult>();

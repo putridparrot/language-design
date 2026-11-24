@@ -851,6 +851,9 @@ public class AspectsPluginTests
     [Theory]
     [InlineData("[Timeout(50)]\nfn Sync() => int = 1;", "Timeout needs an async function")]
     [InlineData("[Timeout]\nasync fn A() => System.Threading.Tasks.Task { }", "Timeout takes how long to wait")]
+    [InlineData("[Bulkhead]\nfn A() => int = 1;", "Bulkhead takes the calls that can run at once")]
+    [InlineData("[Bulkhead(\"a\")]\nfn A() => int = 1;", "Bulkhead takes the calls that can run at once")]
+    [InlineData("[Bulkhead(1)]\nfn A() => System.Collections.Generic.IEnumerable<int> { yield return 1; }", "An iterator can't have a bulkhead")]
     [InlineData("[CircuitBreaker(5)]\nfn A() => int = 1;", "CircuitBreaker takes the failures in a row that open it")]
     public void Policies_are_given_what_they_need(string function, string message)
     {
@@ -899,6 +902,78 @@ public class AspectsPluginTests
         // Two failures open it; the third is refused without a call. After the wait one call tries, fails, and opens it
         // again; once what it calls is up, the trial succeeds and the circuit closes.
         Assert.Equal("down down refused calls=2\ndown refused calls=3\nok ok calls=5\n", output);
+    }
+
+    /// <summary>One runs, one waits its turn, and the third is refused at once; with room again, calls run as before, and
+    /// a call that throws gives its place back.</summary>
+    [Fact]
+    public void A_bulkhead_limits_the_calls_running_and_waiting()
+    {
+        var output = Run("""
+            using System;
+            using System.Threading.Tasks;
+            using Piper.Runtime;
+
+            class State { public static mut running = 0; public static mut most = 0; static prop Gate: TaskCompletionSource { get; } = TaskCompletionSource(); }
+
+            [Bulkhead(1, 1)]
+            async fn Work(n: int) => Task<int> {
+                State.running += 1;
+                State.most = Math.Max(State.most, State.running);
+                await State.Gate.Task;
+                State.running -= 1;
+                if n == 2 { throw InvalidOperationException("broken"); }
+                n
+            }
+
+            async fn Main() {
+                let first = Work(1);
+                let second = Work(2);
+                try { await Work(3); } catch (e: BulkheadFullException) { Print($"{e.Message} {PiperTransient.IsTransient(e)}"); }
+                Print($"{first.IsCompleted} {second.IsCompleted}");
+                State.Gate.SetResult();
+                Print(await first);
+                try { await second; } catch (e: InvalidOperationException) { Print(e.Message); }
+                Print(await Work(4));
+                Print($"most {State.most}");
+            }
+            """);
+        Assert.Equal("Work is full: 1 running and 1 waiting, the most it allows. True\nFalse False\n1\nbroken\n4\nmost 1\n", output);
+    }
+
+    /// <summary>Functions naming a bulkhead share it, synchronous or async, and must agree on its limits.</summary>
+    [Fact]
+    public void A_named_bulkhead_is_shared()
+    {
+        var output = Run("""
+            using System;
+            using System.Threading.Tasks;
+            using Piper.Runtime;
+
+            [Bulkhead("payments", 1)]
+            async fn Charge(gate: Task) => Task { await gate; }
+
+            [Bulkhead("payments", 1)]
+            fn Refund() => string = "refunded";
+
+            [Bulkhead("payments", 2)]
+            fn Other() { Print("other"); }
+
+            [Bulkhead(1)]
+            fn Alone() { Print("alone"); }
+
+            async fn Main() {
+                let gate = TaskCompletionSource();
+                let charge = Charge(gate.Task);
+                try { Print(Refund()); } catch (e: BulkheadFullException) { Print(e.Message); }
+                Alone();
+                gate.SetResult();
+                await charge;
+                Print(Refund());
+                try { Other(); } catch (e: InvalidOperationException) { Print(e.Message.StartsWith("The bulkhead 'payments' is given different limits")); }
+            }
+            """);
+        Assert.Equal("payments is full: 1 running, the most it allows.\nalone\nrefunded\nTrue\n", output);
     }
 
     [Fact]

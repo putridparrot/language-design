@@ -53,8 +53,10 @@ public sealed record ClusterOptions(TimeSpan Heartbeat, TimeSpan DownAfter)
 /// What a cluster's nodes say to each other: a ping (answered with the nodes the receiver knows) or that one is leaving.
 /// A ping also says how many times its sender has taken the receiver to be down (<paramref name="Downs"/>), and whether
 /// it takes it to be up now (<paramref name="Up"/>), so the receiver knows when its actors may have run elsewhere.
+/// Or it asks the receiver to let go of a singleton (<paramref name="Actor"/>) its sender now owns; a node of an older
+/// Piper, which has no singletons, takes that as a ping.
 /// </summary>
-public sealed record ClusterMessage(string Kind, string From, string[] Known, int Downs = 0, bool Up = false);
+public sealed record ClusterMessage(string Kind, string From, string[] Known, int Downs = 0, bool Up = false, string? Actor = null);
 
 /// <summary>
 /// A cluster: nodes that share out actors among themselves, each actor (a kind and a key, <c>Product/tea</c>) running on
@@ -71,6 +73,9 @@ public sealed record ClusterMessage(string Kind, string From, string[] Known, in
 /// message, a persisted one saving its events); messages that reach a node that isn't the owner are dead letters, which
 /// asks to the cluster retry on the owner. A persisted actor starting on its new owner replays its events, so it carries
 /// on where it was if the nodes share their event store.</item>
+/// <item><b>Singletons</b> (<see cref="HostSingleton"/>): one actor of a kind in the whole cluster, started on its owner
+/// without waiting for a message. The owner starts it only once every other member that's up has answered that it isn't
+/// running it, so a hand-over doesn't overlap.</item>
 /// <item><b>Not exact:</b> while nodes disagree on the members (a split network, or the moment a node joins) two may
 /// each start an actor. A persisted actor's store refuses the second writer (<c>EventStreamConflictException</c>), and
 /// the plugin's code stops an actor that's refused, so it starts again from what's saved. And a node that another took
@@ -83,7 +88,13 @@ public sealed class Cluster
     /// <summary>The actor on each node that the others ping.</summary>
     public const string ActorName = "piper-cluster";
 
-    private const string Ping = "ping", Leaving = "leaving";
+    private const string Ping = "ping", Leaving = "leaving", Release = "release";
+
+    /// <summary>The answer to a release by a node still running the singleton. (A name no node's address can have.)</summary>
+    private const string Held = "/held";
+
+    /// <summary>A singleton's key: it's <c>kind/singleton</c>.</summary>
+    internal const string SingletonKey = "singleton";
 
     private readonly ActorSystem _node;
     private readonly IClusterMembership _membership;
@@ -95,6 +106,7 @@ public sealed class Cluster
     private readonly ConcurrentDictionary<string, int> _reported = new();   // node -> how many times it said it took this one to be down
     private readonly ConcurrentDictionary<string, bool> _suspect = new();    // node -> it took this one to be down, and doesn't see it yet
     private readonly ConcurrentDictionary<string, bool> _persisted = new();
+    private readonly ConcurrentDictionary<string, byte> _singletons = new();
     private readonly CancellationTokenSource _stop = new();
     private readonly Lock _activating = new();
     private readonly Lock _recomputing = new();
@@ -164,8 +176,59 @@ public sealed class Cluster
     {
         if (kind.Contains('/'))
             throw new ArgumentException($"A kind of actor can't contain '/': '{kind}'.", nameof(kind));
+        if (_singletons.ContainsKey(kind))
+            throw new InvalidOperationException($"{kind} is already hosted as a singleton, so it can't be hosted by key too.");
         _kinds[kind] = activate;
         _persisted[kind] = persisted;
+    }
+
+    /// <summary>
+    /// Makes this node able to run the cluster's one actor of <paramref name="kind"/> (a scheduler, a coordinator), which
+    /// starts on its owner without waiting for a message, moves as members change, and is started again, by the next
+    /// heartbeat, if it stops. Every node of the cluster should host it, as any may own it.
+    /// </summary>
+    public void HostSingleton(string kind, Action<ActorSystem, string> activate, bool persisted = false)
+    {
+        if (_kinds.ContainsKey(kind))
+            throw new InvalidOperationException($"{kind} is already hosted on this node.");
+        Host(kind, (node, name, _) => activate(node, name), persisted);
+        _singletons[kind] = 0;
+        _ = _node.Runtime.Start(() => StartSingletonAsync(kind));
+    }
+
+    /// <summary>Starts each singleton this node owns that isn't running.</summary>
+    private Task StartSingletonsAsync() =>
+        Task.WhenAll(_singletons.Keys.Order(StringComparer.Ordinal).Select(StartSingletonAsync));
+
+    /// <summary>
+    /// Starts the singleton of <paramref name="kind"/>, if this node owns it and no other member that's up is running it:
+    /// each is asked, and lets go of it if it agrees this node owns it. One that's still finishing a message, or doesn't
+    /// answer, puts it off until the next heartbeat (or until that member is found down).
+    /// </summary>
+    private async Task StartSingletonAsync(string kind)
+    {
+        var name = $"{kind}/{SingletonKey}";
+        if (_leaving || _node.IsStopped || OwnerOf(name) != _node.Address || _node.Actors.Contains(name))
+            return;
+        var asked = Members.Where(m => m != _node.Address).ToArray();
+        var free = await Task.WhenAll(asked.Select(member => ReleasedAsync(member, name)));
+        // A member that came up meanwhile hasn't been asked: the next heartbeat does.
+        if (free.All(f => f) && Members.All(m => m == _node.Address || asked.Contains(m)))
+            Activate(name);
+    }
+
+    private async Task<bool> ReleasedAsync(string member, string name)
+    {
+        try
+        {
+            var answer = await _node.RequestAsync<ClusterMessage, string[]>(new ActorRef(member, ActorName),
+                new ClusterMessage(Release, _node.Address, [], _downs.GetValueOrDefault(member), Members.Contains(member), name), _options.Heartbeat);
+            return answer is not [Held];
+        }
+        catch (Exception)
+        {
+            return false;
+        }
     }
 
     /// <summary>The node that owns the actor called <paramref name="name"/> (<c>kind/key</c>), as this node sees the members.</summary>
@@ -193,10 +256,15 @@ public sealed class Cluster
     /// </summary>
     public async Task LeaveAsync()
     {
-        if (_leaving)
-            return;
-        _leaving = true;
+        lock (_activating)
+        {
+            if (_leaving)
+                return;
+            _leaving = true;
+        }
         await Task.WhenAll(HostedHere().Select(name => _node.StopAsync(new ActorRef(_node.Address, name))));
+        // Those moved elsewhere a moment ago too, so none is still running here once the others hear this node has left.
+        await _node.FinishAsync();
         foreach (var member in Members.Where(m => m != _node.Address))
             _node.Send(new ActorRef(member, ActorName), new ClusterMessage(Leaving, _node.Address, []));
         // Heartbeats first, so a round under way can't renew this node's membership after it's been removed.
@@ -229,13 +297,25 @@ public sealed class Cluster
     /// </summary>
     internal bool TryActivate(string name)
     {
+        // A singleton starts once the others have let go of it, not as a message arrives (an ask is retried meanwhile).
+        // And only the one is ever started, whatever key a message names.
         var slash = name.IndexOf('/');
-        if (_leaving || _node.IsStopped || slash <= 0 || !_kinds.TryGetValue(name[..slash], out var activate) || OwnerOf(name) != _node.Address)
+        return slash > 0 && !_singletons.ContainsKey(name[..slash]) && Activate(name);
+    }
+
+    private bool Activate(string name)
+    {
+        var slash = name.IndexOf('/');
+        if (_node.IsStopped || slash <= 0 || !_kinds.TryGetValue(name[..slash], out var activate) || OwnerOf(name) != _node.Address)
             return false;
         lock (_activating)
         {
+            if (_leaving)
+                return false;
             if (_node.Actors.Contains(name))
                 return true;
+            if (_singletons.ContainsKey(name[..slash]) && _node.IsFinishing(name))
+                return false;
             try
             {
                 activate(_node, name, name[(slash + 1)..]);
@@ -264,6 +344,15 @@ public sealed class Cluster
         Reported(message);
         // A ping says its sender is up: a node joining is a member from its first ping, not the next round.
         Recompute();
+        // A singleton another node owns, as this node sees it too, was stopped as the members changed; but if one started
+        // just then, it's stopped now.
+        if (message is { Kind: Release, Actor: { } singleton })
+        {
+            if (OwnerOf(singleton) != _node.Address)
+                _node.StopLocal(singleton);
+            context.Respond<string[]>(_node.Actors.Contains(singleton) || _node.IsFinishing(singleton) ? [Held] : []);
+            return Task.CompletedTask;
+        }
         context.Respond<string[]>([.. Known]);
         return Task.CompletedTask;
     }
@@ -298,6 +387,7 @@ public sealed class Cluster
         await Task.WhenAll(known.Select(PingAsync));
         Forget();
         Recompute();
+        await StartSingletonsAsync();
     }
 
     private async Task PingAsync(string member)
@@ -412,7 +502,10 @@ public sealed class Cluster
             try
             {
                 await _node.StopAsync(new ActorRef(_node.Address, name));
-                TryActivate(name);
+                if (_singletons.ContainsKey(name[..name.IndexOf('/')]))
+                    await StartSingletonAsync(name[..name.IndexOf('/')]);
+                else
+                    TryActivate(name);
             }
             catch (Exception error)
             {

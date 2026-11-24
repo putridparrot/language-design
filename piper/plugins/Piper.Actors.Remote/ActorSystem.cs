@@ -106,6 +106,7 @@ public sealed class ActorSystem : IAsyncDisposable
 
     private readonly IActorTransport _transport;
     private readonly ConcurrentDictionary<string, LocalActor> _actors = new();
+    private readonly ConcurrentDictionary<LocalActor, byte> _finishing = new();   // stopped, but still handling a message
     private readonly ConcurrentDictionary<long, PendingAsk> _pending = new();
     private long _nextAsk;
     private int _stopped;
@@ -333,11 +334,24 @@ public sealed class ActorSystem : IAsyncDisposable
     /// <summary>Stops this node's actor called <paramref name="name"/>, without waiting: it, or null if there's none.</summary>
     internal LocalActor? StopLocal(string name)
     {
-        if (!_actors.TryRemove(name, out var actor))
+        if (!_actors.TryGetValue(name, out var actor))
+            return null;
+        foreach (var finished in _finishing.Keys.Where(a => a.Completion.IsCompleted))
+            _finishing.TryRemove(finished, out _);
+        // Finishing before it's gone from the actors running, so it's always seen as one or the other.
+        _finishing[actor] = 0;
+        if (!_actors.TryRemove(KeyValuePair.Create(name, actor)))
             return null;
         actor.Stop();
         return actor;
     }
+
+    /// <summary>Whether an actor called <paramref name="name"/> was stopped here, but is still handling its last message.</summary>
+    internal bool IsFinishing(string name) => _finishing.Keys.Any(a => a.Self.Name == name && !a.Completion.IsCompleted);
+
+    /// <summary>Waits for the actors stopped here to finish their last messages (but not the one asking).</summary>
+    internal Task FinishAsync() =>
+        Task.WhenAll(_finishing.Keys.Where(a => !ReferenceEquals(Current.Value, a)).OrderBy(a => a.Self.Name, StringComparer.Ordinal).Select(a => a.Completion));
 
     /// <summary>Where a message to <paramref name="target"/> goes: for an actor in a cluster, its owner now.</summary>
     private ActorRef Route(ActorRef target) =>

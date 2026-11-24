@@ -755,7 +755,7 @@ ada.Deposit(25m);
   - **Interfaces:** a class implements a .NET interface's event, such as `INotifyPropertyChanged.PropertyChanged`
     (which WPF and Avalonia data binding use), by declaring it with the same name and type.
   - **`[Notify]`:** the `aspects` plugin's `[Notify]` writes all of the above for a class, raising `PropertyChanged`
-    from each property's setter (see [plugins](plugins.md#aspects-decorators-trace-timed-retry-timeout-circuitbreaker-and-notify)).
+    from each property's setter (see [plugins](plugins.md#aspects-decorators-trace-timed-retry-timeout-circuitbreaker-bulkhead-and-notify)).
 
 ### Null safety: `Option` and `T?`
 
@@ -818,7 +818,7 @@ enum FetchError { [Transient] Timeout, [Transient] Unavailable, NotFound }   // 
 
 - **Policies retry them:** `[Retry]` on a function returning a `Result` tries again on a transient `Err`, as on a throw,
   and gives any other `Err` back at once; `[CircuitBreaker]` counts only transient `Err`s as failures (see the
-  [aspects plugin](plugins.md#aspects-decorators-trace-timed-retry-timeout-circuitbreaker-and-notify)). A workflow's
+  [aspects plugin](plugins.md#aspects-decorators-trace-timed-retry-timeout-circuitbreaker-bulkhead-and-notify)). A workflow's
   activity is retried on one too ([workflows](plugins.md#workflows-durable-workflows)).
 - **A `[Retry]` that can't help** is a warning: on a function whose error type can never be transient (an enum with no
   `[Transient]` on it or a variant, a record without one, a `string`), it would only retry throws.

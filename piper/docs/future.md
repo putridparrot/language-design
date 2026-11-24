@@ -450,7 +450,8 @@ finishing it), container publishing, and hosted workers; and of actor clustering
      no list of nodes; still to come, Kubernetes' endpoints, for nodes with no shared database;
    - tells to an actor that's moving are lost (at most once); queuing them while it starts on its new owner;
    - placement beyond hashing: keeping an actor near what it uses, or on a node with room;
-   - **singletons:** one instance of an actor in the whole cluster (a scheduler, a coordinator such as apps/grid's),
+   - ~~**singletons**~~, done (`Scheduler.HostSingleton(cluster, …)`, `Scheduler.Singleton(node)`, the owner asking the
+     others to let go first). As written (the distributed lock is still to come): one instance of an actor in the whole cluster (a scheduler, a coordinator such as apps/grid's),
      started on its owner and moved as members change, as keyed actors already are, with the store's single writer
      keeping two nodes from running it while they disagree. Most needs for leader election are this, so no consensus
      algorithm (Raft, Paxos) is planned. A distributed lock (`await cluster.Lock("nightly-report", lease: 30s)`, held
@@ -484,7 +485,7 @@ finishing it), container publishing, and hosted workers; and of actor clustering
      hierarchy; Piper's actors have no parent yet;
    - `restart` recovering the actor's last state rather than starting empty, once actors keep their state (item 3);
    - asks to remote actors taking `[Retry]`, `[Timeout]` and `[CircuitBreaker]` as functions do;
-   - **`[Bulkhead(max, queue)]`** beside them: at most `max` calls running at once, up to `queue` more waiting, and
+   - ~~**`[Bulkhead(max, queue)]`**~~, done for functions; still to come, for remote asks. As written: at most `max` calls running at once, up to `queue` more waiting, and
      the rest refused at once, so one slow dependency can't take every thread or connection a service has. On
      PiperPolicies as the others are, shared by every caller of the function (or named, `[Bulkhead("payments", 10)]`,
      to share one between functions), and for remote asks too. A refusal is a transient error (see

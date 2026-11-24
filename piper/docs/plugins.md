@@ -422,11 +422,11 @@ Only the statements that await become async tasks, so Piper doesn't warn about a
 The same could be a library function with a trailing closure taking a list of actions. The plugin's benefit is that
 each statement is a task, with no lambdas to write.
 
-### `aspects` (decorators: `[Trace]`, `[Timed]`, `[Retry]`, `[Timeout]`, `[CircuitBreaker]` and `[Notify]`)
+### `aspects` (decorators: `[Trace]`, `[Timed]`, `[Retry]`, `[Timeout]`, `[CircuitBreaker]`, `[Bulkhead]` and `[Notify]`)
 
 [Piper.Plugins.Aspects](../plugins/Piper.Plugins.Aspects/AspectsPlugin.cs) adds [decorators](#decorators).
-`[Trace]`, `[Timed]`, `[Retry]`, `[Timeout]` and `[CircuitBreaker]` go on functions and methods; `[Trace]` also goes on a
-class, tracing each of its methods. `[Notify]` goes on classes:
+`[Trace]`, `[Timed]`, `[Retry]`, `[Timeout]`, `[CircuitBreaker]` and `[Bulkhead]` go on functions and methods; `[Trace]`
+also goes on a class, tracing each of its methods. `[Notify]` goes on classes:
 
 ```piper
 [Trace]                       // writes "→ Fetch(url = …)" and "← Fetch" to standard error
@@ -475,7 +475,7 @@ async fn Fetch(id: string) => Task<Result<Page, FetchError>> { … }   // Timeou
 A `[Retry]` on a function whose `Result` can never hold a transient error (an enum with no `[Transient]` on it or any
 variant, a record without one, a `string`) is a warning, as it would try again only on a throw.
 
-Two more policies, for calls to something that can be slow or down (both in Piper.Runtime's
+Three more policies, for calls to something that can be slow or down (both in Piper.Runtime's
 [PiperPolicies](../src/Piper.Runtime/PiperPolicies.cs)):
 
 ```piper
@@ -495,6 +495,15 @@ async fn Quote(sku: string) => Task<Price> { … }
   opens again. A success resets the count. Each decorated function has one circuit, shared by all its callers (a
   service that's down is down for everyone); it works on async and synchronous functions. On a function returning a
   `Result`, a transient `Err` is a failure too, and any other `Err` a success: what it called answered.
+- **`[Bulkhead(max)]`** and **`[Bulkhead(max, queue)]`:** at most `max` calls run at once, up to `queue` more (none, if
+  it's left out) wait their turn, first come first served, and any beyond that throw a `BulkheadFullException` at once
+  (a transient error), so one slow dependency can't take every thread or connection a service has. Each decorated
+  function has one, shared by its callers; functions giving the same name share one (`[Bulkhead("payments", 10, 20)]`),
+  and must give the same limits (an `InvalidOperationException` when called, if not). It works on async and synchronous
+  functions, though a synchronous call waiting its turn holds its thread. Write it above a `[CircuitBreaker]`, so a
+  refusal isn't counted as a failure of what's called, and below a `[Retry]`, so it can be tried again. A `[Timeout]`
+  above it includes the wait (a caller that gives up doesn't give up the call's turn); one below it times only the call,
+  and as a timeout doesn't stop the work, the call's place is free again though its work may still be running.
 - **Together,** decorators nest with the first written outermost, so the order above retries a refused or timed-out
   attempt, counts each timeout as a failure, and times each attempt on its own.
 
@@ -2018,6 +2027,23 @@ await tea.Reserve(1);                          // goes to tea's owner now, which
   from before the split would answer from what it had. Each ping says how many times its sender has taken the
   receiver to be down, which catches a network lost one way only. An actor that isn't persisted has no such guard.
 - **Delivery** is as for any remote actor: at most once. A tell to an actor that's moving can be lost.
+
+**Singletons:** one actor of a kind in the whole cluster (a scheduler, a coordinator), which most needs for leader
+election come down to:
+
+```piper
+Scheduler.HostSingleton(node.Cluster, (n, name) => Scheduler.Spawn(n, name, jobs));   // on every node
+await Scheduler.Singleton(node).Enqueue(job);                                         // from any
+```
+
+- **Starting:** it starts on its owner without waiting for a message, moves as members change, and is started again
+  (by the next heartbeat) if it stops or its node goes. Every node should host it, as any may own it. A kind is hosted
+  either as a singleton or by key, not both.
+- **Never two, while the nodes can reach each other:** a node asks each other member that's up to let go of the singleton
+  before starting it, and waits for one still handling a message. An ask meanwhile is retried until its timeout.
+- **Not exact:** nodes split from each other may each run one, as for any actor in a cluster, and so may a node that
+  joins without reaching the one running it, until they find each other. A persisted one's store refuses the second
+  writer; give anything else it does a guard of its own (a lease, an idempotency key).
 
 [apps/stock](../apps/stock/README.md) runs a cluster as pods in Kubernetes (AKS). Products are actors in the cluster,
 and every node's HTTP API reaches any product wherever it is; the products keep their events in PostgreSQL, which

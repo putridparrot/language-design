@@ -49,6 +49,129 @@ public static class PiperTimeout
             : $"{time.TotalSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)} s";
 }
 
+/// <summary>
+/// A call refused at once because its bulkhead is full: as many are running, and waiting, as it allows. Transient, as
+/// trying again in a while may find room.
+/// </summary>
+[Transient]
+public sealed class BulkheadFullException(string name, int max, int queue)
+    : Exception($"{name} is full: {max} running{(queue > 0 ? $" and {queue} waiting" : "")}, the most it allows.");
+
+/// <summary>
+/// <c>[Bulkhead(max, queue)]</c> (the aspects plugin): at most <c>max</c> calls run at once, up to <c>queue</c> more wait
+/// their turn (first come, first served), and any beyond that throw <see cref="BulkheadFullException"/> at once. So one
+/// slow dependency can't take every thread or connection a service has. One bulkhead for each decorated function, shared
+/// by its callers, or for all those given the same name (<c>[Bulkhead("payments", 10)]</c>).
+/// </summary>
+public sealed class PiperBulkhead
+{
+    private static readonly ConcurrentDictionary<string, PiperBulkhead> Bulkheads = new();
+
+    private readonly object _gate = new();
+    private readonly string _name;
+    private readonly int _max;
+    private readonly int _queue;
+    private readonly Queue<TaskCompletionSource> _waiting = new();
+    private int _running;
+
+    private PiperBulkhead(string name, int max, int queue)
+    {
+        if (max < 1)
+            throw new ArgumentOutOfRangeException(nameof(max), max, "A bulkhead lets at least one call run.");
+        if (queue < 0)
+            throw new ArgumentOutOfRangeException(nameof(queue), queue, "A bulkhead can't have fewer than no calls waiting.");
+        _name = name;
+        _max = max;
+        _queue = queue;
+    }
+
+    /// <summary>The bulkhead of the function <paramref name="key"/> names (one per decorated function).</summary>
+    public static PiperBulkhead For(string key, string name, int max, int queue = 0) =>
+        Bulkheads.GetOrAdd(key, _ => new PiperBulkhead(name, max, queue));
+
+    /// <summary>The bulkhead called <paramref name="name"/>, shared by each <paramref name="function"/> that names it, with the same limits.</summary>
+    public static PiperBulkhead Named(string name, string function, int max, int queue = 0)
+    {
+        var bulkhead = For("name:" + name, name, max, queue);
+        if (bulkhead._max != max || bulkhead._queue != queue)
+            throw new InvalidOperationException(
+                $"The bulkhead '{name}' is given different limits: {bulkhead._max} running and {bulkhead._queue} waiting, and by {function} {max} and {queue}. " +
+                "Functions sharing one must give the same.");
+        return bulkhead;
+    }
+
+    /// <summary>How many calls are running now.</summary>
+    public int Running
+    {
+        get
+        {
+            lock (_gate)
+                return _running;
+        }
+    }
+
+    /// <summary>A synchronous call. One that waits its turn holds its thread meanwhile.</summary>
+    public T Call<T>(Func<T> call)
+    {
+        Enter().GetAwaiter().GetResult();
+        try
+        {
+            return call();
+        }
+        finally
+        {
+            Leave();
+        }
+    }
+
+    public void Run(Action call) => Call(() => { call(); return true; });
+
+    public async Task<T> CallAsync<T>(Func<Task<T>> call)
+    {
+        await Enter();
+        try
+        {
+            return await call();
+        }
+        finally
+        {
+            Leave();
+        }
+    }
+
+    public Task RunAsync(Func<Task> call) => CallAsync(async () => { await call(); return true; });
+
+    /// <summary>Finishes once the call may run: at once if there's room, in its turn if it waits. Throws if it's refused.</summary>
+    private Task Enter()
+    {
+        lock (_gate)
+        {
+            if (_running < _max)
+            {
+                _running++;
+                return Task.CompletedTask;
+            }
+            if (_waiting.Count >= _queue)
+                throw new BulkheadFullException(_name, _max, _queue);
+            var turn = new TaskCompletionSource(PiperRuntime.Current.Continuations);
+            _waiting.Enqueue(turn);
+            return turn.Task;
+        }
+    }
+
+    /// <summary>Hands the call's place to the first waiting, or gives it up.</summary>
+    private void Leave()
+    {
+        TaskCompletionSource? next;
+        lock (_gate)
+        {
+            if (!_waiting.TryDequeue(out next))
+                _running--;
+        }
+        next?.SetResult();
+    }
+}
+
 /// <summary>A call refused at once because its circuit is open: what it calls has been failing.</summary>
 public sealed class CircuitOpenException(string name, TimeSpan retryAfter)
     : Exception($"{name} is failing, so it isn't being called for now; try again in {Math.Ceiling(retryAfter.TotalSeconds)} s.")

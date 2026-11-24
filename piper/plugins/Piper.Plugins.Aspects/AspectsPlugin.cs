@@ -16,6 +16,8 @@ namespace Piper.Plugins.Aspects;
 /// <item><c>[Timeout(ms)]</c> makes an async function's caller stop waiting after <c>ms</c>, with a TimeoutException.</item>
 /// <item><c>[CircuitBreaker(failures, openMs)]</c> refuses calls at once, with a CircuitOpenException, for <c>openMs</c>
 /// after <c>failures</c> failures in a row, then lets one through to try.</item>
+/// <item><c>[Bulkhead(max, queue)]</c> runs at most <c>max</c> calls at once, with up to <c>queue</c> waiting; more throw a
+/// BulkheadFullException at once.</item>
 /// </list>
 /// <c>[Trace]</c> and <c>[Timed]</c> write to standard error, or to the <c>TextWriter</c> given:
 /// <c>[Trace(Console.Out)]</c>.
@@ -66,6 +68,10 @@ public sealed class AspectsPlugin : IPiperPlugin
         new Decorator("CircuitBreaker", CircuitBreaker)
         {
             Description = "`[CircuitBreaker(failures, open)]`: after `failures` failures in a row, calls throw a CircuitOpenException at once for `open` (a duration, `30s`, or milliseconds), rather than waiting on what's failing; then one is let through to try, closing the circuit if it succeeds. One circuit per function.",
+        },
+        new Decorator("Bulkhead", Bulkhead)
+        {
+            Description = "`[Bulkhead(max, queue)]`: at most `max` calls run at once and up to `queue` more (none, if it's left out) wait their turn; any beyond that throw a BulkheadFullException at once, so one slow dependency can't take every thread or connection. One bulkhead per function, or shared by those giving the same name: `[Bulkhead(\"payments\", 10)]`.",
         },
     ];
 
@@ -548,6 +554,43 @@ public sealed class AspectsPlugin : IPiperPlugin
         return Wrapped(d, ("failures", failures), call =>
             $"let $circuit = Piper.Runtime.PiperCircuit.For($key, $name, $failures, $open);\n{prefix}$circuit.{method}(() => {call});",
             ("circuit", circuit), ("key", key), ("open", open));
+    }
+
+    /// <summary>
+    /// <c>[Bulkhead(10, 20)]</c>: at most 10 calls at once, with 20 more waiting (Piper.Runtime's PiperBulkhead). One for
+    /// the function, shared by its callers, or for each function naming it: <c>[Bulkhead("payments", 10, 20)]</c>.
+    /// </summary>
+    private static FunctionDeclarationSyntax Bulkhead(DecoratorContext d)
+    {
+        var (shared, limits) = d.Arguments is [LiteralExpressionSyntax { Value: string } named, ..]
+            ? (named, d.Arguments.Skip(1).ToList())
+            : ((ExpressionSyntax?)null, d.Arguments.ToList());
+        if (limits is not ([_] or [_, _]))
+        {
+            d.Report(d.Attribute.Span, "Bulkhead takes the calls that can run at once, and optionally how many more can wait: [Bulkhead(10)] or [Bulkhead(10, 20)], with a name first to share it: [Bulkhead(\"payments\", 10)].");
+            return d.Function;
+        }
+        if (d.IsIterator)
+        {
+            d.Report(d.Attribute.Span, "An iterator can't have a bulkhead: it runs as it's read, after the call has returned.");
+            return d.Function;
+        }
+        var bulkhead = d.FreshName("bulkhead");
+        var key = shared ?? Text(d.Attribute.Span, $"{d.Name}#{bulkhead.Text}");
+        var find = shared is null ? "For($key, $name, " : "Named($key, $name, ";
+        var more = new List<(string, object)> { ("bulkhead", bulkhead), ("key", key) };
+        if (limits is [_, var queue])
+            more.Add(("queue", queue));
+        var (method, prefix) = (d.IsAsync, d.ReturnsUnit) switch
+        {
+            (true, true) => ("RunAsync", "await "),
+            (true, false) => ("CallAsync", "return await "),
+            (false, true) => ("Run", ""),
+            (false, false) => ("Call", "return "),
+        };
+        return Wrapped(d, ("max", limits[0]), call =>
+            $"let $bulkhead = Piper.Runtime.PiperBulkhead.{find}$max{(limits.Count == 2 ? ", $queue" : "")});\n{prefix}$bulkhead.{method}(() => {call});",
+            [.. more]);
     }
 
     /// <summary>

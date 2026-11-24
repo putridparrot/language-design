@@ -652,6 +652,106 @@ public class RemoteActorPluginTests
     }
 
     /// <summary>
+    /// A singleton: started with no message sent, on one node, reached from any; handed over without overlapping when a
+    /// node joins or leaves, even with a message still being handled; found elsewhere after a crash; and started again
+    /// when it stops. Simulated, over thirty seeds.
+    /// </summary>
+    [Fact]
+    public void A_singleton_runs_once_in_the_cluster_and_is_handed_over()
+    {
+        var result = Compile("""
+            using System;
+            using System.Collections.Generic;
+            using System.Linq;
+            using System.Threading.Tasks;
+            using Piper.Actors.Remote;
+            using Piper.Runtime;
+
+            class Seen { public mut working = 0; public mut overlapped = false; public mut started = 0; public mut moved = 0; }
+
+            actor Scheduler(seen: Seen, at: string) {
+                on Where() => string { at }
+                on Work() {
+                    seen.working += 1;
+                    seen.started += 1;
+                    await Task.Delay(TimeSpan.FromSeconds(3));
+                    seen.working -= 1;
+                }
+            }
+
+            fn Running(cluster: SimulatedCluster) => List<int> =
+                [...Enumerable.Range(0, cluster.Count).Where(i => cluster.IsUp(i) && cluster[i].Cluster.Hosted("Scheduler").Count > 0)];
+
+            fn Check(what: string, holds: bool) {
+                if !holds { throw InvalidOperationException($"Not so: {what}"); }
+            }
+
+            async fn Settled(cluster: SimulatedCluster, sim: PiperSimulation, what: string) => Task {
+                Check($"{what}: the nodes agree", await cluster.SettleAsync());
+                await sim.Delay(TimeSpan.FromSeconds(6));
+                let running = Running(cluster);
+                Check($"{what}: one runs ({string.Join(",", running)})", running.Count == 1);
+                let owner = cluster[running[0]].Cluster.OwnerOf("Scheduler/singleton");
+                Check($"{what}: on its owner", cluster.Addresses[running[0]] == owner);
+                for i in 0..<cluster.Count {
+                    if cluster.IsUp(i) {
+                        Check($"{what}: reached from {i}", await Scheduler.Singleton(cluster[i]).Where() == owner);
+                    }
+                }
+            }
+
+            async fn ComeAndGo(sim: PiperSimulation) => Task {
+                let seen = Seen();
+                let cluster = await SimulatedCluster.StartAsync(sim, 1, node => {
+                    Scheduler.HostSingleton(node.Cluster, (n, name) => {
+                        // A new one while the last is still handling a message would be two at once.
+                        if seen.working > 0 { seen.overlapped = true; }
+                        Scheduler.Spawn(n, name, seen, n.Address)
+                    });
+                }, NetworkFaults.None);
+                await Settled(cluster, sim, "started");
+
+                // Nodes join while it's handling a message, some becoming its owner.
+                for i in 0..<5 {
+                    let before = Running(cluster)[0];
+                    Scheduler.Singleton(cluster[before]).Work();
+                    await sim.Delay(TimeSpan.FromMilliseconds(300));
+                    await cluster.AddNodeAsync();
+                    await Settled(cluster, sim, $"joined {i}");
+                    if Running(cluster)[0] != before { seen.moved += 1; }
+                }
+
+                // Its node leaves while it's handling a message.
+                let leaving = Running(cluster)[0];
+                Scheduler.Singleton(cluster[leaving]).Work();
+                await sim.Delay(TimeSpan.FromMilliseconds(300));
+                await cluster.StopAsync(leaving);
+                await Settled(cluster, sim, "left");
+                Check("it moved", seen.moved > 0);
+                Check("never two at once", !seen.overlapped);
+                Check($"messages were handled ({seen.started}, {seen.working} unfinished)", seen.started == 6 && seen.working == 0);
+
+                // Its node crashes.
+                await cluster.CrashAsync(Running(cluster)[0]);
+                await Settled(cluster, sim, "crashed");
+
+                // Stopped, it's started again.
+                await Scheduler.Singleton(cluster[Running(cluster)[0]]).Stop();
+                await Settled(cluster, sim, "stopped");
+            }
+
+            fn Main() {
+                PiperSimulation.Explore(30, ComeAndGo, 1);
+                Print("held");
+            }
+            """);
+        Assert.True(result.Success, string.Join("\n", result.FormattedDiagnostics));
+        var run = Runner.Run(result.Files, references: result.References);
+        Assert.True(run.Success, string.Join("\n", run.Errors));
+        Assert.Equal("held\n", run.Output.Replace("\r\n", "\n"));
+    }
+
+    /// <summary>
     /// A split network: both sides think they own an actor. The majority's copy starts from the events and carries on;
     /// the cut-off node's copy is behind, so the store refuses its events and it stops. Healed, the actor is back on its
     /// owner, from everything that was saved.

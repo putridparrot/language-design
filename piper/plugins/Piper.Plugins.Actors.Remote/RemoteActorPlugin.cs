@@ -29,7 +29,7 @@ namespace Piper.Plugins.Actors;
 /// </summary>
 public sealed class RemoteActorPlugin : IPiperPlugin
 {
-    private static readonly HashSet<string> GeneratedNames = ["Spawn", "Connect", "WithTimeout", "Stop", "InCluster", "HostInCluster"];
+    private static readonly HashSet<string> GeneratedNames = ["Spawn", "Connect", "WithTimeout", "Stop", "InCluster", "HostInCluster", "Singleton", "HostSingleton"];
 
     /// <summary>Names the generated <c>Spawn</c> and <c>Connect</c> take, which an actor's own parameters can't use.</summary>
     private static readonly HashSet<string> ReservedParameters = ["system", "name", "address"];
@@ -260,6 +260,17 @@ public sealed class RemoteActorPlugin : IPiperPlugin
                 /// `(node, name, key) => {{actor}}.Spawn(node, name, …)`.
                 static fn HostInCluster(cluster: {{Remote}}.Cluster, activate: ({{Remote}}.ActorSystem, string, string) => {{actor}}) {
                     cluster.Host("{{actor}}", (__node, __name, __key) => { activate(__node, __name, __key); }, {{(persisted ? "true" : "false")}});
+                }
+
+                /// The cluster's one {{actor}}, wherever it runs (see HostSingleton).
+                static fn Singleton(system: {{Remote}}.ActorSystem) => {{actor}} =
+                    {{actor}}(system, {{Remote}}.ActorRef.InCluster("{{actor}}", "singleton"), System.TimeSpan.FromSeconds(10));
+
+                /// Makes this node able to run the one {{actor}} in its whole cluster, started on the node that owns it
+                /// (without waiting for a message) and moved as members change: `activate` starts it, given the node and
+                /// the name to spawn it under: `(node, name) => {{actor}}.Spawn(node, name, …)`. Every node should host it.
+                static fn HostSingleton(cluster: {{Remote}}.Cluster, activate: ({{Remote}}.ActorSystem, string) => {{actor}}) {
+                    cluster.HostSingleton("{{actor}}", (__node, __name) => { activate(__node, __name); }, {{(persisted ? "true" : "false")}});
                 }
 
                 /// A copy whose asks wait up to `timeout` for a reply before throwing a TimeoutException.

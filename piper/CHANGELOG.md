@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **`[Bulkhead(max, queue)]` (aspects plugin):** at most `max` calls of a function run at once, up to `queue` more wait
+  their turn, and any beyond that throw a `BulkheadFullException` (transient) at once. Functions giving the same name
+  share one: `[Bulkhead("payments", 10, 20)]`. See [plugins](docs/plugins.md).
+
+- **Cluster singletons (remote actors plugin):** `Scheduler.HostSingleton(cluster, (n, name) => Scheduler.Spawn(n, name))`
+  runs one in the whole cluster, started on its owner with no message sent, handed over as nodes join and leave without
+  two running at once (while the nodes can reach each other), and started again if it stops. `Scheduler.Singleton(node)`
+  reaches it from any node. An actor's handlers can't be called `Singleton` or `HostSingleton` now.
+
+- **Fixed: samples/grid failed on a busy machine**, where no node answered within two seconds: it asks again.
+
 - **`const` declarations:** `const MaxRetries: int = 5;`, at the top level, in a class (`Page.DefaultSize`) and in a
   block, of a number, bool, char, string, duration or .NET enum. A constant can be used wherever a literal can: in
   patterns (`MaxRetries => …`, `< Max`, `Low..High`), attribute arguments and default values. They can refer to each
@@ -523,7 +534,7 @@
 - **`[Timeout]` and `[CircuitBreaker]` (aspects plugin):** `[Timeout(ms)]` makes an async function's caller stop
   waiting after `ms`, with a `TimeoutException`. `[CircuitBreaker(failures, openMs)]` refuses calls at once, with a
   `CircuitOpenException`, for `openMs` after `failures` failures in a row, then lets one through to try. They nest
-  with `[Retry]`, the first written outermost. See [plugins](docs/plugins.md#aspects-decorators-trace-timed-retry-timeout-circuitbreaker-and-notify).
+  with `[Retry]`, the first written outermost. See [plugins](docs/plugins.md#aspects-decorators-trace-timed-retry-timeout-circuitbreaker-bulkhead-and-notify).
 
 - **A `host`'s services are checked (hosting plugin),** as a server's are: a worker or stopping hook taking a service
   of the program's own that nothing in the host registers, a class DI makes needing one, and a singleton taking a
